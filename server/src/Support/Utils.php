@@ -1,6 +1,6 @@
 <?php
 
-namespace Fleetbase\Starter\Support;
+namespace Fleetbase\Quickbooks\Support;
 
 use Fleetbase\Support\Utils as FleetbaseUtils;
 

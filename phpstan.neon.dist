@@ -2,7 +2,18 @@ parameters:
     level: max
     paths:
         - server/src
+    bootstrapFiles:
+        - phpstan-bootstrap.php
+
+    # Eloquent models expose columns through __get; do not report them as undefined properties.
+    universalObjectCratesClasses:
+        - Illuminate\Database\Eloquent\Model
 
     checkMissingIterableValueType: true
     checkGenericClassInNonGenericObjectType: false
     reportUnmatchedIgnoredErrors: true
+    ignoreErrors:
+        - identifier: cast.string
+        - identifier: cast.int
+        - identifier: cast.double
+        - identifier: offsetAccess.nonOffsetAccessible

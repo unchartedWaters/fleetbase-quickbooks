@@ -1,2 +1,169 @@
-starter:
-  extension-name: Starter
+quickbooks:
+  connection:
+    title: Connection
+    loading: Loading QuickBooks connection.
+    unavailable: QuickBooks status could not be loaded.
+    settings-unavailable: QuickBooks settings could not be loaded.
+    reauth-status: QuickBooks needs to be connected again before sync can continue. Choose Connect to QuickBooks.
+    reauth-actions: QuickBooks needs to be connected again before sync can continue. Open Connection and choose Connect to QuickBooks.
+    connected: "Connected to QuickBooks organization {realm} ({environment})."
+    connected-plain: "Connected to QuickBooks organization {realm}."
+    home-currency: "Home currency is {currency}."
+    home-currency-where: "In QuickBooks: gear → Account and settings → Advanced → Currency."
+    home-currency-invoices: Invoices in another currency are not sent and show as failed in Activity.
+    home-currency-wallet: A wallet in another currency fails only when Fleetbase is creating a new QuickBooks account and QuickBooks is not Primary.
+    home-currency-existing: An existing wallet is still sent.
+    home-currency-primary: When QuickBooks is Primary, the account currency is copied onto the wallet.
+    disconnected-status: Not connected. Choose Connect to QuickBooks. Fleetbase then syncs customers, invoices, payments, and wallets with QuickBooks Online.
+    disconnected-actions: Not connected. Open Connection and choose Connect to QuickBooks. Fleetbase then syncs customers, invoices, payments, and wallets with QuickBooks Online.
+    test: Test connection
+    disconnect: Disconnect
+    connect: Connect to QuickBooks
+    disconnected-toast: QuickBooks disconnected.
+    connected-toast: Connected to QuickBooks.
+    connect-failed: Unable to start QuickBooks connection.
+    test-ok: QuickBooks connection works.
+    test-ok-named: "Connected to {company}."
+    test-failed: QuickBooks connection failed.
+    oauth-cancelled: QuickBooks connection was cancelled.
+    oauth-expired: That QuickBooks authorization expired. Connect again from Connection.
+    oauth-failed: QuickBooks could not connect. Try again from Connection.
+  actions:
+    title: Actions
+    description: Sync now sends customers, invoices, payments, and wallets that are waiting. Reconcile syncs one page of invoices already in Fleetbase. It does not go through every customer or wallet. It does not import QuickBooks invoices that are not already in Fleetbase, and it does not delete QuickBooks records.
+    sync-now: Sync now
+    reconcile: Reconcile
+    import: Import customers
+    import-rules: Import customers skips inactive customers and sub-customers. Existing Fleetbase names, emails, and phones are left as they are.
+    credentials-missing: Enter Client ID and Client secret on Connection before these actions.
+    sync-queued: Sync queued.
+    reconcile-queued: Reconcile queued.
+    import-queued: Customer import queued.
+  activity:
+    title: Activity
+    recent: Recent syncs
+    empty: No syncs yet. Connect on Connection, then choose Sync now on Actions or wait for the schedule.
+    load-failed: Sync activity could not be loaded.
+    loading: Loading sync activity.
+    columns:
+      when: When
+      trigger: Trigger
+      status: Status
+      direction: Direction
+      created: Created
+      updated: Updated
+      aligned: Aligned
+      linked: Linked
+      skipped: Skipped
+      unmatched: Unmatched
+      voided: Voided
+      failed: Failed
+    trigger:
+      scheduled: Scheduled
+      now: Sync now
+      manual: Reconcile
+      import: Import customers
+      catalog: Customer catalog
+      drain: Continued sync
+    direction:
+      outbound: To QuickBooks
+      inbound: From QuickBooks
+    status:
+      skipped: Skipped
+      finished: Finished
+      running: Running
+      failed: Failed
+      pending: Pending
+  menu:
+    settings: Quickbooks Settings
+  widget:
+    title: QuickBooks Sync
+    refresh: Refresh QuickBooks status
+    loading: Loading QuickBooks status.
+    unavailable: QuickBooks status is unavailable.
+    last-sync: Last sync
+    no-sync: No sync yet
+    records-waiting: Records waiting
+    waiting: "{count} waiting"
+    credentials-missing: Enter Client ID and Client secret on Connection before Sync now.
+    reauth: Connect QuickBooks again
+    connected: Connected
+    disconnected: Not connected
+  settings:
+    save: Save Changes
+    saved: QuickBooks settings saved.
+    authentication: Authentication
+    credentials-title: Getting your QuickBooks credentials
+    credentials-step-keys: "Sign in at developer.intuit.com and open Keys & credentials."
+    credentials-step-form: Complete the form using the data from QuickBooks.
+    credentials-step-redirect: Under Redirect URIs, paste the Public OAuth Redirect URL.
+    credentials-step-save: Choose Save Changes, then Connect to QuickBooks. Connect uses the saved keys.
+    schedule: Schedule
+    data-resolution: Data Resolution
+    data-resolution-description: Controls the data to be synchronized, the data that should be accepted in the event of a conflict, and the directionality of the synchronization.
+    enable: Enable
+    entity-enable: "{entity} Enable"
+    import-on-connect: On connect, copy QuickBooks customers into Fleetbase once, only when Customers is enabled in Data Resolution. If Customers is off, the import is skipped. Inactive customers and sub-customers are skipped. Existing Fleetbase names, emails, and phones are left as they are.
+    primary: Primary
+    primary-help: Which system wins when records differ, and which supplies identifiers.
+    entity-primary: "{entity} Primary"
+    sync-direction: Sync direction
+    sync-direction-help: To QuickBooks sends from Fleetbase. From QuickBooks updates Fleetbase.
+    entity-sync-direction: "{entity} Sync direction"
+    client-secret: Client secret
+    client-secret-help: "On Keys & credentials, next to the Client ID. Stored encrypted."
+    client-secret-placeholder: A secret is saved
+    client-secret-saved: A Client secret is already saved. Leave this blank to keep it.
+    verifier: Webhook verifier token
+    verifier-help: Intuit signs webhooks with this token. Stored encrypted. Leave blank to keep it.
+    verifier-placeholder: A verifier token is saved
+    verifier-saved: A verifier token is already saved. Leave this blank to keep it.
+    fields:
+      client-id: Client ID
+      environment: Sandbox or Production
+      interval-minutes: Sync Frequency (minutes)
+      periodic-interval-hours: Full Sync Frequency (hours)
+      retry-limit: Retry attempts
+      retry-delay: Retry Delay (seconds)
+    hints:
+      client-id: "On Keys & credentials. Use the Development Client ID with Sandbox, and the Production Client ID with the live organization."
+      environment: Sandbox uses the Development keys and a sandbox organization. Production uses the Production keys and the live QuickBooks Online organization.
+      interval-minutes: Defines the time between possible sync operations. Sync operations will only occur when there is data to sync.
+      periodic-interval-hours: Customer catalog uses this slower interval. Pending records use the minutes interval.
+      retry-limit: Retries after a failure. Later tries wait longer.
+      retry-delay: Seconds before the first retry. Later tries wait longer, up to 15 minutes.
+    urls:
+      internal-webhook: Internal Webhook Receiver URL
+      internal-webhook-hint: Intuit posts webhooks to this address.
+      public-webhook: Public Webhook Receiver URL
+      public-webhook-hint: Paste this into the Intuit webhook Endpoint URL.
+      internal-oauth: Internal Oauth Redirect URL
+      internal-oauth-hint: QuickBooks returns here after sign-in.
+      public-oauth: Public OAuth Redirect URL
+      public-oauth-hint: Paste this into Intuit Redirect URIs.
+    options:
+      sandbox: Sandbox
+      production: Production
+      fleetbase: Fleetbase
+      quickbooks: QuickBooks
+      both: Both
+      outbound: To QuickBooks
+      inbound: From QuickBooks
+    entities:
+      customer: Customers
+      invoice: Invoices
+      payment: Payments
+      wallet: Accounts / Wallets
+  validation:
+    client-id: "Enter the Client ID from developer.intuit.com → your app → Keys & credentials."
+    environment: "Choose Sandbox for Development keys, or Production for the live organization."
+    client-secret: "Enter the Client secret shown next to the Client ID on Keys & credentials."
+    interval-minutes: Enter a whole number of minutes, at least 1.
+    periodic-interval-hours: Enter a whole number of hours, at least 1.
+    retry-limit: Enter a whole number of retry attempts, at least 1.
+    retry-delay: Enter a whole number of seconds for Retry Delay, at least 5.
+    choice: Choose one of the listed options.
+    direction-customer: Choose Both, To QuickBooks, or From QuickBooks for Customers.
+    direction-invoice: Choose Both, To QuickBooks, or From QuickBooks for Invoices.
+    direction-payment: Choose Both, To QuickBooks, or From QuickBooks for Payments.
+    direction-wallet: Choose Both, To QuickBooks, or From QuickBooks for Accounts / Wallets.

@@ -29,6 +29,7 @@
 .idea/codeStyleSettings.xml
 composer.lock
 /server_vendor
+/vendor
 /server/vendor/
 composer.lock
 .phpunit.result.cache

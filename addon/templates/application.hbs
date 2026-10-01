@@ -1,5 +1,8 @@
 <EmberWormhole @to="sidebar-menu-items">
-    <Layout::Sidebar::Item @route="console.starter.home" @icon="home">Home</Layout::Sidebar::Item>
+    <Layout::Sidebar::Panel @title={{t "quickbooks.menu.settings"}} @open={{true}}>
+        <Layout::Sidebar::Item @route="console.quickbooks.settings" @icon="gear">{{t "quickbooks.connection.title"}}</Layout::Sidebar::Item>
+        <Layout::Sidebar::Item @route="console.quickbooks.activity" @icon="list">{{t "quickbooks.activity.title"}}</Layout::Sidebar::Item>
+    </Layout::Sidebar::Panel>
 </EmberWormhole>
 
 <Layout::Section::Container>

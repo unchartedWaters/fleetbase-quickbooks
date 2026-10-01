@@ -1,0 +1,190 @@
+<div class="space-y-6">
+    <QuickbooksConnection @variant="status" @connection={{@connection}} @loadFailed={{@loadFailed}} @busy={{@busy}} @importCustomers={{@importCustomers}} @onTest={{@onTest}} @onConnect={{@onConnect}} @onDisconnect={{@onDisconnect}} />
+    <QuickbooksConnection
+        @variant="embedded"
+        @connection={{@connection}}
+        @configured={{@configured}}
+        @loadFailed={{@loadFailed}}
+        @busy={{@busy}}
+        @onSync={{@onSync}}
+        @onReconcile={{@onReconcile}}
+        @onImport={{@onImport}}
+    />
+    <ContentPanel @title={{t "quickbooks.settings.authentication"}} @open={{true}} @wrapperClass="bordered-classic">
+        <ContentPanel @title={{t "quickbooks.settings.credentials-title"}} @open={{false}} @wrapperClass="bordered-classic mb-4">
+            <ol class="text-sm text-gray-500 list-decimal pl-5 space-y-2">
+                <li>{{t "quickbooks.settings.credentials-step-keys"}}</li>
+                <li>{{t "quickbooks.settings.credentials-step-form"}}</li>
+                <li data-test-redirect-step>{{t "quickbooks.settings.credentials-step-redirect"}}</li>
+                <li data-test-credential-save-step>{{t "quickbooks.settings.credentials-step-save"}}</li>
+            </ol>
+        </ContentPanel>
+        {{#each @authFields key="key" as |field|}}
+            <div data-test-sync-field={{field.key}}>
+                {{#if (eq field.key "environment")}}
+                    <InputGroup @name={{field.label}} @required={{true}} as |id|>
+                        <select id={{id}} class="form-select form-input w-full" data-test-field={{field.key}} {{on "change" (fn @onUpdate field.key)}}>
+                            <option value="sandbox" selected={{eq field.value "sandbox"}}>{{t "quickbooks.settings.options.sandbox"}}</option>
+                            <option value="production" selected={{eq field.value "production"}}>{{t "quickbooks.settings.options.production"}}</option>
+                        </select>
+                        <p class="text-xs text-gray-400 mt-1" data-test-field-help={{field.key}}>{{field.hint}}</p>
+                    </InputGroup>
+                {{else}}
+                    <InputGroup @name={{field.label}} @required={{true}} as |id|>
+                        <Input id={{id}} @type="text" @value={{field.value}} class="w-full form-input" data-test-field={{field.key}} {{on "input" (fn @onUpdate field.key)}} />
+                        <p class="text-xs text-gray-400 mt-1" data-test-field-help={{field.key}}>{{field.hint}}</p>
+                    </InputGroup>
+                {{/if}}
+                {{#if (get @errors field.key)}}
+                    <p class="text-xs text-red-600 mt-1" data-test-error={{field.key}}>{{get @errors field.key}}</p>
+                {{/if}}
+            </div>
+        {{/each}}
+        <InputGroup @name={{t "quickbooks.settings.client-secret"}} @required={{not @secret.set}} as |id|>
+            <Input
+                id={{id}}
+                @type="password"
+                @value={{@secret.value}}
+                class="w-full form-input"
+                placeholder={{if @secret.set (t "quickbooks.settings.client-secret-placeholder") ""}}
+                data-test-field="client_secret"
+                {{on "input" (fn @onUpdate "client_secret")}}
+            />
+            <p class="text-xs text-gray-400 mt-1" data-test-field-help="client_secret">{{t "quickbooks.settings.client-secret-help"}}</p>
+        </InputGroup>
+        {{#if (get @errors "client_secret")}}
+            <p class="text-xs text-red-600 mt-1" data-test-error="client_secret">{{get @errors "client_secret"}}</p>
+        {{else if @secret.set}}
+            <p class="text-xs text-gray-400 mt-1" data-test-secret-set>{{t "quickbooks.settings.client-secret-saved"}}</p>
+        {{/if}}
+        <InputGroup @name={{t "quickbooks.settings.verifier"}} as |id|>
+            <Input
+                id={{id}}
+                @type="password"
+                @value={{@secret.verifier.value}}
+                class="w-full form-input"
+                placeholder={{if @secret.verifier.set (t "quickbooks.settings.verifier-placeholder") ""}}
+                data-test-field="webhook_verifier"
+                {{on "input" (fn @onUpdate "webhook_verifier")}}
+            />
+            <p class="text-xs text-gray-400 mt-1" data-test-field-help="webhook_verifier">{{t "quickbooks.settings.verifier-help"}}</p>
+        </InputGroup>
+        {{#if (get @errors "webhook_verifier")}}
+            <p class="text-xs text-red-600 mt-1" data-test-error="webhook_verifier">{{get @errors "webhook_verifier"}}</p>
+        {{else if @secret.verifier.set}}
+            <p class="text-xs text-gray-400 mt-1" data-test-verifier-set>{{t "quickbooks.settings.verifier-saved"}}</p>
+        {{/if}}
+        {{#each @displayedUrls key="key" as |url|}}
+            <div data-test-sync-field={{url.key}}>
+                <InputGroup @name={{url.label}} as |id|>
+                    {{#if url.editable}}
+                        <Input id={{id}} @type="text" @value={{url.value}} class="w-full form-input" data-test-field={{url.key}} {{on "input" (fn @onUpdate url.key)}} />
+                    {{else}}
+                        <div
+                            id={{id}}
+                            class="mt-1 w-full cursor-text select-text break-all rounded-md border border-gray-300 bg-gray-50 px-3 py-2 font-mono text-xs leading-5 text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                            data-test-field={{url.key}}
+                        >{{url.value}}</div>
+                    {{/if}}
+                    <p class="text-xs text-gray-400 mt-1" data-test-field-help={{url.key}}>{{url.hint}}</p>
+                </InputGroup>
+            </div>
+        {{/each}}
+    </ContentPanel>
+
+    <ContentPanel @title={{t "quickbooks.settings.schedule"}} @open={{true}} @wrapperClass="bordered-classic">
+        {{#each @syncFields key="key" as |field|}}
+            <div data-test-sync-field={{field.key}}>
+                <InputGroup @name={{field.label}} @required={{true}} as |id|>
+                    <Input
+                        id={{id}}
+                        @type={{field.type}}
+                        @value={{field.value}}
+                        min={{field.min}}
+                        class="w-full form-input"
+                        data-test-sync={{field.key}}
+                        data-test-sync-label={{field.key}}
+                        aria-label={{field.label}}
+                        {{on "input" (fn @onUpdate field.key)}}
+                    />
+                    <p class="text-xs text-gray-400 mt-1" data-test-field-help={{field.key}}>{{field.hint}}</p>
+                </InputGroup>
+                {{#if (get @errors field.key)}}
+                    <p class="text-xs text-red-600 mt-1" data-test-error={{field.key}}>{{get @errors field.key}}</p>
+                {{/if}}
+            </div>
+        {{/each}}
+    </ContentPanel>
+
+    <ContentPanel @title={{t "quickbooks.settings.data-resolution"}} @open={{true}} @wrapperClass="bordered-classic">
+        <p class="text-xs text-gray-500 mb-3" data-test-data-resolution-description>{{t "quickbooks.settings.data-resolution-description"}}</p>
+        {{#each @policies key="entity" as |policy|}}
+            <div class="mb-6" data-test-policy={{policy.entity}}>
+                <p class="text-sm font-medium leading-5 text-gray-700 mb-2 dark:text-gray-100">{{policy.label}}</p>
+                <div class="mb-2" data-test-sync-field={{policy.enabledKey}}>
+                    <Toggle
+                        @isToggled={{policy.enabled}}
+                        @onToggle={{fn @onSetEntityEnabled policy.entity}}
+                        @label={{t "quickbooks.settings.enable"}}
+                        aria-label={{t "quickbooks.settings.entity-enable" entity=policy.label}}
+                        data-test-sync={{policy.enabledKey}}
+                    />
+                </div>
+                {{#if (eq policy.entity "customer")}}
+                    <div class="mb-2" data-test-sync-field="import_customers">
+                        <div class="flex items-start">
+                            <Toggle
+                                @isToggled={{@importCustomers}}
+                                @onToggle={{@onSetImportCustomers}}
+                                aria-label={{t "quickbooks.actions.import"}}
+                                data-test-import-checkbox
+                            />
+                            <div class="ml-2 text-sm dark:text-gray-100">{{t "quickbooks.actions.import"}}</div>
+                        </div>
+                        <p class="text-xs text-gray-400 mt-1" data-test-field-help="import_customers">{{t "quickbooks.settings.import-on-connect"}}</p>
+                    </div>
+                {{/if}}
+                <InputGroup @name={{t "quickbooks.settings.primary"}} @required={{policy.enabled}} as |id|>
+                    <select
+                        id={{id}}
+                        aria-label={{t "quickbooks.settings.entity-primary" entity=policy.label}}
+                        class="form-select form-input w-full"
+                        disabled={{not policy.enabled}}
+                        data-test-sync={{policy.conflictKey}}
+                        {{on "change" (fn @onUpdate policy.entity)}}
+                    >
+                        <option value="fleetbase" selected={{eq policy.primary "fleetbase"}}>{{t "quickbooks.settings.options.fleetbase"}}</option>
+                        <option value="quickbooks" selected={{eq policy.primary "quickbooks"}}>{{t "quickbooks.settings.options.quickbooks"}}</option>
+                    </select>
+                    <p class="text-xs text-gray-400 mt-1" data-test-field-help="primary">{{t "quickbooks.settings.primary-help"}}</p>
+                </InputGroup>
+                {{#if (get @errors policy.conflictKey)}}
+                    <p class="text-xs text-red-600 mt-1" data-test-error={{policy.conflictKey}}>{{get @errors policy.conflictKey}}</p>
+                {{/if}}
+                {{#if (get @errors policy.referenceKey)}}
+                    <p class="text-xs text-red-600 mt-1" data-test-error={{policy.referenceKey}}>{{get @errors policy.referenceKey}}</p>
+                {{/if}}
+                <div data-test-sync-field={{policy.directionKey}}>
+                    <InputGroup @name={{t "quickbooks.settings.sync-direction"}} @required={{policy.enabled}} as |id|>
+                        <select
+                            id={{id}}
+                            aria-label={{t "quickbooks.settings.entity-sync-direction" entity=policy.label}}
+                            class="form-select form-input w-full"
+                            disabled={{not policy.enabled}}
+                            data-test-sync={{policy.directionKey}}
+                            {{on "change" (fn @onUpdate policy.directionKey)}}
+                        >
+                            <option value="both" selected={{eq policy.direction "both"}}>{{t "quickbooks.settings.options.both"}}</option>
+                            <option value="outbound" selected={{eq policy.direction "outbound"}}>{{t "quickbooks.settings.options.outbound"}}</option>
+                            <option value="inbound" selected={{eq policy.direction "inbound"}}>{{t "quickbooks.settings.options.inbound"}}</option>
+                        </select>
+                        <p class="text-xs text-gray-400 mt-1" data-test-field-help="sync_direction">{{t "quickbooks.settings.sync-direction-help"}}</p>
+                    </InputGroup>
+                    {{#if (get @errors policy.directionKey)}}
+                        <p class="text-xs text-red-600 mt-1" data-test-error={{policy.directionKey}}>{{get @errors policy.directionKey}}</p>
+                    {{/if}}
+                </div>
+            </div>
+        {{/each}}
+    </ContentPanel>
+</div>

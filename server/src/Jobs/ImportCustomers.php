@@ -1,0 +1,194 @@
+<?php
+
+namespace Fleetbase\Quickbooks\Jobs;
+
+use Fleetbase\Quickbooks\Models\Connection;
+use Fleetbase\Quickbooks\Services\BatchRunner;
+use Fleetbase\Quickbooks\Services\ConnectionTokens;
+use Fleetbase\Quickbooks\Services\CustomerImporter;
+use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
+use Fleetbase\Quickbooks\Services\SettingsService;
+use Fleetbase\Quickbooks\Services\SettingsStore;
+use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\ConnectionGate;
+use Illuminate\Bus\Queueable;
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class ImportCustomers implements ShouldQueue
+{
+    use InteractsWithQueue;
+    use Queueable;
+    use SerializesModels;
+
+    private const DEADLINE_MARGIN_SECONDS = 30;
+
+    public const CONTINUATION_RETRY_LIMIT = 3;
+
+    public const CONTINUATION_RETRY_DELAY_SECONDS = 5;
+
+    public int $tries = 1;
+
+    public int $timeout = BatchRunner::LOCK_SECONDS;
+
+    public function __construct(
+        public string $companyUuid,
+        public ?int $continuationAttempt = null,
+    ) {
+    }
+
+    /**
+     * @param Connection|array<string, mixed>|null $connection
+     */
+    public static function blockedMessage(Connection|array|null $connection): string
+    {
+        $needsReauth = $connection instanceof Connection
+            ? (bool) $connection->needs_reauth
+            : (is_array($connection) && !empty($connection['needs_reauth']));
+
+        return $needsReauth
+            ? 'QuickBooks needs to be connected again before import can continue.'
+            : 'QuickBooks is not connected. Connect from Connection.';
+    }
+
+    public static function dispatch(string $companyUuid): void
+    {
+        self::dispatchJob(new self($companyUuid));
+    }
+
+    public function handle(
+        CustomerImporter $importer,
+        FleetbaseDirectory $directory,
+        ?ConnectionTokens $tokens = null,
+        ?SettingsService $settings = null,
+        ?SettingsStore $store = null,
+    ): void {
+        if (!ConnectionGate::hasRealm($directory->connection($this->companyUuid))) {
+            return;
+        }
+
+        $lock = BatchRunner::lock($this->companyUuid);
+        if ($lock === null) {
+            $directory->saveSkipped($this->companyUuid, 'import', 'inbound', BatchRunner::LOCK_UNAVAILABLE);
+
+            return;
+        }
+        if (!$lock->get()) {
+            $directory->saveSkipped($this->companyUuid, 'import', 'inbound', 'Another QuickBooks sync is already running.');
+            $this->retryBusyContinuation();
+
+            return;
+        }
+
+        $continue = false;
+        try {
+            $continue = $this->import($importer, $directory, $tokens, $settings, $store);
+        } finally {
+            $lock->release();
+            if ($continue) {
+                // Mark only deadline-created jobs as continuations, and dispatch after releasing the company lock.
+                self::dispatchJob(new self($this->companyUuid, 0));
+            }
+        }
+    }
+
+    private function retryBusyContinuation(): void
+    {
+        if ($this->continuationAttempt === null || $this->continuationAttempt >= self::CONTINUATION_RETRY_LIMIT) {
+            return;
+        }
+
+        $attempt = $this->continuationAttempt + 1;
+        $retry   = new self($this->companyUuid, $attempt);
+        $retry->delay(self::CONTINUATION_RETRY_DELAY_SECONDS * $attempt);
+        self::dispatchJob($retry);
+    }
+
+    private static function dispatchJob(self $job): void
+    {
+        $dispatcher = Container::getInstance()->make(Dispatcher::class);
+        if ($dispatcher instanceof Dispatcher) {
+            $dispatcher->dispatch($job);
+        }
+    }
+
+    private function import(
+        CustomerImporter $importer,
+        FleetbaseDirectory $directory,
+        ?ConnectionTokens $tokens,
+        ?SettingsService $settings,
+        ?SettingsStore $store,
+    ): bool {
+        $connection = $directory->connection($this->companyUuid);
+        if (!is_array($connection) || !ConnectionGate::hasRealm($connection)) {
+            return false;
+        }
+
+        if (!empty($connection['needs_reauth'])) {
+            $directory->saveSkipped($this->companyUuid, 'import', 'inbound', self::blockedMessage($connection));
+
+            return false;
+        }
+
+        if ($settings !== null && $store !== null) {
+            $resolved = $settings->resolveSync(
+                $store->companySync($this->companyUuid),
+                [],
+                $store->defaultSync()
+            );
+            if (array_key_exists('customer_enabled', $resolved) && $resolved['customer_enabled'] === false) {
+                $directory->saveSkipped($this->companyUuid, 'import', 'inbound', 'Customers are turned off in Data Resolution, so they are not imported.');
+
+                return false;
+            }
+        }
+
+        if ($tokens !== null) {
+            $connection = $tokens->refreshIfDue($connection, time());
+            $blocked    = ConnectionTokens::blockedMessage($connection, time());
+            if ($blocked !== null) {
+                $directory->saveSkipped($this->companyUuid, 'import', 'inbound', $blocked);
+
+                return false;
+            }
+        }
+
+        $ledger                                  = $directory->memory ?? new SyncLedger();
+        $ledger->connections[$this->companyUuid] = $connection;
+        $started                                 = time();
+
+        try {
+            $batch = $importer->import(
+                $ledger,
+                $connection,
+                [],
+                true,
+                $this->pageSize($settings, $store),
+                $started + BatchRunner::LOCK_SECONDS - self::DEADLINE_MARGIN_SECONDS
+            );
+
+            return !empty($batch['continue']);
+        } finally {
+            // Saved even when a page query throws, so customers already created keep their links.
+            $directory->save($ledger);
+        }
+    }
+
+    private function pageSize(?SettingsService $settings, ?SettingsStore $store): int
+    {
+        $batch = CustomerImporter::MAX_PAGE_SIZE;
+        if ($settings !== null && $store !== null) {
+            $resolved = $settings->resolveSync(
+                $store->companySync($this->companyUuid),
+                [],
+                $store->defaultSync()
+            );
+            $batch = (int) ($resolved['batch_size'] ?? CustomerImporter::MAX_PAGE_SIZE);
+        }
+
+        return max(1, min(CustomerImporter::MAX_PAGE_SIZE, $batch));
+    }
+}

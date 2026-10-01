@@ -27,6 +27,21 @@
 /yarn.lock
 .gitkeep
 
+# server (dev-only)
+/server_vendor/
+/vendor
+/server/tests/
+/scripts/
+/composer.lock
+/pnpm-lock.yaml
+/pnpm-workspace.yaml
+/.php-cs-fixer.php
+/.php-cs-fixer.cache
+/.phpunit.result.cache
+/phpstan-bootstrap.php
+/phpstan.neon.dist
+/phpunit.xml.dist
+
 # ember-try
 /.node_modules.ember-try/
 /npm-shrinkwrap.json.ember-try

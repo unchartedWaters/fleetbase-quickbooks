@@ -5,7 +5,7 @@ import config from './config/environment';
 import { services, externalRoutes } from '@fleetbase/ember-core/exports';
 
 const { modulePrefix } = config;
-export default class StarterEngine extends Engine {
+export default class QuickbooksEngine extends Engine {
     modulePrefix = modulePrefix;
     Resolver = Resolver;
     dependencies = {
@@ -14,4 +14,4 @@ export default class StarterEngine extends Engine {
     };
 }
 
-loadInitializers(StarterEngine, modulePrefix);
+loadInitializers(QuickbooksEngine, modulePrefix);

@@ -1,0 +1,385 @@
+import Component from '@glimmer/component';
+import { action } from '@ember/object';
+import { tracked } from '@glimmer/tracking';
+import { inject as service } from '@ember/service';
+import { DEFAULT_ENVIRONMENT, fieldState, normalizeSyncDirection, secretPresentation, validateSettings, webhookVerifierPresentation } from '../utils/settings-form';
+
+const NUMBER_FIELDS = ['interval_minutes', 'periodic_interval_hours', 'retry_limit', 'default_backoff_seconds'];
+const MINIMUMS = {
+    interval_minutes: 1,
+    periodic_interval_hours: 1,
+    retry_limit: 1,
+    default_backoff_seconds: 5,
+};
+const AUTH_FIELDS = ['client_id', 'environment'];
+const SYNC_FIELDS = ['interval_minutes', 'periodic_interval_hours', 'retry_limit', 'default_backoff_seconds'];
+const POLICY_FIELDS = [
+    'customer_conflict',
+    'customer_reference',
+    'customer_direction',
+    'invoice_conflict',
+    'invoice_reference',
+    'invoice_direction',
+    'payment_conflict',
+    'payment_reference',
+    'payment_direction',
+    'wallet_conflict',
+    'wallet_reference',
+    'wallet_direction',
+];
+const PRIMARY_ENTITIES = ['customer', 'invoice', 'payment', 'wallet'];
+const CHOICE_DEFAULTS = {
+    customer_conflict: 'fleetbase',
+    customer_reference: 'fleetbase',
+    invoice_conflict: 'fleetbase',
+    invoice_reference: 'fleetbase',
+    payment_conflict: 'fleetbase',
+    payment_reference: 'fleetbase',
+    wallet_conflict: 'fleetbase',
+    wallet_reference: 'fleetbase',
+    customer_direction: 'both',
+    invoice_direction: 'both',
+    payment_direction: 'both',
+    wallet_direction: 'both',
+};
+const DISPLAY_URLS = [
+    {
+        key: 'internal_webhook_receiver_url',
+        label: 'Internal Webhook Receiver URL',
+        hint: 'Intuit posts webhooks to this address.',
+        editable: false,
+    },
+    {
+        key: 'public_webhook_receiver_url',
+        label: 'Public Webhook Receiver URL',
+        hint: 'Paste this into the Intuit webhook Endpoint URL.',
+        editable: true,
+        fallback: 'internal_webhook_receiver_url',
+    },
+    {
+        key: 'internal_oauth_redirect_url',
+        label: 'Internal Oauth Redirect URL',
+        hint: 'QuickBooks returns here after sign-in.',
+        editable: false,
+    },
+    {
+        key: 'public_oauth_redirect_url',
+        label: 'Public OAuth Redirect URL',
+        hint: 'Paste this into Intuit Redirect URIs.',
+        editable: true,
+        fallback: 'internal_oauth_redirect_url',
+    },
+];
+
+// The screen has one Primary. Anything other than quickbooks is Fleetbase, including a stored conflict of report.
+function displayedPrimary(conflict) {
+    return conflict === 'quickbooks' ? 'quickbooks' : 'fleetbase';
+}
+
+function primaryEntity(key) {
+    return PRIMARY_ENTITIES.find((entity) => key === `${entity}_conflict` || key === `${entity}_reference`) ?? null;
+}
+
+const LABEL_KEYS = {
+    client_id: 'quickbooks.settings.fields.client-id',
+    environment: 'quickbooks.settings.fields.environment',
+    interval_minutes: 'quickbooks.settings.fields.interval-minutes',
+    periodic_interval_hours: 'quickbooks.settings.fields.periodic-interval-hours',
+    retry_limit: 'quickbooks.settings.fields.retry-limit',
+    default_backoff_seconds: 'quickbooks.settings.fields.retry-delay',
+};
+
+const HINT_KEYS = {
+    client_id: 'quickbooks.settings.hints.client-id',
+    environment: 'quickbooks.settings.hints.environment',
+    interval_minutes: 'quickbooks.settings.hints.interval-minutes',
+    periodic_interval_hours: 'quickbooks.settings.hints.periodic-interval-hours',
+    retry_limit: 'quickbooks.settings.hints.retry-limit',
+    default_backoff_seconds: 'quickbooks.settings.hints.retry-delay',
+};
+
+const URL_COPY = {
+    internal_webhook_receiver_url: ['quickbooks.settings.urls.internal-webhook', 'quickbooks.settings.urls.internal-webhook-hint'],
+    public_webhook_receiver_url: ['quickbooks.settings.urls.public-webhook', 'quickbooks.settings.urls.public-webhook-hint'],
+    internal_oauth_redirect_url: ['quickbooks.settings.urls.internal-oauth', 'quickbooks.settings.urls.internal-oauth-hint'],
+    public_oauth_redirect_url: ['quickbooks.settings.urls.public-oauth', 'quickbooks.settings.urls.public-oauth-hint'],
+};
+
+export default class QuickbooksSettingsComponent extends Component {
+    @service notifications;
+    @service intl;
+
+    @tracked draft = {};
+    @tracked errors = {};
+    // Sent with Connect only. Customers must also be enabled or the server skips the import.
+    @tracked importCustomers = false;
+
+    primaryTouched = new Set();
+
+    get title() {
+        return this.args.title || this.intl.t('quickbooks.connection.title');
+    }
+
+    get authFields() {
+        return AUTH_FIELDS.map((key) => this.present(key));
+    }
+
+    get syncFields() {
+        return SYNC_FIELDS.map((key) => this.present(key));
+    }
+
+    get policies() {
+        return [
+            { entity: 'customer', label: this.intl.t('quickbooks.settings.entities.customer') },
+            { entity: 'invoice', label: this.intl.t('quickbooks.settings.entities.invoice') },
+            { entity: 'payment', label: this.intl.t('quickbooks.settings.entities.payment') },
+            { entity: 'wallet', label: this.intl.t('quickbooks.settings.entities.wallet') },
+        ].map((policy) => {
+            const conflict = this.present(`${policy.entity}_conflict`);
+            const reference = this.present(`${policy.entity}_reference`);
+            const direction = this.entityDirection(policy.entity);
+
+            return {
+                ...policy,
+                enabled: this.entityEnabled(policy.entity),
+                enabledKey: `${policy.entity}_enabled`,
+                primary: displayedPrimary(conflict.value),
+                conflictKey: conflict.key,
+                referenceKey: reference.key,
+                direction: direction.direction,
+                directionKey: direction.directionKey,
+            };
+        });
+    }
+
+    get displayedUrls() {
+        return DISPLAY_URLS.map((field) => {
+            const [labelKey, hintKey] = URL_COPY[field.key];
+
+            return {
+                ...field,
+                label: this.intl.t(labelKey),
+                hint: this.intl.t(hintKey),
+                value: this.displayedUrl(field.key),
+            };
+        });
+    }
+
+    get secret() {
+        const presentation = secretPresentation(this.args.settings);
+        if (this.draft.client_secret != null) {
+            presentation.value = this.draft.client_secret;
+        }
+        // The fields template already receives this object, so the verifier rides along with the same blank-keeps-saved shape.
+        presentation.verifier = webhookVerifierPresentation(this.args.settings);
+        if (this.draft.webhook_verifier != null) {
+            presentation.verifier.value = this.draft.webhook_verifier;
+        }
+
+        return presentation;
+    }
+
+    displayedUrl(key) {
+        if (Object.prototype.hasOwnProperty.call(this.draft, key)) {
+            const drafted = this.draft[key];
+
+            return typeof drafted === 'string' ? drafted : '';
+        }
+
+        const value = this.args.settings?.[key];
+        if (typeof value === 'string' && value.trim() !== '') {
+            return value;
+        }
+
+        const field = DISPLAY_URLS.find((item) => item.key === key);
+        if (field?.fallback) {
+            const fallback = this.args.settings?.[field.fallback];
+
+            return typeof fallback === 'string' ? fallback : '';
+        }
+
+        return typeof value === 'string' ? value : '';
+    }
+
+    present(key) {
+        const source = AUTH_FIELDS.includes(key) ? this.args.settings : this.args.sync;
+        const state = fieldState({ ...source, sources: source?.sources, scope: 'company' }, key);
+        if (key === 'interval_minutes' && (state.value === '' || state.value == null)) {
+            state.value = 5;
+        }
+        if (key === 'periodic_interval_hours' && (state.value === '' || state.value == null)) {
+            state.value = 24;
+        }
+        if (key === 'environment' && (state.value === '' || state.value == null)) {
+            state.value = DEFAULT_ENVIRONMENT;
+        }
+        if (CHOICE_DEFAULTS[key] && (state.value === '' || state.value == null)) {
+            state.value = CHOICE_DEFAULTS[key];
+        }
+        const entity = primaryEntity(key);
+        if (entity) {
+            // Dropdown edits live in the draft. Otherwise show the loaded Primary.
+            state.value =
+                this.primaryTouched.has(entity) && Object.prototype.hasOwnProperty.call(this.draft, key) ? this.draft[key] : displayedPrimary(this.args.sync?.[`${entity}_conflict`]);
+        } else if (Object.prototype.hasOwnProperty.call(this.draft, key)) {
+            state.value = this.draft[key];
+        }
+
+        return {
+            key,
+            label: LABEL_KEYS[key] ? this.intl.t(LABEL_KEYS[key]) : key,
+            hint: HINT_KEYS[key] ? this.intl.t(HINT_KEYS[key]) : null,
+            type: NUMBER_FIELDS.includes(key) ? 'number' : 'text',
+            min: MINIMUMS[key] ?? null,
+            ...state,
+        };
+    }
+
+    @action
+    update(key, event) {
+        const value = event.target.value;
+        if (PRIMARY_ENTITIES.includes(key)) {
+            const conflictKey = `${key}_conflict`;
+            const referenceKey = `${key}_reference`;
+            this.primaryTouched.add(key);
+            this.draft = {
+                ...this.draft,
+                [conflictKey]: value,
+                [referenceKey]: value,
+            };
+            if (this.errors[conflictKey] || this.errors[referenceKey]) {
+                const errors = { ...this.errors };
+                delete errors[conflictKey];
+                delete errors[referenceKey];
+                this.errors = errors;
+            }
+            return;
+        }
+
+        this.draft = { ...this.draft, [key]: value };
+        if (this.errors[key]) {
+            const errors = { ...this.errors };
+            delete errors[key];
+            this.errors = errors;
+        }
+    }
+
+    @action
+    setImportCustomers(enabled) {
+        this.importCustomers = enabled === true;
+    }
+
+    @action
+    setEntityEnabled(entity, enabled) {
+        enabled = enabled === true;
+        this.draft = { ...this.draft, [`${entity}_enabled`]: enabled };
+        if (!enabled) {
+            const errors = { ...this.errors };
+            delete errors[`${entity}_conflict`];
+            delete errors[`${entity}_reference`];
+            delete errors[`${entity}_direction`];
+            this.errors = errors;
+        }
+    }
+
+    @action
+    async save(event) {
+        event?.preventDefault?.();
+        if (this.args.settingsLoadFailed === true || this.args.settingsLoaded === false) {
+            return;
+        }
+
+        const auth = {
+            client_id: String(this.present('client_id').value || '').trim(),
+            environment: this.present('environment').value || DEFAULT_ENVIRONMENT,
+        };
+        if (this.draft.client_secret) {
+            auth.client_secret = this.draft.client_secret;
+        }
+        if (this.draft.webhook_verifier) {
+            auth.webhook_verifier = this.draft.webhook_verifier;
+        }
+        auth.public_webhook_receiver_url = String(this.displayedUrl('public_webhook_receiver_url') || '').trim();
+        auth.public_oauth_redirect_url = String(this.displayedUrl('public_oauth_redirect_url') || '').trim();
+
+        const sync = {};
+        SYNC_FIELDS.forEach((key) => {
+            sync[key] = this.numeric(key);
+        });
+        POLICY_FIELDS.forEach((key) => {
+            if (key.endsWith('_direction')) {
+                const entity = key.slice(0, -'_direction'.length);
+                sync[key] = this.entityDirection(entity).direction;
+                return;
+            }
+            sync[key] = this.present(key).value;
+        });
+        PRIMARY_ENTITIES.forEach((entity) => {
+            sync[`${entity}_enabled`] = this.entityEnabled(entity);
+        });
+
+        const errors = validateSettings({
+            auth: { ...auth, client_secret: this.draft.client_secret || '' },
+            sync,
+            secretSet: Boolean(this.args.settings?.client_secret_set),
+        });
+        this.errors = this.localizeErrors(errors);
+        if (Object.keys(errors).length) {
+            return;
+        }
+
+        try {
+            await this.args.onSave?.({ scope: 'company', auth, sync });
+            this.notifications.success(this.intl.t('quickbooks.settings.saved'));
+            this.primaryTouched.clear();
+            this.draft = {};
+            this.errors = {};
+        } catch (error) {
+            const serverErrors = error?.errors;
+            if (serverErrors && typeof serverErrors === 'object' && !Array.isArray(serverErrors)) {
+                this.errors = this.localizeErrors(serverErrors);
+            } else {
+                this.notifications.serverError(error);
+            }
+        }
+    }
+
+    localizeErrors(errors) {
+        const localized = {};
+        Object.keys(errors || {}).forEach((key) => {
+            const value = errors[key];
+            localized[key] = typeof value === 'string' && value.startsWith('quickbooks.') ? this.intl.t(value) : value;
+        });
+
+        return localized;
+    }
+
+    entityEnabled(entity) {
+        const key = `${entity}_enabled`;
+        const stored = Object.prototype.hasOwnProperty.call(this.draft, key) ? this.draft[key] : this.args.sync?.[key];
+        if (stored === false || stored === 'false' || stored === 0 || stored === '0') {
+            return false;
+        }
+
+        return true;
+    }
+
+    entityDirection(entity) {
+        const directionKey = `${entity}_direction`;
+        const stored = Object.prototype.hasOwnProperty.call(this.draft, directionKey) ? this.draft[directionKey] : this.args.sync?.[directionKey];
+
+        return {
+            direction: normalizeSyncDirection(stored),
+            directionKey,
+        };
+    }
+
+    numeric(key) {
+        const value = this.present(key).value;
+        if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) {
+            return Number(value);
+        }
+
+        return value;
+    }
+}

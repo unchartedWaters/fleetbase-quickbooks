@@ -2,10 +2,10 @@
 
 module.exports = {
     extends: 'recommended',
+    ignore: ['server/**', 'server_vendor/**', 'vendor/**', 'node_modules/**'],
     rules: {
         'no-invalid-interactive': 'off',
         'no-yield-only': 'off',
-        'no-down-event-binding': 'off',
         'table-groups': 'off',
         'link-href-attributes': 'off',
         'require-input-label': 'off',

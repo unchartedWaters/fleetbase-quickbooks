@@ -1,0 +1,62 @@
+<Layout::Section::Header @title={{t "quickbooks.activity.title"}} />
+
+<Layout::Section::Body class="overflow-y-scroll h-full">
+    <div class="container mx-auto h-screen">
+        <div class="max-w-4xl my-10 mx-auto">
+            <ContentPanel @title={{t "quickbooks.activity.recent"}} @open={{true}} @wrapperClass="bordered-classic">
+                <section class="quickbooks-activity" data-test-activity>
+                    {{#if this.rows.length}}
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="text-left text-gray-500 border-b">
+                                    <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.when"}}</th>
+                                    <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.trigger"}}</th>
+                                    <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.status"}}</th>
+                                    <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.direction"}}</th>
+                                    <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.created"}}</th>
+                                    <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.updated"}}</th>
+                                    <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.aligned"}}</th>
+                                    <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.linked"}}</th>
+                                    <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.skipped"}}</th>
+                                    <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.unmatched"}}</th>
+                                    <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.voided"}}</th>
+                                    <th scope="col" class="py-2 font-medium">{{t "quickbooks.activity.columns.failed"}}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{#each this.rows as |row|}}
+                                    <tr data-test-activity-row data-direction={{row.direction}} class="border-b">
+                                        <td class="py-2 pr-4">{{row.when}}</td>
+                                        <th scope="row" id={{row.headerId}} class="py-2 pr-4 text-left font-normal" data-test-activity-trigger>{{row.trigger}}</th>
+                                        <td class="py-2 pr-4" data-test-activity-status>{{row.status}}</td>
+                                        <td class="py-2 pr-4">{{row.directionLabel}}</td>
+                                        <td class="py-2 pr-4" data-test-activity-created>{{row.created}}</td>
+                                        <td class="py-2 pr-4" data-test-activity-updated>{{row.updated}}</td>
+                                        <td class="py-2 pr-4" data-test-activity-aligned>{{row.aligned}}</td>
+                                        <td class="py-2 pr-4" data-test-activity-linked>{{row.linked}}</td>
+                                        <td class="py-2 pr-4" data-test-activity-skipped>{{row.skipped}}</td>
+                                        <td class="py-2 pr-4" data-test-activity-unmatched>{{row.unmatched}}</td>
+                                        <td class="py-2 pr-4" data-test-activity-voided>{{row.voided}}</td>
+                                        <td class="py-2">{{row.failed}}</td>
+                                    </tr>
+                                    {{#if row.error}}
+                                        <tr>
+                                            <td colspan="12" headers={{row.headerId}} class="pb-2 text-red-600" data-test-activity-error>{{row.error}}</td>
+                                        </tr>
+                                    {{/if}}
+                                {{/each}}
+                            </tbody>
+                        </table>
+                    {{else if this.loadFailed}}
+                        <p class="text-sm text-gray-500" data-test-activity-load-failed>{{t "quickbooks.activity.load-failed"}}</p>
+                    {{else if this.showEmptyState}}
+                        <p class="text-sm text-gray-500" data-test-activity-empty>{{t "quickbooks.activity.empty"}}</p>
+                    {{else if this.isLoading}}
+                        <p class="text-sm text-gray-500" data-test-activity-loading>{{t "quickbooks.activity.loading"}}</p>
+                    {{/if}}
+                </section>
+            </ContentPanel>
+        </div>
+        <Spacer @height="600px" />
+    </div>
+</Layout::Section::Body>
