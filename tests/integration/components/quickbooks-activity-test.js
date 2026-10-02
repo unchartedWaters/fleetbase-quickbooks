@@ -1,6 +1,6 @@
 import { module, test } from 'qunit';
 import { setupRenderingTest } from 'dummy/tests/helpers';
-import { render, settled } from '@ember/test-helpers';
+import { click, render, settled } from '@ember/test-helpers';
 import { hbs } from 'ember-cli-htmlbars';
 import Service from '@ember/service';
 
@@ -105,6 +105,69 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         assert.dom('[data-test-activity-empty]').hasText('No syncs yet. Connect on Connection, then choose Sync now on Actions or wait for the schedule.');
         assert.dom('[data-test-activity-load-failed]').doesNotExist();
         assert.dom('[data-test-activity-loading]').doesNotExist();
+        assert.dom('#fleetbase-pagination').doesNotExist();
+    });
+
+    test('one page of batches does not show the pager', async function (assert) {
+        this.set('batches', [{ uuid: 'only', trigger: 'now', direction: 'outbound', created: 1 }]);
+        this.set('meta', { current_page: 1, last_page: 1, per_page: 25, total: 1 });
+
+        await render(hbs`<QuickbooksActivity @batches={{this.batches}} @meta={{this.meta}} />`);
+
+        assert.dom('[data-test-activity-row]').exists({ count: 1 });
+        assert.dom('#fleetbase-pagination').doesNotExist();
+    });
+
+    test('changing page requests that page of 25 and replaces the rows', async function (assert) {
+        const calls = [];
+        this.owner.register('service:notifications', NotificationsStubService);
+        this.owner.register('service:current-user', CurrentUserStubService);
+        this.owner.register(
+            'service:fetch',
+            class extends Service {
+                get(path, query, options) {
+                    calls.push({ path, query, options });
+                    const page = Number(query?.page) || 1;
+                    if (page === 2) {
+                        return Promise.resolve({
+                            batches: [{ uuid: 'page-2', trigger: 'now', direction: 'outbound', created: 9 }],
+                            meta: { current_page: 2, last_page: 2, per_page: 25, total: 26 },
+                        });
+                    }
+
+                    return Promise.resolve({
+                        batches: [{ uuid: 'page-1', trigger: 'scheduled', direction: 'outbound', created: 1 }],
+                        meta: { current_page: 1, last_page: 2, per_page: 25, total: 26 },
+                    });
+                }
+            }
+        );
+
+        await render(hbs`<QuickbooksActivity />`);
+
+        assert.deepEqual(calls, [
+            {
+                path: 'batches',
+                query: { company_uuid: 'company-uuid', page: 1, per_page: 25 },
+                options: { namespace: 'quickbooks/int/v1' },
+            },
+        ]);
+        assert.dom('[data-test-activity-row]').exists({ count: 1 });
+        assert.dom('[data-test-activity-created]').hasText('1');
+        assert.dom('#fleetbase-pagination').exists({ count: 1 });
+
+        await click('#fleetbase-pagination-forward-button');
+
+        assert.strictEqual(calls.length, 2);
+        assert.deepEqual(calls[1], {
+            path: 'batches',
+            query: { company_uuid: 'company-uuid', page: 2, per_page: 25 },
+            options: { namespace: 'quickbooks/int/v1' },
+        });
+        assert.true(calls.every((call) => call.query.per_page === 25));
+        assert.dom('[data-test-activity-row]').exists({ count: 1 });
+        assert.dom('[data-test-activity-created]').hasText('9');
+        assert.dom('[data-test-activity-trigger]').hasText('Sync now');
     });
 
     test('it shows a loading sentence while batches are still loading', async function (assert) {

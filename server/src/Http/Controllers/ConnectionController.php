@@ -46,11 +46,12 @@ class ConnectionController extends QuickbooksController
     public function batches(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks view sync');
-        $batches = SyncBatch::query()
+        $perPage   = $this->pageArgument($request->input('per_page', 25), 25, 25);
+        $page      = $this->pageArgument($request->input('page', 1), 1, PHP_INT_MAX);
+        $paginator = SyncBatch::query()
             ->where('company_uuid', $this->companyUuid($request))
             ->orderByDesc('created_at')
-            ->limit(25)
-            ->get([
+            ->paginate($perPage, [
                 'uuid',
                 'trigger',
                 'direction',
@@ -66,11 +67,19 @@ class ConnectionController extends QuickbooksController
                 'started_at',
                 'finished_at',
                 'created_at',
-            ]);
+            ], 'page', $page);
+        [$batches, $meta] = $this->batchPage($paginator);
+
+        $batchUuids = [];
+        foreach ($batches as $batch) {
+            if ($batch instanceof SyncBatch) {
+                $batchUuids[] = (string) $batch->uuid;
+            }
+        }
 
         $errors   = [];
         $attempts = SyncAttempt::query()
-            ->whereIn('batch_uuid', $batches->pluck('uuid'))
+            ->whereIn('batch_uuid', $batchUuids)
             ->whereNotNull('error')
             ->orderBy('created_at')
             ->get(['batch_uuid', 'error']);
@@ -125,7 +134,10 @@ class ConnectionController extends QuickbooksController
             ];
         }
 
-        return response()->json(['batches' => $payload]);
+        return response()->json([
+            'batches' => $payload,
+            'meta'    => $meta,
+        ]);
     }
 
     public function start(Request $request): JsonResponse
@@ -343,6 +355,60 @@ class ConnectionController extends QuickbooksController
         }
 
         return new RedirectResponse(rtrim($host, '/') . '/quickbooks?' . http_build_query($query));
+    }
+
+    /**
+     * Current page rows and paging summary.
+     * The package test harness stubs this paginator without items(), currentPage(), or total().
+     *
+     * @return array{0: array<int, mixed>, 1: array{current_page: int, last_page: int, per_page: int, total: int}}
+     */
+    private function batchPage(object $paginator): array
+    {
+        if (method_exists($paginator, 'items')
+            && method_exists($paginator, 'currentPage')
+            && method_exists($paginator, 'lastPage')
+            && method_exists($paginator, 'perPage')
+            && method_exists($paginator, 'total')
+        ) {
+            $rows = $paginator->items();
+
+            return [
+                is_array($rows) ? $rows : [],
+                [
+                    'current_page' => (int) $paginator->currentPage(),
+                    'last_page'    => (int) $paginator->lastPage(),
+                    'per_page'     => (int) $paginator->perPage(),
+                    'total'        => (int) $paginator->total(),
+                ],
+            ];
+        }
+
+        $summary = method_exists($paginator, 'toArray') ? $paginator->toArray() : [];
+        if (!is_array($summary)) {
+            $summary = [];
+        }
+        $rows = $summary['data'] ?? [];
+
+        return [
+            is_array($rows) ? $rows : [],
+            [
+                'current_page' => (int) ($summary['current_page'] ?? 1),
+                'last_page'    => (int) ($summary['last_page'] ?? 1),
+                'per_page'     => (int) ($summary['per_page'] ?? 25),
+                'total'        => (int) ($summary['total'] ?? 0),
+            ],
+        ];
+    }
+
+    /**
+     * Missing or non-numeric query values use $default. The result stays between 1 and $maximum.
+     */
+    private function pageArgument(mixed $value, int $default, int $maximum): int
+    {
+        $number = is_numeric($value) ? (int) $value : $default;
+
+        return min($maximum, max(1, $number));
     }
 
     private function latestConnection(string $companyUuid): ?Connection

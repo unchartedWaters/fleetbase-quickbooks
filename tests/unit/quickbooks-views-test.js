@@ -5,6 +5,7 @@ import { connectPayload, connectionState } from '@unchartedwaters/quickbooks-eng
 import { activityRows } from '@unchartedwaters/quickbooks-engine/utils/activity-view';
 import ConnectionRoute from '@unchartedwaters/quickbooks-engine/routes/connection';
 import ActionsRoute from '@unchartedwaters/quickbooks-engine/routes/actions';
+import ActivityRoute from '@unchartedwaters/quickbooks-engine/routes/activity';
 import Service from '@ember/service';
 
 module('Unit | QuickBooks views', function (hooks) {
@@ -40,6 +41,23 @@ module('Unit | QuickBooks views', function (hooks) {
         this.owner.register('route:quickbooks-actions', ActionsRoute);
 
         this.owner.lookup('route:quickbooks-actions').beforeModel();
+
+        assert.deepEqual(replaced, ['console.quickbooks.settings']);
+    });
+
+    test('the activity route redirects to Connection', function (assert) {
+        const replaced = [];
+        this.owner.register(
+            'service:host-router',
+            class extends Service {
+                replaceWith(name) {
+                    replaced.push(name);
+                }
+            }
+        );
+        this.owner.register('route:quickbooks-activity', ActivityRoute);
+
+        this.owner.lookup('route:quickbooks-activity').beforeModel();
 
         assert.deepEqual(replaced, ['console.quickbooks.settings']);
     });

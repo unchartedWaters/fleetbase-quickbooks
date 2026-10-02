@@ -35,11 +35,8 @@ use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Connection as DatabaseConnection;
 use Illuminate\Database\ConnectionResolver;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
 
@@ -239,50 +236,52 @@ test('a webhook change is not applied when the organization has no connection', 
 });
 
 test('a webhook batch does not queue a sync when the organization has no connection', function () {
-    $defaultConnection = config('database.default');
-    $sqliteConnection  = config('database.connections.sqlite');
-    config()->set('database.default', 'sqlite');
-    config()->set('database.connections.sqlite', [
-        'driver'                  => 'sqlite',
-        'database'                => ':memory:',
-        'prefix'                  => '',
-        'foreign_key_constraints' => true,
-    ]);
+    $connection = new class(new class extends PDO {
+        public function __construct()
+        {
+        }
+    }, 'testing', '', ['name' => 'testing']) extends DatabaseConnection {
+        /** @var array<int, string> */
+        public array $inserts = [];
+
+        public function select($query, $bindings = [], $useReadPdo = true)
+        {
+            if (str_contains(strtolower($query), 'exists')) {
+                return [['exists' => 0]];
+            }
+
+            return [];
+        }
+
+        public function insert($query, $bindings = [])
+        {
+            $this->inserts[] = $query;
+
+            return true;
+        }
+    };
+    $resolver = new ConnectionResolver(['testing' => $connection]);
+    $resolver->setDefaultConnection('testing');
+    $previous = Model::getConnectionResolver();
+    Model::setConnectionResolver($resolver);
 
     try {
-        Schema::create('quickbooks_connections', function (Blueprint $table) {
-            $table->char('uuid', 36)->primary();
-            $table->char('company_uuid', 36);
-            $table->string('realm_id')->nullable();
-            $table->boolean('needs_reauth')->default(false);
-            $table->timestamps();
-        });
-        Schema::create('quickbooks_pending_syncs', function (Blueprint $table) {
-            $table->char('uuid', 36)->primary();
-            $table->char('company_uuid', 36);
-            $table->string('local_type');
-            $table->char('local_uuid', 36);
-            $table->string('reason')->nullable();
-            $table->string('status');
-            $table->unsignedInteger('attempts');
-            $table->timestamp('next_attempt_at')->nullable();
-            $table->timestamps();
-        });
-
-        gateDispatch(function ($dispatcher) {
+        gateDispatch(function ($dispatcher) use ($connection) {
             (new SyncWebhookBatch('company-uuid', [
                 ['local_type' => 'customer', 'local_uuid' => 'cust-1'],
             ]))->handle();
 
-            expect(DB::table('quickbooks_pending_syncs')->count())->toBe(0)
+            expect($connection->inserts)->toBe([])
                 ->and($dispatcher->jobs)->toBe([]);
         });
     } finally {
-        DB::purge('sqlite');
-        config()->set('database.default', $defaultConnection);
-        config()->set('database.connections.sqlite', $sqliteConnection);
+        if ($previous === null) {
+            Model::unsetConnectionResolver();
+        } else {
+            Model::setConnectionResolver($previous);
+        }
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+});
 
 /**
  * @return array{0: BatchRunner, 1: FakeQuickBooks}

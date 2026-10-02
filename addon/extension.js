@@ -1,4 +1,4 @@
-import { MenuItem, Widget } from '@fleetbase/ember-core/contracts';
+import { MenuItem, ExtensionComponent, Widget } from '@fleetbase/ember-core/contracts';
 
 export default {
     setupExtension(app, universe) {
@@ -16,24 +16,21 @@ export default {
             })
         );
 
-        menuService.registerSettingsMenuPanel(
-            'Quickbooks Settings',
-            [
-                new MenuItem({
-                    title: 'Connection',
-                    route: 'console.ledger.settings.quickbooks',
-                    icon: 'file-invoice-dollar',
-                }),
-                new MenuItem({
-                    title: 'Activity',
-                    route: 'console.ledger.settings.quickbooks-activity',
-                    icon: 'list',
-                }),
-            ],
-            {
-                slug: 'quickbooks-settings',
+        menuService.registerSettingsMenuItem(
+            new MenuItem({
+                title: 'QuickBooks',
                 icon: 'file-invoice-dollar',
-            }
+                slug: 'quickbooks',
+                index: 0,
+                view: 'index',
+                component: new ExtensionComponent('@unchartedwaters/quickbooks-engine', 'quickbooks-company-settings'),
+                onClick: (menuItem) => {
+                    const router = app.lookup('service:router');
+                    if (router) {
+                        return router.transitionTo('console.settings.virtual', menuItem.slug);
+                    }
+                },
+            })
         );
 
         if (widgetService) {
@@ -54,6 +51,8 @@ export default {
         }
     },
 
+    // The organization settings page renders this engine's component from the host app.
+    // Nested engine components resolve only after they are registered there.
     onEngineLoaded(engine, universe, app) {
         const names = [
             'quickbooks-company-settings',

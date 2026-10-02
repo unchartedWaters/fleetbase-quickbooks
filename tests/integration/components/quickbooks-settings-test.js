@@ -20,6 +20,16 @@ class NotificationsStubService extends Service {
     }
 }
 
+class ActivityFetchStubService extends Service {
+    get() {
+        return Promise.resolve({ batches: [], meta: { current_page: 1, last_page: 1, per_page: 25, total: 0 } });
+    }
+}
+
+class CurrentUserStubService extends Service {
+    companyId = 'company-uuid';
+}
+
 function assertSelectableUrl(assert, key, label, value) {
     assert.dom(`[data-test-sync-field="${key}"] label`).hasText(label);
     assert.dom(`[data-test-field="${key}"]`).hasTagName('div');
@@ -64,6 +74,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
     hooks.beforeEach(function () {
         this.owner.register('service:notifications', NotificationsStubService);
+        this.owner.register('service:fetch', ActivityFetchStubService);
+        this.owner.register('service:current-user', CurrentUserStubService);
         this.notifications = this.owner.lookup('service:notifications');
     });
 
@@ -136,6 +148,11 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert
             .dom('[data-test-data-resolution-description]')
             .hasText('Controls the data to be synchronized, the data that should be accepted in the event of a conflict, and the directionality of the synchronization.');
+        const resolution = this.element.querySelector('[data-test-data-resolution-description]');
+        const activity = this.element.querySelector('[data-test-activity]');
+        assert.ok(activity);
+        assert.strictEqual(resolution.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING, Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.dom('#fleetbase-pagination').doesNotExist();
         assert.dom().doesNotIncludeText('The Primary choice for each category decides which system wins when the records differ and which system supplies identifiers.');
         assert.dom("[data-test-field='environment']").hasValue('sandbox');
         assert.dom("[data-test-field='environment'] option[value='sandbox']").hasText('Sandbox');
