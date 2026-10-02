@@ -117,30 +117,46 @@ module('Unit | extension', function (hooks) {
         assert.false(widgetCalls[1].widgets[0].isDefault());
     });
 
-    test('the extension does not copy components onto the host when the engine loads', function (assert) {
+    test('onEngineLoaded registers nested settings components on the host', function (assert) {
         const registrations = [];
+        const presentOnEngine = new Set([
+            'component:quickbooks-company-settings',
+            'component:quickbooks-settings',
+            'component:quickbooks-settings-fields',
+            'component:quickbooks-connection',
+            'component:quickbooks-actions',
+            'component:quickbooks-activity',
+            'component:widget/quickbooks-sync',
+        ]);
         const app = {
-            hasRegistration() {
-                return false;
+            hasRegistration(key) {
+                return key === 'component:quickbooks-settings';
             },
             register(key) {
                 registrations.push(key);
             },
         };
         const engine = {
-            hasRegistration() {
-                return true;
+            hasRegistration(key) {
+                return presentOnEngine.has(key);
             },
-            factoryFor() {
+            factoryFor(key) {
+                assert.true(presentOnEngine.has(key));
+
                 return { class: function QuickbooksComponent() {} };
             },
         };
 
-        if (typeof extension.onEngineLoaded === 'function') {
-            extension.onEngineLoaded(engine, {}, app);
-        }
+        assert.strictEqual(typeof extension.onEngineLoaded, 'function');
+        extension.onEngineLoaded(engine, {}, app);
 
-        assert.strictEqual(registrations.length, 0);
-        assert.strictEqual(extension.onEngineLoaded, undefined);
+        assert.deepEqual(registrations, [
+            'component:quickbooks-company-settings',
+            'component:quickbooks-settings-fields',
+            'component:quickbooks-connection',
+            'component:quickbooks-actions',
+            'component:quickbooks-activity',
+            'component:widget/quickbooks-sync',
+        ]);
     });
 });

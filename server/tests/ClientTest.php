@@ -5,6 +5,26 @@ use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
+test('voiding an invoice keeps money fields as strings', function () {
+    Http::fake([
+        'sandbox-quickbooks.api.intuit.com/*' => Http::response(
+            '{"Invoice":{"Id":"1","SyncToken":"2","TotalAmt":10.50,"Balance":0,"Line":[{"Amount":10.5,"SalesItemLineDetail":{"UnitPrice":10.50}}]}}',
+            200,
+            ['Content-Type' => 'application/json']
+        ),
+    ]);
+
+    $voided = (new QuickBooksClient())->voidInvoice(clientConnection(), '1', '0');
+
+    expect($voided['Id'])->toBe('1')
+        ->and($voided['TotalAmt'])->toBe('10.50')
+        ->and($voided['Balance'])->toBe('0')
+        ->and($voided['Line'][0]['Amount'])->toBe('10.5')
+        ->and($voided['Line'][0]['SalesItemLineDetail']['UnitPrice'])->toBe('10.50')
+        ->and(is_float($voided['TotalAmt']))->toBeFalse()
+        ->and(is_float($voided['Line'][0]['Amount']))->toBeFalse();
+});
+
 test('the home currency is read from preferences currency prefs', function () {
     Http::fake([
         'sandbox-quickbooks.api.intuit.com/*' => Http::response([

@@ -97,6 +97,34 @@ test('flagging a company without a connection writes nothing', function () {
     expect($directory->written)->toBe([]);
 });
 
+test('flagging a connection without a realm writes nothing', function () {
+    $directory                   = directoryWithConnection();
+    $directory->storedConnection = ['company_uuid' => 'company-uuid', 'realm_id' => '  '];
+
+    $directory->flag(function (SyncLedger $ledger): void {
+        (new SyncFlagger())->fromCustomerEvent($ledger, (object) [
+            'uuid'         => 'cus-1',
+            'company_uuid' => 'company-uuid',
+            'type'         => 'customer',
+        ]);
+    }, 'company-uuid');
+
+    expect($directory->written)->toBe([]);
+});
+
+test('the flagger does not queue a pending row when the connection has no realm', function () {
+    $ledger                              = new SyncLedger();
+    $ledger->connections['company-uuid'] = ['company_uuid' => 'company-uuid', 'realm_id' => ''];
+
+    (new SyncFlagger())->fromCustomerEvent($ledger, (object) [
+        'uuid'         => 'cus-1',
+        'company_uuid' => 'company-uuid',
+        'type'         => 'customer',
+    ]);
+
+    expect($ledger->pending)->toBe([]);
+});
+
 test('a change to the amount paid flags the invoice', function () {
     $directory = directoryWithConnection();
     Container::getInstance()->instance(FlagInvoiceListener::class, new FlagInvoiceListener($directory, new SyncFlagger()));

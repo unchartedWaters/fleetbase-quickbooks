@@ -2,6 +2,7 @@
 
 namespace Fleetbase\Quickbooks\Services;
 
+use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 
@@ -12,7 +13,7 @@ class SyncFlagger
         if (SyncSuppressor::paused()) {
             return;
         }
-        if ($ledger->connection($companyUuid) === null) {
+        if (!ConnectionGate::hasRealm($ledger->connection($companyUuid))) {
             return;
         }
         if ($localType === 'invoice' && ($status === null || $status === 'draft')) {

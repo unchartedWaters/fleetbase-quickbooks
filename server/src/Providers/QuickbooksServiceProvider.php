@@ -24,6 +24,14 @@ if (!class_exists(CoreServiceProvider::class)) {
 class QuickbooksServiceProvider extends CoreServiceProvider
 {
     /**
+     * Core observers stay registered by CoreServiceProvider. Leaving this
+     * inherited would register them again from this extension.
+     *
+     * @var array<string, class-string>
+     */
+    public $observers = [];
+
+    /**
      * @var array<int, class-string>
      */
     public $commands = [

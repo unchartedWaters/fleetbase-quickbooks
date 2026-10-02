@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
+use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
@@ -375,7 +376,7 @@ class FleetbaseDirectory
         }
 
         $connection = $this->connection($companyUuid);
-        if ($connection === null) {
+        if (!ConnectionGate::hasRealm($connection)) {
             return;
         }
 

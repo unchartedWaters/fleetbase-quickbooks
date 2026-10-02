@@ -364,7 +364,7 @@ class QuickBooksClient
             'Id'        => $id,
             'SyncToken' => $syncToken,
         ]);
-        $body = $response->json();
+        $body = $this->decodeBody($response);
 
         return is_array($body['Invoice'] ?? null) ? $body['Invoice'] : [];
     }
