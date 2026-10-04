@@ -2,7 +2,7 @@
 
 Fleetbase extension that syncs customers, invoices, payments, and wallets (QuickBooks accounts) with QuickBooks Online.
 
-Planned repository: [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks). The git remote in this tree is still `https://github.com/fleetbase/starter-extension.git` and has not been changed.
+The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks) (`packages/quickbooks`, branch `develop`).
 
 Package names:
 
@@ -117,7 +117,7 @@ After the signature check, each notification is applied to Fleetbase organizatio
 
 **Webhook Receiver URL** and **Public Receiver URL** are the same read-only value. The public URL equals the internal URL. It is computed, not stored, and saving settings does not change it. The webhook URL uses the scheme of the configured application URL. http stays http when the application URL is http. https is kept when the application URL is https. The host is the configured non-loopback host and the port is the configured API port. The console host is not used. The path stays `/quickbooks/int/v1/webhooks`.
 
-Intuit subscription is configured in the Intuit developer portal only. Open the app, choose Webhooks, then Production or Development, and paste this URL into Endpoint URL. Subscribe to Customer, Invoice, Payment, and Account when that type's direction is From QuickBooks or Both. Fleetbase does not call an Intuit API to register the URL, choose entities, or unsubscribe a realm. `WebhookSubscriptions::apply()` and `IntuitWebhookClient` do not call Intuit.
+Intuit subscription is configured in the Intuit developer portal only. Open the app, choose Webhooks, then Production or Development, and paste this URL into Endpoint URL. Subscribe to Customer, Invoice, Payment, and Account when that type's direction is From QuickBooks or Both. Fleetbase does not call an Intuit API to register the URL, choose entities, or unsubscribe a realm. `WebhookSubscriptions::apply()` does not call Intuit.
 
 The verifier token is stored encrypted on the organization and is not shown again after save. Leave the field blank to keep the saved token.
 
@@ -134,7 +134,9 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 
 ## Requirements and install
 
-This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`, `fleetbase/fleetops-api`, and `fleetbase/ledger-api`. The Ember engine needs Node `>= 18`.
+This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`, `fleetbase/fleetops-api` `0.6.70`, and `fleetbase/ledger-api` `0.0.11`. The Ember engine needs Node `>= 18`.
+
+`flb install <name> --path <fleetbase>` is how Fleetbase registers a published extension. It looks the name up on `https://api.fleetbase.io/~registry/v1/lookup`. This package is not in that registry, so the command cannot install it.
 
 In this Fleetbase tree the plugin is `packages/quickbooks`.
 
@@ -143,7 +145,7 @@ In this Fleetbase tree the plugin is `packages/quickbooks`.
 - The console mounts that engine at `/quickbooks`.
 - `console/config/environment.js` and `console/fleetbase.config.json` include `@unchartedwaters/quickbooks-engine` in `EXTENSIONS`.
 - `QuickbooksServiceProvider` loads `server/src/routes.php`, `server/migrations`, and registers `quickbooks:sync` on the Laravel scheduler. The system cron invokes that scheduler every minute, but the command does not start on a minute when no organization is due before its Sync Frequency.
-- `docker/api/Dockerfile.quickbooks` copies this package and runs `composer require unchartedwaters/quickbooks-api:0.0.2`.
+- The published image stays `fleetbase/fleetbase-api:latest`. This package is not copied into a custom API image.
 
 After the files are in place, install PHP dependencies from `api/` and the console dependencies from `console/`, then run the Fleetbase migrations so the QuickBooks tables and the engine-name migration are applied. Keys are saved on Connection for that organization.
 

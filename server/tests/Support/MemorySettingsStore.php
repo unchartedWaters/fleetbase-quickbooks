@@ -26,19 +26,4 @@ class MemorySettingsStore extends SettingsStore
     {
         $this->rows[$key] = $value;
     }
-
-    public function companyAuthRecords(): array
-    {
-        $records = [];
-        foreach ($this->rows as $key => $value) {
-            if (!is_string($key) || !str_starts_with($key, 'company.') || !str_ends_with($key, '.quickbooks.auth')) {
-                continue;
-            }
-            if (is_array($value)) {
-                $records[] = $value;
-            }
-        }
-
-        return $records;
-    }
 }

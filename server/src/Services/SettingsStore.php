@@ -76,28 +76,6 @@ class SettingsStore
     }
 
     /**
-     * Auth rows saved for organizations. The stored system row is separate.
-     *
-     * @return array<int, array<string, mixed>>
-     */
-    public function companyAuthRecords(): array
-    {
-        if (!class_exists(Setting::class)) {
-            return [];
-        }
-
-        $records = [];
-        foreach (Setting::query()->where('key', 'like', 'company.%.quickbooks.auth')->get() as $setting) {
-            $value = $setting->value ?? null;
-            if (is_array($value)) {
-                $records[] = $this->normalizeAuth($value);
-            }
-        }
-
-        return $records;
-    }
-
-    /**
      * @return array<string, string>
      */
     public function envAuth(): array

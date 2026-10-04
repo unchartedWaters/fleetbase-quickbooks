@@ -1,12 +1,17 @@
 name: PHP CI
 
+# `flb install` of this package into the published fleetbase/fleetbase-api
+# image looks the extension up on the Fleetbase registry and needs registry
+# credentials. This workflow does not have those secrets, so it does not add
+# that job.
+
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
     tags:
       - 'v*'
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
 
 jobs:
   build:
@@ -14,7 +19,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Setup PHP
       uses: shivammathur/setup-php@v2
