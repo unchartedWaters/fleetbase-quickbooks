@@ -9,27 +9,54 @@ export default {
             new MenuItem({
                 id: 'quickbooks',
                 title: 'QuickBooks',
-                route: 'console.quickbooks',
+                route: 'console.settings.virtual',
+                slug: 'quickbooks-setup',
+                view: 'index',
                 icon: 'file-invoice-dollar',
                 priority: 5,
                 description: 'Sync customers, invoices, payments, and wallets with QuickBooks Online.',
+                onClick: () => {
+                    const router = app.lookup('service:router');
+                    if (router) {
+                        return router.transitionTo('console.settings.virtual', 'quickbooks-setup', {
+                            queryParams: { view: 'index' },
+                        });
+                    }
+                },
+            })
+        );
+
+        // Same list as Organization, Two Factor, and Notifications. Not an admin panel and not a Ledger menu.
+        const openOrganizationSettings = (menuItem) => {
+            const router = app.lookup('service:router');
+            if (router) {
+                return router.transitionTo('console.settings.virtual', menuItem.slug, {
+                    queryParams: { view: menuItem.view },
+                });
+            }
+        };
+
+        menuService.registerSettingsMenuItem(
+            new MenuItem({
+                title: 'Quickbooks Setup',
+                icon: 'plug',
+                slug: 'quickbooks-setup',
+                index: 0,
+                view: 'index',
+                component: new ExtensionComponent('@unchartedwaters/quickbooks-engine', 'quickbooks-company-settings'),
+                onClick: openOrganizationSettings,
             })
         );
 
         menuService.registerSettingsMenuItem(
             new MenuItem({
-                title: 'QuickBooks',
-                icon: 'file-invoice-dollar',
-                slug: 'quickbooks',
-                index: 0,
+                title: 'Quickbooks Activity',
+                icon: 'clock-rotate-left',
+                slug: 'quickbooks-activity',
+                index: 1,
                 view: 'index',
-                component: new ExtensionComponent('@unchartedwaters/quickbooks-engine', 'quickbooks-company-settings'),
-                onClick: (menuItem) => {
-                    const router = app.lookup('service:router');
-                    if (router) {
-                        return router.transitionTo('console.settings.virtual', menuItem.slug);
-                    }
-                },
+                component: new ExtensionComponent('@unchartedwaters/quickbooks-engine', 'quickbooks-activity'),
+                onClick: openOrganizationSettings,
             })
         );
 

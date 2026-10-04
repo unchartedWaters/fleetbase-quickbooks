@@ -33,8 +33,8 @@ function captureRegistration() {
                     registerAdminMenuItem(item) {
                         adminItems.push(item);
                     },
-                    registerAdminMenuPanel(panel) {
-                        adminPanels.push(panel);
+                    registerAdminMenuPanel(title, items, options) {
+                        adminPanels.push({ title, items, options });
                     },
                     registerSettingsMenuItem(item) {
                         settingsItems.push(item);
@@ -65,39 +65,56 @@ function captureRegistration() {
 module('Unit | extension', function (hooks) {
     setupTest(hooks);
 
-    test('the header menu opens the QuickBooks engine', function (assert) {
-        const { headerItems } = captureRegistration();
+    test('the header menu opens Quickbooks Setup', function (assert) {
+        const { headerItems, transitions } = captureRegistration();
 
         assert.strictEqual(headerItems.length, 1);
         assert.strictEqual(headerItems[0].title, 'QuickBooks');
-        assert.strictEqual(headerItems[0].route, 'console.quickbooks');
+        assert.strictEqual(headerItems[0].route, 'console.settings.virtual');
+        assert.strictEqual(headerItems[0].slug, 'quickbooks-setup');
+        assert.strictEqual(headerItems[0].view, 'index');
         assert.strictEqual(headerItems[0].description, 'Sync customers, invoices, payments, and wallets with QuickBooks Online.');
+
+        headerItems[0].onClick(headerItems[0]);
+
+        assert.deepEqual(transitions, [['console.settings.virtual', 'quickbooks-setup', { queryParams: { view: 'index' } }]]);
     });
 
-    test('QuickBooks settings are not registered under Admin', function (assert) {
-        const { adminItems, adminPanels } = captureRegistration();
+    test('Quickbooks Setup and Quickbooks Activity are organization settings items', function (assert) {
+        const { adminItems, adminPanels, settingsItems, settingsPanels, transitions } = captureRegistration();
 
         assert.strictEqual(adminItems.length, 0);
         assert.strictEqual(adminPanels.length, 0);
-    });
-
-    test('QuickBooks settings are one organization settings item', function (assert) {
-        const { settingsItems, settingsPanels, transitions } = captureRegistration();
-        const item = settingsItems[0];
-
-        assert.strictEqual(settingsItems.length, 1);
         assert.strictEqual(settingsPanels.length, 0);
-        assert.strictEqual(item.title, 'QuickBooks');
-        assert.strictEqual(item.slug, 'quickbooks');
-        assert.strictEqual(item.icon, 'file-invoice-dollar');
-        assert.strictEqual(item.index, 0);
-        assert.strictEqual(item.component.engine, '@unchartedwaters/quickbooks-engine');
-        assert.strictEqual(item.component.path, 'quickbooks-company-settings');
-        assert.strictEqual(item.route, null);
+        assert.strictEqual(settingsItems.length, 2);
 
-        item.onClick(item);
+        assert.strictEqual(settingsItems[0].title, 'Quickbooks Setup');
+        assert.strictEqual(settingsItems[0].slug, 'quickbooks-setup');
+        assert.strictEqual(settingsItems[0].view, 'index');
+        assert.strictEqual(settingsItems[0].index, 0);
+        assert.strictEqual(settingsItems[0].icon, 'plug');
+        assert.strictEqual(settingsItems[0].component.engine, '@unchartedwaters/quickbooks-engine');
+        assert.strictEqual(settingsItems[0].component.path, 'quickbooks-company-settings');
+        assert.false(settingsItems[0].overwriteWrapperClass);
+        assert.strictEqual(settingsItems[0].wrapperClass, null);
 
-        assert.deepEqual(transitions, [['console.settings.virtual', 'quickbooks']]);
+        assert.strictEqual(settingsItems[1].title, 'Quickbooks Activity');
+        assert.strictEqual(settingsItems[1].slug, 'quickbooks-activity');
+        assert.strictEqual(settingsItems[1].view, 'index');
+        assert.strictEqual(settingsItems[1].index, 1);
+        assert.strictEqual(settingsItems[1].icon, 'clock-rotate-left');
+        assert.strictEqual(settingsItems[1].component.engine, '@unchartedwaters/quickbooks-engine');
+        assert.strictEqual(settingsItems[1].component.path, 'quickbooks-activity');
+        assert.false(settingsItems[1].overwriteWrapperClass);
+        assert.strictEqual(settingsItems[1].wrapperClass, null);
+
+        settingsItems[0].onClick(settingsItems[0]);
+        settingsItems[1].onClick(settingsItems[1]);
+
+        assert.deepEqual(transitions, [
+            ['console.settings.virtual', 'quickbooks-setup', { queryParams: { view: 'index' } }],
+            ['console.settings.virtual', 'quickbooks-activity', { queryParams: { view: 'index' } }],
+        ]);
     });
 
     test('QuickBooks widgets register on the ledger and dashboard', function (assert) {
