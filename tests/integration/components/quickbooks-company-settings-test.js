@@ -43,9 +43,6 @@ class FetchStubService extends Service {
     async post(path, body) {
         this.postCalls.push(path);
         this.posts.push({ path, body });
-        if (path === 'connection/test') {
-            return { ok: false, message: 'QuickBooks is not connected.' };
-        }
         if (path === 'settings') {
             return { auth: body?.auth ?? {}, sync: body?.sync ?? {} };
         }

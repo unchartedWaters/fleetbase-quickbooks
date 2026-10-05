@@ -1,21 +1,11 @@
 import Component from '@glimmer/component';
 import { action } from '@ember/object';
-import { tracked } from '@glimmer/tracking';
 import { inject as service } from '@ember/service';
 import { connectionState } from '../utils/connection-view';
 
-const NAMESPACE = 'quickbooks/int/v1';
-
 export default class QuickbooksConnectionComponent extends Component {
-    @service fetch;
-    @service currentUser;
-    @service notifications;
     @service intl;
     @service modalsManager;
-
-    // Set only after Disconnect succeeds on a screen that does not pass onDisconnect.
-    @tracked removed = false;
-    @tracked localBusy = false;
 
     get loadFailed() {
         return this.args.loadFailed === true;
@@ -36,16 +26,7 @@ export default class QuickbooksConnectionComponent extends Component {
             return 'loading';
         }
 
-        return connectionState(this.effectiveConnection);
-    }
-
-    // A needs-reauth organization is still a saved connection.
-    get effectiveConnection() {
-        if (this.removed) {
-            return null;
-        }
-
-        return this.args.connection;
+        return connectionState(this.args.connection);
     }
 
     get isConnected() {
@@ -62,7 +43,7 @@ export default class QuickbooksConnectionComponent extends Component {
     }
 
     get busy() {
-        return Boolean(this.args.busy) || this.localBusy;
+        return Boolean(this.args.busy);
     }
 
     get isConfigured() {
@@ -97,7 +78,7 @@ export default class QuickbooksConnectionComponent extends Component {
         await this.args.onConnect?.();
     }
 
-    // Local delete through POST disconnect. This does not unsubscribe Intuit.
+    // Setup owns the disconnect request. This does not unsubscribe Intuit.
     @action
     disconnect() {
         if (this.disconnectDisabled) {
@@ -115,18 +96,6 @@ export default class QuickbooksConnectionComponent extends Component {
     async performDisconnect() {
         if (typeof this.args.onDisconnect === 'function') {
             await this.args.onDisconnect();
-            return;
-        }
-
-        this.localBusy = true;
-        try {
-            await this.fetch.post('disconnect', { company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
-            this.removed = true;
-            this.notifications.success(this.intl.t('quickbooks.connection.disconnected-toast'));
-        } catch (error) {
-            this.notifications.serverError(error);
-        } finally {
-            this.localBusy = false;
         }
     }
 

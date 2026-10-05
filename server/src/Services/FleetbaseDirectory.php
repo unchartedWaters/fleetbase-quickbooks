@@ -252,19 +252,6 @@ class FleetbaseDirectory
     }
 
     /**
-     * Mark every customer, non-draft invoice, and wallet pending without syncing them.
-     * Reconcile does not use this; it claims one page of in-scope invoices.
-     */
-    public function flagCatalog(string $companyUuid): void
-    {
-        $this->queueInScope($companyUuid, [
-            'customer' => true,
-            'invoice'  => true,
-            'wallet'   => true,
-        ]);
-    }
-
-    /**
      * Queue in-scope customers, non-draft invoices, invoice links, and wallets.
      * Disabled entities are left alone. Already-pending rows are not inserted again.
      *

@@ -9,21 +9,6 @@ export function fieldState(settings, key) {
     };
 }
 
-export function changedFields(original, next) {
-    const changed = {};
-
-    Object.keys(next || {}).forEach((key) => {
-        if ((key === 'client_secret' || key === 'webhook_verifier') && (next[key] === '' || next[key] == null)) {
-            return;
-        }
-        if (next[key] !== original?.[key]) {
-            changed[key] = next[key];
-        }
-    });
-
-    return changed;
-}
-
 function savedSecretPresentation(set) {
     return {
         value: '',

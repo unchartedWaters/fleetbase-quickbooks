@@ -86,7 +86,6 @@ export default {
             'quickbooks-settings',
             'quickbooks-settings-fields',
             'quickbooks-connection',
-            'quickbooks-actions',
             'quickbooks-activity',
             'widget/quickbooks-sync',
         ];

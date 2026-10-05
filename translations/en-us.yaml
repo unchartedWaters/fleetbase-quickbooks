@@ -15,7 +15,6 @@ quickbooks:
     home-currency-primary: When QuickBooks is Primary, the account currency is copied onto the wallet.
     disconnected-status: Not connected. Choose Connect to QuickBooks. Fleetbase then syncs customers, invoices, payments, and wallets with QuickBooks Online.
     disconnected-save-first: Not connected. Choose Save Changes first. Fleetbase then syncs customers, invoices, payments, and wallets with QuickBooks Online.
-    test: Test connection
     disconnect: Disconnect
     disconnect-confirm-title: Disconnect QuickBooks?
     disconnect-confirm: This removes the saved QuickBooks connection. Sync now stays off until you connect again.
@@ -23,26 +22,14 @@ quickbooks:
     disconnected-toast: QuickBooks disconnected.
     connected-toast: Connected to QuickBooks.
     connect-failed: Unable to start QuickBooks connection.
-    test-ok: QuickBooks connection works.
-    test-ok-named: "Connected to {company}."
-    test-failed: QuickBooks connection failed.
     oauth-cancelled: QuickBooks connection was cancelled.
     oauth-expired: That QuickBooks authorization expired. Connect again from Quickbooks Setup.
     oauth-failed: QuickBooks could not connect. Try again from Quickbooks Setup.
   actions:
-    title: Actions
-    description: Sync now sends customers, invoices, payments, and wallets that are waiting. Reconcile syncs one page of invoices already in Fleetbase. It does not go through every customer or wallet. It does not import QuickBooks invoices that are not already in Fleetbase, and it does not delete QuickBooks records.
     sync-now: Sync now
-    reconcile: Reconcile
-    import: Import customers
-    import-rules: Import customers skips inactive customers and sub-customers. Existing Fleetbase names, emails, and phones are left as they are.
-    credentials-missing: Enter Client ID and Client secret on Quickbooks Setup before these actions.
     sync-queued: Sync queued.
-    reconcile-queued: Reconcile queued.
-    import-queued: Customer import queued.
   activity:
     title: Activity
-    recent: Recent syncs
     empty: No syncs yet. Connect on Quickbooks Setup, then choose Sync now or wait for the schedule.
     load-failed: Sync activity could not be loaded.
     loading: Loading sync activity.
@@ -103,7 +90,6 @@ quickbooks:
     schedule: Schedule
     data-resolution: Data Resolution
     data-resolution-description: Controls the data to be synchronized, the data that should be accepted in the event of a conflict, and the directionality of the synchronization.
-    entity-enable: "{entity}"
     primary: Primary
     primary-help: Which system wins when records differ, and which supplies identifiers.
     entity-primary: "{entity} Primary"

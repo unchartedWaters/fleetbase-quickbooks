@@ -1,6 +1,6 @@
 import { module, test } from 'qunit';
 import { setupTest } from 'dummy/tests/helpers';
-import { changedFields, fieldState, normalizeSyncDirection, secretPresentation, validateSettings } from '@unchartedwaters/quickbooks-engine/utils/settings-form';
+import { fieldState, normalizeSyncDirection, secretPresentation, validateSettings } from '@unchartedwaters/quickbooks-engine/utils/settings-form';
 import { connectionState } from '@unchartedwaters/quickbooks-engine/utils/connection-view';
 import { activityRows } from '@unchartedwaters/quickbooks-engine/utils/activity-view';
 import ConnectionRoute from '@unchartedwaters/quickbooks-engine/routes/connection';
@@ -69,9 +69,6 @@ module('Unit | QuickBooks views', function (hooks) {
         const overridden = fieldState({ scope: 'company', client_id: 'company-id', sources: { client_id: 'company' } }, 'client_id');
         assert.false(overridden.inherited);
 
-        assert.deepEqual(changedFields({ client_id: 'a', redirect_uri: 'https://old' }, { client_id: 'b', redirect_uri: 'https://old', client_secret: '' }), {
-            client_id: 'b',
-        });
         assert.deepEqual(secretPresentation({ client_secret_set: true }), { value: '', set: true });
 
         const withoutOverride = validateSettings({ auth: {}, sync: {}, secretSet: false });
