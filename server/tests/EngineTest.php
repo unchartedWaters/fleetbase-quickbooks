@@ -276,22 +276,27 @@ test('a partial payment sends the amount paid and matches on the next sync', fun
         ->and($client->calls)->not->toContain('updatePayment');
 });
 
-test('a paid invoice missing from quickbooks is re-created with its payment', function () {
+test('a paid invoice deleted in quickbooks is not recreated and its payment is not replaced', function () {
     [$engine, $client]           = qbEngine();
     $ledger                      = engineLedger();
     $ledger->customers['cust-1'] = engineCustomer('cust-1');
     $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
-    $ledger->invoices['inv-1']   = engineInvoice('inv-1', ['status' => 'paid']);
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', ['status' => 'paid', 'amount_paid' => 1000]);
     $ledger->links[]             = engineLink('invoice', 'inv-1', 'deleted-in-quickbooks');
+    $ledger->links[]             = engineLink('payment', 'inv-1', 'deleted-payment');
     $ledger->pending[]           = enginePending('invoice', 'inv-1');
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(1)
-        ->and($client->calls)->toContain('createInvoice')
-        ->and($client->calls)->toContain('createPayment')
-        ->and($client->paymentPayloads[0]['Line'][0]['LinkedTxn'][0]['TxnId'])->toBe('inv-1')
-        ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'pay-1')['qbo_id'])->toBe('pay-1');
+    expect($batch['created'])->toBe(0)
+        ->and($batch['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and($client->calls)->not->toContain('createPayment')
+        ->and($ledger->invoices['inv-1']['status'])->toBe('paid')
+        ->and($ledger->invoices['inv-1']['total'])->toBe(1000)
+        ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(1000)
+        ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-1')['qbo_id'])->toBe('deleted-in-quickbooks')
+        ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'inv-1')['qbo_id'])->toBe('deleted-payment');
 });
 
 test('a fleetbase primary customer does not link a quickbooks customer that has a different email', function () {
@@ -1071,12 +1076,14 @@ test('a failed or short invoice or wallet read is not treated as missing', funct
     $missRows = array_column($ledger->pending, null, 'local_uuid');
 
     expect($miss['voided'])->toBe(1)
-        ->and($miss['aligned'])->toBe(1)
-        ->and($miss['created'])->toBe(1)
+        ->and($miss['aligned'])->toBe(2)
+        ->and($miss['created'])->toBe(0)
         ->and($client->calls)->toContain('voidInvoice')
         ->and($missRows['inv-gone']['status'])->toBe('done')
-        ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-live')['qbo_id'])->not->toBe('qb-live')
-        ->and(array_count_values($client->calls)['createInvoice'] ?? 0)->toBe(1);
+        ->and($missRows['inv-live']['status'])->toBe('done')
+        ->and($ledger->invoices['inv-live']['status'])->toBe('sent')
+        ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-live')['qbo_id'])->toBe('qb-live')
+        ->and(array_count_values($client->calls)['createInvoice'] ?? 0)->toBe(0);
 
     $one = new class extends FakeQuickBooks {
         public function getInvoice(array $connection, string $id): ?array
@@ -1367,9 +1374,9 @@ test('a failed multi-id remote read is not applied as a miss', function () {
         public function batch(array $connection, array $items): array
         {
             foreach ($items as $item) {
-                if ((string) ($item['bId'] ?? '') === 'read') {
+                if (str_contains((string) ($item['query'] ?? ''), 'from Customer where Id IN')) {
                     return [
-                        'read' => [
+                        (string) $item['bId'] => [
                             'ok'     => false,
                             'body'   => [],
                             'rows'   => [],
@@ -1872,6 +1879,216 @@ test('a cached customer miss is not looked up again', function () {
     expect(array_count_values($client->calls)['getCustomer:qbo-missing'] ?? 0)->toBe(1)
         ->and($client->calls)->not->toContain('findCustomerByEmail')
         ->and($client->calls)->not->toContain('findCustomerByDisplayName');
+});
+
+test('a linked customer or wallet deleted in quickbooks is left unchanged', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => 'Local Ada']);
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-gone');
+    $ledger->pending[]           = enginePending('customer', 'cust-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($batch['created'])->toBe(0)
+        ->and($client->calls)->not->toContain('createCustomer')
+        ->and($client->calls)->not->toContain('findCustomerByEmail')
+        ->and($ledger->customers['cust-1']['name'])->toBe('Local Ada')
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-1')['qbo_id'])->toBe('qbo-gone');
+
+    [$engine, $client]        = qbEngine();
+    $ledger                   = engineLedger();
+    $ledger->wallets['wal-1'] = engineWallet('wal-1', ['name' => 'Operating']);
+    $ledger->links[]          = engineLink('wallet', 'wal-1', 'acct-gone');
+    $ledger->pending[]        = enginePending('wallet', 'wal-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('createAccount')
+        ->and($ledger->wallets['wal-1']['name'])->toBe('Operating')
+        ->and($ledger->link('company-uuid', 'realm-1', 'wallet', 'wal-1')['qbo_id'])->toBe('acct-gone');
+});
+
+test('a voided cancelled deleted or removed invoice is not pushed', function () {
+    [$engine, $client]                 = qbEngine();
+    $ledger                            = engineLedger();
+    $ledger->customers['cust-1']       = engineCustomer('cust-1');
+    $ledger->links[]                   = engineLink('customer', 'cust-1', 'qbo-customer');
+    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
+    $cases                             = [
+        'inv-void'      => ['status' => 'void'],
+        'inv-cancelled' => ['status' => 'cancelled'],
+        'inv-deleted'   => ['status' => 'deleted'],
+        'inv-removed'   => ['status' => 'sent', 'deleted_at' => '2026-09-20 00:00:00'],
+    ];
+    foreach ($cases as $uuid => $overrides) {
+        $ledger->invoices[$uuid] = engineInvoice($uuid, $overrides + ['number' => strtoupper($uuid)]);
+        $ledger->pending[]       = enginePending('invoice', $uuid);
+    }
+    $ledger->invoices['inv-live-deleted'] = engineInvoice('inv-live-deleted', ['number' => 'INV-LIVE-DELETED', 'status' => 'deleted']);
+    $client->invoices['qb-live']          = ['Id' => 'qb-live', 'SyncToken' => '1', 'DocNumber' => 'INV-LIVE-DELETED', 'TotalAmt' => 10];
+    $ledger->links[]                      = engineLink('invoice', 'inv-live-deleted', 'qb-live');
+    $ledger->pending[]                    = enginePending('invoice', 'inv-live-deleted');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['created'])->toBe(0)
+        ->and($batch['updated'])->toBe(0)
+        ->and($batch['voided'])->toBe(1)
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and($client->calls)->toContain('voidInvoice')
+        ->and($ledger->invoices['inv-deleted']['status'])->toBe('deleted')
+        ->and($ledger->invoices['inv-removed']['deleted_at'])->toBe('2026-09-20 00:00:00')
+        ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-deleted'))->toBeNull();
+});
+
+test('a linked payment that quickbooks no longer has is not replaced', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', ['status' => 'paid', 'amount_paid' => 1000]);
+    $client->invoices['qb-1']    = [
+        'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 10,
+        'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+    ];
+    $ledger->links[]   = engineLink('invoice', 'inv-1', 'qb-1');
+    $ledger->links[]   = engineLink('payment', 'inv-1', 'pay-gone');
+    $ledger->pending[] = enginePending('invoice', 'inv-1');
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->calls)->not->toContain('createPayment')
+        ->and($ledger->invoices['inv-1']['status'])->toBe('paid')
+        ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(1000)
+        ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'inv-1')['qbo_id'])->toBe('pay-gone');
+});
+
+test('remote id reads stay within the batch cap and keep paging', function () {
+    $client = new class extends FakeQuickBooks {
+        /** @var array<int, string> */
+        public array $idQueries = [];
+
+        public function batch(array $connection, array $items): array
+        {
+            $results = parent::batch($connection, $items);
+            foreach ($items as $item) {
+                $query = (string) ($item['query'] ?? '');
+                $bId   = (string) ($item['bId'] ?? '');
+                if (!isset($results[$bId]) || !str_contains($query, 'where Id IN')) {
+                    continue;
+                }
+                $this->idQueries[] = $query;
+                $rows              = is_array($results[$bId]['rows'] ?? null) ? array_values($results[$bId]['rows']) : [];
+                $start             = 1;
+                $max               = 100;
+                if (preg_match('/startposition\s+(\d+)/i', $query, $match) === 1) {
+                    $start = (int) $match[1];
+                }
+                if (preg_match('/maxresults\s+(\d+)/i', $query, $match) === 1) {
+                    $max = (int) $match[1];
+                }
+                if (!str_contains($query, 'startposition')) {
+                    $max = min($max, 100);
+                }
+                $results[$bId]['rows'] = array_slice($rows, max(0, $start - 1), $max);
+            }
+
+            return $results;
+        }
+    };
+    [$engine, $client] = qbEngine($client);
+    $ledger            = engineLedger();
+    $entities          = [];
+    for ($i = 1; $i <= 101; $i++) {
+        $uuid                        = 'cust-' . $i;
+        $id                          = 'qbo-' . $i;
+        $ledger->customers[$uuid]    = engineCustomer($uuid, ['name' => 'Local ' . $i, 'email' => 'c' . $i . '@example.test']);
+        $client->customers[$id]      = ['Id' => $id, 'SyncToken' => '1', 'DisplayName' => 'Remote ' . $i, 'PrimaryEmailAddr' => ['Address' => 'c' . $i . '@example.test']];
+        $ledger->links[]             = engineLink('customer', $uuid, $id);
+        $entities[]                  = ['entity' => 'Customer', 'id' => $id, 'operation' => 'Update'];
+    }
+
+    $engine->acceptRemoteChanges($ledger, 'company-uuid', $entities, qbSettings(), time());
+
+    expect($ledger->customers['cust-1']['name'])->toBe('Remote 1')
+        ->and($ledger->customers['cust-101']['name'])->toBe('Remote 101')
+        ->and($client->calls)->not->toContain('getCustomer:qbo-101')
+        ->and($client->idQueries)->not->toBeEmpty();
+    foreach ($client->idQueries as $query) {
+        preg_match_all("/'[^']*'/", $query, $ids);
+        expect($query)->toContain('startposition')
+            ->and($query)->toContain('maxresults')
+            ->and(count($ids[0]))->toBeLessThanOrEqual(30);
+    }
+
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => 'Local Ada']);
+    $client->customers['qbo-1']  = ['Id' => 'qbo-1', 'SyncToken' => '1', 'DisplayName' => 'Remote Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-1');
+
+    $engine->acceptRemoteChanges($ledger, 'company-uuid', [
+        ['entity' => 'Customer', 'id' => 'qbo-1', 'operation' => 'Update'],
+    ], qbSettings(), time());
+
+    expect($ledger->customers['cust-1']['name'])->toBe('Remote Ada')
+        ->and($client->calls)->toContain('getCustomer:qbo-1')
+        ->and($client->calls)->not->toContain('batch');
+});
+
+test('payments touching an invoice are not read in one unbounded query', function () {
+    $client = new class extends FakeQuickBooks {
+        /** @var array<int, string> */
+        public array $paymentQueries = [];
+
+        public function batch(array $connection, array $items): array
+        {
+            foreach ($items as $item) {
+                $query = (string) ($item['query'] ?? '');
+                if (str_contains($query, 'from Payment where Id IN')) {
+                    $this->paymentQueries[] = $query;
+                }
+            }
+
+            return parent::batch($connection, $items);
+        }
+    };
+    [$engine, $client]           = qbEngine($client);
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1');
+    $ledger->links[]             = engineLink('invoice', 'inv-1', 'qb-1');
+    $client->payments['pay-0']   = [
+        'Id'   => 'pay-0', 'SyncToken' => '1', 'TotalAmt' => 1, 'TxnDate' => '2026-09-10',
+        'Line' => [['Amount' => 1, 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]]],
+    ];
+    $ledger->links[] = engineLink('payment', 'inv-1', 'pay-0');
+    for ($i = 1; $i <= 31; $i++) {
+        $id                      = 'pay-' . $i;
+        $client->payments[$id]   = [
+            'Id'   => $id, 'SyncToken' => '1', 'TotalAmt' => 1, 'TxnDate' => '2026-09-10',
+            'Line' => [['Amount' => 1, 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]]],
+        ];
+        $ledger->links[] = engineLink('payment', $id, $id);
+    }
+
+    $engine->acceptRemoteChanges($ledger, 'company-uuid', [
+        ['entity' => 'Payment', 'id' => 'pay-0', 'operation' => 'Update'],
+    ], qbSettings(['payment_reference' => 'quickbooks']), time());
+
+    expect($client->paymentQueries)->not->toBeEmpty()
+        ->and($client->calls)->not->toContain('createPayment');
+    foreach ($client->paymentQueries as $query) {
+        preg_match_all("/'[^']*'/", $query, $ids);
+        expect($query)->toContain('startposition')
+            ->and($query)->toContain('maxresults')
+            ->and(count($ids[0]))->toBeLessThanOrEqual(30);
+    }
 });
 
 function engineLedger(): SyncLedger

@@ -173,8 +173,8 @@ class SyncEngine
     private QuickBooksClient $client;
 
     /**
-     * Drops the company lock for one QuickBooks HTTP call when a batch installed it.
-     * Null leaves calls unchanged for tests and webhook applies that do not set it.
+     * Drops the company lock for one QuickBooks HTTP call when a batch or a
+     * webhook apply installed it. Null leaves calls unchanged for tests.
      *
      * @var callable|null
      */
@@ -321,7 +321,7 @@ class SyncEngine
         }
 
         foreach ($wanted as $name => $linksById) {
-            $remotes = $this->readRemoteSet($connection, $name, array_keys($linksById));
+            $remotes = $this->readRemoteIds($connection, $name, array_keys($linksById));
             foreach ($linksById as $id => $link) {
                 $remote = $remotes[$id] ?? null;
                 if (!is_array($remote)) {
@@ -574,12 +574,9 @@ class SyncEngine
             }
         } elseif (!$cacheHit && $link !== null) {
             $remote = $this->client->getCustomer($connection, (string) $link['qbo_id']);
-            if ($remote === null) {
-                $remote = $this->findRemoteCustomer($connection, $email, (string) ($payload['DisplayName'] ?? ''), $reference !== 'fleetbase');
-                if ($remote !== null) {
-                    $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote));
-                }
-            }
+        }
+        if ($remote === null && $link !== null) {
+            return 'aligned';
         }
         if ($remote === null) {
             if ($this->lastError !== null) {
@@ -692,6 +689,7 @@ class SyncEngine
         if ($link !== null && $link['realm_id'] !== $connection['realm_id']) {
             $link = null;
         }
+        $hadLink = $link !== null;
 
         if ($link === null && !empty($payload['AcctNum'])) {
             $acctNum = (string) $payload['AcctNum'];
@@ -737,6 +735,9 @@ class SyncEngine
             }
             $remote = $this->reattachWallet($ledger, $connection, $uuid, $wallet, $payload);
             $link   = $remote === null ? null : $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'wallet', $uuid);
+        }
+        if ($remote === null && $hadLink) {
+            return 'aligned';
         }
         if ($remote === null) {
             if (!$quickbooksPrimary) {
@@ -888,7 +889,7 @@ class SyncEngine
         }
 
         $status = (string) ($invoice['status'] ?? '');
-        $voided = in_array($status, ['void', 'voided', 'cancelled', 'canceled'], true) || !empty($invoice['deleted_at']);
+        $voided = in_array($status, ['void', 'voided', 'cancelled', 'canceled', 'deleted'], true) || !empty($invoice['deleted_at']);
         $itemId = $voided ? '' : $this->serviceItemId($ledger, $connection);
         if (!$voided && $itemId === '') {
             $this->lastError = 'QuickBooks has no item for invoice lines. Fleetbase could not create its "Fleetbase service" item; add an Income account in QuickBooks and try again.';
@@ -969,6 +970,9 @@ class SyncEngine
             $remote = $this->invoiceById !== null
                 ? ($this->invoiceById[$remoteId] ?? null)
                 : $this->client->getInvoice($connection, $remoteId);
+        }
+        if ($remote === null && $link !== null) {
+            return 'aligned';
         }
         if ($remote === null) {
             if (!$push) {
@@ -1100,7 +1104,7 @@ class SyncEngine
         $payments      = $applied['payments'];
         $remoteInvoice = $applied['invoice'];
         if ($payments === []) {
-            if (!$pushesPayment || $applied['settled'] || !$pushPay) {
+            if ($applied['missing'] || !$pushesPayment || $applied['settled'] || !$pushPay) {
                 return null;
             }
 
@@ -1763,7 +1767,7 @@ class SyncEngine
      *
      * @param array<string, mixed> $connection
      *
-     * @return array{payments: array<int, array<string, mixed>>, settled: bool, invoice: array<string, mixed>|null}
+     * @return array{payments: array<int, array<string, mixed>>, settled: bool, invoice: array<string, mixed>|null, missing: bool}
      */
     private function paymentsApplied(SyncLedger $ledger, array $connection, string $invoiceUuid, string $invoiceId): array
     {
@@ -1799,10 +1803,13 @@ class SyncEngine
         }
 
         $payments = [];
+        $missing  = false;
         foreach (array_keys($ids) as $id) {
             $remote = $this->readPayment($connection, $id);
             if (is_array($remote)) {
                 $payments[$id] = $remote;
+            } else {
+                $missing = true;
             }
         }
         foreach ($this->paymentLinkRows($ledger, $connection) as $link) {
@@ -1832,6 +1839,7 @@ class SyncEngine
             'payments' => array_values($payments),
             'settled'  => $settled,
             'invoice'  => is_array($remoteInvoice) ? $remoteInvoice : null,
+            'missing'  => $missing && $payments === [],
         ];
     }
 
@@ -1896,7 +1904,7 @@ class SyncEngine
             }
             $missing[$id] = $local;
         }
-        foreach ($this->readRemoteSet($connection, 'Payment', array_keys($missing)) as $id => $remote) {
+        foreach ($this->readRemoteIds($connection, 'Payment', array_keys($missing)) as $id => $remote) {
             $local = $missing[$id] ?? '';
             if ($local === $invoiceUuid || ($invoiceId !== '' && $this->linkedLineCents($remote, $invoiceId) !== null)) {
                 $payments[$id] = $remote;
@@ -3309,7 +3317,7 @@ class SyncEngine
         }
 
         $status = (string) ($invoice['status'] ?? '');
-        if (in_array($status, ['void', 'voided', 'cancelled', 'canceled'], true) || !empty($invoice['deleted_at'])) {
+        if (in_array($status, ['void', 'voided', 'cancelled', 'canceled', 'deleted'], true) || !empty($invoice['deleted_at'])) {
             return false;
         }
 
@@ -3332,18 +3340,7 @@ class SyncEngine
             return true;
         }
 
-        $remoteId = (string) ($link['qbo_id'] ?? '');
-        if ($remoteId === '') {
-            return true;
-        }
-        if (isset($this->invoiceReadFailed[$remoteId])) {
-            return false;
-        }
-        if ($this->invoiceById !== null) {
-            return !isset($this->invoiceById[$remoteId]);
-        }
-
-        return $this->client->getInvoice($connection, $remoteId) === null;
+        return false;
     }
 
     private function prefetchInvoices(array $connection, SyncLedger $ledger, array $rows): void
@@ -3985,7 +3982,9 @@ class SyncEngine
 
     /**
      * One id uses a direct read. Null is a real miss. A thrown error stays thrown.
-     * Several ids use one batch query. A successful query that omits an id is a miss.
+     * Several ids are queried in chunks of BATCH_LIMIT. Each query is paged with
+     * startposition and maxresults so a row past QuickBooks' default page is not
+     * treated as missing. A successful query that omits an id is a miss.
      * A failed batch throws. Those ids are not returned as an empty success.
      *
      * @param array<string, mixed> $connection
@@ -4012,33 +4011,62 @@ class SyncEngine
             return is_array($remote) ? [$id => $remote] : [];
         }
 
-        $query = 'select * from ' . $entity . ' where Id IN (' . QuickBooksClient::quotedList($ids) . ')';
-        try {
-            $results = $this->client->batch($connection, [['bId' => 'read', 'query' => $query]]);
-        } catch (QuickBooksException $exception) {
-            if ($exception->isUnauthorized() || $exception->isRateLimit()) {
-                throw $exception;
+        $mapped = [];
+        foreach (array_chunk($ids, QuickBooksClient::BATCH_LIMIT) as $chunkIndex => $chunk) {
+            if (count($chunk) === 1) {
+                foreach ($this->readRemoteSet($connection, $entity, $chunk) as $id => $remote) {
+                    $mapped[$id] = $remote;
+                }
+                continue;
             }
 
-            throw new QuickBooksException($exception->status, $this->exceptionError($exception), $exception->retryAfter, $exception->faultCode);
-        }
+            $start = 1;
+            $pages = 0;
+            while ($pages < 100) {
+                $pages++;
+                $query = 'select * from ' . $entity . ' where Id IN (' . QuickBooksClient::quotedList($chunk) . ')'
+                    . ' startposition ' . $start . ' maxresults ' . self::QUERY_PAGE_SIZE;
+                $bId = 'read-' . $chunkIndex . '-' . $start;
+                try {
+                    $results = $this->client->batch($connection, [[
+                        'bId'   => $bId,
+                        'query' => $query,
+                    ]]);
+                } catch (QuickBooksException $exception) {
+                    if ($exception->isUnauthorized() || $exception->isRateLimit()) {
+                        throw $exception;
+                    }
 
-        $result = $results['read'] ?? null;
-        if (is_array($result) && !empty($result['halt'])) {
-            throw new QuickBooksException((int) ($result['status'] ?? 0), (string) ($result['error'] ?? ''));
-        }
-        if (!is_array($result) || empty($result['ok'])) {
-            $message = is_array($result) ? (string) ($result['error'] ?? '') : '';
-            $status  = is_array($result) ? (int) ($result['status'] ?? 0) : 0;
-            $error   = $this->batchItemAttemptError($message, $status);
-            throw new QuickBooksException($status, $error !== '' ? $error : self::SYNC_FAILED_MESSAGE);
-        }
+                    throw new QuickBooksException($exception->status, $this->exceptionError($exception), $exception->retryAfter, $exception->faultCode);
+                }
 
-        $read   = is_array($result['rows'] ?? null) ? $result['rows'] : [];
-        $mapped = [];
-        foreach ($read as $remote) {
-            if (is_array($remote) && (string) ($remote['Id'] ?? '') !== '') {
-                $mapped[(string) $remote['Id']] = $remote;
+                $result = $results[$bId] ?? null;
+                if (is_array($result) && !empty($result['halt'])) {
+                    throw new QuickBooksException((int) ($result['status'] ?? 0), (string) ($result['error'] ?? ''));
+                }
+                if (!is_array($result) || empty($result['ok'])) {
+                    $message = is_array($result) ? (string) ($result['error'] ?? '') : '';
+                    $status  = is_array($result) ? (int) ($result['status'] ?? 0) : 0;
+                    $error   = $this->batchItemAttemptError($message, $status);
+                    throw new QuickBooksException($status, $error !== '' ? $error : self::SYNC_FAILED_MESSAGE);
+                }
+
+                $pageRows = is_array($result['rows'] ?? null) ? $result['rows'] : [];
+                $count    = 0;
+                foreach ($pageRows as $remote) {
+                    if (!is_array($remote)) {
+                        continue;
+                    }
+                    $count++;
+                    $id = (string) ($remote['Id'] ?? '');
+                    if ($id !== '') {
+                        $mapped[$id] = $remote;
+                    }
+                }
+                if ($count < self::QUERY_PAGE_SIZE) {
+                    break;
+                }
+                $start += self::QUERY_PAGE_SIZE;
             }
         }
 

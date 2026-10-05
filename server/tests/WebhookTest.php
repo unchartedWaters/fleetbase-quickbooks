@@ -929,6 +929,110 @@ test('a busy or unavailable lock does not call the engine', function () {
     }
 });
 
+test('quickbooks http in a remote change releases the company lock', function () {
+    $client = new class extends FakeQuickBooks {
+        public ?bool $heldDuringRead = null;
+
+        public function getCustomer(array $connection, string $id): ?array
+        {
+            $this->heldDuringRead = BatchRunner::holds('company-uuid');
+
+            return parent::getCustomer($connection, $id);
+        }
+
+        public function batch(array $connection, array $items): array
+        {
+            $this->heldDuringRead = BatchRunner::holds('company-uuid');
+
+            return parent::batch($connection, $items);
+        }
+    };
+    $engine = new SyncEngine(
+        $client,
+        new CustomerMapper(),
+        new InvoiceMapper(),
+        new WalletMapper(),
+        new BackoffPolicy(static fn (int $wait): int => $wait)
+    );
+    $directory = new class extends FleetbaseDirectory {
+        public ?bool $heldDuringLoad = null;
+
+        public ?bool $heldDuringSave = null;
+
+        public function connection(string $companyUuid): ?array
+        {
+            return [
+                'company_uuid' => $companyUuid,
+                'realm_id'     => 'realm-1',
+                'needs_reauth' => false,
+            ];
+        }
+
+        public function loadLinked(string $companyUuid, array $entities): ?array
+        {
+            $this->heldDuringLoad                  = BatchRunner::holds($companyUuid);
+            $ledger                                = new SyncLedger();
+            $ledger->connections[$companyUuid]     = [
+                'company_uuid'  => $companyUuid,
+                'realm_id'      => 'realm-1',
+                'needs_reauth'  => false,
+                'home_currency' => 'USD',
+            ];
+            $ledger->customers['cust-1'] = [
+                'uuid'         => 'cust-1',
+                'company_uuid' => $companyUuid,
+                'name'         => 'Local Ada',
+                'email'        => 'ada@example.test',
+            ];
+            $ledger->links[] = [
+                'company_uuid' => $companyUuid,
+                'realm_id'     => 'realm-1',
+                'local_type'   => 'customer',
+                'local_uuid'   => 'cust-1',
+                'qbo_entity'   => 'Customer',
+                'qbo_id'       => 'qbo-1',
+                'sync_token'   => '0',
+            ];
+
+            return ['ledger' => $ledger, 'connection' => $ledger->connections[$companyUuid]];
+        }
+
+        public function save(SyncLedger $ledger): void
+        {
+            $this->heldDuringSave = BatchRunner::holds('company-uuid');
+        }
+    };
+    $settings                               = webhookSettings();
+    $store                                  = new MemorySettingsStore();
+    $previous                               = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+
+    try {
+        $client->customers['qbo-1'] = [
+            'Id'               => 'qbo-1',
+            'SyncToken'        => '1',
+            'DisplayName'      => 'Remote Ada',
+            'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+        ];
+        $job = new ApplyRemoteChange('company-uuid', [
+            ['entity' => 'Customer', 'id' => 'qbo-1', 'operation' => 'Update'],
+            ['entity' => 'Payment', 'id' => 'pay-1', 'operation' => 'Update'],
+        ]);
+        $job->handle($engine, $directory, $settings, $store);
+        $again = BatchRunner::lock('company-uuid');
+
+        expect($directory->heldDuringLoad)->toBeTrue()
+            ->and($client->heldDuringRead)->toBeFalse()
+            ->and($directory->heldDuringSave)->toBeTrue()
+            ->and(BatchRunner::holds('company-uuid'))->toBeFalse()
+            ->and($again)->not->toBeNull()
+            ->and($again->get())->toBeTrue();
+        $again->release();
+    } finally {
+        Cache::swap($previous);
+    }
+});
+
 /**
  * @return array{0: SyncEngine, 1: FakeQuickBooks}
  */

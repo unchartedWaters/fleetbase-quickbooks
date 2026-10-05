@@ -7,10 +7,12 @@ use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Services\SyncEngine;
+use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Illuminate\Bus\Queueable;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
@@ -72,6 +74,18 @@ class ApplyRemoteChange implements ShouldQueue
             return;
         }
 
+        // Same boundary as a company batch: the lock covers the local read and the
+        // local save. QuickBooks queries, including payments on an invoice, run
+        // after this releases it. The lock is not held for the job timeout.
+        $engine->setHttpBoundary(function (callable $call) use ($lock) {
+            if (BatchRunner::holds($this->companyUuid)) {
+                $lock->release();
+            }
+
+            return $call();
+        });
+        $ledger = null;
+        $save   = false;
         try {
             // Links for these QuickBooks ids, and the local rows those links need.
             // Direction filtering happens inside acceptRemoteChanges. This does not reconcile the catalog.
@@ -85,10 +99,45 @@ class ApplyRemoteChange implements ShouldQueue
                 $store->adminSync(),
                 $store->defaultSync()
             );
-            $engine->acceptRemoteChanges($loaded['ledger'], $this->companyUuid, $entities, $syncSettings, time());
-            $directory->save($loaded['ledger']);
+            $ledger = $loaded['ledger'];
+            if (!$ledger instanceof SyncLedger) {
+                return;
+            }
+            $engine->acceptRemoteChanges($ledger, $this->companyUuid, $entities, $syncSettings, time());
+            $save = true;
         } finally {
-            $lock->release();
+            $engine->setHttpBoundary(null);
+            try {
+                if ($save && $ledger instanceof SyncLedger) {
+                    $this->reacquireCompanyLock($lock);
+                    $directory->save($ledger);
+                }
+            } finally {
+                if (BatchRunner::holds($this->companyUuid)) {
+                    $lock->release();
+                }
+            }
+        }
+    }
+
+    /**
+     * Take the company lock again after QuickBooks HTTP released it.
+     * A local save still runs when the lock cannot be taken, so rows already
+     * applied in memory are not dropped.
+     */
+    private function reacquireCompanyLock(Lock $lock): void
+    {
+        if (BatchRunner::holds($this->companyUuid)) {
+            return;
+        }
+        if ($lock->get()) {
+            return;
+        }
+
+        try {
+            $lock->block(BatchRunner::LOCK_SECONDS);
+        } catch (\Throwable) {
+            // Save anyway. The local rows are already decided.
         }
     }
 
