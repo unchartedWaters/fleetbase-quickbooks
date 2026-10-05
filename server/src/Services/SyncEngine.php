@@ -32,17 +32,17 @@ class SyncEngine
 
     /**
      * Payments prefetched for the current invoice block, keyed by QuickBooks invoice id.
-     * Null means this invoice is alone and may use one payment query.
+     * Each invoice keeps every linked payment. Null means this invoice is alone and may use one payment query.
      *
-     * @var array<string, array<string, mixed>>|null
+     * @var array<string, array<int, array<string, mixed>>>|null
      */
     private ?array $blockPayments = null;
 
     /**
      * Linked payments prefetched for the current invoice block, keyed by QuickBooks payment id.
-     * Null means this invoice is alone and may use one payment GET.
+     * Null means this invoice is alone and may use one payment GET. A null value is a confirmed miss.
      *
-     * @var array<string, array<string, mixed>>|null
+     * @var array<string, array<string, mixed>|null>|null
      */
     private ?array $paymentById = null;
 
@@ -170,13 +170,47 @@ class SyncEngine
 
     private bool $customersPrepared = false;
 
+    private QuickBooksClient $client;
+
+    /**
+     * Drops the company lock for one QuickBooks HTTP call when a batch installed it.
+     * Null leaves calls unchanged for tests and webhook applies that do not set it.
+     *
+     * @var callable|null
+     */
+    private $httpBoundary;
+
     public function __construct(
-        private QuickBooksClient $client,
+        QuickBooksClient $client,
         private CustomerMapper $customers,
         private InvoiceMapper $invoices,
         private WalletMapper $wallets,
         private BackoffPolicy $backoff,
     ) {
+        $this->httpBoundary = null;
+        $this->client       = new QuickBooksHttpGate($client, $this);
+    }
+
+    /**
+     * @param callable|null $boundary function(callable $call): mixed
+     */
+    public function setHttpBoundary(?callable $boundary): void
+    {
+        $this->httpBoundary = $boundary;
+    }
+
+    /**
+     * One QuickBooks HTTP call. The batch boundary releases the company lock
+     * around $call so the request is not inside that lock.
+     */
+    public function runHttp(callable $call): mixed
+    {
+        $boundary = $this->httpBoundary;
+        if ($boundary === null) {
+            return $call();
+        }
+
+        return $boundary($call);
     }
 
     /**
@@ -244,7 +278,7 @@ class SyncEngine
      * ignored. A remote invoice with no local invoice and no link is not imported.
      *
      * @param array<int, array{entity: string, id: string, operation: string}> $entities
-     * @param array<string, mixed>                                              $settings
+     * @param array<string, mixed>                                             $settings
      */
     public function acceptRemoteChanges(SyncLedger $ledger, string $companyUuid, array $entities, array $settings, int $now): void
     {
@@ -299,10 +333,18 @@ class SyncEngine
                 } elseif ($name === 'Invoice' && isset($ledger->invoices[$localUuid])) {
                     $this->applyInvoiceFromRemote($ledger, $localUuid, $remote, (string) ($settings['invoice_reference'] ?? 'fleetbase'));
                     $this->applyPaymentStatus($ledger, $localUuid);
-                } elseif ($name === 'Payment' && isset($ledger->invoices[$localUuid])) {
-                    $invoiceLink = $ledger->link($companyUuid, (string) $connection['realm_id'], 'invoice', $localUuid);
-                    $this->applyPaymentFromRemote($ledger, $localUuid, $remote, (string) ($invoiceLink['qbo_id'] ?? ''));
-                    $this->applyPaymentStatus($ledger, $localUuid);
+                } elseif ($name === 'Payment') {
+                    $invoiceUuid = isset($ledger->invoices[$localUuid])
+                        ? $localUuid
+                        : $this->invoiceUuidForPayment($ledger, $connection, $remote);
+                    if ($invoiceUuid === null) {
+                        continue;
+                    }
+                    $invoiceLink = $ledger->link($companyUuid, (string) $connection['realm_id'], 'invoice', $invoiceUuid);
+                    $invoiceId   = is_array($invoiceLink) ? trim((string) ($invoiceLink['qbo_id'] ?? '')) : '';
+                    $payments    = $this->paymentsTouchingInvoice($ledger, $connection, $invoiceUuid, $invoiceId, $remote, $remotes);
+                    $this->applyPaymentsFromRemote($ledger, $invoiceUuid, $payments, $invoiceId);
+                    $this->applyPaymentStatus($ledger, $invoiceUuid);
                 } elseif ($name === 'Account' && isset($ledger->wallets[$localUuid])) {
                     $this->applyWalletFromRemote($ledger, $localUuid, $remote, (string) ($settings['wallet_reference'] ?? 'fleetbase'));
                 }
@@ -366,9 +408,9 @@ class SyncEngine
             if ((string) ($invoice['status'] ?? 'draft') === 'draft') {
                 continue;
             }
-            $uuid = (string) $invoice['uuid'];
+            $uuid        = (string) $invoice['uuid'];
             $seen[$uuid] = true;
-            $rows[] = ['company_uuid' => $companyUuid, 'local_type' => 'invoice', 'local_uuid' => $uuid, 'status' => 'pending', 'attempts' => 0];
+            $rows[]      = ['company_uuid' => $companyUuid, 'local_type' => 'invoice', 'local_uuid' => $uuid, 'status' => 'pending', 'attempts' => 0];
         }
         foreach ($ledger->links as $link) {
             if (($link['company_uuid'] ?? '') !== $companyUuid || ($link['local_type'] ?? '') !== 'invoice') {
@@ -379,7 +421,7 @@ class SyncEngine
                 continue;
             }
             $seen[$uuid] = true;
-            $rows[] = ['company_uuid' => $companyUuid, 'local_type' => 'invoice', 'local_uuid' => $uuid, 'status' => 'pending', 'attempts' => 0];
+            $rows[]      = ['company_uuid' => $companyUuid, 'local_type' => 'invoice', 'local_uuid' => $uuid, 'status' => 'pending', 'attempts' => 0];
         }
 
         foreach (array_slice($rows, $limit) as $row) {
@@ -438,7 +480,7 @@ class SyncEngine
                     if ((string) ($candidate['local_type'] ?? 'invoice') !== $type) {
                         continue;
                     }
-                    $block[] = $candidate;
+                    $block[]                                                                                                     = $candidate;
                     $handled[(string) ($candidate['local_type'] ?? 'invoice') . '|' . (string) ($candidate['local_uuid'] ?? '')] = true;
                 }
                 $halt = match ($type) {
@@ -506,13 +548,19 @@ class SyncEngine
         if ($link !== null && $link['realm_id'] !== $connection['realm_id']) {
             $link = null;
         }
+        if (isset($this->customerLookupFailed[$uuid])) {
+            $this->lastError = $this->customerLookupFailed[$uuid];
 
-        $remote = null;
-        if ($this->customerRemoteCache !== null && array_key_exists($uuid, $this->customerRemoteCache) && is_array($this->customerRemoteCache[$uuid])) {
+            return 'failed';
+        }
+
+        $remote    = null;
+        $cacheHit  = $this->customerRemoteCache !== null && array_key_exists($uuid, $this->customerRemoteCache);
+        if ($cacheHit && is_array($this->customerRemoteCache[$uuid])) {
             $remote = $this->customerRemoteCache[$uuid];
             $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote));
             $link = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $uuid);
-        } elseif ($link === null && !($this->customerRemoteCache !== null && array_key_exists($uuid, $this->customerRemoteCache))) {
+        } elseif (!$cacheHit && $link === null) {
             $remote = $this->findRemoteCustomer($connection, $email, (string) ($payload['DisplayName'] ?? ''), $reference !== 'fleetbase');
             if ($remote !== null) {
                 $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote));
@@ -524,7 +572,7 @@ class SyncEngine
                     return $before !== $after ? 'updated' : 'aligned';
                 }
             }
-        } elseif ($link !== null) {
+        } elseif (!$cacheHit && $link !== null) {
             $remote = $this->client->getCustomer($connection, (string) $link['qbo_id']);
             if ($remote === null) {
                 $remote = $this->findRemoteCustomer($connection, $email, (string) ($payload['DisplayName'] ?? ''), $reference !== 'fleetbase');
@@ -535,11 +583,6 @@ class SyncEngine
         }
         if ($remote === null) {
             if ($this->lastError !== null) {
-                return 'failed';
-            }
-            if (isset($this->customerLookupFailed[$uuid])) {
-                $this->lastError = $this->customerLookupFailed[$uuid];
-
                 return 'failed';
             }
             if (!$push) {
@@ -815,8 +858,8 @@ class SyncEngine
             return 'failed';
         }
 
-        $copy = $this->copiesRemote($direction);
-        $push = $this->pushesRemote($direction);
+        $copy         = $this->copiesRemote($direction);
+        $push         = $this->pushesRemote($direction);
         $customerUuid = (string) ($invoice['customer_uuid'] ?? '');
         if ($customerUuid !== '' && $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $customerUuid) === null) {
             if ($this->entityPaused($settings, 'customer')) {
@@ -871,7 +914,7 @@ class SyncEngine
             $existing = $this->invoiceByDoc !== null
                 ? ($this->invoiceByDoc[$number] ?? null)
                 : $this->client->findInvoiceByDocNumber($connection, $number);
-            if ($existing !== null) {
+            if (is_array($existing) && $this->invoiceCustomerMatches($existing, (string) ($customerLink['qbo_id'] ?? ''))) {
                 $ledger->putLink($this->linkFrom($connection, 'invoice', $uuid, 'Invoice', $existing));
                 $link      = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'invoice', $uuid);
                 $matchedId = trim((string) ($existing['Id'] ?? ''));
@@ -937,9 +980,12 @@ class SyncEngine
                 $next = $this->reservedDocNumbers !== null
                     ? ($this->reservedDocNumbers[$uuid] ?? null)
                     : $this->client->nextInvoiceDocNumber($connection);
-                if (is_string($next) && $next !== '') {
-                    $payload['DocNumber'] = $next;
+                if (!is_string($next) || $next === '') {
+                    $this->lastError = 'QuickBooks did not confirm a free invoice number, so Fleetbase did not create this invoice.';
+
+                    return 'failed';
                 }
+                $payload['DocNumber'] = $next;
             }
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
@@ -1049,74 +1095,51 @@ class SyncEngine
             return null;
         }
 
-        $uuid   = (string) $invoice['uuid'];
-        $link   = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'payment', $uuid);
-        $remote = null;
-        if ($link !== null) {
-            $paymentId = (string) $link['qbo_id'];
-            if (isset($this->paymentReadFailed[$paymentId])) {
-                throw new QuickBooksException(500, $this->paymentReadFailed[$paymentId]);
+        $uuid          = (string) $invoice['uuid'];
+        $applied       = $this->paymentsApplied($ledger, $connection, $uuid, $invoiceId);
+        $payments      = $applied['payments'];
+        $remoteInvoice = $applied['invoice'];
+        if ($payments === []) {
+            if (!$pushesPayment || $applied['settled'] || !$pushPay) {
+                return null;
             }
-            $remote    = $this->paymentById !== null
-                ? ($this->paymentById[$paymentId] ?? null)
-                : $this->client->getPayment($connection, $paymentId);
+
+            $payload = $this->invoices->payment($customerRef, $invoiceId, $this->paymentAmountCents($invoice), $this->paymentDate($invoice));
+            if ($this->writeBuffer !== null) {
+                $this->writeBuffer[] = [
+                    'bId'       => 'payment:' . $uuid,
+                    'operation' => 'create',
+                    'entity'    => 'Payment',
+                    'payload'   => $payload,
+                ];
+
+                return null;
+            }
+            $created = $this->client->createPayment($connection, $payload);
+            $this->storePaymentLink($ledger, $connection, $uuid, $invoiceId, $created, $remoteInvoice);
+
+            return null;
         }
-        if ($remote === null) {
-            $state = $this->invoicePaymentState($connection, $customerRef, $invoiceId);
-            if (is_array($state['payment'])) {
-                $remote = $state['payment'];
-            } elseif ($state['settled'] && $quickbooksPrimary) {
-                $before = $ledger->invoices[$uuid];
-                $ledger->invoices[$uuid]['amount_paid'] = (int) ($ledger->invoices[$uuid]['total'] ?? 0);
-                $ledger->invoices[$uuid]['payment_from_quickbooks'] = true;
-                $this->applyPaymentStatus($ledger, $uuid);
 
-                return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) ? 'updated' : null;
-            } elseif (!$pushesPayment || $state['settled'] || !$pushPay) {
-                return null;
-            } else {
-                $payload = $this->invoices->payment($customerRef, $invoiceId, $this->paymentAmountCents($invoice), $this->paymentDate($invoice));
-                if ($this->writeBuffer !== null) {
-                    $this->writeBuffer[] = [
-                        'bId'       => 'payment:' . $uuid,
-                        'operation' => 'create',
-                        'entity'    => 'Payment',
-                        'payload'   => $payload,
-                    ];
-
-                    return null;
-                }
-                $created = $this->client->createPayment($connection, $payload);
-                $ledger->putLink($this->linkFrom($connection, 'payment', $uuid, 'Payment', $created));
-
-                return null;
-            }
+        foreach ($payments as $remote) {
+            $this->storePaymentLink($ledger, $connection, $uuid, $invoiceId, $remote, $remoteInvoice);
         }
 
         if (!$pushesPayment) {
-            if (!$copyPay) {
-                return null;
-            }
-            $ledger->putLink($this->linkFrom($connection, 'payment', $uuid, 'Payment', $remote));
             $before = $ledger->invoices[$uuid];
-            $this->applyPaymentFromRemote($ledger, $uuid, $remote, $invoiceId);
+            $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
             $this->applyPaymentStatus($ledger, $uuid);
 
             return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) ? 'updated' : null;
         }
 
-        $payload = $this->invoices->payment($customerRef, $invoiceId, $this->paymentAmountCents($invoice), $this->paymentDate($invoice));
-        if ($link === null) {
-            $ledger->putLink($this->linkFrom($connection, 'payment', $uuid, 'Payment', $remote));
-        }
-
-        if ($this->paymentMatches($invoice, $remote, $invoiceId)) {
+        if ($this->paymentsMatch($invoice, $payments, $invoiceId)) {
             return null;
         }
 
         if ($conflict === 'quickbooks' && $copyPay) {
             $before = $ledger->invoices[$uuid];
-            $this->applyPaymentFromRemote($ledger, $uuid, $remote, $invoiceId);
+            $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
             $this->applyPaymentStatus($ledger, $uuid);
 
             return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) ? 'updated' : null;
@@ -1125,7 +1148,7 @@ class SyncEngine
         if (!$pushPay) {
             if ($copyPay) {
                 $before = $ledger->invoices[$uuid];
-                $this->applyPaymentFromRemote($ledger, $uuid, $remote, $invoiceId);
+                $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
                 $this->applyPaymentStatus($ledger, $uuid);
 
                 return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) ? 'updated' : null;
@@ -1134,12 +1157,20 @@ class SyncEngine
             return null;
         }
 
+        if (count($payments) !== 1) {
+            $this->lastError = 'This invoice has more than one QuickBooks payment, so Fleetbase left them unchanged.';
+
+            return 'skipped';
+        }
+
+        $remote = $payments[0];
         if ($this->paymentCoversOtherInvoices($remote, $invoiceId)) {
             $this->lastError = 'This QuickBooks payment also applies to other invoices, so Fleetbase left it unchanged.';
 
             return 'skipped';
         }
 
+        $payload = $this->invoices->payment($customerRef, $invoiceId, $this->paymentAmountCents($invoice), $this->paymentDate($invoice));
         if ($this->writeBuffer !== null) {
             $payload['Id']        = (string) $remote['Id'];
             $payload['SyncToken'] = (string) $remote['SyncToken'];
@@ -1155,7 +1186,7 @@ class SyncEngine
         }
 
         $updated = $this->client->updatePayment($connection, (string) $remote['Id'], (string) $remote['SyncToken'], $payload);
-        $ledger->putLink($this->linkFrom($connection, 'payment', $uuid, 'Payment', $updated));
+        $this->storePaymentLink($ledger, $connection, $uuid, $invoiceId, $updated, $remoteInvoice);
 
         return 'updated';
     }
@@ -1324,6 +1355,28 @@ class SyncEngine
     }
 
     /**
+     * The same DocNumber on another customer's invoice is a different invoice.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function invoiceCustomerMatches(array $remote, string $customerId): bool
+    {
+        $customerId = trim($customerId);
+        if ($customerId === '') {
+            return false;
+        }
+
+        $ref = $remote['CustomerRef'] ?? null;
+        if (is_array($ref)) {
+            $remoteCustomer = trim((string) ($ref['value'] ?? ''));
+        } else {
+            $remoteCustomer = trim((string) $ref);
+        }
+
+        return $remoteCustomer !== '' && $remoteCustomer === $customerId;
+    }
+
+    /**
      * @param array<string, mixed> $payload
      * @param array<string, mixed> $invoice
      * @param array<string, mixed> $remote
@@ -1431,9 +1484,9 @@ class SyncEngine
     private function customerMatches(array $payload, array $remote): bool
     {
         $local = [
-            'email' => (string) ($payload['PrimaryEmailAddr']['Address'] ?? ''),
+            'email' => $this->comparableEmail((string) ($payload['PrimaryEmailAddr']['Address'] ?? '')),
             'name'  => (string) ($payload['DisplayName'] ?? ''),
-            'phone' => (string) ($payload['PrimaryPhone']['FreeFormNumber'] ?? ''),
+            'phone' => $this->comparablePhone((string) ($payload['PrimaryPhone']['FreeFormNumber'] ?? '')),
         ];
         if (array_key_exists('Notes', $payload)) {
             $local['notes'] = (string) $payload['Notes'];
@@ -1449,15 +1502,15 @@ class SyncEngine
         }
 
         $other = [
-            'email' => (string) ($remote['PrimaryEmailAddr']['Address'] ?? ''),
+            'email' => $this->comparableEmail((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')),
             'name'  => (string) ($remote['DisplayName'] ?? ''),
-            'phone' => (string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? ''),
+            'phone' => $this->comparablePhone((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')),
         ];
         if (array_key_exists('notes', $local)) {
             $other['notes'] = (string) ($remote['Notes'] ?? '');
         }
         if (array_key_exists('address', $local)) {
-            $bill = is_array($remote['BillAddr'] ?? null) ? $remote['BillAddr'] : [];
+            $bill             = is_array($remote['BillAddr'] ?? null) ? $remote['BillAddr'] : [];
             $other['address'] = [
                 'city'        => (string) ($bill['City'] ?? ''),
                 'country'     => (string) ($bill['Country'] ?? ''),
@@ -1468,6 +1521,22 @@ class SyncEngine
         }
 
         return ContentHash::of($local) === ContentHash::of($other);
+    }
+
+    /**
+     * Same key import matching uses: trimmed, lower-case email.
+     */
+    private function comparableEmail(string $email): string
+    {
+        return strtolower(trim($email));
+    }
+
+    /**
+     * Same key import matching uses: digits only, so punctuation is not a change.
+     */
+    private function comparablePhone(string $phone): string
+    {
+        return preg_replace('/\D+/', '', $phone) ?? '';
     }
 
     /**
@@ -1689,77 +1758,340 @@ class SyncEngine
     }
 
     /**
-     * Balance 0, or a payment already applied to this invoice, means QuickBooks
-     * already recorded the payment. Link that payment instead of creating one.
+     * Every payment applied to this invoice. A failed block read is not treated as
+     * "no payment", and it is not fetched again one id at a time.
      *
      * @param array<string, mixed> $connection
      *
-     * @return array{payment: array<string, mixed>|null, settled: bool}
+     * @return array{payments: array<int, array<string, mixed>>, settled: bool, invoice: array<string, mixed>|null}
      */
-    private function invoicePaymentState(array $connection, string $customerRef, string $invoiceId): array
+    private function paymentsApplied(SyncLedger $ledger, array $connection, string $invoiceUuid, string $invoiceId): array
     {
-        $payment = null;
-        $settled = false;
+        $remoteInvoice = $this->remoteInvoice($connection, $invoiceId);
+        $ids           = [];
+        if (is_array($remoteInvoice)) {
+            foreach ($this->linkedPaymentIds($remoteInvoice) as $id) {
+                $ids[$id] = true;
+            }
+        }
         if ($this->blockPayments !== null) {
-            $payment = $this->blockPayments[$invoiceId] ?? null;
-            $invoice = $this->invoiceById[$invoiceId] ?? null;
-            if (is_array($invoice)) {
-                $balance = $invoice['Balance'] ?? null;
-                if ($balance !== null && $balance !== '' && $this->majorUnits($balance) === 0) {
-                    $settled = true;
+            foreach ($this->blockPayments[$invoiceId] ?? [] as $payment) {
+                if (!is_array($payment)) {
+                    continue;
+                }
+                $id = trim((string) ($payment['Id'] ?? ''));
+                if ($id !== '') {
+                    $ids[$id] = true;
                 }
             }
-            if ($payment !== null) {
-                $settled = true;
-            }
-
-            return ['payment' => $payment, 'settled' => $settled];
         }
-        $invoice = $this->client->getInvoice($connection, $invoiceId);
-        if (is_array($invoice)) {
-            $balance = $invoice['Balance'] ?? null;
+        $legacy = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'payment', $invoiceUuid);
+        if (is_array($legacy)) {
+            $id = trim((string) ($legacy['qbo_id'] ?? ''));
+            if ($id !== '') {
+                $ids[$id] = true;
+            }
+        }
+        foreach (array_keys($ids) as $id) {
+            if (isset($this->paymentReadFailed[$id])) {
+                throw new QuickBooksException(500, $this->paymentReadFailed[$id]);
+            }
+        }
+
+        $payments = [];
+        foreach (array_keys($ids) as $id) {
+            $remote = $this->readPayment($connection, $id);
+            if (is_array($remote)) {
+                $payments[$id] = $remote;
+            }
+        }
+        foreach ($this->paymentLinkRows($ledger, $connection) as $link) {
+            $id    = trim((string) ($link['qbo_id'] ?? ''));
+            $local = (string) ($link['local_uuid'] ?? '');
+            if ($id === '' || $local !== $id || isset($payments[$id]) || isset($this->paymentReadFailed[$id])) {
+                continue;
+            }
+            $remote = $this->readPayment($connection, $id);
+            if (is_array($remote) && $this->linkedLineCents($remote, $invoiceId) !== null) {
+                $payments[$id] = $remote;
+            }
+        }
+
+        $settled = false;
+        if (is_array($remoteInvoice)) {
+            $balance = $remoteInvoice['Balance'] ?? null;
             if ($balance !== null && $balance !== '' && $this->majorUnits($balance) === 0) {
                 $settled = true;
             }
-            $payment = $this->paymentLinkedOnInvoice($connection, $invoice);
         }
-        if ($payment === null) {
-            $payment = $this->client->findPaymentForInvoice($connection, $customerRef, $invoiceId);
-        }
-        if ($payment !== null) {
+        if ($payments !== []) {
             $settled = true;
         }
 
-        return ['payment' => $payment, 'settled' => $settled];
+        return [
+            'payments' => array_values($payments),
+            'settled'  => $settled,
+            'invoice'  => is_array($remoteInvoice) ? $remoteInvoice : null,
+        ];
     }
 
     /**
      * @param array<string, mixed> $connection
-     * @param array<string, mixed> $invoice
+     * @param array<string, mixed> $remote
+     */
+    private function invoiceUuidForPayment(SyncLedger $ledger, array $connection, array $remote): ?string
+    {
+        $company = (string) $connection['company_uuid'];
+        $realm   = (string) $connection['realm_id'];
+        foreach ($ledger->invoices as $uuid => $invoice) {
+            if (!is_array($invoice)) {
+                continue;
+            }
+            $link      = $ledger->link($company, $realm, 'invoice', (string) $uuid);
+            $invoiceId = is_array($link) ? trim((string) ($link['qbo_id'] ?? '')) : '';
+            if ($invoiceId !== '' && $this->linkedLineCents($remote, $invoiceId) !== null) {
+                return (string) $uuid;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The changed payment plus every other payment already linked to this invoice.
+     * Amounts stay in integer minor units.
+     *
+     * @param array<string, mixed>                $connection
+     * @param array<string, mixed>                $changed
+     * @param array<string, array<string, mixed>> $alreadyRead
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function paymentsTouchingInvoice(SyncLedger $ledger, array $connection, string $invoiceUuid, string $invoiceId, array $changed, array $alreadyRead): array
+    {
+        $payments  = [];
+        $changedId = trim((string) ($changed['Id'] ?? ''));
+        if ($changedId !== '') {
+            $payments[$changedId] = $changed;
+        }
+        foreach ($alreadyRead as $remote) {
+            if (!is_array($remote)) {
+                continue;
+            }
+            $id = trim((string) ($remote['Id'] ?? ''));
+            if ($id === '' || isset($payments[$id])) {
+                continue;
+            }
+            if ($invoiceId !== '' && $this->linkedLineCents($remote, $invoiceId) !== null) {
+                $payments[$id] = $remote;
+            }
+        }
+
+        $missing = [];
+        foreach ($this->paymentLinkRows($ledger, $connection) as $link) {
+            $id    = trim((string) ($link['qbo_id'] ?? ''));
+            $local = (string) ($link['local_uuid'] ?? '');
+            if ($id === '' || isset($payments[$id]) || ($local !== $invoiceUuid && $local !== $id)) {
+                continue;
+            }
+            $missing[$id] = $local;
+        }
+        foreach ($this->readRemoteSet($connection, 'Payment', array_keys($missing)) as $id => $remote) {
+            $local = $missing[$id] ?? '';
+            if ($local === $invoiceUuid || ($invoiceId !== '' && $this->linkedLineCents($remote, $invoiceId) !== null)) {
+                $payments[$id] = $remote;
+            }
+        }
+
+        return array_values($payments);
+    }
+
+    /**
+     * @param array<string, mixed> $connection
      *
      * @return array<string, mixed>|null
      */
-    private function paymentLinkedOnInvoice(array $connection, array $invoice): ?array
+    private function remoteInvoice(array $connection, string $invoiceId): ?array
     {
+        if ($this->blockPayments !== null || $this->invoiceById !== null) {
+            $invoice = $this->invoiceById[$invoiceId] ?? null;
+
+            return is_array($invoice) ? $invoice : null;
+        }
+
+        return $this->client->getInvoice($connection, $invoiceId);
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    private function readPayment(array $connection, string $id): ?array
+    {
+        if (isset($this->paymentReadFailed[$id])) {
+            throw new QuickBooksException(500, $this->paymentReadFailed[$id]);
+        }
+        if ($this->paymentById !== null) {
+            if (!array_key_exists($id, $this->paymentById)) {
+                return null;
+            }
+            $cached = $this->paymentById[$id];
+
+            return is_array($cached) ? $cached : null;
+        }
+
+        return $this->client->getPayment($connection, $id);
+    }
+
+    /**
+     * One stored link per QuickBooks payment id. A payment that cannot be found
+     * again from the invoice or its own lines keeps the invoice uuid so the next
+     * sync still sees it. A later payment never replaces an earlier id.
+     *
+     * @param array<string, mixed>      $connection
+     * @param array<string, mixed>      $remote
+     * @param array<string, mixed>|null $remoteInvoice
+     */
+    private function storePaymentLink(SyncLedger $ledger, array $connection, string $invoiceUuid, string $invoiceId, array $remote, ?array $remoteInvoice = null): void
+    {
+        $paymentId = trim((string) ($remote['Id'] ?? ''));
+        if ($paymentId === '') {
+            return;
+        }
+        if ($remoteInvoice === null && $invoiceId !== '' && $this->invoiceById !== null) {
+            $cached = $this->invoiceById[$invoiceId] ?? null;
+            if (is_array($cached)) {
+                $remoteInvoice = $cached;
+            }
+        }
+
+        $company    = (string) $connection['company_uuid'];
+        $realm      = (string) $connection['realm_id'];
+        $legacy     = $ledger->link($company, $realm, 'payment', $invoiceUuid);
+        $legacyId   = is_array($legacy) ? trim((string) ($legacy['qbo_id'] ?? '')) : '';
+        $byPayment  = $this->paymentRediscoverable($remote, $invoiceId, $remoteInvoice) || ($legacyId !== '' && $legacyId !== $paymentId);
+        $localUuid  = $byPayment ? $paymentId : $invoiceUuid;
+        $attributes = $this->linkFrom($connection, 'payment', $localUuid, 'Payment', $remote);
+        if ($byPayment && is_array($legacy) && $legacyId === $paymentId && $ledger->link($company, $realm, 'payment', $paymentId) === null) {
+            $this->rekeyPaymentLink($ledger, $company, $realm, $invoiceUuid, $attributes);
+
+            return;
+        }
+
+        $ledger->putLink($attributes);
+        if ($byPayment && is_array($legacy) && $legacyId === $paymentId) {
+            $this->forgetPaymentLink($ledger, $company, $realm, $invoiceUuid);
+        }
+    }
+
+    /**
+     * @param array<string, mixed>      $remote
+     * @param array<string, mixed>|null $remoteInvoice
+     */
+    private function paymentRediscoverable(array $remote, string $invoiceId, ?array $remoteInvoice): bool
+    {
+        if ($invoiceId !== '' && $this->linkedLineCents($remote, $invoiceId) !== null) {
+            return true;
+        }
+        $paymentId = trim((string) ($remote['Id'] ?? ''));
+        if ($paymentId === '' || !is_array($remoteInvoice)) {
+            return false;
+        }
+
+        return in_array($paymentId, $this->linkedPaymentIds($remoteInvoice), true);
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function paymentLinkRows(SyncLedger $ledger, array $connection): array
+    {
+        $company = (string) $connection['company_uuid'];
+        $realm   = (string) $connection['realm_id'];
+        $rows    = [];
+        foreach ($ledger->links as $link) {
+            if (!is_array($link)) {
+                continue;
+            }
+            if ((string) ($link['company_uuid'] ?? '') !== $company || (string) ($link['realm_id'] ?? '') !== $realm) {
+                continue;
+            }
+            if ((string) ($link['local_type'] ?? '') !== 'payment') {
+                continue;
+            }
+            $rows[] = $link;
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param array<string, mixed> $attributes
+     */
+    private function rekeyPaymentLink(SyncLedger $ledger, string $company, string $realm, string $fromUuid, array $attributes): void
+    {
+        foreach ($ledger->links as $index => $link) {
+            if (!is_array($link) || !$this->samePaymentLink($link, $company, $realm, $fromUuid)) {
+                continue;
+            }
+            $ledger->links[$index] = array_merge($link, $attributes);
+            $ledger->rebuildIndex();
+
+            return;
+        }
+    }
+
+    private function forgetPaymentLink(SyncLedger $ledger, string $company, string $realm, string $localUuid): void
+    {
+        foreach ($ledger->links as $index => $link) {
+            if (!is_array($link) || !$this->samePaymentLink($link, $company, $realm, $localUuid)) {
+                continue;
+            }
+            unset($ledger->links[$index]);
+            $ledger->links = array_values($ledger->links);
+            $ledger->rebuildIndex();
+
+            return;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $link
+     */
+    private function samePaymentLink(array $link, string $company, string $realm, string $localUuid): bool
+    {
+        return (string) ($link['company_uuid'] ?? '') === $company
+            && (string) ($link['realm_id'] ?? '') === $realm
+            && (string) ($link['local_type'] ?? '') === 'payment'
+            && (string) ($link['local_uuid'] ?? '') === $localUuid;
+    }
+
+    /**
+     * @param array<string, mixed> $invoice
+     *
+     * @return array<int, string>
+     */
+    private function linkedPaymentIds(array $invoice): array
+    {
+        $ids  = [];
         $txns = $invoice['LinkedTxn'] ?? [];
         if (!is_array($txns)) {
-            return null;
+            return [];
         }
         foreach ($txns as $txn) {
             if (!is_array($txn) || (string) ($txn['TxnType'] ?? '') !== 'Payment') {
                 continue;
             }
             $id = trim((string) ($txn['TxnId'] ?? ''));
-            if ($id === '') {
-                continue;
-            }
-            $payment = $this->client->getPayment($connection, $id);
-            if ($payment !== null) {
-                return $payment;
+            if ($id !== '') {
+                $ids[$id] = true;
             }
         }
 
-        return null;
+        return array_keys($ids);
     }
 
     /**
@@ -1796,38 +2128,79 @@ class SyncEngine
     }
 
     /**
+     * @param array<string, mixed>             $invoice
+     * @param array<int, array<string, mixed>> $payments
+     */
+    private function paymentsMatch(array $invoice, array $payments, string $invoiceId): bool
+    {
+        if (count($payments) === 1) {
+            return $this->paymentMatches($invoice, $payments[0], $invoiceId);
+        }
+        $remoteCents = $this->summedOnInvoice($payments, $invoiceId);
+
+        return $remoteCents !== null && $remoteCents === $this->paymentAmountCents($invoice);
+    }
+
+    /**
      * Compare the amount written onto the invoice. Invoice total is only the
-     * stand-in before a payment amount has been recorded.
+     * stand-in before a payment amount has been recorded. A recorded zero stays
+     * zero and is not replaced with the invoice total.
      *
      * @param array<string, mixed> $invoice
      */
     private function paymentAmountCents(array $invoice): int
     {
-        if (!empty($invoice['payment_from_quickbooks'])) {
+        if (!empty($invoice['payment_from_quickbooks']) || array_key_exists('amount_paid', $invoice)) {
             return (int) ($invoice['amount_paid'] ?? 0);
-        }
-
-        if (array_key_exists('amount_paid', $invoice) && (int) $invoice['amount_paid'] > 0) {
-            return (int) $invoice['amount_paid'];
         }
 
         return (int) ($invoice['total'] ?? 0);
     }
 
     /**
-     * @param array<string, mixed> $remote
+     * @param array<int, array<string, mixed>> $payments
      */
-    private function applyPaymentFromRemote(SyncLedger $ledger, string $uuid, array $remote, string $invoiceId): void
+    private function applyPaymentsFromRemote(SyncLedger $ledger, string $uuid, array $payments, string $invoiceId): void
     {
-        $date = substr(trim((string) ($remote['TxnDate'] ?? '')), 0, 10);
-        if ($date !== '') {
-            $ledger->invoices[$uuid]['paid_at'] = $date;
+        $latest = '';
+        foreach ($payments as $remote) {
+            $date = substr(trim((string) ($remote['TxnDate'] ?? '')), 0, 10);
+            if ($date !== '' && ($latest === '' || $date > $latest)) {
+                $latest = $date;
+            }
         }
-        $amount = $this->amountOnInvoice($remote, $invoiceId);
+        if ($latest !== '') {
+            $ledger->invoices[$uuid]['paid_at'] = $latest;
+        }
+        $amount = $this->summedOnInvoice($payments, $invoiceId);
         if ($amount !== null) {
             $ledger->invoices[$uuid]['amount_paid'] = $amount;
         }
         $ledger->invoices[$uuid]['payment_from_quickbooks'] = true;
+    }
+
+    /**
+     * Integer minor units applied to this invoice, across every payment.
+     * One unknown amount makes the sum unknown so a partial total is not stored.
+     *
+     * @param array<int, array<string, mixed>> $payments
+     */
+    private function summedOnInvoice(array $payments, string $invoiceId): ?int
+    {
+        if ($payments === []) {
+            return null;
+        }
+
+        $sum = 0;
+        foreach ($payments as $remote) {
+            $amount = $this->amountOnInvoice($remote, $invoiceId);
+            if ($amount === null) {
+                return null;
+            }
+            $sum += $amount;
+        }
+
+        return $sum;
     }
 
     /**
@@ -1955,15 +2328,30 @@ class SyncEngine
 
     private function applyPaymentStatus(SyncLedger $ledger, string $uuid): void
     {
-        $paid  = (int) ($ledger->invoices[$uuid]['amount_paid'] ?? 0);
-        $total = (int) ($ledger->invoices[$uuid]['total'] ?? 0);
-        if ($paid >= $total) {
+        $invoice = $ledger->invoices[$uuid];
+        $status  = (string) ($invoice['status'] ?? '');
+        if (in_array($status, ['void', 'voided', 'cancelled', 'canceled', 'deleted'], true) || !empty($invoice['deleted_at'])) {
+            return;
+        }
+
+        $hasPaid = array_key_exists('amount_paid', $invoice);
+        $paid    = (int) ($invoice['amount_paid'] ?? 0);
+        $total   = (int) ($invoice['total'] ?? 0);
+        if ($total > 0 && $paid >= $total) {
             $ledger->invoices[$uuid]['status'] = 'paid';
 
             return;
         }
         if ($paid > 0 && $paid < $total) {
             $ledger->invoices[$uuid]['status'] = 'partial';
+
+            return;
+        }
+        if ($hasPaid && $paid === 0 && $total > 0) {
+            $status = (string) ($invoice['status'] ?? '');
+            if ($status === '' || in_array($status, ['paid', 'partial'], true)) {
+                $ledger->invoices[$uuid]['status'] = 'sent';
+            }
         }
     }
 
@@ -2002,10 +2390,10 @@ class SyncEngine
     }
 
     /**
-     * @param array<string, mixed>             $connection
-     * @param array<string, mixed>             $row
-     * @param array<string, mixed>             $settings
-     * @param array<string, mixed>             $batch
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $batch
      */
     private function runOne(SyncLedger $ledger, array &$connection, array $row, array $settings, array &$batch, int $now, string $trigger): void
     {
@@ -2421,9 +2809,9 @@ class SyncEngine
      * Invoice writes are durable before payment reads begin. A later payment failure
      * therefore cannot leave an invoice that QuickBooks created or updated unlinked.
      *
-     * @param array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool}> $planned
+     * @param array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool}>                                           $planned
      * @param array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}> $results
-     * @param array<string, mixed> $settings
+     * @param array<string, mixed>                                                                                                                            $settings
      */
     private function persistSuccessfulInvoiceWrites(SyncLedger $ledger, array $connection, array $planned, array $results, array $settings): void
     {
@@ -2544,7 +2932,7 @@ class SyncEngine
 
                     return true;
                 }
-                $message = (string) ($result['error'] ?? '');
+                $message                      = (string) ($result['error'] ?? '');
                 $finished[$uuid]['outcome']   = $this->failure($ledger, $connection, $item['row'], new QuickBooksException($status, $message), $settings, $now);
                 $finished[$uuid]['error']     = $this->batchItemAttemptError($message, $status);
                 $finished[$uuid]['permanent'] = false;
@@ -2553,7 +2941,7 @@ class SyncEngine
                 return true;
             }
             if (empty($result['ok'])) {
-                $message = (string) ($result['error'] ?? '');
+                $message                      = (string) ($result['error'] ?? '');
                 $finished[$uuid]['outcome']   = $this->failure(
                     $ledger,
                     $connection,
@@ -2567,7 +2955,9 @@ class SyncEngine
                 continue;
             }
             if (is_array($result['body'] ?? null) && ($result['body']['Id'] ?? '') !== '') {
-                $ledger->putLink($this->linkFrom($connection, 'payment', (string) $uuid, 'Payment', $result['body']));
+                $invoiceLink = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'invoice', (string) $uuid);
+                $invoiceId   = is_array($invoiceLink) ? trim((string) ($invoiceLink['qbo_id'] ?? '')) : '';
+                $this->storePaymentLink($ledger, $connection, (string) $uuid, $invoiceId, $result['body']);
             }
         }
         $this->commitFinished($ledger, $connection, $finished, $batch, $trigger, $record);
@@ -2639,6 +3029,8 @@ class SyncEngine
         $realm                      = (string) $connection['realm_id'];
         /** @var array<int, array{bId: string, query: string, uuid: string, by: string, value: string}> $queries */
         $queries = [];
+        /** @var array<int, array{bId: string, query: string, uuid: string, email: string, name: string}> $nameOnly */
+        $nameOnly = [];
         foreach ($rows as $row) {
             $uuid = (string) ($row['local_uuid'] ?? '');
             if ($uuid === '') {
@@ -2668,14 +3060,26 @@ class SyncEngine
                     'by'    => 'email',
                     'value' => $email,
                 ];
+                continue;
+            }
+            $payload = $this->customers->toQuickBooks($this->customers->fromParty($customer));
+            $name    = trim((string) ($payload['DisplayName'] ?? ''));
+            if ($name !== '') {
+                $nameOnly[] = [
+                    'bId'   => 'customer-name:' . $uuid,
+                    'query' => "select * from Customer where DisplayName = '" . QuickBooksClient::escapeQuery($name) . "' maxresults 1",
+                    'uuid'  => $uuid,
+                    'email' => '',
+                    'name'  => $name,
+                ];
             }
         }
-        if ($queries === []) {
+        if ($queries === [] && $nameOnly === []) {
             return;
         }
-        if (count($queries) === 1) {
+        if ($queries !== [] && count($queries) === 1) {
             $this->prefetchOneCustomer($connection, $queries[0]);
-        } else {
+        } elseif ($queries !== []) {
             $items = [];
             foreach ($queries as $query) {
                 $items[] = ['bId' => $query['bId'], 'query' => $query['query']];
@@ -2703,12 +3107,12 @@ class SyncEngine
                     throw new QuickBooksException((int) ($result['status'] ?? 0), (string) ($result['error'] ?? ''));
                 }
                 if (!is_array($result) || empty($result['ok'])) {
-                    $message = is_array($result) ? (string) ($result['error'] ?? '') : '';
-                    $status  = is_array($result) ? (int) ($result['status'] ?? 0) : 0;
+                    $message                           = is_array($result) ? (string) ($result['error'] ?? '') : '';
+                    $status                            = is_array($result) ? (int) ($result['status'] ?? 0) : 0;
                     $this->customerLookupFailed[$uuid] = $this->batchItemAttemptError($message, $status);
                     continue;
                 }
-                $remote = $result['rows'][0] ?? null;
+                $remote                           = $result['rows'][0] ?? null;
                 $this->customerRemoteCache[$uuid] = is_array($remote) ? $remote : null;
             }
             foreach ($queries as $query) {
@@ -2741,12 +3145,17 @@ class SyncEngine
                 ];
             }
         }
+        foreach ($nameOnly as $query) {
+            if (!isset($this->customerLookupFailed[$query['uuid']])) {
+                $nameQueries[] = $query;
+            }
+        }
         $this->prefetchCustomerNames($connection, $nameQueries, (string) ($settings['customer_reference'] ?? 'fleetbase') !== 'fleetbase');
     }
 
     /**
-     * @param array<string, mixed>                                                              $connection
-     * @param array{bId: string, query: string, uuid: string, by: string, value: string}        $query
+     * @param array<string, mixed>                                                       $connection
+     * @param array{bId: string, query: string, uuid: string, by: string, value: string} $query
      */
     private function prefetchOneCustomer(array $connection, array $query): void
     {
@@ -2766,7 +3175,7 @@ class SyncEngine
     }
 
     /**
-     * @param array<string, mixed> $connection
+     * @param array<string, mixed>                                                                     $connection
      * @param array<int, array{bId: string, query: string, uuid: string, email: string, name: string}> $queries
      */
     private function prefetchCustomerNames(array $connection, array $queries, bool $allowDifferentEmail): void
@@ -2786,13 +3195,7 @@ class SyncEngine
                     $this->customerLookupFailed[$query['uuid']] = $this->exceptionError($exception);
                     continue;
                 }
-                if (is_array($remote)) {
-                    $remoteEmail = strtolower(trim((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')));
-                    $localEmail  = strtolower($query['email']);
-                    if ($allowDifferentEmail || $localEmail === '' || $remoteEmail === '' || $remoteEmail === $localEmail) {
-                        $this->customerRemoteCache[$query['uuid']] = $remote;
-                    }
-                }
+                $this->rememberCustomerByName($query, is_array($remote) ? $remote : null, $allowDifferentEmail);
                 continue;
             }
             try {
@@ -2815,22 +3218,38 @@ class SyncEngine
                     throw new QuickBooksException((int) ($result['status'] ?? 0), (string) ($result['error'] ?? ''));
                 }
                 if (!is_array($result) || empty($result['ok'])) {
-                    $message = is_array($result) ? (string) ($result['error'] ?? '') : '';
-                    $status  = is_array($result) ? (int) ($result['status'] ?? 0) : 0;
+                    $message                                    = is_array($result) ? (string) ($result['error'] ?? '') : '';
+                    $status                                     = is_array($result) ? (int) ($result['status'] ?? 0) : 0;
                     $this->customerLookupFailed[$query['uuid']] = $this->batchItemAttemptError($message, $status);
                     continue;
                 }
                 $remote = $result['rows'][0] ?? null;
-                if (!is_array($remote)) {
-                    continue;
-                }
-                $remoteEmail = strtolower(trim((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')));
-                $localEmail  = strtolower($query['email']);
-                if ($allowDifferentEmail || $localEmail === '' || $remoteEmail === '' || $remoteEmail === $localEmail) {
-                    $this->customerRemoteCache[$query['uuid']] = $remote;
-                }
+                $this->rememberCustomerByName($query, is_array($remote) ? $remote : null, $allowDifferentEmail);
             }
         }
+    }
+
+    /**
+     * A display-name miss is cached so the row is not queried again one name at a time.
+     *
+     * @param array{bId: string, query: string, uuid: string, email: string, name: string} $query
+     * @param array<string, mixed>|null                                                    $remote
+     */
+    private function rememberCustomerByName(array $query, ?array $remote, bool $allowDifferentEmail): void
+    {
+        if (!is_array($remote)) {
+            $this->customerRemoteCache[$query['uuid']] = null;
+
+            return;
+        }
+        $remoteEmail = strtolower(trim((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')));
+        $localEmail  = strtolower($query['email']);
+        if ($allowDifferentEmail || $localEmail === '' || $remoteEmail === '' || $remoteEmail === $localEmail) {
+            $this->customerRemoteCache[$query['uuid']] = $remote;
+
+            return;
+        }
+        $this->customerRemoteCache[$query['uuid']] = null;
     }
 
     /**
@@ -2897,14 +3316,16 @@ class SyncEngine
         $customerUuid = (string) ($invoice['customer_uuid'] ?? '');
         $companyUuid  = (string) $connection['company_uuid'];
         $realm        = (string) $connection['realm_id'];
-        if ($customerUuid === '' || $ledger->link($companyUuid, $realm, 'customer', $customerUuid) === null) {
+        $customerLink = $customerUuid === '' ? null : $ledger->link($companyUuid, $realm, 'customer', $customerUuid);
+        if ($customerLink === null) {
             return false;
         }
 
         $link = $ledger->link($companyUuid, $realm, 'invoice', $uuid);
         if ($link === null) {
-            $number = trim((string) ($invoice['number'] ?? ''));
-            if ($number !== '' && $this->invoiceByDoc !== null && isset($this->invoiceByDoc[$number])) {
+            $number   = trim((string) ($invoice['number'] ?? ''));
+            $existing = ($number !== '' && $this->invoiceByDoc !== null) ? ($this->invoiceByDoc[$number] ?? null) : null;
+            if (is_array($existing) && $this->invoiceCustomerMatches($existing, (string) ($customerLink['qbo_id'] ?? ''))) {
                 return false;
             }
 
@@ -2943,8 +3364,8 @@ class SyncEngine
                 $docs[] = trim((string) $invoice['number']);
             }
         }
-        $ids  = array_values(array_unique($ids));
-        $docs = array_values(array_unique($docs));
+        $ids                        = array_values(array_unique($ids));
+        $docs                       = array_values(array_unique($docs));
         $this->invoiceReadFailed    = [];
         $this->invoiceDocReadFailed = [];
         if ($ids !== []) {
@@ -2998,10 +3419,11 @@ class SyncEngine
     {
         $this->blockPayments      = [];
         $this->paymentPrefetchIds = [];
+        $this->paymentById        = [];
+        $this->paymentReadFailed  = [];
         $companyUuid              = (string) $connection['company_uuid'];
-        $realm               = (string) $connection['realm_id'];
-        $invoiceIds          = [];
-        $targets             = [];
+        $realm                    = (string) $connection['realm_id'];
+        $invoiceIds               = [];
         foreach ($rows as $row) {
             $uuid    = (string) ($row['local_uuid'] ?? '');
             $invoice = $ledger->invoices[$uuid] ?? null;
@@ -3010,39 +3432,22 @@ class SyncEngine
             }
             $customerUuid = (string) ($invoice['customer_uuid'] ?? '');
             $customerLink = $customerUuid === '' ? null : $ledger->link($companyUuid, $realm, 'customer', $customerUuid);
-            $link = $ledger->link($companyUuid, $realm, 'invoice', $uuid);
-            $customerId = is_array($customerLink) ? trim((string) ($customerLink['qbo_id'] ?? '')) : '';
-            $invoiceId  = is_array($link) ? trim((string) ($link['qbo_id'] ?? '')) : '';
+            $link         = $ledger->link($companyUuid, $realm, 'invoice', $uuid);
+            $customerId   = is_array($customerLink) ? trim((string) ($customerLink['qbo_id'] ?? '')) : '';
+            $invoiceId    = is_array($link) ? trim((string) ($link['qbo_id'] ?? '')) : '';
             if ($customerId !== '' && $invoiceId !== '') {
-                $invoiceIds[]        = $invoiceId;
-                $targets[$invoiceId] = $customerId;
+                $invoiceIds[] = $invoiceId;
             }
         }
         $this->paymentPrefetchIds = array_fill_keys($invoiceIds, true);
-        if ($targets === []) {
-            return;
-        }
-        $payments = $this->client->findPaymentsForCustomers($connection, $targets, true);
-        foreach ($payments as $payment) {
-            if (!is_array($payment)) {
-                continue;
-            }
-            foreach ($invoiceIds as $invoiceId) {
-                if (isset($this->blockPayments[$invoiceId])) {
-                    continue;
-                }
-                if ($this->paymentAppliesTo($payment, $invoiceId)) {
-                    $this->blockPayments[$invoiceId] = $payment;
-                }
-            }
-        }
+        $this->loadPaymentsForInvoices($connection, $invoiceIds);
     }
 
     /**
      * A DocNumber match can link an invoice after the block payment prefetch.
-     * One new invoice uses one payment lookup. A larger set uses the customer payment query.
+     * The invoice is already in memory, so its LinkedTxn ids are loaded once.
      *
-     * @param array<string, mixed>                                                                                              $connection
+     * @param array<string, mixed>                                                                                  $connection
      * @param array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool}> $planned
      */
     private function resolveNewlyLinkedPayments(SyncLedger $ledger, array $connection, array $planned): void
@@ -3077,48 +3482,115 @@ class SyncEngine
         if ($missing === []) {
             return;
         }
-        if (count($missing) === 1) {
-            $invoiceId = (string) array_key_first($missing);
-            $payment   = $this->client->findPaymentForInvoice($connection, $missing[$invoiceId], $invoiceId);
-            if (is_array($payment)) {
-                $this->blockPayments[$invoiceId] = $payment;
-            }
 
+        $invoiceIds = [];
+        foreach (array_keys($missing) as $invoiceId) {
+            if (!is_array($this->invoiceById[$invoiceId] ?? null)) {
+                continue;
+            }
+            $invoiceIds[]                                  = (string) $invoiceId;
+            $this->paymentPrefetchIds[(string) $invoiceId] = true;
+        }
+        $this->loadPaymentsForInvoices($connection, $invoiceIds);
+    }
+
+    /**
+     * Payment ids come from invoices already loaded. Each payment is read once.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<int, string>   $invoiceIds
+     */
+    private function loadPaymentsForInvoices(array $connection, array $invoiceIds): void
+    {
+        $paymentIds = [];
+        foreach ($invoiceIds as $invoiceId) {
+            $invoice = $this->invoiceById[$invoiceId] ?? null;
+            if (!is_array($invoice)) {
+                continue;
+            }
+            foreach ($this->linkedPaymentIds($invoice) as $id) {
+                $paymentIds[$id] = true;
+            }
+        }
+        $this->loadPayments($connection, array_keys($paymentIds));
+        $this->assignBlockPayments($invoiceIds);
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     * @param array<int, string>   $ids
+     */
+    private function loadPayments(array $connection, array $ids): void
+    {
+        if ($this->paymentById === null) {
+            $this->paymentById = [];
+        }
+        $missing = [];
+        foreach ($ids as $id) {
+            $id = trim($id);
+            if ($id === '' || array_key_exists($id, $this->paymentById) || isset($this->paymentReadFailed[$id])) {
+                continue;
+            }
+            $missing[] = $id;
+        }
+        if ($missing === []) {
             return;
         }
 
-        foreach ($this->client->findPaymentsForCustomers($connection, $missing, true) as $payment) {
-            if (!is_array($payment)) {
+        $loaded = $this->queryWhereIn(
+            $connection,
+            'Payment',
+            'Id',
+            $missing,
+            fn (string $id): ?array => $this->client->getPayment($connection, $id)
+        );
+        $found = [];
+        foreach ($loaded['rows'] as $payment) {
+            $id = trim((string) ($payment['Id'] ?? ''));
+            if ($id === '') {
                 continue;
             }
-            foreach (array_keys($missing) as $invoiceId) {
-                if (!isset($this->blockPayments[$invoiceId]) && $this->paymentAppliesTo($payment, (string) $invoiceId)) {
-                    $this->blockPayments[$invoiceId] = $payment;
+            $this->paymentById[$id] = $payment;
+            $found[$id]             = true;
+        }
+        foreach ($loaded['failed'] as $id => $error) {
+            $this->paymentReadFailed[(string) $id] = $error;
+        }
+        foreach ($missing as $id) {
+            if (!isset($found[$id]) && !isset($this->paymentReadFailed[$id])) {
+                $this->paymentById[$id] = null;
+            }
+        }
+    }
+
+    /**
+     * @param array<int, string> $invoiceIds
+     */
+    private function assignBlockPayments(array $invoiceIds): void
+    {
+        if ($this->blockPayments === null || $this->paymentById === null) {
+            return;
+        }
+        foreach ($invoiceIds as $invoiceId) {
+            $invoice = $this->invoiceById[$invoiceId] ?? null;
+            if (!is_array($invoice)) {
+                continue;
+            }
+            $payments = [];
+            foreach ($this->linkedPaymentIds($invoice) as $id) {
+                $payment = $this->paymentById[$id] ?? null;
+                if (is_array($payment)) {
+                    $payments[] = $payment;
                 }
             }
-        }
-    }
-
-    /**
-     * @param array<string, mixed> $payment
-     */
-    private function paymentAppliesTo(array $payment, string $invoiceId): bool
-    {
-        $lines = $payment['Line'] ?? [];
-        if (!is_array($lines)) {
-            return false;
-        }
-        foreach ($lines as $line) {
-            if (is_array($line) && $this->lineLinksInvoice($line, $invoiceId)) {
-                return true;
+            if ($payments !== []) {
+                $this->blockPayments[$invoiceId] = $payments;
             }
         }
-
-        return false;
     }
 
     /**
-     * @param array<string, mixed>                                                                                              $connection
+     * @param array<string, mixed> $connection
      *
      * @return array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}>
      */
@@ -3137,7 +3609,7 @@ class SyncEngine
     }
 
     /**
-     * @param array<string, mixed>                                                          $connection
+     * @param array<string, mixed>                                                                 $connection
      * @param array{bId: string, operation: string, entity: string, payload: array<string, mixed>} $op
      *
      * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}
@@ -3218,44 +3690,29 @@ class SyncEngine
     }
 
     /**
-     * @param array<string, mixed>                                                                                              $connection
+     * @param array<string, mixed>                                                                                  $connection
      * @param array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool}> $planned
-     * @param array<string, mixed>                                                                                              $settings
+     * @param array<string, mixed>                                                                                  $settings
      */
     private function prefetchLinkedPayments(array $connection, SyncLedger $ledger, array $planned, array $settings): void
     {
-        $this->paymentReadFailed = [];
         if ($this->entityPaused($settings, 'payment')) {
             $this->paymentById = [];
 
             return;
         }
+        if ($planned === []) {
+            return;
+        }
 
-        $companyUuid = (string) $connection['company_uuid'];
-        $realm       = (string) $connection['realm_id'];
-        $ids         = [];
-        foreach (array_keys($planned) as $uuid) {
-            $link = $ledger->link($companyUuid, $realm, 'payment', (string) $uuid);
-            $id   = is_array($link) ? trim((string) ($link['qbo_id'] ?? '')) : '';
+        $ids = [];
+        foreach ($this->paymentLinkRows($ledger, $connection) as $link) {
+            $id = trim((string) ($link['qbo_id'] ?? ''));
             if ($id !== '') {
                 $ids[] = $id;
             }
         }
-        $loaded = $this->queryWhereIn(
-            $connection,
-            'Payment',
-            'Id',
-            $ids,
-            fn (string $id): ?array => $this->client->getPayment($connection, $id)
-        );
-        $this->paymentById = [];
-        foreach ($loaded['rows'] as $payment) {
-            $id = trim((string) ($payment['Id'] ?? ''));
-            if ($id !== '') {
-                $this->paymentById[$id] = $payment;
-            }
-        }
-        $this->paymentReadFailed = $loaded['failed'];
+        $this->loadPayments($connection, $ids);
     }
 
     /**
@@ -3416,9 +3873,9 @@ class SyncEngine
      * and does not call them missing. One value uses $readOne. Larger sets use batch() in chunks of 30,
      * and each query is paged until a short page.
      *
-     * @param array<string, mixed>           $connection
-     * @param array<int, string>             $values
-     * @param callable(string): (?array)     $readOne
+     * @param array<string, mixed>       $connection
+     * @param array<int, string>         $values
+     * @param callable(string): (?array) $readOne
      *
      * @return array{rows: array<int, array<string, mixed>>, failed: array<string, string>}
      */
@@ -3563,12 +4020,7 @@ class SyncEngine
                 throw $exception;
             }
 
-            throw new QuickBooksException(
-                $exception->status,
-                $this->exceptionError($exception),
-                $exception->retryAfter,
-                $exception->faultCode,
-            );
+            throw new QuickBooksException($exception->status, $this->exceptionError($exception), $exception->retryAfter, $exception->faultCode);
         }
 
         $result = $results['read'] ?? null;
@@ -3696,5 +4148,146 @@ class SyncEngine
         }
 
         return false;
+    }
+}
+
+/**
+ * Sends SyncEngine's QuickBooks calls through SyncEngine::runHttp.
+ * The inner client stays the real or fake client; this only brackets HTTP.
+ */
+class QuickBooksHttpGate extends QuickBooksClient
+{
+    public function __construct(private QuickBooksClient $inner, private SyncEngine $engine)
+    {
+    }
+
+    public function homeCurrency(array $connection): ?string
+    {
+        return $this->engine->runHttp(fn (): ?string => $this->inner->homeCurrency($connection));
+    }
+
+    public function customTxnNumbers(array $connection): bool
+    {
+        return $this->engine->runHttp(fn (): bool => $this->inner->customTxnNumbers($connection));
+    }
+
+    public function createCustomer(array $connection, array $payload): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->createCustomer($connection, $payload));
+    }
+
+    public function updateCustomer(array $connection, string $id, string $syncToken, array $payload): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->updateCustomer($connection, $id, $syncToken, $payload));
+    }
+
+    public function getCustomer(array $connection, string $id): ?array
+    {
+        return $this->engine->runHttp(fn (): ?array => $this->inner->getCustomer($connection, $id));
+    }
+
+    public function createInvoice(array $connection, array $payload): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->createInvoice($connection, $payload));
+    }
+
+    public function updateInvoice(array $connection, string $id, string $syncToken, array $payload): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->updateInvoice($connection, $id, $syncToken, $payload));
+    }
+
+    public function nextInvoiceDocNumber(array $connection): ?string
+    {
+        return $this->engine->runHttp(fn (): ?string => $this->inner->nextInvoiceDocNumber($connection));
+    }
+
+    public function nextInvoiceDocNumbers(array $connection, int $count): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->nextInvoiceDocNumbers($connection, $count));
+    }
+
+    public function findInvoiceByDocNumber(array $connection, string $docNumber): ?array
+    {
+        return $this->engine->runHttp(fn (): ?array => $this->inner->findInvoiceByDocNumber($connection, $docNumber));
+    }
+
+    public function getInvoice(array $connection, string $id): ?array
+    {
+        return $this->engine->runHttp(fn (): ?array => $this->inner->getInvoice($connection, $id));
+    }
+
+    public function voidInvoice(array $connection, string $id, string $syncToken): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->voidInvoice($connection, $id, $syncToken));
+    }
+
+    public function createPayment(array $connection, array $payload): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->createPayment($connection, $payload));
+    }
+
+    public function updatePayment(array $connection, string $id, string $syncToken, array $payload): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->updatePayment($connection, $id, $syncToken, $payload));
+    }
+
+    public function getPayment(array $connection, string $id): ?array
+    {
+        return $this->engine->runHttp(fn (): ?array => $this->inner->getPayment($connection, $id));
+    }
+
+    public function findPaymentForInvoice(array $connection, string $customerId, string $invoiceId): ?array
+    {
+        return $this->engine->runHttp(fn (): ?array => $this->inner->findPaymentForInvoice($connection, $customerId, $invoiceId));
+    }
+
+    public function findPaymentsForCustomers(array $connection, array $customerIds, bool $asBatch = false): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->findPaymentsForCustomers($connection, $customerIds, $asBatch));
+    }
+
+    public function findCustomerByDisplayName(array $connection, string $name): ?array
+    {
+        return $this->engine->runHttp(fn (): ?array => $this->inner->findCustomerByDisplayName($connection, $name));
+    }
+
+    public function findCustomerByEmail(array $connection, string $email): ?array
+    {
+        return $this->engine->runHttp(fn (): ?array => $this->inner->findCustomerByEmail($connection, $email));
+    }
+
+    public function createAccount(array $connection, array $payload): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->createAccount($connection, $payload));
+    }
+
+    public function updateAccount(array $connection, string $id, string $syncToken, array $payload): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->updateAccount($connection, $id, $syncToken, $payload));
+    }
+
+    public function getAccount(array $connection, string $id): ?array
+    {
+        return $this->engine->runHttp(fn (): ?array => $this->inner->getAccount($connection, $id));
+    }
+
+    public function findAccountByAcctNum(array $connection, string $acctNum): ?array
+    {
+        return $this->engine->runHttp(fn (): ?array => $this->inner->findAccountByAcctNum($connection, $acctNum));
+    }
+
+    public function findAccountsByName(array $connection, string $name): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->findAccountsByName($connection, $name));
+    }
+
+    public function batch(array $connection, array $items): array
+    {
+        return $this->engine->runHttp(fn (): array => $this->inner->batch($connection, $items));
+    }
+
+    public function ensureServiceItem(array $connection): string
+    {
+        return $this->engine->runHttp(fn (): string => $this->inner->ensureServiceItem($connection));
     }
 }
