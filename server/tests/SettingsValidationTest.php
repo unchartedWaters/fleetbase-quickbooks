@@ -18,7 +18,7 @@ function validAuth(array $overrides = []): array
     return array_merge([
         'client_id'     => 'client-id',
         'client_secret' => 'secret',
-        'redirect_uri'  => 'https://example.test/callback',
+        'redirect_uri'  => 'https://example.com/callback',
         'environment'   => 'sandbox',
     ], $overrides);
 }
@@ -279,7 +279,7 @@ test('a blank client secret is not configured and interval minutes stay out of a
             'auth'         => [
                 'client_id'        => 'client-id',
                 'client_secret'    => '',
-                'redirect_uri'     => 'https://example.test/callback',
+                'redirect_uri'     => 'https://example.com/callback',
                 'environment'      => 'sandbox',
                 'interval_minutes' => '5',
             ],
@@ -482,9 +482,10 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
                 'webhook_url'                     => 'not-a-url',
                 'public_receiver_url'             => 'https://quickbooks-proxy.example.com/quickbooks/int/v1/webhooks',
                 'internal_webhook_receiver_url'   => 'https://client.example.test/quickbooks/int/v1/webhooks',
-                'public_webhook_receiver_url'     => 'https://public.example.test/quickbooks/int/v1/webhooks',
+                'redirect_uri'                    => 'https://example.com/callback',
+                'public_webhook_receiver_url'     => 'https://example.com/quickbooks/int/v1/webhooks',
                 'internal_oauth_redirect_url'     => 'https://client.example.test/quickbooks/int/v1/oauth/callback',
-                'public_oauth_redirect_url'       => 'https://public.example.test/quickbooks/int/v1/oauth/callback',
+                'public_oauth_redirect_url'       => 'https://example.com/quickbooks/int/v1/oauth/callback',
             ]),
             'sync' => qbSettings([
                 'internal_webhook_receiver_url' => 'https://client.example.test/quickbooks/int/v1/webhooks',
@@ -500,24 +501,25 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
             ->and($stored)->not->toHaveKey('public_receiver_url')
             ->and($stored)->not->toHaveKey('internal_webhook_receiver_url')
             ->and($stored)->not->toHaveKey('internal_oauth_redirect_url')
-            ->and($stored['public_webhook_receiver_url'])->toBe('https://public.example.test/quickbooks/int/v1/webhooks')
-            ->and($stored['public_oauth_redirect_url'])->toBe('https://public.example.test/quickbooks/int/v1/oauth/callback')
+            ->and($stored['public_webhook_receiver_url'])->toBe('https://example.com/quickbooks/int/v1/webhooks')
+            ->and($stored['public_oauth_redirect_url'])->toBe('https://example.com/quickbooks/int/v1/oauth/callback')
             ->and($storedSync)->not->toHaveKey('internal_webhook_receiver_url')
             ->and($storedSync)->not->toHaveKey('public_webhook_receiver_url')
             ->and($storedSync)->not->toHaveKey('public_oauth_redirect_url')
             ->and($body['internal_webhook_receiver_url'])->toBe('/quickbooks/int/v1/webhooks')
-            ->and($body['public_webhook_receiver_url'])->toBe('https://public.example.test/quickbooks/int/v1/webhooks')
+            ->and($body['public_webhook_receiver_url'])->toBe('https://example.com/quickbooks/int/v1/webhooks')
             ->and($body['internal_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback')
-            ->and($body['public_oauth_redirect_url'])->toBe('https://public.example.test/quickbooks/int/v1/oauth/callback')
+            ->and($body['public_oauth_redirect_url'])->toBe('https://example.com/quickbooks/int/v1/oauth/callback')
             ->and($body['auth']['internal_webhook_receiver_url'])->toBe('/quickbooks/int/v1/webhooks')
-            ->and($body['auth']['public_webhook_receiver_url'])->toBe('https://public.example.test/quickbooks/int/v1/webhooks')
+            ->and($body['auth']['public_webhook_receiver_url'])->toBe('https://example.com/quickbooks/int/v1/webhooks')
             ->and($body['auth']['internal_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback')
-            ->and($body['auth']['public_oauth_redirect_url'])->toBe('https://public.example.test/quickbooks/int/v1/oauth/callback');
+            ->and($body['auth']['public_oauth_redirect_url'])->toBe('https://example.com/quickbooks/int/v1/oauth/callback');
 
         $cleared = $controller->save(Request::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
             'auth'         => validAuth([
+                'redirect_uri'                => 'https://example.com/callback',
                 'public_webhook_receiver_url' => '   ',
                 'public_oauth_redirect_url'   => '',
             ]),
@@ -653,12 +655,12 @@ test('a blank path-only loopback or port 4200 redirect is saved as the api callb
         $kept = $controller->save(Request::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
-            'auth'         => validAuth(['redirect_uri' => 'https://example.test/callback']),
+            'auth'         => validAuth(['redirect_uri' => 'https://example.com/callback']),
             'sync'         => qbSettings(),
         ]));
 
         expect($kept->getStatusCode())->toBe(200)
-            ->and($store->rows[SettingsKeys::adminAuth()]['redirect_uri'])->toBe('https://example.test/callback');
+            ->and($store->rows[SettingsKeys::adminAuth()]['redirect_uri'])->toBe('https://example.com/callback');
     } finally {
         session(['company' => null]);
         config()->set('app.url', null);
@@ -833,7 +835,7 @@ test('a new install defaults to production and a stored sandbox stays stored', f
             'company_uuid' => 'company-uuid',
             'auth'         => [
                 'client_id'     => 'client-id',
-                'redirect_uri'  => 'https://example.test/callback',
+                'redirect_uri'  => 'https://example.com/callback',
                 'client_secret' => 'secret',
             ],
             'sync' => qbSettings(),
@@ -875,10 +877,24 @@ test('a public oauth or webhook url must be https and not an internal address', 
             'https://192.168.1.9/callback',
             'https://172.16.5.5/callback',
             'https://127.0.0.2/callback',
+            'https://127.1/callback',
+            'https://127.0.1/callback',
+            'https://0177.0.0.1/callback',
+            'https://2130706433/callback',
+            'https://0x7f000001/callback',
+            'https://127.000.000.001/callback',
+            'https://0.0.0.0/callback',
+            'https://100.64.0.1/callback',
+            'https://192.0.2.1/callback',
+            'https://224.0.0.1/callback',
             'https://169.254.169.254/callback',
+            'https://[::]/callback',
+            'https://[ff02::1]/callback',
             'https://[fe80::1]/callback',
             'https://[fd00::1]/callback',
             'https://localhost/callback',
+            'https://127.0.0.1.nip.io/callback',
+            'https://public.example.test/callback',
         ] as $redirect) {
             $saved = $controller->save(Request::create('/settings', 'POST', [
                 'scope' => 'admin',
@@ -902,8 +918,8 @@ test('a public oauth or webhook url must be https and not an internal address', 
 
         Http::assertNothingSent();
 
-        $public = 'https://public.example.test/quickbooks/int/v1/oauth/callback';
-        $hook   = 'https://public.example.test/quickbooks/int/v1/webhooks';
+        $public = 'https://example.com/quickbooks/int/v1/oauth/callback';
+        $hook   = 'https://example.com/quickbooks/int/v1/webhooks';
         $kept   = $controller->save(Request::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => validAuth([

@@ -3,8 +3,10 @@
 namespace Fleetbase\Quickbooks\Support;
 
 /**
- * The public https check used when QuickBooks settings are saved.
- * The host is taken from the URL. This does not resolve the name or request it.
+ * Public https check for QuickBooks redirect and receiver URLs.
+ * IP literals are normalized, including short, octal, decimal, and hexadecimal
+ * forms. A hostname is resolved, and the URL is rejected when DNS fails or any
+ * address is not a public unicast address.
  */
 class PublicHttps
 {
@@ -31,25 +33,116 @@ class PublicHttps
 
     private static function hostIsInternal(string $host): bool
     {
-        $host = strtolower(trim($host, '[]'));
+        $host = trim($host, '[]');
+        if (str_ends_with($host, '.')) {
+            $host = substr($host, 0, -1);
+        }
+        if (preg_match('/[^\x00-\x7F]/', $host) === 1) {
+            if (!function_exists('idn_to_ascii')) {
+                return true;
+            }
+            $ascii = idn_to_ascii($host, IDNA_DEFAULT);
+            if (!is_string($ascii) || $ascii === '') {
+                return true;
+            }
+            $host = $ascii;
+        }
+        $host = strtolower($host);
         if ($host === '' || self::hostnameIsLoopback($host)) {
             return true;
         }
-        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            return self::ipv4IsInternal($host);
+        if (self::looksLikeIpv4Literal($host)) {
+            $ipv4 = self::ipv4FromLiteral($host);
+
+            return $ipv4 === null || self::ipv4IsInternal($ipv4);
         }
         if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
             return self::ipv6IsInternal($host);
         }
+        if (str_contains($host, ':')) {
+            return true;
+        }
 
-        return false;
+        return !self::hostnameResolvesToPublic($host);
     }
 
     private static function hostnameIsLoopback(string $hostname): bool
     {
-        $hostname = strtolower(trim($hostname, '[]'));
-
         return in_array($hostname, ['localhost', '127.0.0.1', '::1'], true);
+    }
+
+    private static function looksLikeIpv4Literal(string $host): bool
+    {
+        return preg_match('/^(?:0x[0-9a-f]+|\d+)(?:\.(?:0x[0-9a-f]+|\d+))*$/', $host) === 1;
+    }
+
+    /**
+     * inet_aton forms: a, a.b, a.b.c, and a.b.c.d, with decimal, octal, or hex parts.
+     */
+    private static function ipv4FromLiteral(string $host): ?string
+    {
+        if (preg_match('/^(?:0x[0-9a-f]+|\d+)(?:\.(?:0x[0-9a-f]+|\d+)){0,3}$/', $host) !== 1) {
+            return null;
+        }
+        $parts   = explode('.', $host);
+        $count   = count($parts);
+        $numbers = [];
+        foreach ($parts as $index => $part) {
+            $parsed = self::parseIpv4Component($part);
+            if ($parsed === null) {
+                return null;
+            }
+            $bits = $index === $count - 1 ? 8 * (5 - $count) : 8;
+            $max  = (2 ** $bits) - 1;
+            if ($parsed > $max) {
+                return null;
+            }
+            $numbers[] = $parsed;
+        }
+        $value = match ($count) {
+            1       => $numbers[0],
+            2       => ($numbers[0] * 16777216) + $numbers[1],
+            3       => ($numbers[0] * 16777216) + ($numbers[1] * 65536) + $numbers[2],
+            default => ($numbers[0] * 16777216) + ($numbers[1] * 65536) + ($numbers[2] * 256) + $numbers[3],
+        };
+
+        $formatted = long2ip($value & 0xFFFFFFFF);
+
+        return is_string($formatted) ? $formatted : null;
+    }
+
+    private static function parseIpv4Component(string $part): ?int
+    {
+        if ($part === '' || $part === '0x') {
+            return null;
+        }
+        if (preg_match('/^0x([0-9a-f]+)$/', $part, $matches) === 1) {
+            if (strlen($matches[1]) > 8) {
+                return null;
+            }
+            $value = hexdec($matches[1]);
+            if (!is_int($value) || $value < 0) {
+                return null;
+            }
+
+            return $value;
+        }
+        if ($part[0] === '0') {
+            if (strlen($part) > 11 || preg_match('/^[0-7]+$/', $part) !== 1) {
+                return null;
+            }
+
+            return intval($part, 8);
+        }
+        if (preg_match('/^[1-9][0-9]*$/', $part) !== 1 || strlen($part) > 10) {
+            return null;
+        }
+        $value = (int) $part;
+        if ((string) $value !== $part) {
+            return null;
+        }
+
+        return $value;
     }
 
     private static function ipv4IsInternal(string $ip): bool
@@ -58,23 +151,42 @@ class PublicHttps
         if ($long === false) {
             return true;
         }
-        $value  = (int) sprintf('%u', $long);
-        $ranges = [
-            ['10.0.0.0', '10.255.255.255'],
-            ['127.0.0.0', '127.255.255.255'],
-            ['169.254.0.0', '169.254.255.255'],
-            ['172.16.0.0', '172.31.255.255'],
-            ['192.168.0.0', '192.168.255.255'],
+        $value = (int) sprintf('%u', $long);
+        $cidrs = [
+            ['0.0.0.0', 8],
+            ['10.0.0.0', 8],
+            ['100.64.0.0', 10],
+            ['127.0.0.0', 8],
+            ['169.254.0.0', 16],
+            ['172.16.0.0', 12],
+            ['192.0.0.0', 24],
+            ['192.0.2.0', 24],
+            ['192.168.0.0', 16],
+            ['198.18.0.0', 15],
+            ['198.51.100.0', 24],
+            ['203.0.113.0', 24],
+            ['224.0.0.0', 4],
+            ['240.0.0.0', 4],
         ];
-        foreach ($ranges as [$start, $end]) {
-            $from = (int) sprintf('%u', ip2long($start));
-            $to   = (int) sprintf('%u', ip2long($end));
-            if ($value >= $from && $value <= $to) {
+        foreach ($cidrs as [$network, $bits]) {
+            if (self::ipv4InCidr($value, $network, $bits)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static function ipv4InCidr(int $value, string $network, int $bits): bool
+    {
+        $base = ip2long($network);
+        if ($base === false || $bits < 1 || $bits > 32) {
+            return true;
+        }
+        $base = (int) sprintf('%u', $base);
+        $mask = (int) ((0xFFFFFFFF << (32 - $bits)) & 0xFFFFFFFF);
+
+        return ($value & $mask) === ($base & $mask);
     }
 
     private static function ipv6IsInternal(string $ip): bool
@@ -89,16 +201,70 @@ class PublicHttps
 
             return !is_string($ipv4) || self::ipv4IsInternal($ipv4);
         }
-        if ($packed === inet_pton('::1')) {
-            return true;
+        if (str_starts_with($packed, str_repeat("\x00", 12))) {
+            $ipv4 = inet_ntop(substr($packed, 12));
+
+            return !is_string($ipv4) || self::ipv4IsInternal($ipv4);
         }
         $first  = ord($packed[0]);
         $second = ord($packed[1]);
-        // fe80::/10 is link-local. fc00::/7 is the private unique-local range.
-        if ($first === 0xFE && ($second & 0xC0) === 0x80) {
+        if ($first === 0xFF) {
+            return true;
+        }
+        if ($first === 0xFE && (($second & 0xC0) === 0x80 || ($second & 0xC0) === 0xC0)) {
+            return true;
+        }
+        if (($first & 0xFE) === 0xFC) {
             return true;
         }
 
-        return ($first & 0xFE) === 0xFC;
+        return $packed[0] === "\x20"
+            && $packed[1] === "\x01"
+            && $packed[2] === "\x0d"
+            && $packed[3] === "\xb8";
+    }
+
+    private static function addressIsInternal(string $ip): bool
+    {
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return self::ipv4IsInternal($ip);
+        }
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            return self::ipv6IsInternal($ip);
+        }
+
+        return true;
+    }
+
+    private static function hostnameResolvesToPublic(string $host): bool
+    {
+        if (strlen($host) > 253 || preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/', $host) !== 1) {
+            return false;
+        }
+        $records = @dns_get_record($host, DNS_A | DNS_AAAA);
+        if (!is_array($records) || $records === []) {
+            return false;
+        }
+        $sawAddress = false;
+        foreach ($records as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            $ip = null;
+            if (isset($record['ip']) && is_string($record['ip'])) {
+                $ip = $record['ip'];
+            } elseif (isset($record['ipv6']) && is_string($record['ipv6'])) {
+                $ip = $record['ipv6'];
+            }
+            if ($ip === null || $ip === '') {
+                continue;
+            }
+            $sawAddress = true;
+            if (self::addressIsInternal($ip)) {
+                return false;
+            }
+        }
+
+        return $sawAddress;
     }
 }

@@ -169,7 +169,7 @@ test('an unrecognized token is not a live secret and plaintext is encrypted on t
         'client_id'        => 'id',
         'client_secret'    => 'plain-secret',
         'webhook_verifier' => 'plain-verifier',
-        'redirect_uri'     => 'https://example.test/callback',
+        'redirect_uri'     => 'https://example.com/callback',
         'environment'      => 'sandbox',
     ];
     $controller = new SettingController(
@@ -186,7 +186,7 @@ test('an unrecognized token is not a live secret and plaintext is encrypted on t
                 'client_id'        => 'id',
                 'client_secret'    => '',
                 'webhook_verifier' => '',
-                'redirect_uri'     => 'https://example.test/callback',
+                'redirect_uri'     => 'https://example.com/callback',
                 'environment'      => 'sandbox',
             ],
             'sync' => qbSettings(),
@@ -497,7 +497,20 @@ test('oauth start refuses a private callback and sends a public https redirect',
             'https://192.168.1.9/callback',
             'https://172.16.5.5/callback',
             'https://127.0.0.2/callback',
+            'https://127.1/callback',
+            'https://0177.0.0.1/callback',
+            'https://2130706433/callback',
+            'https://0x7f000001/callback',
+            'https://127.000.000.001/callback',
+            'https://0.0.0.0/callback',
+            'https://100.64.0.1/callback',
+            'https://192.0.2.1/callback',
+            'https://224.0.0.1/callback',
+            'https://[::]/callback',
+            'https://[ff02::1]/callback',
             'https://localhost/callback',
+            'https://127.0.0.1.nip.io/callback',
+            'https://public.example.test/callback',
             'not-a-url',
         ] as $redirect) {
             $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url'] = $redirect;
@@ -506,13 +519,13 @@ test('oauth start refuses a private callback and sends a public https redirect',
                 ->and($refused->getContent())->not->toContain($redirect);
         }
 
-        $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url'] = 'https://public.example.test/quickbooks/int/v1/oauth/callback';
+        $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url'] = 'https://example.com/quickbooks/int/v1/oauth/callback';
         $public                                                              = qbOAuthRedirect($start());
-        expect($public)->toBe('https://public.example.test/quickbooks/int/v1/oauth/callback');
+        expect($public)->toBe('https://example.com/quickbooks/int/v1/oauth/callback');
 
-        config()->set('app.url', 'https://api.example.test');
+        config()->set('app.url', 'https://example.com');
         unset($store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']);
-        expect(qbOAuthRedirect($start()))->toBe('https://api.example.test/quickbooks/int/v1/oauth/callback');
+        expect(qbOAuthRedirect($start()))->toBe('https://example.com/quickbooks/int/v1/oauth/callback');
     } finally {
         qbRestoreConfig($previous);
         session(['company' => null, 'user' => null]);
@@ -533,7 +546,7 @@ test('a path-only computed callback uses a full public oauth url and otherwise s
     config()->set('fleetbase.console.host', null);
     config()->set('quickbooks.console_host', null);
     config()->set('quickbooks.redirect_uri', '');
-    $public                                                 = 'https://books.example.test/quickbooks/int/v1/oauth/callback';
+    $public                                                 = 'https://example.com/quickbooks/int/v1/oauth/callback';
     $store                                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()]                 = [
         'client_id'                  => 'client-id',
@@ -584,12 +597,12 @@ test('oauth complete exchanges the code with the same computed callback', functi
         'quickbooks.console_host',
         'quickbooks.redirect_uri',
     ]);
-    config()->set('app.url', 'https://api.example.test');
+    config()->set('app.url', 'https://example.com');
     config()->set('fleetbase.url', null);
     config()->set('fleetbase.console.host', 'http://10.30.0.34:4200');
     config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
     config()->set('quickbooks.redirect_uri', '');
-    $computed = 'https://api.example.test/quickbooks/int/v1/oauth/callback';
+    $computed = 'https://example.com/quickbooks/int/v1/oauth/callback';
     Http::swap(new Illuminate\Http\Client\Factory());
     Http::fake([
         'oauth.platform.intuit.com/*' => Http::response([

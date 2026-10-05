@@ -804,7 +804,7 @@ test('saving a blank webhook verifier keeps the stored ciphertext and does not p
     $store->rows[SettingsKeys::adminAuth()]                 = $settings->storeAuth([
         'client_id'        => 'client-id',
         'client_secret'    => 'plain-secret',
-        'redirect_uri'     => 'https://example.test/callback',
+        'redirect_uri'     => 'https://example.com/callback',
         'environment'      => 'sandbox',
         'webhook_verifier' => 'verifier-token',
     ], []);
@@ -821,7 +821,7 @@ test('saving a blank webhook verifier keeps the stored ciphertext and does not p
             'auth'  => [
                 'client_id'            => 'client-id',
                 'client_secret'        => '',
-                'redirect_uri'         => 'https://example.test/callback',
+                'redirect_uri'         => 'https://example.com/callback',
                 'environment'          => 'sandbox',
                 'webhook_verifier'     => '',
                 'webhook_verifier_set' => true,

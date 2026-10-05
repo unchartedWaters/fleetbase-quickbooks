@@ -196,21 +196,59 @@ test('a non-admin cannot connect disconnect sync import reconcile or test the in
 });
 
 test('the redirect sent to intuit must be public https', function () {
-    expect(PublicHttps::isPublicHttpsUrl('https://public.example.test/quickbooks/int/v1/oauth/callback'))->toBeTrue();
+    expect(PublicHttps::isPublicHttpsUrl('https://example.com/quickbooks/int/v1/oauth/callback'))->toBeTrue()
+        ->and(PublicHttps::isPublicHttpsUrl('https://1.1.1.1/callback'))->toBeTrue()
+        ->and(PublicHttps::isPublicHttpsUrl('https://8.8.8.8/callback'))->toBeTrue()
+        ->and(PublicHttps::isPublicHttpsUrl('https://[2606:4700:4700::1111]/callback'))->toBeTrue()
+        ->and(PublicHttps::isPublicHttpsUrl('https://[::ffff:8.8.8.8]/callback'))->toBeTrue()
+        ->and(PublicHttps::isPublicHttpsUrl('https://100.128.0.1/callback'))->toBeTrue();
 
     foreach ([
-        'http://public.example.test/callback',
+        'http://example.com/callback',
         'https://10.0.0.5/callback',
         'https://192.168.1.9/callback',
         'https://172.16.5.5/callback',
         'https://127.0.0.2/callback',
+        'https://127.1/callback',
+        'https://127.0.1/callback',
+        'https://0177.0.0.1/callback',
+        'https://2130706433/callback',
+        'https://0x7f000001/callback',
+        'https://127.000.000.001/callback',
+        'https://0x7f.0.0.1/callback',
+        'https://0.0.0.0/callback',
+        'https://0.255.255.255/callback',
+        'https://100.64.0.1/callback',
+        'https://100.127.255.255/callback',
         'https://169.254.169.254/callback',
+        'https://192.0.0.1/callback',
+        'https://192.0.2.1/callback',
+        'https://198.18.0.1/callback',
+        'https://198.51.100.1/callback',
+        'https://203.0.113.1/callback',
+        'https://224.0.0.1/callback',
+        'https://239.255.255.255/callback',
+        'https://240.0.0.1/callback',
+        'https://255.255.255.255/callback',
+        'https://192.168.08.1/callback',
+        'https://1.2.3.4.5/callback',
         'https://localhost/callback',
         'https://127.0.0.1/callback',
+        'https://[::]/callback',
         'https://[::1]/callback',
+        'https://[::7f00:1]/callback',
         'https://[fe80::1]/callback',
+        'https://[fec0::1]/callback',
         'https://[fd00::1]/callback',
-        'https://user:secret@public.example.test/callback',
+        'https://[ff02::1]/callback',
+        'https://[2001:db8::1]/callback',
+        'https://[::ffff:127.0.0.1]/callback',
+        'https://[::ffff:7f00:1]/callback',
+        'https://[::ffff:192.0.2.1]/callback',
+        'https://127.0.0.1.nip.io/callback',
+        'https://public.example.test/callback',
+        'https://no-such-host.invalid/callback',
+        'https://user:secret@example.com/callback',
         '/quickbooks/int/v1/oauth/callback',
     ] as $url) {
         expect(PublicHttps::isPublicHttpsUrl($url))->toBeFalse();

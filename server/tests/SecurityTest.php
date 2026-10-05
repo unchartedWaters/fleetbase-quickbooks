@@ -104,7 +104,7 @@ test('saving settings keeps stored auth fields that were not sent', function () 
     $store->rows[SettingsKeys::adminAuth()] = [
         'client_id'     => 'old-id',
         'client_secret' => 'kept-secret',
-        'redirect_uri'  => 'https://example.test/callback',
+        'redirect_uri'  => 'https://example.com/callback',
         'environment'   => 'sandbox',
     ];
 
@@ -121,7 +121,7 @@ test('saving settings keeps stored auth fields that were not sent', function () 
             ->and($stored['client_id'])->toBe('new-id')
             ->and($stored['client_secret'])->not->toBe('kept-secret')
             ->and((new SecretCipher())->decrypt($stored['client_secret']))->toBe('kept-secret')
-            ->and($stored['redirect_uri'])->toBe('https://example.test/callback')
+            ->and($stored['redirect_uri'])->toBe('https://example.com/callback')
             ->and($stored['environment'])->toBe('sandbox');
     } finally {
         session(['company' => null]);
