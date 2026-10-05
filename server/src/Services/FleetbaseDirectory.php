@@ -325,20 +325,36 @@ class FleetbaseDirectory
         // writeConnection already no-ops in those cases; these rows do not.
         $skipped = $this->companiesSkippingLedgerWrites($ledger);
 
+        $loadedByUuid = [];
+        foreach ($this->loaded['links'] as $loadedLink) {
+            if (!is_array($loadedLink)) {
+                continue;
+            }
+            $loadedUuid = (string) ($loadedLink['uuid'] ?? '');
+            if ($loadedUuid !== '') {
+                $loadedByUuid[$loadedUuid] = $loadedLink;
+            }
+        }
+        $linkFields   = ['company_uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_entity', 'qbo_id', 'sync_token'];
         $freshLinks   = [];
         $changedLinks = [];
         foreach ($ledger->links as $link) {
-            if (isset($skipped[(string) ($link['company_uuid'] ?? '')])) {
+            if (!is_array($link) || isset($skipped[(string) ($link['company_uuid'] ?? '')])) {
                 continue;
             }
             $key     = (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '') . '|' . (string) ($link['local_uuid'] ?? '');
-            $loaded  = $this->loaded['links'][$key] ?? null;
-            $changed = self::changedColumns($link, is_array($loaded) ? $loaded : null, ['company_uuid', 'realm_id', 'qbo_entity', 'qbo_id', 'sync_token']);
+            $loaded  = $this->loadedLink($key, $link, $loadedByUuid);
+            $changed = self::changedColumns($link, is_array($loaded) ? $loaded : null, $linkFields);
             if ($changed === [] && is_array($loaded)) {
                 continue;
             }
             if (is_array($loaded)) {
                 $uuid = (string) ($loaded['uuid'] ?? '');
+                if (isset($changed['local_uuid']) || isset($changed['local_type'])) {
+                    // The new local key may already be stored. Free it before this row moves,
+                    // or the unique local identity rejects the update and insertOrIgnore keeps the old key.
+                    $this->releaseLinkIdentity($link, $uuid);
+                }
                 if ($uuid === '') {
                     Link::query()->updateOrCreate(
                         [
@@ -356,7 +372,8 @@ class FleetbaseDirectory
             $freshLinks[] = $link;
         }
         $this->insertLinks($freshLinks);
-        $this->updateByUuid(new Link(), $changedLinks, ['company_uuid', 'realm_id', 'qbo_entity', 'qbo_id', 'sync_token']);
+        $this->updateByUuid(new Link(), $changedLinks, $linkFields);
+        $this->dropStaleInvoicePaymentLinks($ledger, $skipped);
         $freshPending   = [];
         $changedPending = [];
         foreach ($ledger->pending as $row) {
@@ -1927,6 +1944,463 @@ class FleetbaseDirectory
     }
 
     /**
+     * A rekeyed payment keeps its link uuid and changes local_uuid from the invoice
+     * to the QuickBooks payment id. insertOrIgnore of that same primary key would
+     * leave the invoice-uuid row in place.
+     *
+     * @param array<string, mixed>                $link
+     * @param array<string, array<string, mixed>> $loadedByUuid
+     *
+     * @return array<string, mixed>|null
+     */
+    private function loadedLink(string $key, array $link, array $loadedByUuid): ?array
+    {
+        $loaded = $this->loaded['links'][$key] ?? null;
+        if (is_array($loaded)) {
+            return $loaded;
+        }
+        $uuid = (string) ($link['uuid'] ?? '');
+        if ($uuid === '' || !isset($loadedByUuid[$uuid]) || !is_array($loadedByUuid[$uuid])) {
+            return null;
+        }
+
+        return $loadedByUuid[$uuid];
+    }
+
+    /**
+     * Delete a different row that already occupies this local identity.
+     *
+     * @param array<string, mixed> $link
+     */
+    private function releaseLinkIdentity(array $link, string $keepUuid): void
+    {
+        $company = (string) ($link['company_uuid'] ?? '');
+        $type    = (string) ($link['local_type'] ?? '');
+        $local   = (string) ($link['local_uuid'] ?? '');
+        if ($company === '' || $type === '' || $local === '') {
+            return;
+        }
+
+        $query = Link::query()
+            ->where('company_uuid', $company)
+            ->where('local_type', $type)
+            ->where('local_uuid', $local);
+        if ($keepUuid !== '') {
+            $query->where('uuid', '!=', $keepUuid);
+        }
+        $query->delete();
+    }
+
+    /**
+     * One QuickBooks payment id is stored under that id. An older row that still
+     * uses the invoice uuid for the same payment is removed once the new key is stored.
+     *
+     * @param array<string, true> $skipped
+     */
+    private function dropStaleInvoicePaymentLinks(SyncLedger $ledger, array $skipped): void
+    {
+        foreach ($ledger->links as $link) {
+            if (!is_array($link) || isset($skipped[(string) ($link['company_uuid'] ?? '')])) {
+                continue;
+            }
+            if ((string) ($link['local_type'] ?? '') !== 'payment') {
+                continue;
+            }
+            $local   = (string) ($link['local_uuid'] ?? '');
+            $qboId   = (string) ($link['qbo_id'] ?? '');
+            $company = (string) ($link['company_uuid'] ?? '');
+            $realm   = (string) ($link['realm_id'] ?? '');
+            if ($local === '' || $qboId === '' || $local !== $qboId || $company === '' || $realm === '') {
+                continue;
+            }
+            $kept = Link::query()
+                ->where('company_uuid', $company)
+                ->where('realm_id', $realm)
+                ->where('local_type', 'payment')
+                ->where('qbo_id', $qboId)
+                ->where('local_uuid', $local)
+                ->exists();
+            if (!$kept) {
+                continue;
+            }
+            Link::query()
+                ->where('company_uuid', $company)
+                ->where('realm_id', $realm)
+                ->where('local_type', 'payment')
+                ->where('qbo_id', $qboId)
+                ->where('local_uuid', '!=', $local)
+                ->delete();
+        }
+    }
+
+    /**
+     * QuickBooks deleted or voided this record. The local invoice is voided and its
+     * link dropped. A customer or wallet is retired so catalog and pending sync
+     * cannot create the remote record again. A payment link is dropped, and a paid
+     * invoice it pointed at is set so the next sync does not create a replacement payment.
+     */
+    public function releaseRemoteDelete(string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid): void
+    {
+        if ($companyUuid === '' || $localType === '') {
+            return;
+        }
+        if ($this->memory !== null) {
+            $this->releaseMemoryRemoteDelete($companyUuid, $realmId, $localType, $quickbooksId, $localUuid);
+
+            return;
+        }
+
+        $wasPaused = SyncSuppressor::paused();
+        SyncSuppressor::pause();
+        try {
+            $uuids = $this->linkedLocalUuids($companyUuid, $realmId, $localType, $quickbooksId, $localUuid);
+            if (is_string($localUuid) && $localUuid !== '' && !in_array($localUuid, $uuids, true)) {
+                $uuids[] = $localUuid;
+            }
+            foreach ($uuids as $uuid) {
+                $this->applyRemoteDelete($companyUuid, $realmId, $localType, $quickbooksId, $uuid);
+            }
+            $this->dropRemoteLinks($companyUuid, $realmId, $localType, $quickbooksId);
+        } finally {
+            if (!$wasPaused) {
+                SyncSuppressor::resume();
+            }
+        }
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function linkedLocalUuids(string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid): array
+    {
+        if ($quickbooksId === '' && ($localUuid === null || $localUuid === '')) {
+            return [];
+        }
+
+        try {
+            $query = Link::query()->where('company_uuid', $companyUuid)->where('local_type', $localType);
+            if ($realmId !== '') {
+                $query->where('realm_id', $realmId);
+            }
+            $query->where(function ($inner) use ($quickbooksId, $localUuid): void {
+                $started = false;
+                if ($quickbooksId !== '') {
+                    $inner->where('qbo_id', $quickbooksId);
+                    $started = true;
+                }
+                if (is_string($localUuid) && $localUuid !== '') {
+                    $method = $started ? 'orWhere' : 'where';
+                    $inner->{$method}('local_uuid', $localUuid);
+                }
+            });
+            $ids = [];
+            foreach ($query->pluck('local_uuid') as $uuid) {
+                $id = (string) $uuid;
+                if ($id !== '') {
+                    $ids[] = $id;
+                }
+            }
+
+            return array_values(array_unique($ids));
+        } catch (\Illuminate\Database\QueryException $exception) {
+            if ($this->isMissingTable($exception)) {
+                return [];
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function applyRemoteDelete(string $companyUuid, string $realmId, string $localType, string $quickbooksId, string $localUuid): void
+    {
+        if ($localType === 'invoice') {
+            $this->setInvoiceStatus($companyUuid, $localUuid, 'void');
+            $this->dropLocalLinks($companyUuid, $realmId, 'invoice', $localUuid);
+            $this->dropLocalLinks($companyUuid, $realmId, 'payment', $localUuid);
+            $this->finishPending($companyUuid, 'invoice', $localUuid);
+
+            return;
+        }
+        if ($localType === 'payment') {
+            $this->dropLocalLinks($companyUuid, $realmId, 'payment', $localUuid);
+            if ($localUuid === '' || $localUuid === $quickbooksId) {
+                return;
+            }
+            $status = $this->invoiceStatus($companyUuid, $localUuid);
+            if ($status === null) {
+                return;
+            }
+            if (in_array(strtolower($status), ['paid', 'partial'], true)) {
+                $this->setInvoiceStatus($companyUuid, $localUuid, 'sent');
+            }
+            $this->finishPending($companyUuid, 'invoice', $localUuid);
+
+            return;
+        }
+        if ($localType === 'customer') {
+            $this->retireLocal('Fleetbase\\FleetOps\\Models\\Customer', $companyUuid, $localUuid, []);
+            $this->dropLocalLinks($companyUuid, $realmId, 'customer', $localUuid);
+            $this->finishPending($companyUuid, 'customer', $localUuid);
+
+            return;
+        }
+        if ($localType === 'wallet') {
+            $this->retireLocal('Fleetbase\\Ledger\\Models\\Wallet', $companyUuid, $localUuid, ['status' => 'closed']);
+            $this->dropLocalLinks($companyUuid, $realmId, 'wallet', $localUuid);
+            $this->finishPending($companyUuid, 'wallet', $localUuid);
+        }
+    }
+
+    private function setInvoiceStatus(string $companyUuid, string $uuid, string $status): void
+    {
+        $class = 'Fleetbase\\Ledger\\Models\\Invoice';
+        if (!class_exists($class) || $companyUuid === '' || $uuid === '') {
+            return;
+        }
+
+        try {
+            $current = $this->invoiceTable($class, $companyUuid, $uuid)->value('status');
+            if (!is_string($current)) {
+                return;
+            }
+            if ($status === 'void' && in_array(strtolower($current), ['void', 'voided', 'cancelled', 'canceled'], true)) {
+                return;
+            }
+            if ($current === $status) {
+                return;
+            }
+            // The invoice model eager-loads lines. A table update changes status only and leaves integer money alone.
+            $this->invoiceTable($class, $companyUuid, $uuid)->update([
+                'status'     => $status,
+                'updated_at' => Carbon::now()->toDateTimeString(),
+            ]);
+        } catch (\Throwable $exception) {
+            if ($this->isUnavailableStorage($exception)) {
+                return;
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function invoiceStatus(string $companyUuid, string $uuid): ?string
+    {
+        $class = 'Fleetbase\\Ledger\\Models\\Invoice';
+        if (!class_exists($class) || $companyUuid === '' || $uuid === '') {
+            return null;
+        }
+
+        try {
+            $status = $this->invoiceTable($class, $companyUuid, $uuid)->value('status');
+        } catch (\Throwable $exception) {
+            if ($this->isUnavailableStorage($exception)) {
+                return null;
+            }
+
+            throw $exception;
+        }
+
+        return is_string($status) ? $status : null;
+    }
+
+    /**
+     * @param class-string $class
+     */
+    private function invoiceTable(string $class, string $companyUuid, string $uuid): \Illuminate\Database\Query\Builder
+    {
+        $model = new $class();
+
+        return $model->getConnection()->table($model->getTable())
+            ->where('company_uuid', $companyUuid)
+            ->where('uuid', $uuid)
+            ->whereNull('deleted_at');
+    }
+
+    /**
+     * @param class-string         $class
+     * @param array<string, mixed> $extra
+     */
+    private function retireLocal(string $class, string $companyUuid, string $uuid, array $extra): void
+    {
+        if (!class_exists($class) || $companyUuid === '' || $uuid === '') {
+            return;
+        }
+
+        try {
+            $class::query()->where('company_uuid', $companyUuid)->where('uuid', $uuid)->update(array_merge($extra, [
+                'deleted_at' => Carbon::now(),
+                'updated_at' => Carbon::now(),
+            ]));
+        } catch (\Throwable $exception) {
+            if ($this->isUnavailableStorage($exception)) {
+                return;
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function dropLocalLinks(string $companyUuid, string $realmId, string $localType, string $localUuid): void
+    {
+        if ($companyUuid === '' || $localType === '' || $localUuid === '') {
+            return;
+        }
+
+        try {
+            $query = Link::query()
+                ->where('company_uuid', $companyUuid)
+                ->where('local_type', $localType)
+                ->where('local_uuid', $localUuid);
+            if ($realmId !== '') {
+                $query->where('realm_id', $realmId);
+            }
+            $query->delete();
+        } catch (\Illuminate\Database\QueryException $exception) {
+            if ($this->isMissingTable($exception)) {
+                return;
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function dropRemoteLinks(string $companyUuid, string $realmId, string $localType, string $quickbooksId): void
+    {
+        if ($companyUuid === '' || $localType === '' || $quickbooksId === '') {
+            return;
+        }
+
+        try {
+            $query = Link::query()
+                ->where('company_uuid', $companyUuid)
+                ->where('local_type', $localType)
+                ->where('qbo_id', $quickbooksId);
+            if ($realmId !== '') {
+                $query->where('realm_id', $realmId);
+            }
+            $query->delete();
+        } catch (\Illuminate\Database\QueryException $exception) {
+            if ($this->isMissingTable($exception)) {
+                return;
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function finishPending(string $companyUuid, string $localType, string $localUuid): void
+    {
+        if ($companyUuid === '' || $localType === '' || $localUuid === '') {
+            return;
+        }
+
+        try {
+            PendingSync::query()
+                ->where('company_uuid', $companyUuid)
+                ->where('local_type', $localType)
+                ->where('local_uuid', $localUuid)
+                ->where('status', 'pending')
+                ->update([
+                    'status'     => 'done',
+                    'updated_at' => Carbon::now(),
+                ]);
+        } catch (\Illuminate\Database\QueryException $exception) {
+            if ($this->isMissingTable($exception)) {
+                return;
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function isMissingTable(\Illuminate\Database\QueryException $exception): bool
+    {
+        return $this->isUnavailableStorage($exception);
+    }
+
+    private function isUnavailableStorage(\Throwable $exception): bool
+    {
+        $message = strtolower($exception->getMessage());
+
+        return str_contains($message, 'no such table')
+            || str_contains($message, "doesn't exist")
+            || str_contains($message, 'base table or view not found')
+            || str_contains($message, 'not configured');
+    }
+
+    private function releaseMemoryRemoteDelete(string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid): void
+    {
+        if ($this->memory === null) {
+            return;
+        }
+
+        $uuids = [];
+        $kept  = [];
+        foreach ($this->memory->links as $link) {
+            if (!is_array($link)) {
+                continue;
+            }
+            $sameCompany = (string) ($link['company_uuid'] ?? '') === $companyUuid;
+            $sameRealm   = $realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId;
+            $sameType    = (string) ($link['local_type'] ?? '') === $localType;
+            $sameRemote  = $quickbooksId !== '' && (string) ($link['qbo_id'] ?? '') === $quickbooksId;
+            $sameLocal   = is_string($localUuid) && $localUuid !== '' && (string) ($link['local_uuid'] ?? '') === $localUuid;
+            if ($sameCompany && $sameRealm && $sameType && ($sameRemote || $sameLocal)) {
+                $id = (string) ($link['local_uuid'] ?? '');
+                if ($id !== '') {
+                    $uuids[] = $id;
+                }
+                continue;
+            }
+            $kept[] = $link;
+        }
+        if (is_string($localUuid) && $localUuid !== '') {
+            $uuids[] = $localUuid;
+        }
+        $this->memory->links = $kept;
+        foreach (array_values(array_unique($uuids)) as $uuid) {
+            if ($localType === 'invoice') {
+                if (isset($this->memory->invoices[$uuid]) && is_array($this->memory->invoices[$uuid])) {
+                    $this->memory->invoices[$uuid]['status'] = 'void';
+                }
+                $this->memory->links = array_values(array_filter(
+                    $this->memory->links,
+                    static function ($link) use ($companyUuid, $realmId, $uuid): bool {
+                        if (!is_array($link)) {
+                            return false;
+                        }
+                        $payment = (string) ($link['local_type'] ?? '') === 'payment'
+                            && (string) ($link['company_uuid'] ?? '') === $companyUuid
+                            && ($realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId)
+                            && (string) ($link['local_uuid'] ?? '') === $uuid;
+
+                        return !$payment;
+                    }
+                ));
+            } elseif ($localType === 'payment' && $uuid !== $quickbooksId && isset($this->memory->invoices[$uuid]) && is_array($this->memory->invoices[$uuid])) {
+                $status = strtolower((string) ($this->memory->invoices[$uuid]['status'] ?? ''));
+                if (in_array($status, ['paid', 'partial'], true)) {
+                    $this->memory->invoices[$uuid]['status'] = 'sent';
+                }
+            } elseif ($localType === 'customer') {
+                unset($this->memory->customers[$uuid]);
+            } elseif ($localType === 'wallet') {
+                unset($this->memory->wallets[$uuid]);
+            }
+            foreach ($this->memory->pending as $index => $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $pendingType = $localType === 'payment' ? 'invoice' : $localType;
+                if ((string) ($row['company_uuid'] ?? '') === $companyUuid && (string) ($row['local_type'] ?? '') === $pendingType && (string) ($row['local_uuid'] ?? '') === $uuid && (string) ($row['status'] ?? '') === 'pending') {
+                    $this->memory->pending[$index]['status'] = 'done';
+                }
+            }
+        }
+        $this->memory->rebuildIndex();
+    }
+
+    /**
      * @param array<int, array<string, mixed>> $links
      */
     private function insertLinks(array $links): void
@@ -1951,9 +2425,37 @@ class FleetbaseDirectory
                 'updated_at'   => $now,
             ];
         }
-        foreach (array_chunk($rows, 200) as $chunk) {
+        $existing = [];
+        foreach (array_chunk(array_column($rows, 'uuid'), 200) as $chunk) {
+            foreach (Link::query()->whereIn('uuid', $chunk)->pluck('uuid') as $uuid) {
+                $existing[(string) $uuid] = true;
+            }
+        }
+        $inserts = [];
+        $updates = [];
+        foreach ($rows as $row) {
+            if (!isset($existing[$row['uuid']])) {
+                $inserts[] = $row;
+                continue;
+            }
+            $this->releaseLinkIdentity($row, $row['uuid']);
+            $updates[] = [
+                'uuid'    => $row['uuid'],
+                'columns' => [
+                    'company_uuid' => $row['company_uuid'],
+                    'realm_id'     => $row['realm_id'],
+                    'local_type'   => $row['local_type'],
+                    'local_uuid'   => $row['local_uuid'],
+                    'qbo_entity'   => $row['qbo_entity'],
+                    'qbo_id'       => $row['qbo_id'],
+                    'sync_token'   => $row['sync_token'],
+                ],
+            ];
+        }
+        foreach (array_chunk($inserts, 200) as $chunk) {
             Link::query()->insertOrIgnore($chunk);
         }
+        $this->updateByUuid(new Link(), $updates, ['company_uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_entity', 'qbo_id', 'sync_token']);
     }
 
     /**

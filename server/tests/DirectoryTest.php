@@ -345,6 +345,84 @@ test('a webhook load reads linked rows from the database and leaves the rest of 
     }
 })->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
 
+test('rekeying a payment link from the invoice uuid persists the quickbooks payment id', function () {
+    [$restore] = directorySqlite();
+    try {
+        $schema = DB::connection('sqlite')->getSchemaBuilder();
+        directoryWebhookSchema($schema);
+        $schema->table('quickbooks_links', function (Blueprint $table): void {
+            $table->unique(['company_uuid', 'local_type', 'local_uuid'], 'quickbooks_links_local_unique');
+        });
+        directoryWebhookRows();
+        $now = now();
+        DB::table('quickbooks_links')->insert([
+            'uuid'         => 'link-payment-id',
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'local_type'   => 'payment',
+            'local_uuid'   => '4',
+            'qbo_entity'   => 'Payment',
+            'qbo_id'       => '4',
+            'sync_token'   => '1',
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ]);
+        DB::table('quickbooks_links')->insert([
+            'uuid'         => 'link-other-payment',
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'local_type'   => 'payment',
+            'local_uuid'   => 'inv-other',
+            'qbo_entity'   => 'Payment',
+            'qbo_id'       => '9',
+            'sync_token'   => '0',
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ]);
+
+        $directory     = new FleetbaseDirectory();
+        $loaded        = $directory->load('company-uuid');
+        $ledger        = $loaded['ledger'];
+        $ledger->links = array_values(array_filter(
+            $ledger->links,
+            static fn (array $link): bool => !(($link['local_type'] ?? '') === 'payment' && ($link['local_uuid'] ?? '') === 'inv-9' && ($link['qbo_id'] ?? '') === '4')
+        ));
+        $directory->save($ledger);
+
+        $stored = Link::query()
+            ->where('company_uuid', 'company-uuid')
+            ->where('local_type', 'payment')
+            ->where('qbo_id', '4')
+            ->get();
+
+        expect($stored)->toHaveCount(1)
+            ->and((string) $stored[0]->local_uuid)->toBe('4')
+            ->and((string) $stored[0]->qbo_id)->toBe('4')
+            ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', 'inv-9')->exists())->toBeFalse()
+            ->and(Link::query()->where('uuid', 'link-other-payment')->value('local_uuid'))->toBe('inv-other');
+
+        $again = new FleetbaseDirectory();
+        $fresh = $again->load('company-uuid');
+        foreach ($fresh['ledger']->links as $index => $link) {
+            if (($link['local_type'] ?? '') === 'payment' && ($link['qbo_id'] ?? '') === '9') {
+                $fresh['ledger']->links[$index]['local_uuid'] = '9';
+                $fresh['ledger']->links[$index]['qbo_id']     = '9';
+                $fresh['ledger']->links[$index]['sync_token'] = '8';
+            }
+        }
+        $again->save($fresh['ledger']);
+        $rekeyed = Link::query()->where('local_type', 'payment')->where('qbo_id', '9')->get();
+
+        expect($rekeyed)->toHaveCount(1)
+            ->and((string) $rekeyed[0]->uuid)->toBe('link-other-payment')
+            ->and((string) $rekeyed[0]->local_uuid)->toBe('9')
+            ->and((string) $rekeyed[0]->sync_token)->toBe('8')
+            ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', 'inv-other')->exists())->toBeFalse();
+    } finally {
+        $restore();
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
 test('changed links and pending rows update in bulk and attempts insert in one chunk', function () {
     [$restore] = directorySqlite();
     try {

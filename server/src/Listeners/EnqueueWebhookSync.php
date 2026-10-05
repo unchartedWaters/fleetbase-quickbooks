@@ -52,12 +52,10 @@ class EnqueueWebhookSync
             $inbound  = [];
             foreach ($events as $event) {
                 // Delete and void both arrive as operation "delete". A pending row would
-                // run the normal outbound sync and create the customer, invoice, or account
-                // in QuickBooks again. Voiding the local invoice, or deleting the link,
-                // cannot be done safely from here: a local void flags another outbound sync,
-                // and dropping the link makes the next sync create a new remote record.
-                // Both of those belong to SyncEngine. Leave the local row and link alone.
+                // run the outbound sync and create the remote record again. Retire the
+                // local row here. Do not hand the delete to SyncEngine or to a pending create.
                 if ($event->operation === 'delete') {
+                    $this->releaseRemoteDelete($companyUuid, $event);
                     continue;
                 }
                 if (!$this->allows($settings, $event->entityType)) {
@@ -129,6 +127,26 @@ class EnqueueWebhookSync
             }
             SyncWebhookBatch::dispatch($companyUuid, array_values($records));
         }
+    }
+
+    private function releaseRemoteDelete(string $companyUuid, QuickBooksEntityChanged $event): void
+    {
+        try {
+            $directory = app(FleetbaseDirectory::class);
+        } catch (\Throwable) {
+            return;
+        }
+        if (!$directory instanceof FleetbaseDirectory) {
+            return;
+        }
+
+        $directory->releaseRemoteDelete(
+            $companyUuid,
+            $event->realmId,
+            $event->entityType,
+            $event->quickbooksId,
+            $event->localUuid
+        );
     }
 
     private function remoteEntity(string $entityType): ?string
