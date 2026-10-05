@@ -18,7 +18,8 @@ class EnqueueWebhookSync
     private array $queued = [];
 
     /**
-     * realm|payment id => found when QuickBooks returned the payment, missing when that read was null.
+     * realm|payment id => found when QuickBooks returned that payment, missing when the read was null.
+     * A throw, reauth skip, realm mismatch, or batch fault leaves the key unset.
      *
      * @var array<string, string>
      */
@@ -173,8 +174,9 @@ class EnqueueWebhookSync
                 if (is_array($target) && $target['invoice'] !== '') {
                     $invoiceUuids[] = $target['invoice'];
                 }
-                // A null payment read is the delete. A payment that came back names its own invoices.
-                $fromPayment = ($this->paymentReads[$key] ?? '') !== 'missing';
+                // The body counts as read only when QuickBooks returned that payment.
+                // Null, a throw, reauth, a realm mismatch, and a batch fault keep the stored invoice.
+                $fromPayment = ($this->paymentReads[$key] ?? '') === 'found';
             }
             $deletions[] = [
                 'realm_id'              => $event->realmId,
