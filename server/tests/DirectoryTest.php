@@ -399,7 +399,8 @@ test('rekeying a payment link from the invoice uuid persists the quickbooks paym
             ->and((string) $stored[0]->local_uuid)->toBe('4')
             ->and((string) $stored[0]->qbo_id)->toBe('4')
             ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', 'inv-9')->exists())->toBeFalse()
-            ->and(Link::query()->where('uuid', 'link-other-payment')->value('local_uuid'))->toBe('inv-other');
+            ->and(Link::query()->where('uuid', 'link-other-payment')->value('local_uuid'))->toBe('inv-other')
+            ->and((string) Link::query()->where('local_type', 'payment-invoice')->where('local_uuid', '4')->value('qbo_id'))->toBe('inv-9');
 
         $again = new FleetbaseDirectory();
         $fresh = $again->load('company-uuid');
@@ -417,7 +418,8 @@ test('rekeying a payment link from the invoice uuid persists the quickbooks paym
             ->and((string) $rekeyed[0]->uuid)->toBe('link-other-payment')
             ->and((string) $rekeyed[0]->local_uuid)->toBe('9')
             ->and((string) $rekeyed[0]->sync_token)->toBe('8')
-            ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', 'inv-other')->exists())->toBeFalse();
+            ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', 'inv-other')->exists())->toBeFalse()
+            ->and((string) Link::query()->where('local_type', 'payment-invoice')->where('local_uuid', '9')->value('qbo_id'))->toBe('inv-other');
     } finally {
         $restore();
     }
@@ -586,6 +588,52 @@ test('stale invoice payment links for a chunk are deleted in one statement', fun
             ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', 'inv-other')->exists())->toBeFalse()
             ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', '4')->exists())->toBeTrue()
             ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', '9')->exists())->toBeTrue();
+    } finally {
+        $restore();
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
+test('a first payment link stored under the quickbooks id remembers that invoice', function () {
+    [$restore] = directorySqlite();
+    try {
+        directoryWebhookSchema(DB::connection('sqlite')->getSchemaBuilder());
+        $now = now();
+        DB::table('quickbooks_connections')->insert([
+            'uuid'         => 'conn-1',
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'environment'  => 'sandbox',
+            'needs_reauth' => 0,
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ]);
+        $directory       = new FleetbaseDirectory();
+        $loaded          = $directory->load('company-uuid');
+        $ledger          = $loaded['ledger'];
+        $ledger->links[] = [
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'local_type'   => 'payment',
+            'local_uuid'   => '4',
+            'qbo_entity'   => 'Payment',
+            'qbo_id'       => '4',
+            'sync_token'   => '0',
+            'invoice_uuid' => 'inv-paid',
+        ];
+        $ledger->links[] = directoryWebhookLink('company-uuid', 'realm-1', 'payment', '5', 'Payment', '5');
+        $ledger->links[] = directoryWebhookLink('company-uuid', 'realm-1', 'invoice', 'inv-other', 'Invoice', '8');
+
+        $directory->save($ledger);
+
+        $remembered = Link::query()->where('local_type', 'payment-invoice')->orderBy('local_uuid')->get();
+
+        expect($remembered)->toHaveCount(1)
+            ->and((string) $remembered[0]->local_uuid)->toBe('4')
+            ->and((string) $remembered[0]->qbo_id)->toBe('inv-paid')
+            ->and((string) $remembered[0]->realm_id)->toBe('realm-1')
+            ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', '4')->exists())->toBeTrue()
+            ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', '5')->exists())->toBeTrue()
+            ->and(Link::query()->where('local_type', 'invoice')->where('local_uuid', 'inv-other')->exists())->toBeTrue();
     } finally {
         $restore();
     }

@@ -5,7 +5,8 @@ namespace Fleetbase\Quickbooks\Support;
 /**
  * Public https check for QuickBooks redirect and receiver URLs.
  * IP literals are normalized, including short, octal, decimal, and hexadecimal
- * forms. A hostname is resolved, and the URL is rejected when DNS fails or any
+ * forms. 6to4 and NAT64 addresses are rejected when the embedded IPv4 is not
+ * public. A hostname is resolved, and the URL is rejected when DNS fails or any
  * address is not a public unicast address.
  */
 class PublicHttps
@@ -202,6 +203,19 @@ class PublicHttps
             return !is_string($ipv4) || self::ipv4IsInternal($ipv4);
         }
         if (str_starts_with($packed, str_repeat("\x00", 12))) {
+            $ipv4 = inet_ntop(substr($packed, 12));
+
+            return !is_string($ipv4) || self::ipv4IsInternal($ipv4);
+        }
+        // 6to4 (2002::/16) stores the IPv4 address in bits 16-47.
+        if ($packed[0] === "\x20" && $packed[1] === "\x02") {
+            $ipv4 = inet_ntop(substr($packed, 2, 4));
+
+            return !is_string($ipv4) || self::ipv4IsInternal($ipv4);
+        }
+        // NAT64 well-known prefix (64:ff9b::/96) stores the IPv4 address in the last 32 bits.
+        $nat64 = "\x00\x64\xff\x9b" . str_repeat("\x00", 8);
+        if (str_starts_with($packed, $nat64)) {
             $ipv4 = inet_ntop(substr($packed, 12));
 
             return !is_string($ipv4) || self::ipv4IsInternal($ipv4);

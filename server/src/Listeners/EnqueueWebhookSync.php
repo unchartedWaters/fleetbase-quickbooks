@@ -17,6 +17,13 @@ class EnqueueWebhookSync
     /** @var array<string, array<int, QuickBooksEntityChanged>> */
     private array $queued = [];
 
+    /**
+     * realm|payment id => found when QuickBooks returned the payment, missing when that read was null.
+     *
+     * @var array<string, string>
+     */
+    private array $paymentReads = [];
+
     public function __construct(private SettingsService $settings)
     {
     }
@@ -159,18 +166,23 @@ class EnqueueWebhookSync
         $deletions = [];
         foreach ($events as $event) {
             $invoiceUuids = [];
+            $fromPayment  = true;
             if ($event->entityType === 'payment') {
-                $target = $resolved[$event->realmId . '|' . $event->quickbooksId] ?? null;
+                $key    = $event->realmId . '|' . $event->quickbooksId;
+                $target = $resolved[$key] ?? null;
                 if (is_array($target) && $target['invoice'] !== '') {
                     $invoiceUuids[] = $target['invoice'];
                 }
+                // A null payment read is the delete. A payment that came back names its own invoices.
+                $fromPayment = ($this->paymentReads[$key] ?? '') !== 'missing';
             }
             $deletions[] = [
-                'realm_id'      => $event->realmId,
-                'local_type'    => $event->entityType,
-                'qbo_id'        => $event->quickbooksId,
-                'local_uuid'    => $event->localUuid,
-                'invoice_uuids' => $invoiceUuids,
+                'realm_id'              => $event->realmId,
+                'local_type'            => $event->entityType,
+                'qbo_id'                => $event->quickbooksId,
+                'local_uuid'            => $event->localUuid,
+                'invoice_uuids'         => $invoiceUuids,
+                'invoices_from_payment' => $fromPayment,
             ];
         }
         $directory->releaseRemoteDeletes($companyUuid, $deletions);
@@ -302,7 +314,8 @@ class EnqueueWebhookSync
      */
     private function paymentInvoices(string $companyUuid, array $events, bool $allowDelete = false): array
     {
-        $idsByRealm = [];
+        $this->paymentReads = [];
+        $idsByRealm         = [];
         foreach ($events as $event) {
             if ($event->entityType !== 'payment' || (!$allowDelete && $event->operation === 'delete')) {
                 continue;
@@ -357,20 +370,39 @@ class EnqueueWebhookSync
         }
 
         $remoteInvoices = [];
+        $missingByRealm = [];
         foreach ($keyed as $realmId => $ids) {
             $found = $this->quickbooksInvoiceIdsForPayments($companyUuid, (string) $realmId, array_values(array_unique($ids)));
-            foreach ($found as $paymentId => $invoiceIds) {
-                if ($invoiceIds !== []) {
-                    $remoteInvoices[$realmId . '|' . $paymentId] = $invoiceIds;
+            foreach (array_values(array_unique($ids)) as $paymentId) {
+                $key = $realmId . '|' . $paymentId;
+                if (!array_key_exists($paymentId, $found)) {
+                    continue;
+                }
+                $invoiceIds = $found[$paymentId];
+                if ($invoiceIds === null) {
+                    $this->paymentReads[$key] = 'missing';
+                    if ($allowDelete) {
+                        $missingByRealm[$realmId][] = (string) $paymentId;
+                    }
+                    continue;
+                }
+                $this->paymentReads[$key] = 'found';
+                if (is_array($invoiceIds) && $invoiceIds !== []) {
+                    $remoteInvoices[$key] = $invoiceIds;
                 }
             }
         }
+
+        $storedInvoice = $allowDelete ? $this->storedPaymentInvoices($companyUuid, $missingByRealm) : [];
 
         $candidateUuids = [];
         foreach ($direct as $uuids) {
             foreach ($uuids as $uuid) {
                 $candidateUuids[] = $uuid;
             }
+        }
+        foreach ($storedInvoice as $uuid) {
+            $candidateUuids[] = $uuid;
         }
         $qboInvoiceIds = [];
         foreach ($remoteInvoices as $invoiceIds) {
@@ -423,6 +455,12 @@ class EnqueueWebhookSync
                 }
             }
         }
+        foreach ($storedInvoice as $key => $uuid) {
+            $realm = explode('|', $key, 2)[0];
+            if (!isset($linkedByUuid[$realm . '|' . $uuid])) {
+                $needFile[] = $uuid;
+            }
+        }
         $onFile = [];
         if ($needFile !== [] && class_exists(Invoice::class)) {
             $found = Invoice::query()
@@ -466,17 +504,75 @@ class EnqueueWebhookSync
                 break;
             }
         }
+        foreach ($storedInvoice as $key => $uuid) {
+            if (isset($resolved[$key])) {
+                continue;
+            }
+            $realm = explode('|', $key, 2)[0];
+            if (isset($linkedByUuid[$realm . '|' . $uuid]) || isset($onFile[$uuid])) {
+                $resolved[$key] = [
+                    'invoice'             => $uuid,
+                    'keyed_by_payment'    => true,
+                    'quickbooks_invoices' => [],
+                ];
+            }
+        }
 
         return $resolved;
     }
 
     /**
-     * QuickBooks invoice ids applied by these payments. Empty when the payment
-     * cannot be read. A failure here skips the payment; it does not fail the delivery.
+     * Invoice uuids remembered when the payment link was stored under the payment id.
+     *
+     * @param array<string, array<int, string>> $idsByRealm
+     *
+     * @return array<string, string> realm|payment id => invoice uuid
+     */
+    private function storedPaymentInvoices(string $companyUuid, array $idsByRealm): array
+    {
+        $realms     = [];
+        $paymentIds = [];
+        foreach ($idsByRealm as $realmId => $ids) {
+            $realms[] = (string) $realmId;
+            foreach ($ids as $id) {
+                $paymentIds[] = (string) $id;
+            }
+        }
+        $realms     = array_values(array_unique(array_filter($realms, static fn (string $realm): bool => $realm !== '')));
+        $paymentIds = array_values(array_unique(array_filter($paymentIds, static fn (string $id): bool => $id !== '')));
+        if ($companyUuid === '' || $realms === [] || $paymentIds === []) {
+            return [];
+        }
+
+        $mapped = [];
+        foreach (Link::query()
+            ->where('company_uuid', $companyUuid)
+            ->where('local_type', 'payment-invoice')
+            ->whereIn('realm_id', $realms)
+            ->whereIn('local_uuid', $paymentIds)
+            ->get(['realm_id', 'local_uuid', 'qbo_id']) as $link) {
+            if (!is_object($link)) {
+                continue;
+            }
+            $paymentId   = trim((string) $link->local_uuid);
+            $invoiceUuid = trim((string) $link->qbo_id);
+            $realm       = trim((string) $link->realm_id);
+            if ($realm === '' || $paymentId === '' || $invoiceUuid === '' || $invoiceUuid === $paymentId) {
+                continue;
+            }
+            $mapped[$realm . '|' . $paymentId] = $invoiceUuid;
+        }
+
+        return $mapped;
+    }
+
+    /**
+     * QuickBooks invoice ids applied by these payments. Null means that payment
+     * read returned nothing. A failure here skips the payment; it does not fail the delivery.
      *
      * @param array<int, string> $paymentIds
      *
-     * @return array<string, array<int, string>>
+     * @return array<string, array<int, string>|null> null when that payment read returned nothing
      */
     protected function quickbooksInvoiceIdsForPayments(string $companyUuid, string $realmId, array $paymentIds): array
     {
@@ -507,16 +603,18 @@ class EnqueueWebhookSync
         }
 
         try {
-            $remotes = $this->readPayments($client, $connection, $paymentIds);
+            $read = $this->readPayments($client, $connection, $paymentIds);
         } catch (\Throwable) {
             return [];
         }
 
         $mapped = [];
-        foreach ($remotes as $paymentId => $remote) {
-            $invoiceIds = $this->invoiceQboIdsOnPayment($remote);
-            if ($invoiceIds !== []) {
-                $mapped[(string) $paymentId] = $invoiceIds;
+        foreach ($read['found'] as $paymentId => $remote) {
+            $mapped[(string) $paymentId] = $this->invoiceQboIdsOnPayment($remote);
+        }
+        foreach ($read['missing'] as $paymentId => $missing) {
+            if ($missing && !array_key_exists((string) $paymentId, $mapped)) {
+                $mapped[(string) $paymentId] = null;
             }
         }
 
@@ -527,21 +625,25 @@ class EnqueueWebhookSync
      * @param array<string, mixed> $connection
      * @param array<int, string>   $paymentIds
      *
-     * @return array<string, array<string, mixed>>
+     * @return array{found: array<string, array<string, mixed>>, missing: array<string, true>}
      */
     private function readPayments(QuickBooksClient $client, array $connection, array $paymentIds): array
     {
         $paymentIds = array_values(array_unique(array_filter($paymentIds, static fn (string $id): bool => $id !== '')));
         if ($paymentIds === []) {
-            return [];
+            return ['found' => [], 'missing' => []];
         }
         if (count($paymentIds) === 1) {
             $remote = $client->getPayment($connection, $paymentIds[0]);
+            if (!is_array($remote)) {
+                return ['found' => [], 'missing' => [$paymentIds[0] => true]];
+            }
 
-            return is_array($remote) ? [$paymentIds[0] => $remote] : [];
+            return ['found' => [$paymentIds[0] => $remote], 'missing' => []];
         }
 
-        $mapped = [];
+        $found   = [];
+        $missing = [];
         foreach (array_chunk($paymentIds, QuickBooksClient::BATCH_LIMIT) as $index => $chunk) {
             $bId     = 'webhook-payments-' . $index;
             $results = $client->batch($connection, [[
@@ -552,18 +654,25 @@ class EnqueueWebhookSync
             if (!is_array($result) || empty($result['ok']) || !is_array($result['rows'] ?? null)) {
                 continue;
             }
+            $seen = [];
             foreach ($result['rows'] as $remote) {
                 if (!is_array($remote)) {
                     continue;
                 }
                 $id = trim((string) ($remote['Id'] ?? ''));
                 if ($id !== '') {
-                    $mapped[$id] = $remote;
+                    $found[$id] = $remote;
+                    $seen[$id]  = true;
+                }
+            }
+            foreach ($chunk as $id) {
+                if (!isset($seen[$id])) {
+                    $missing[$id] = true;
                 }
             }
         }
 
-        return $mapped;
+        return ['found' => $found, 'missing' => $missing];
     }
 
     /**

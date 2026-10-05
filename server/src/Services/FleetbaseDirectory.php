@@ -357,13 +357,15 @@ class FleetbaseDirectory
                     $identityReleases[] = ['link' => $link, 'keep' => $uuid];
                 }
                 if ($uuid === '') {
+                    $payload = $link;
+                    unset($payload['invoice_uuid']);
                     Link::query()->updateOrCreate(
                         [
                             'company_uuid' => $link['company_uuid'],
                             'local_type'   => $link['local_type'],
                             'local_uuid'   => $link['local_uuid'],
                         ],
-                        $link
+                        $payload
                     );
                     continue;
                 }
@@ -2073,8 +2075,9 @@ class FleetbaseDirectory
     }
 
     /**
-     * A payment link moved from the invoice uuid to the QuickBooks payment id.
-     * Remember that invoice so a later remote delete can unmark it without reading QuickBooks.
+     * A payment stored under the QuickBooks payment id remembers the Fleetbase invoice.
+     * A rekey still has that invoice on the older link. A first save whose line already
+     * names the invoice carries invoice_uuid, because a later delete cannot read the payment.
      *
      * @param array<string, true> $skipped
      */
@@ -2107,7 +2110,10 @@ class FleetbaseDirectory
             if ($local === '' || $qboId === '' || $local !== $qboId || $company === '' || $realm === '' || isset($skipped[$company])) {
                 continue;
             }
-            $invoice = $invoiceByPayment[$company . '|' . $realm . '|' . $qboId] ?? '';
+            $invoice = trim((string) ($link['invoice_uuid'] ?? ''));
+            if ($invoice === '' || $invoice === $qboId) {
+                $invoice = $invoiceByPayment[$company . '|' . $realm . '|' . $qboId] ?? '';
+            }
             if ($invoice === '' || $invoice === $qboId) {
                 continue;
             }
@@ -2212,7 +2218,7 @@ class FleetbaseDirectory
      * status update, one link delete, and one pending update. A payment id is not
      * applied to an invoice, customer, or wallet that merely shares that id.
      *
-     * @param array<int, array{realm_id?: string, local_type?: string, qbo_id?: string, local_uuid?: string|null, invoice_uuids?: array<int, string>}> $deletions
+     * @param array<int, array{realm_id?: string, local_type?: string, qbo_id?: string, local_uuid?: string|null, invoice_uuids?: array<int, string>, invoices_from_payment?: bool}> $deletions
      */
     public function releaseRemoteDeletes(string $companyUuid, array $deletions): void
     {
@@ -2429,17 +2435,18 @@ class FleetbaseDirectory
     }
 
     /**
-     * @param array<int, array{realm_id?: string, local_type?: string, qbo_id?: string, local_uuid?: string|null, invoice_uuids?: array<int, string>}> $deletions
+     * @param array<int, array{realm_id?: string, local_type?: string, qbo_id?: string, local_uuid?: string|null, invoice_uuids?: array<int, string>, invoices_from_payment?: bool}> $deletions
      */
     private function retireDeleteBatch(string $companyUuid, array $deletions): void
     {
-        $links        = $this->linksForDeletions($companyUuid, $deletions);
-        $voidInvoices = [];
-        $sentInvoices = [];
-        $customers    = [];
-        $wallets      = [];
-        $linkUuids    = [];
-        $voidRealms   = [];
+        $links         = $this->linksForDeletions($companyUuid, $deletions);
+        $voidInvoices  = [];
+        $sentInvoices  = [];
+        $customers     = [];
+        $wallets       = [];
+        $linkUuids     = [];
+        $voidRealms    = [];
+        $namedPayments = [];
 
         foreach ($deletions as $deletion) {
             if (!is_array($deletion)) {
@@ -2460,6 +2467,11 @@ class FleetbaseDirectory
                 $wallets[] = $local;
             }
             if ($type === 'payment') {
+                if (!empty($deletion['invoices_from_payment']) && $qbo !== '') {
+                    // The payment was read. Its lines name every invoice to unmark.
+                    // A stored fallback for a different invoice must not be applied.
+                    $namedPayments[$realm . '|' . $qbo] = true;
+                }
                 if ($local !== '' && $local !== $qbo) {
                     $sentInvoices[] = $local;
                 } else {
@@ -2484,7 +2496,7 @@ class FleetbaseDirectory
                 if ($uuid !== '') {
                     $linkUuids[] = $uuid;
                 }
-                if ($qbo !== '' && $qbo !== $local) {
+                if (!isset($namedPayments[$realm . '|' . $local]) && $qbo !== '' && $qbo !== $local) {
                     $sentInvoices[] = $qbo;
                 }
                 continue;

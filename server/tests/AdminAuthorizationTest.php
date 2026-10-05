@@ -201,7 +201,13 @@ test('the redirect sent to intuit must be public https', function () {
         ->and(PublicHttps::isPublicHttpsUrl('https://8.8.8.8/callback'))->toBeTrue()
         ->and(PublicHttps::isPublicHttpsUrl('https://[2606:4700:4700::1111]/callback'))->toBeTrue()
         ->and(PublicHttps::isPublicHttpsUrl('https://[::ffff:8.8.8.8]/callback'))->toBeTrue()
-        ->and(PublicHttps::isPublicHttpsUrl('https://100.128.0.1/callback'))->toBeTrue();
+        ->and(PublicHttps::isPublicHttpsUrl('https://100.128.0.1/callback'))->toBeTrue()
+        ->and(PublicHttps::isPublicHttpsUrl('https://[2002:101:101::]/callback'))->toBeTrue()
+        ->and(PublicHttps::isPublicHttpsUrl('https://[2002:808:808::]/callback'))->toBeTrue()
+        ->and(PublicHttps::isPublicHttpsUrl('https://[2002:6480:1::]/callback'))->toBeTrue()
+        ->and(PublicHttps::isPublicHttpsUrl('https://[64:ff9b::101:101]/callback'))->toBeTrue()
+        ->and(PublicHttps::isPublicHttpsUrl('https://[64:ff9b::808:808]/callback'))->toBeTrue()
+        ->and(PublicHttps::isPublicHttpsUrl('https://[64:ff9b::6480:1]/callback'))->toBeTrue();
 
     foreach ([
         'http://example.com/callback',
@@ -245,6 +251,34 @@ test('the redirect sent to intuit must be public https', function () {
         'https://[::ffff:127.0.0.1]/callback',
         'https://[::ffff:7f00:1]/callback',
         'https://[::ffff:192.0.2.1]/callback',
+        'https://[2002:7f00:1::]/callback',
+        'https://[2002:a00:1::]/callback',
+        'https://[2002:ac10:505::]/callback',
+        'https://[2002:c0a8:1::]/callback',
+        'https://[2002:a9fe:a9fe::]/callback',
+        'https://[2002:6440:1::]/callback',
+        'https://[2002:c000:201::]/callback',
+        'https://[2002:c633:6401::]/callback',
+        'https://[2002:cb00:7101::]/callback',
+        'https://[2002:e000:1::]/callback',
+        'https://[2002:0:1::]/callback',
+        'https://[2002:c000:1::]/callback',
+        'https://[2002:c612:1::]/callback',
+        'https://[2002:f000:1::]/callback',
+        'https://[64:ff9b::a9fe:a9fe]/callback',
+        'https://[64:ff9b::a00:1]/callback',
+        'https://[64:ff9b::c0a8:101]/callback',
+        'https://[64:ff9b::7f00:1]/callback',
+        'https://[64:ff9b::ac10:505]/callback',
+        'https://[64:ff9b::6440:1]/callback',
+        'https://[64:ff9b::c000:201]/callback',
+        'https://[64:ff9b::c633:6401]/callback',
+        'https://[64:ff9b::cb00:7101]/callback',
+        'https://[64:ff9b::e000:1]/callback',
+        'https://[64:ff9b::1]/callback',
+        'https://[64:ff9b::c000:1]/callback',
+        'https://[64:ff9b::c612:1]/callback',
+        'https://[64:ff9b::f000:1]/callback',
         'https://127.0.0.1.nip.io/callback',
         'https://public.example.test/callback',
         'https://no-such-host.invalid/callback',

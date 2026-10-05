@@ -1976,13 +1976,27 @@ class SyncEngine
             }
         }
 
-        $company    = (string) $connection['company_uuid'];
-        $realm      = (string) $connection['realm_id'];
-        $legacy     = $ledger->link($company, $realm, 'payment', $invoiceUuid);
-        $legacyId   = is_array($legacy) ? trim((string) ($legacy['qbo_id'] ?? '')) : '';
-        $byPayment  = $this->paymentRediscoverable($remote, $invoiceId, $remoteInvoice) || ($legacyId !== '' && $legacyId !== $paymentId);
-        $localUuid  = $byPayment ? $paymentId : $invoiceUuid;
-        $attributes = $this->linkFrom($connection, 'payment', $localUuid, 'Payment', $remote);
+        $company        = (string) $connection['company_uuid'];
+        $realm          = (string) $connection['realm_id'];
+        $legacy         = $ledger->link($company, $realm, 'payment', $invoiceUuid);
+        $legacyId       = is_array($legacy) ? trim((string) ($legacy['qbo_id'] ?? '')) : '';
+        $rediscoverable = $this->paymentRediscoverable($remote, $invoiceId, $remoteInvoice);
+        $byPayment      = $rediscoverable || ($legacyId !== '' && $legacyId !== $paymentId);
+        $localUuid      = $byPayment ? $paymentId : $invoiceUuid;
+        $attributes     = $this->linkFrom($connection, 'payment', $localUuid, 'Payment', $remote);
+        // The payment id is not the invoice. Keep the invoice on the link so a later
+        // delete can unmark it after QuickBooks stops returning this payment.
+        if ($byPayment && $invoiceUuid !== '' && $invoiceUuid !== $paymentId && ($rediscoverable || $legacyId === $paymentId)) {
+            $kept    = $invoiceUuid;
+            $already = $ledger->link($company, $realm, 'payment', $paymentId);
+            if (is_array($already)) {
+                $prior = trim((string) ($already['invoice_uuid'] ?? ''));
+                if ($prior !== '' && $prior !== $paymentId) {
+                    $kept = $prior;
+                }
+            }
+            $attributes['invoice_uuid'] = $kept;
+        }
         if ($byPayment && is_array($legacy) && $legacyId === $paymentId && $ledger->link($company, $realm, 'payment', $paymentId) === null) {
             $this->rekeyPaymentLink($ledger, $company, $realm, $invoiceUuid, $attributes);
 
