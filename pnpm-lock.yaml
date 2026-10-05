@@ -29,6 +29,12 @@ importers:
       '@fortawesome/free-solid-svg-icons':
         specifier: 6.4.0
         version: 6.4.0
+      '@glimmer/component':
+        specifier: ^1.1.2
+        version: 1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      '@glimmer/tracking':
+        specifier: ^1.1.2
+        version: 1.1.2
       broccoli-funnel:
         specifier: ^3.0.8
         version: 3.0.8(supports-color@8.1.1)
@@ -44,9 +50,15 @@ importers:
       ember-intl:
         specifier: 6.3.2
         version: 6.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.15)(uglify-js@3.19.3))
+      ember-load-initializers:
+        specifier: ^2.1.2
+        version: 2.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-radio-button:
         specifier: ^3.0.0-beta.1
         version: 3.0.0-beta.1(clean-css@5.3.3)(postcss@8.5.15)(supports-color@8.1.1)(uglify-js@3.19.3)
+      ember-resolver:
+        specifier: ^11.0.1
+        version: 11.0.1(ember-source@4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.15)(uglify-js@3.19.3)))(supports-color@8.1.1)
       ember-wormhole:
         specifier: ^0.6.0
         version: 0.6.1(supports-color@8.1.1)
@@ -69,12 +81,6 @@ importers:
       '@embroider/test-setup':
         specifier: ^3.0.2
         version: 3.0.3
-      '@glimmer/component':
-        specifier: ^1.1.2
-        version: 1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
-      '@glimmer/tracking':
-        specifier: ^1.1.2
-        version: 1.1.2
       broccoli-asset-rev:
         specifier: ^3.0.0
         version: 3.0.0(supports-color@8.1.1)
@@ -114,9 +120,6 @@ importers:
       ember-engines:
         specifier: ^0.9.0
         version: 0.9.0(@babel/core@7.29.7(supports-color@8.1.1))(@ember/legacy-built-in-components@0.4.2(@babel/core@7.29.7(supports-color@8.1.1))(ember-source@4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.15)(uglify-js@3.19.3)))(supports-color@8.1.1))(ember-source@4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.15)(uglify-js@3.19.3)))(supports-color@8.1.1)
-      ember-load-initializers:
-        specifier: ^2.1.2
-        version: 2.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-math-helpers:
         specifier: ^4.0.0
         version: 4.2.1(ember-source@4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.15)(uglify-js@3.19.3)))(supports-color@8.1.1)
@@ -126,9 +129,6 @@ importers:
       ember-qunit:
         specifier: ^8.0.1
         version: 8.1.1(@babel/core@7.29.7(supports-color@8.1.1))(@ember/test-helpers@3.3.1(@babel/core@7.29.7(supports-color@8.1.1))(ember-source@4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.15)(uglify-js@3.19.3)))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.15)(uglify-js@3.19.3)))(ember-source@4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.15)(uglify-js@3.19.3)))(qunit@2.26.0)(supports-color@8.1.1)
-      ember-resolver:
-        specifier: ^11.0.1
-        version: 11.0.1(ember-source@4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.15)(uglify-js@3.19.3)))(supports-color@8.1.1)
       ember-source:
         specifier: ~4.8.0
         version: 4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.15)(uglify-js@3.19.3))
