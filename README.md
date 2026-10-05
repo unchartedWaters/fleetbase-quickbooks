@@ -2,7 +2,7 @@
 
 Fleetbase extension that syncs customers, invoices, payments, and wallets (QuickBooks accounts) with QuickBooks Online.
 
-The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks) (`packages/quickbooks`, branch `develop`).
+The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks) and must be present at `packages/quickbooks`.
 
 Package names:
 
@@ -27,34 +27,30 @@ Money is stored as integer minor units. QuickBooks major-unit amounts are conver
 
 ## Settings
 
-Settings are organization-only. There is no admin QuickBooks settings screen. A request with `scope=admin` returns HTTP 404. There is no shared system row and no environment-variable fallback for Client ID, Client secret, Redirect URI, or webhook verifier.
+Settings are install-wide. Client ID, Client secret, Redirect URI, webhook verifier, and sync options are saved on the system rows `system.quickbooks.auth` and `system.quickbooks.sync`. Organization settings → Quickbooks Setup loads and saves them with `scope=admin`.
 
-The menu group title is exactly **Quickbooks Settings**. Its items are **Connection**, **Actions**, and **Activity**. Ledger → Settings opens the same screens, and the QuickBooks header item opens Connection at `/quickbooks`.
+Organization settings lists **Quickbooks Setup** and **Quickbooks Activity** with Organization, Two Factor, and Notifications. Quickbooks Setup is route `console.settings.virtual`, slug `quickbooks-setup`, view `index` (`/settings/quickbooks-setup?view=index`). Quickbooks Activity is slug `quickbooks-activity` (`/settings/quickbooks-activity?view=index`). The QuickBooks header item opens Quickbooks Setup. There is no Admin QuickBooks panel and no Ledger settings entry.
 
-- Connection is `/quickbooks`. `/quickbooks/connection` redirects there.
-- Actions are `/quickbooks/actions`.
-- Activity is `/quickbooks/activity`.
-
-Save this organization's Client ID, Client secret, and webhook verifier on Connection. Connect uses those saved keys.
+Save the install's Client ID, Client secret, and system webhook verifier on Organization settings → Quickbooks Setup. Connect uses those saved keys. Client ID, Client secret, Redirect URI, and the webhook verifier come only from that system row. A blank system field stays blank. Environment may fall back to `QUICKBOOKS_ENVIRONMENT`, which defaults to `production`.
 
 The settings form does not ask for a batch size and does not send `batch_size`.
 
 ### Enable and sync direction
 
-Each of Customers, Invoices, Payments, and Accounts / Wallets has its own Enable checkbox, default on, and a Sync direction. Primary and Sync direction are required while that box is on. Off means that type is not synced.
+Each of Customers, Invoices, Payments, and Accounts / Wallets is a switch, then that name. The switch defaults to on. Primary and Sync direction are required while the switch is on. Off means that type is not synced.
 
-| Checkbox | Stored direction | Meaning |
+| Switch | Stored direction | Meaning |
 | --- | --- | --- |
 | On, Both | `both` | Fleetbase and QuickBooks update each other |
 | On, To QuickBooks | `outbound` | Fleetbase sends to QuickBooks and does not copy QuickBooks field changes back |
 | On, From QuickBooks | `inbound` | QuickBooks updates Fleetbase only |
-| Off | `off` | That type is not synced |
+| Off | not enabled | That type is not synced |
 
-Unchecking Enable stores `off`. Checking it again keeps the last Both / To QuickBooks / From QuickBooks choice.
+Turning the switch off stores that type as not enabled. Turning it on again keeps the last Both / To QuickBooks / From QuickBooks choice.
 
 **Primary**, under Data Resolution, decides which system wins when the records differ and which system supplies identifiers. Primary and direction are separate. Outbound still sends the Fleetbase record when Primary is QuickBooks.
 
-**Enable schedule** is the schedule control. Its label is not the same as each entity's Enable checkbox. Sync now and Reconcile still run when Enable schedule is off. When QuickBooks is not connected, Sync now and Reconcile return HTTP 422, save a skipped activity row, and the console shows that error.
+Sync Frequency is the schedule. It is separate from each entity switch. When QuickBooks is not connected, Sync now returns HTTP 422, saves a skipped activity row, and the console shows that error.
 
 ### Environments
 
@@ -73,9 +69,9 @@ HTTP 429 does not use Retry Delay. It uses the `Retry-After` header when that he
 
 ## Connect and disconnect
 
-Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved on Connection for this organization and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
+Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved in Organization settings → Quickbooks Setup for the install and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
 
-The Redirect URI and the webhook URL use the scheme of the configured application URL. http stays http when the application URL is http. https is kept when the application URL is https. The host is the configured non-loopback host and the port is the configured API port. The public URL equals the internal URL. Paths stay `/quickbooks/int/v1/oauth/callback` and `/quickbooks/int/v1/webhooks`. Receiver URLs are read-only. The Redirect URI must be listed under Redirect URIs.
+The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The internal webhook path is `/quickbooks/int/v1/webhooks`. Quickbooks Setup shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver URL stay editable and are saved on the install-wide settings row. Paste the public OAuth URL into Intuit Redirect URIs and the public webhook URL into the Intuit Endpoint URL. A blank public URL is shown as the matching internal URL.
 
 Connect uses PKCE (`S256`). The API stores a code verifier with the OAuth state and sends the code challenge on `https://appcenter.intuit.com/connect/oauth2` with scope `com.intuit.quickbooks.accounting`.
 
@@ -99,7 +95,7 @@ Home currency comes from QuickBooks Preferences. Test connection also reads Pref
 
 An organization with nothing due does not sync. The schedule does not read a stored batch size.
 
-**Sync now** and **Reconcile** are manual. Sync now and Reconcile still run when Enable schedule is off. Sync now uses the pending queue and does not load the whole organization. Reconcile covers invoices already in this Fleetbase organization: a local non-draft invoice, or a `quickbooks_links` row for this organization whose local type is invoice. It does not list every invoice in the QuickBooks organization.
+**Sync now** is on Quickbooks Setup. It uses the pending queue and does not load the whole organization. Reconcile is not a control on this screen. It covers invoices already in this Fleetbase organization: a local non-draft invoice, or a `quickbooks_links` row for this organization whose local type is invoice. It does not list every invoice in the QuickBooks organization.
 
 QuickBooks update operations are posted in chunks of 20. Queries, creates, and voids are posted in chunks of at most 30.
 
@@ -111,15 +107,15 @@ The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires a c
 
 ## Webhooks
 
-There is one public receiver: `POST /quickbooks/int/v1/webhooks`. It is outside the session and does not use CSRF. Intuit signs the raw body. Intuit's `intuit-signature` is checked only against this organization's own verifier. If that organization has no verifier configured, the webhook is rejected with HTTP 401. A verifier from another organization, a stored system token, or `QUICKBOOKS_WEBHOOK_VERIFIER` is not accepted. Unsigned posts are HTTP 401 and do not dispatch events. A valid signature returns HTTP 200 after events are dispatched. The request does not call QuickBooks.
+There is one public receiver: `POST /quickbooks/int/v1/webhooks`. It is outside the session and does not use CSRF. Intuit signs the raw body. Intuit's `intuit-signature` is checked against the install-wide system webhook verifier. If that verifier is not saved, the webhook is rejected with HTTP 401. An organization verifier and `QUICKBOOKS_WEBHOOK_VERIFIER` are not accepted. Unsigned posts are HTTP 401 and do not dispatch events. A valid signature returns HTTP 200 after events are dispatched. The request does not call QuickBooks.
 
 After the signature check, each notification is applied to Fleetbase organizations connected to that `realmId`. Direction `outbound` or `off` does not sync that type. The event is still dispatched.
 
-**Webhook Receiver URL** and **Public Receiver URL** are the same read-only value. The public URL equals the internal URL. It is computed, not stored, and saving settings does not change it. The webhook URL uses the scheme of the configured application URL. http stays http when the application URL is http. https is kept when the application URL is https. The host is the configured non-loopback host and the port is the configured API port. The console host is not used. The path stays `/quickbooks/int/v1/webhooks`.
+Internal Webhook Receiver URL is computed from the configured origin and is not stored. Public Webhook Receiver URL is saved on the install-wide settings row when you set it. When that field is blank, the value shown is the internal URL. Paste the public URL into the Intuit Endpoint URL. The internal path stays `/quickbooks/int/v1/webhooks`. Saving settings does not register the URL with Intuit.
 
 Intuit subscription is configured in the Intuit developer portal only. Open the app, choose Webhooks, then Production or Development, and paste this URL into Endpoint URL. Subscribe to Customer, Invoice, Payment, and Account when that type's direction is From QuickBooks or Both. Fleetbase does not call an Intuit API to register the URL, choose entities, or unsubscribe a realm. `WebhookSubscriptions::apply()` does not call Intuit.
 
-The verifier token is stored encrypted on the organization and is not shown again after save. Leave the field blank to keep the saved token.
+The system webhook verifier is stored encrypted on the install-wide settings row and is not shown again after save. Leave the field blank to keep the saved token.
 
 Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChanged`. Each event is one entity:
 
@@ -136,18 +132,21 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 
 This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`, `fleetbase/fleetops-api` `0.6.70`, and `fleetbase/ledger-api` `0.0.11`. The Ember engine needs Node `>= 18`.
 
-`flb install <name> --path <fleetbase>` is how Fleetbase registers a published extension. It looks the name up on `https://api.fleetbase.io/~registry/v1/lookup`. This package is not in that registry, so the command cannot install it.
+The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks) (`packages/quickbooks`, branch `develop`). `application`, `queue`, and `scheduler` use the published `fleetbase/fleetbase-api:latest` image. That image does not contain this package. Do not build a custom API image for it.
 
-In this Fleetbase tree the plugin is `packages/quickbooks`.
+`flb install <name> --path <fleetbase>` is how Fleetbase registers a published extension. It looks the name up on `https://api.fleetbase.io/~registry/v1/lookup`. This package is not in that registry, so the command cannot install it. The running stack uses the mounted checkout.
 
-- `api/composer.json` has a path repository at `../packages/quickbooks` and requires `unchartedwaters/quickbooks-api`.
-- `console/package.json` links `@unchartedwaters/quickbooks-engine` to `../packages/quickbooks`.
-- The console mounts that engine at `/quickbooks`.
-- `console/config/environment.js` and `console/fleetbase.config.json` include `@unchartedwaters/quickbooks-engine` in `EXTENSIONS`.
-- `QuickbooksServiceProvider` loads `server/src/routes.php`, `server/migrations`, and registers `quickbooks:sync` on the Laravel scheduler. The system cron invokes that scheduler every minute, but the command does not start on a minute when no organization is due before its Sync Frequency.
-- The published image stays `fleetbase/fleetbase-api:latest`. This package is not copied into a custom API image.
+1. Place this package at `packages/quickbooks`.
+2. Put the existing Fleetbase `APP_KEY` in `api/.env`. Use the key that already decrypts this install.
+3. Start the stack with Docker Compose. `docker-compose.yml` mounts `./api/.env` into `application`, `queue`, and `scheduler`, so all three read the same `APP_KEY`. It mounts `./packages/quickbooks` read-only at `/fleetbase/packages/quickbooks`. The entrypoint for those three services is `packages/quickbooks/docker/ensure-quickbooks-extension.sh`.
+4. On start, that script exits with an error if `/fleetbase/packages/quickbooks` is missing. It Composer-requires `unchartedwaters/quickbooks-api:0.0.2` when the provider is not installed, or when the mounted `composer.json` version or `require` entries differ from the installed package. Only `application` runs `php artisan migrate --force`. `queue` and `scheduler` do not migrate on startup. A later application start skips the require when the installed package still matches, and migrate applies only pending migrations.
+5. Install console dependencies from `console/`. `console/package.json` links `@unchartedwaters/quickbooks-engine` to `../packages/quickbooks`. The console mounts that engine at `/quickbooks`. `console/fleetbase.config.json` lists `@unchartedwaters/quickbooks-engine` in `EXTENSIONS`.
 
-After the files are in place, install PHP dependencies from `api/` and the console dependencies from `console/`, then run the Fleetbase migrations so the QuickBooks tables and the engine-name migration are applied. Keys are saved on Connection for that organization.
+`api/composer.json` has a path repository at `../packages/quickbooks` and requires `unchartedwaters/quickbooks-api`. The running containers get the package from the ensure script, not from a rebuilt image.
+
+`QuickbooksServiceProvider` loads `server/src/routes.php`, `server/migrations`, and registers `quickbooks:sync` on the Laravel scheduler. The system cron invokes that scheduler every minute, but the command does not start on a minute when no organization is due before its Sync Frequency.
+
+Keys are saved in Organization settings → Quickbooks Setup for the install.
 
 ## Tests
 

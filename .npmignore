@@ -41,6 +41,7 @@
 /phpstan-bootstrap.php
 /phpstan.neon.dist
 /phpunit.xml.dist
+/ui-copy-review.csv
 
 # ember-try
 /.node_modules.ember-try/
