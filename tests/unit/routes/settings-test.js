@@ -103,7 +103,7 @@ module('Unit | Route | settings', function (hooks) {
         this.route.setupController(this.controller, null);
         await settled();
 
-        assert.deepEqual(this.messages, [['error', 'That QuickBooks authorization expired. Connect again from Connection.']]);
+        assert.deepEqual(this.messages, [['error', 'That QuickBooks authorization expired. Connect again from Quickbooks Setup.']]);
     });
 
     test('an unknown error code shows the generic message, never the raw text', async function (assert) {
@@ -112,7 +112,7 @@ module('Unit | Route | settings', function (hooks) {
         await settled();
 
         assert.strictEqual(this.controller.error, null);
-        assert.deepEqual(this.messages, [['error', 'QuickBooks could not connect. Try again from Connection.']]);
+        assert.deepEqual(this.messages, [['error', 'QuickBooks could not connect. Try again from Quickbooks Setup.']]);
     });
 
     test('resetController on exit clears params and the dedupe key', async function (assert) {

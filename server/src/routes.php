@@ -20,18 +20,23 @@ Route::prefix($prefix)->group(function ($router) use ($internalPrefix) {
         $router->post('v1/webhooks', [WebhookController::class, 'handle']);
 
         $router->group(['prefix' => 'v1', 'middleware' => ['fleetbase.protected']], function ($router) {
-            $router->get('settings', [SettingController::class, 'show']);
-            $router->post('settings', [SettingController::class, 'save']);
             $router->get('connection', [ConnectionController::class, 'show']);
             $router->get('batches', [ConnectionController::class, 'batches']);
-            $router->post('oauth/start', [ConnectionController::class, 'start']);
-            $router->post('oauth/complete', [ConnectionController::class, 'complete']);
-            $router->post('disconnect', [ConnectionController::class, 'disconnect']);
-            $router->post('import', [ConnectionController::class, 'import']);
-            $router->post('reconcile', [ConnectionController::class, 'reconcile']);
-            $router->post('sync', [ConnectionController::class, 'sync']);
-            $router->post('connection/test', [ConnectionController::class, 'test']);
             $router->get('summary', [ConnectionController::class, 'summary']);
+
+            // Settings, connect, disconnect, sync, import, reconcile, and test are install-wide.
+            // Fleetbase's AdminGuard requires User::isAdmin(). A QuickBooks permission is not enough.
+            $router->group(['middleware' => [Fleetbase\Http\Middleware\AdminGuard::class]], function ($router) {
+                $router->get('settings', [SettingController::class, 'show']);
+                $router->post('settings', [SettingController::class, 'save']);
+                $router->post('oauth/start', [ConnectionController::class, 'start']);
+                $router->post('oauth/complete', [ConnectionController::class, 'complete']);
+                $router->post('disconnect', [ConnectionController::class, 'disconnect']);
+                $router->post('import', [ConnectionController::class, 'import']);
+                $router->post('reconcile', [ConnectionController::class, 'reconcile']);
+                $router->post('sync', [ConnectionController::class, 'sync']);
+                $router->post('connection/test', [ConnectionController::class, 'test']);
+            });
         });
     });
 });

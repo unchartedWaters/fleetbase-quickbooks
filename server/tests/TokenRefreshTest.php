@@ -262,9 +262,66 @@ test('busy continuations retry three times with bounded delays while other trigg
     }
 });
 
+test('the company lock is held while the refresh token is sent to intuit', function () {
+    $client                = new RefreshingQuickBooks();
+    $secondCouldStart      = true;
+    $client->duringRefresh = function () use (&$secondCouldStart): void {
+        $probe            = Cache::getFacadeRoot()->getStore()->lock('quickbooks.batch.company-uuid', BatchRunner::LOCK_SECONDS);
+        $secondCouldStart = $probe->get() === true;
+        if ($secondCouldStart) {
+            $probe->release();
+        }
+    };
+    [$tokens, $directory] = tokensWith($client);
+    $connection           = refreshLedger($directory, null);
+
+    $fresh = $tokens->refreshIfDue($connection, time());
+
+    expect($secondCouldStart)->toBeFalse()
+        ->and($client->refreshes)->toBe(1)
+        ->and($fresh['refresh_token'])->toBe('new-refresh')
+        ->and($directory->memory->connections['company-uuid']['refresh_token'])->toBe('new-refresh');
+});
+
+test('a refresh token that changed during the intuit call is not overwritten', function () {
+    $client                = new RefreshingQuickBooks();
+    [$tokens, $directory]  = tokensWith($client);
+    $connection            = refreshLedger($directory, null);
+    $client->duringRefresh = function () use ($directory): void {
+        $directory->memory->connections['company-uuid']['refresh_token'] = 'winner-refresh';
+        $directory->memory->connections['company-uuid']['access_token']  = 'winner-access';
+    };
+
+    $fresh = $tokens->refreshIfDue($connection, time());
+
+    expect($client->refreshes)->toBe(1)
+        ->and($directory->memory->connections['company-uuid']['refresh_token'])->toBe('winner-refresh')
+        ->and($directory->memory->connections['company-uuid']['access_token'])->toBe('winner-access')
+        ->and($fresh['refresh_token'])->toBe('winner-refresh')
+        ->and($fresh['access_token'])->toBe('winner-access');
+});
+
+test('a refresh token that was already rotated is not sent to intuit', function () {
+    $client                                                          = new RefreshingQuickBooks();
+    [$tokens, $directory]                                            = tokensWith($client);
+    $stale                                                           = refreshLedger($directory, null);
+    $directory->memory->connections['company-uuid']['refresh_token'] = 'already-new';
+    $directory->memory->connections['company-uuid']['access_token']  = 'already-access';
+
+    $fresh = $tokens->refreshIfDue($stale, time());
+
+    expect($client->refreshes)->toBe(0)
+        ->and($fresh['refresh_token'])->toBe('already-new')
+        ->and($fresh['access_token'])->toBe('already-access')
+        ->and($directory->memory->connections['company-uuid']['refresh_token'])->toBe('already-new');
+});
+
 class RefreshingQuickBooks extends FakeQuickBooks
 {
     public int $refreshes = 0;
+
+    /** @var callable|null */
+    public $duringRefresh;
 
     public function __construct(private ?QuickBooksException $refreshError = null)
     {
@@ -273,6 +330,9 @@ class RefreshingQuickBooks extends FakeQuickBooks
     public function refresh(array $credentials, string $refreshToken): array
     {
         $this->refreshes++;
+        if ($this->duringRefresh !== null) {
+            ($this->duringRefresh)($refreshToken);
+        }
         if ($this->refreshError !== null) {
             throw $this->refreshError;
         }
@@ -332,7 +392,7 @@ function catalogRunner(): array
         ];
     }
     $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companySync('company-uuid')] = ['batch_size' => 2, 'periodic_interval_hours' => 24];
+    $store->rows[SettingsKeys::adminSync()]                 = ['batch_size' => 2, 'periodic_interval_hours' => 24];
 
     return [batchRunner($directory, $tokens, $client, $store), $directory, $client];
 }

@@ -3,6 +3,8 @@
 use Fleetbase\Quickbooks\Auth\Schemas\Quickbooks;
 use Fleetbase\Quickbooks\Http\Controllers\ConnectionController;
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
+use Fleetbase\Quickbooks\Jobs\ImportCustomers;
+use Fleetbase\Quickbooks\Jobs\SyncCompanyBatch;
 use Fleetbase\Quickbooks\Services\OAuthFlow;
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Fleetbase\Quickbooks\Services\SettingsService;
@@ -16,6 +18,8 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionResolver;
 use Illuminate\Database\Eloquent\Model;
@@ -26,15 +30,15 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
-test('company credentials win and a stored system row does not replace env', function () {
+test('global credentials are used and an organization row does not replace them', function () {
     $resolved = (new CredentialResolver())->resolve(
-        ['client_id' => 'company-id', 'client_secret' => '', 'redirect_uri' => '', 'environment' => '', 'webhook_verifier' => ''],
-        ['client_id' => 'admin-id', 'client_secret' => 'admin-secret', 'redirect_uri' => 'https://admin.example.test/callback', 'environment' => 'production', 'webhook_verifier' => 'admin-verifier'],
+        ['client_id' => 'company-id', 'client_secret' => 'company-secret', 'redirect_uri' => 'https://company.example.test/callback', 'environment' => 'sandbox', 'webhook_verifier' => 'company-verifier'],
+        ['client_id' => '', 'client_secret' => '', 'redirect_uri' => '', 'environment' => '', 'webhook_verifier' => ''],
         ['client_id' => 'env-id', 'client_secret' => 'env-secret', 'redirect_uri' => 'https://example.test/callback', 'environment' => 'sandbox', 'webhook_verifier' => 'env-verifier']
     );
 
-    expect($resolved['client_id'])->toBe('company-id')
-        ->and($resolved['sources']['client_id'])->toBe('company')
+    expect($resolved['client_id'])->toBe('')
+        ->and($resolved['sources']['client_id'])->toBe('none')
         ->and($resolved['client_secret'])->toBe('')
         ->and($resolved['sources']['client_secret'])->toBe('none')
         ->and($resolved['redirect_uri'])->toBe('')
@@ -45,18 +49,18 @@ test('company credentials win and a stored system row does not replace env', fun
         ->and($resolved['sources']['environment'])->toBe('env');
 });
 
-test('company credentials resolve from an explicit key when there is no session', function () {
+test('global credentials resolve from the system row when there is no session', function () {
     expect(SettingsKeys::companyAuth('company-uuid'))->toBe('company.company-uuid.quickbooks.auth')
         ->and(SettingsKeys::adminAuth())->toBe('system.quickbooks.auth');
 
     $resolved = (new CredentialResolver())->resolve(
         ['client_id' => 'from-company-row'],
-        [],
+        ['client_id' => 'from-system-row'],
         ['client_id' => 'from-env']
     );
 
-    expect($resolved['client_id'])->toBe('from-company-row')
-        ->and($resolved['sources']['client_id'])->toBe('company');
+    expect($resolved['client_id'])->toBe('from-system-row')
+        ->and($resolved['sources']['client_id'])->toBe('admin');
 });
 
 test('the client secret is encrypted at rest and is not returned by the settings api', function () {
@@ -155,6 +159,114 @@ test('saving a connection re-encrypts a legacy token and leaves a crypt token al
         ->and($stored['refresh_token'])->toBe($crypt)
         ->and($connection->access_token)->toBe('old-access')
         ->and($connection->refresh_token)->toBe('refresh-plain');
+});
+
+test('an unrecognized token is not a live secret and plaintext is encrypted on the next save', function () {
+    $cipher                                 = new SecretCipher();
+    $settings                               = new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), $cipher);
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'        => 'id',
+        'client_secret'    => 'plain-secret',
+        'webhook_verifier' => 'plain-verifier',
+        'redirect_uri'     => 'https://example.test/callback',
+        'environment'      => 'sandbox',
+    ];
+    $controller = new SettingController(
+        new Authorizer(static fn () => true),
+        $settings,
+        $store
+    );
+
+    session(['company' => 'company-uuid']);
+    try {
+        $response = $controller->save(Request::create('/settings', 'POST', [
+            'scope' => 'admin',
+            'auth'  => [
+                'client_id'        => 'id',
+                'client_secret'    => '',
+                'webhook_verifier' => '',
+                'redirect_uri'     => 'https://example.test/callback',
+                'environment'      => 'sandbox',
+            ],
+            'sync' => qbSettings(),
+        ]));
+        $stored = $store->rows[SettingsKeys::adminAuth()];
+        $body   = $response->getContent();
+
+        expect($response->getStatusCode())->toBe(200)
+            ->and($body)->not->toContain('plain-secret')
+            ->and($body)->not->toContain('plain-verifier')
+            ->and($body)->not->toContain('access_token')
+            ->and($body)->not->toContain('refresh_token')
+            ->and($stored['client_secret'])->not->toBe('plain-secret')
+            ->and($cipher->decrypt($stored['client_secret']))->toBe('plain-secret')
+            ->and($stored['webhook_verifier'])->not->toBe('plain-verifier')
+            ->and($cipher->decrypt($stored['webhook_verifier']))->toBe('plain-verifier')
+            ->and($settings->credentialsFor($store, 'company-uuid')['client_secret'])->toBe('plain-secret');
+    } finally {
+        session(['company' => null]);
+    }
+
+    $connection = new Fleetbase\Quickbooks\Models\Connection();
+    $connection->setRawAttributes([
+        'access_token'  => 'plain-access',
+        'refresh_token' => 'plain-refresh',
+    ]);
+
+    expect($connection->access_token)->toBeNull()
+        ->and($connection->refresh_token)->toBeNull();
+
+    try {
+        $connection->save();
+    } catch (Throwable) {
+        // The row is not written in this harness. The upgrade runs before the query.
+    }
+
+    $tokens = $connection->getAttributes();
+
+    expect($tokens['access_token'])->not->toBe('plain-access')
+        ->and($cipher->decrypt($tokens['access_token']))->toBe('plain-access')
+        ->and($tokens['refresh_token'])->not->toBe('plain-refresh')
+        ->and($cipher->decrypt($tokens['refresh_token']))->toBe('plain-refresh')
+        ->and($connection->access_token)->toBe('plain-access')
+        ->and($connection->refresh_token)->toBe('plain-refresh');
+});
+
+test('a failed decrypt or unrecognized secret is missing and legacy ciphertext still opens', function () {
+    $cipher      = new SecretCipher();
+    $settings    = new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), $cipher);
+    $payload     = $cipher->encrypt('real-secret');
+    $json        = json_decode(base64_decode($payload), true);
+    $json['mac'] = str_repeat('ab', 32);
+    $tampered    = base64_encode((string) json_encode($json));
+    $appKey      = (string) config('app.key');
+    $key         = substr(hash('sha256', base64_decode(substr($appKey, 7), true), true), 0, 32);
+    $iv          = random_bytes(16);
+    $legacy      = base64_encode($iv . openssl_encrypt('old-secret', 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
+
+    $unrecognized = $settings->resolveAuth([], [
+        'client_secret'    => 'not-a-secret',
+        'webhook_verifier' => $tampered,
+    ], []);
+    $opened = $settings->resolveAuth([], [
+        'client_secret'    => $legacy,
+        'webhook_verifier' => $cipher->encrypt('verifier-token'),
+    ], []);
+    $connection = new Fleetbase\Quickbooks\Models\Connection();
+    $connection->setRawAttributes([
+        'access_token'  => 'not-a-token',
+        'refresh_token' => $legacy,
+    ]);
+
+    expect($unrecognized['client_secret'])->toBe('')
+        ->and($unrecognized['client_secret'])->not->toBe('not-a-secret')
+        ->and($unrecognized['webhook_verifier'])->toBe('')
+        ->and($unrecognized['webhook_verifier'])->not->toBe($tampered)
+        ->and($opened['client_secret'])->toBe('old-secret')
+        ->and($opened['webhook_verifier'])->toBe('verifier-token')
+        ->and($connection->access_token)->toBeNull()
+        ->and($connection->refresh_token)->toBe('old-secret');
 });
 
 test('a controller action without quickbooks update settings returns 403', function () {
@@ -257,7 +369,7 @@ test('disconnect deletes only the signed-in company connection and does not call
             ->and($checked)->toBe(['quickbooks disconnect connection', 'quickbooks disconnect connection'])
             ->and($connection->deletes)->toHaveCount(1)
             ->and($connection->deletes[0]['query'])->toContain('quickbooks_connections')
-            ->and($connection->deletes[0]['bindings'])->toBe(['company-uuid'])
+            ->and($connection->deletes[0]['bindings'])->toBe([])
             ->and(Http::recorded())->toHaveCount(0);
     } finally {
         if ($previous === null) {
@@ -315,14 +427,14 @@ test('the session company is used when the request sends no company uuid', funct
 
     try {
         $controller->show(Request::create('/settings', 'GET'));
-        expect($store->asked)->toContain(SettingsKeys::companySync('company-uuid'))
-            ->and($store->asked)->toContain(SettingsKeys::companyAuth('company-uuid'));
+        expect($store->asked)->toContain(SettingsKeys::adminSync())
+            ->and($store->asked)->toContain(SettingsKeys::adminAuth());
     } finally {
         session(['company' => null]);
     }
 });
 
-test('oauth start uses the computed api callback when the saved redirect uri is empty', function () {
+test('oauth start refuses a private callback and sends a public https redirect', function () {
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     $previous = qbRememberConfig([
         'app.url',
@@ -342,9 +454,9 @@ test('oauth start uses the computed api callback when the saved redirect uri is 
     config()->set('quickbooks.client_secret', '');
     $computed                                               = 'http://10.30.0.34:8000/quickbooks/int/v1/oauth/callback';
     $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companyAuth('company-uuid')] = [
+    $store->rows[SettingsKeys::adminAuth()]                 = [
         'client_id'     => 'client-id',
-        'client_secret' => 'secret',
+        'client_secret' => (new SecretCipher())->encrypt('secret'),
         'environment'   => 'sandbox',
     ];
     $controller = new ConnectionController(
@@ -358,34 +470,49 @@ test('oauth start uses the computed api callback when the saved redirect uri is 
     try {
         expect(SettingController::internalOAuthRedirectUrl())->toBe($computed);
 
-        $empty = qbOAuthRedirect($controller->start(Request::create('/oauth/start', 'POST', [
+        $start = static fn (): JsonResponse => $controller->start(Request::create('/oauth/start', 'POST', [
             'company_uuid' => 'company-uuid',
-        ])));
-        expect($empty)->toBe($computed);
+        ]));
 
-        $store->rows[SettingsKeys::companyAuth('company-uuid')]['redirect_uri'] = 'https://example.test/callback';
-        $stored                                                                 = qbOAuthRedirect($controller->start(Request::create('/oauth/start', 'POST', [
-            'company_uuid' => 'company-uuid',
-        ])));
-        expect($stored)->toBe($computed);
+        foreach ([
+            null,
+            'https://example.test/callback',
+            'http://10.30.0.34:4200/quickbooks',
+        ] as $redirect) {
+            if ($redirect === null) {
+                unset($store->rows[SettingsKeys::adminAuth()]['redirect_uri']);
+            } else {
+                $store->rows[SettingsKeys::adminAuth()]['redirect_uri'] = $redirect;
+            }
+            unset($store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']);
+            $refused = $start();
+            expect($refused->getStatusCode())->toBe(422)
+                ->and($refused->getContent())->not->toContain('10.30.0.34')
+                ->and($refused->getContent())->not->toContain('localhost');
+        }
 
-        $store->rows[SettingsKeys::companyAuth('company-uuid')]['redirect_uri'] = 'http://10.30.0.34:4200/quickbooks';
-        $consolePort                                                            = qbOAuthRedirect($controller->start(Request::create('/oauth/start', 'POST', [
-            'company_uuid' => 'company-uuid',
-        ])));
-        expect($consolePort)->toBe($computed);
+        foreach ([
+            'http://public.example.test/callback',
+            'https://10.0.0.5/callback',
+            'https://192.168.1.9/callback',
+            'https://172.16.5.5/callback',
+            'https://127.0.0.2/callback',
+            'https://localhost/callback',
+            'not-a-url',
+        ] as $redirect) {
+            $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url'] = $redirect;
+            $refused                                                             = $start();
+            expect($refused->getStatusCode())->toBe(422)
+                ->and($refused->getContent())->not->toContain($redirect);
+        }
 
-        $store->rows[SettingsKeys::companyAuth('company-uuid')]['public_oauth_redirect_url'] = 'https://public.example.test/quickbooks/int/v1/oauth/callback';
-        $public                                                                              = qbOAuthRedirect($controller->start(Request::create('/oauth/start', 'POST', [
-            'company_uuid' => 'company-uuid',
-        ])));
+        $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url'] = 'https://public.example.test/quickbooks/int/v1/oauth/callback';
+        $public                                                              = qbOAuthRedirect($start());
         expect($public)->toBe('https://public.example.test/quickbooks/int/v1/oauth/callback');
 
-        $store->rows[SettingsKeys::companyAuth('company-uuid')]['public_oauth_redirect_url'] = 'not-a-url';
-        $invalidPublic                                                                       = qbOAuthRedirect($controller->start(Request::create('/oauth/start', 'POST', [
-            'company_uuid' => 'company-uuid',
-        ])));
-        expect($invalidPublic)->toBe($computed);
+        config()->set('app.url', 'https://api.example.test');
+        unset($store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']);
+        expect(qbOAuthRedirect($start()))->toBe('https://api.example.test/quickbooks/int/v1/oauth/callback');
     } finally {
         qbRestoreConfig($previous);
         session(['company' => null, 'user' => null]);
@@ -408,9 +535,9 @@ test('a path-only computed callback uses a full public oauth url and otherwise s
     config()->set('quickbooks.redirect_uri', '');
     $public                                                 = 'https://books.example.test/quickbooks/int/v1/oauth/callback';
     $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companyAuth('company-uuid')] = [
+    $store->rows[SettingsKeys::adminAuth()]                 = [
         'client_id'                  => 'client-id',
-        'client_secret'              => 'secret',
+        'client_secret'              => (new SecretCipher())->encrypt('secret'),
         'redirect_uri'               => $public,
         'public_oauth_redirect_url'  => $public,
         'environment'                => 'sandbox',
@@ -431,13 +558,13 @@ test('a path-only computed callback uses a full public oauth url and otherwise s
         ])));
         expect($kept)->toBe($public);
 
-        unset($store->rows[SettingsKeys::companyAuth('company-uuid')]['public_oauth_redirect_url']);
+        unset($store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']);
         $redirectOnly = $controller->start(Request::create('/oauth/start', 'POST', [
             'company_uuid' => 'company-uuid',
         ]));
         expect($redirectOnly->getStatusCode())->toBe(422);
 
-        $store->rows[SettingsKeys::companyAuth('company-uuid')]['public_oauth_redirect_url'] = 'not-a-url';
+        $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']                 = 'not-a-url';
         $invalid                                                                             = $controller->start(Request::create('/oauth/start', 'POST', [
             'company_uuid' => 'company-uuid',
         ]));
@@ -457,12 +584,12 @@ test('oauth complete exchanges the code with the same computed callback', functi
         'quickbooks.console_host',
         'quickbooks.redirect_uri',
     ]);
-    config()->set('app.url', 'http://localhost:8000');
+    config()->set('app.url', 'https://api.example.test');
     config()->set('fleetbase.url', null);
     config()->set('fleetbase.console.host', 'http://10.30.0.34:4200');
     config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
     config()->set('quickbooks.redirect_uri', '');
-    $computed = 'http://10.30.0.34:8000/quickbooks/int/v1/oauth/callback';
+    $computed = 'https://api.example.test/quickbooks/int/v1/oauth/callback';
     Http::swap(new Illuminate\Http\Client\Factory());
     Http::fake([
         'oauth.platform.intuit.com/*' => Http::response([
@@ -478,9 +605,9 @@ test('oauth complete exchanges the code with the same computed callback', functi
         ], 200),
     ]);
     $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companyAuth('company-uuid')] = [
+    $store->rows[SettingsKeys::adminAuth()]                 = [
         'client_id'     => 'client-id',
-        'client_secret' => 'secret',
+        'client_secret' => (new SecretCipher())->encrypt('secret'),
         'environment'   => 'sandbox',
     ];
     $controller = new class(new Authorizer(static fn () => true), new OAuthFlow(new QuickBooksClient()), new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()), $store, new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {
@@ -516,16 +643,24 @@ test('oauth complete exchanges the code with the same computed callback', functi
         expect($callback->getTargetUrl())->toStartWith('http://10.30.0.34:4200/quickbooks?oauth_state=');
         parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
 
-        $completed = $controller->complete(Request::create('/oauth/complete', 'POST', [
-            'state' => (string) $query['oauth_state'],
-        ]));
+        $completed = null;
+        $jobs      = qbCaptureDispatches(function () use ($controller, $query, &$completed): void {
+            $completed = $controller->complete(Request::create('/oauth/complete', 'POST', [
+                'state' => (string) $query['oauth_state'],
+            ]));
+        });
         $exchanges = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
         parse_str($exchanges[0][0]->body(), $form);
+        $syncs = array_values(array_filter($jobs, fn ($job) => $job instanceof SyncCompanyBatch));
 
         expect($completed->getStatusCode())->toBe(200)
             ->and($completed->getData(true))->toBe(['connected' => true])
             ->and($form['redirect_uri'])->toBe($computed)
-            ->and($controller->saved['realm_id'])->toBe('realm-1');
+            ->and($controller->saved['realm_id'])->toBe('realm-1')
+            ->and($syncs)->toHaveCount(1)
+            ->and($syncs[0]->companyUuid)->toBe('company-uuid')
+            ->and($syncs[0]->trigger)->toBe('now')
+            ->and(array_filter($jobs, fn ($job) => $job instanceof ImportCustomers))->toBe([]);
     } finally {
         qbRestoreConfig($previous);
         session(['company' => null, 'user' => null]);
@@ -602,7 +737,7 @@ test('the oauth callback only keeps the code and the user who started the flow c
         'client_secret' => 'secret',
         'redirect_uri'  => 'https://example.test/callback',
         'environment'   => 'sandbox',
-    ], false);
+    ]);
 
     $controller = new class(new Authorizer(static fn () => true), $flow, new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()), new MemorySettingsStore(), new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {
         /** @var array<string, mixed> */
@@ -639,29 +774,36 @@ test('the oauth callback only keeps the code and the user who started the flow c
 
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     try {
-        $completed = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
+        $jobs = qbCaptureDispatches(function () use ($controller, $handle): void {
+            $completed = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
 
-        expect($completed->getStatusCode())->toBe(200)
-            ->and($completed->getData(true))->toBe(['connected' => true])
-            ->and($controller->saved['company_uuid'])->toBe('company-uuid')
-            ->and($controller->saved['realm_id'])->toBe('realm-1')
-            ->and($controller->saved['refresh_token'])->toBe('refresh')
-            ->and($controller->saved)->not->toHaveKey('import_customers');
+            expect($completed->getStatusCode())->toBe(200)
+                ->and($completed->getData(true))->toBe(['connected' => true])
+                ->and($controller->saved['company_uuid'])->toBe('company-uuid')
+                ->and($controller->saved['realm_id'])->toBe('realm-1')
+                ->and($controller->saved['refresh_token'])->toBe('refresh')
+                ->and($controller->saved)->not->toHaveKey('import_customers');
 
-        // A reload repeats complete(); it reports connected without a second code exchange or save.
-        $controller->saved = [];
-        $repeated          = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
-        $exchanges         = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
+            // A reload repeats complete(); it reports connected without a second code exchange, save, or sync.
+            $controller->saved = [];
+            $repeated          = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
+            $exchanges         = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
 
-        expect($repeated->getStatusCode())->toBe(200)
-            ->and($repeated->getData(true))->toBe(['connected' => true])
-            ->and($controller->saved)->toBe([])
-            ->and($exchanges)->toHaveCount(1);
+            expect($repeated->getStatusCode())->toBe(200)
+                ->and($repeated->getData(true))->toBe(['connected' => true])
+                ->and($controller->saved)->toBe([])
+                ->and($exchanges)->toHaveCount(1);
 
-        $controller->stored = false;
-        $disconnected       = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
-        expect($disconnected->getStatusCode())->toBe(422)
-            ->and($disconnected->getData(true)['message'])->toBe('QuickBooks is not connected. Connect again from Connection.');
+            $controller->stored = false;
+            $disconnected       = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
+            expect($disconnected->getStatusCode())->toBe(422)
+                ->and($disconnected->getData(true)['message'])->toBe('QuickBooks is not connected. Connect again from Connection.');
+        });
+        $syncs = array_values(array_filter($jobs, fn ($job) => $job instanceof SyncCompanyBatch));
+
+        expect($syncs)->toHaveCount(1)
+            ->and($syncs[0]->trigger)->toBe('now')
+            ->and(array_filter($jobs, fn ($job) => $job instanceof ImportCustomers))->toBe([]);
     } finally {
         session(['company' => null, 'user' => null]);
     }
@@ -690,7 +832,7 @@ test('oauth state is validated before the code exchange', function () {
         'redirect_uri'  => 'https://example.test/callback',
         'environment'   => 'sandbox',
     ];
-    $begun = $flow->begin('company-uuid', 'user-uuid', $credentials, false);
+    $begun = $flow->begin('company-uuid', 'user-uuid', $credentials);
 
     expect(fn () => $flow->complete('foreign-state', 'company-uuid', 'user-uuid', $credentials))
         ->toThrow(QuickBooksException::class);
@@ -706,14 +848,14 @@ test('oauth state is validated before the code exchange', function () {
     expect(fn () => $flow->complete($begun['state'], 'company-uuid', 'user-uuid', $credentials))
         ->toThrow(QuickBooksException::class);
 
-    $again      = $flow->begin('company-uuid', 'user-uuid', $credentials, true);
+    $again      = $flow->begin('company-uuid', 'user-uuid', $credentials);
     $handle     = $flow->receive($again['state'], 'code', 'realm-1');
     $connection = $flow->complete($handle, 'company-uuid', 'user-uuid', $credentials);
 
     expect($connection['refresh_token'])->toBe('refresh')
         ->and($connection['home_currency'])->toBe('USD')
         ->and($connection['default_item_id'])->toBe('7')
-        ->and($connection['import_customers'])->toBeTrue();
+        ->and($connection)->not->toHaveKey('import_customers');
 });
 
 test('completing a handle again is allowed only for the user who completed it and does not exchange again', function () {
@@ -756,7 +898,7 @@ test('completing a handle again is allowed only for the user who completed it an
         'redirect_uri'  => 'https://example.test/callback',
         'environment'   => 'sandbox',
     ];
-    $begun  = $flow->begin('company-uuid', 'user-uuid', $credentials, false);
+    $begun  = $flow->begin('company-uuid', 'user-uuid', $credentials);
     $handle = $flow->receive($begun['state'], 'code', 'realm-1');
 
     expect(fn () => $flow->complete($handle, 'company-uuid', 'other-user', $credentials))
@@ -808,7 +950,7 @@ test('a failed token exchange and an unreachable probe do not return transport t
         'environment'   => 'sandbox',
     ];
     $flow   = new OAuthFlow($client);
-    $begun  = $flow->begin('company-uuid', 'user-uuid', $credentials, false);
+    $begun  = $flow->begin('company-uuid', 'user-uuid', $credentials);
     $handle = $flow->receive($begun['state'], 'code', 'realm-1');
 
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
@@ -866,7 +1008,7 @@ test('completing with the original state instead of the handle says the link is 
         'redirect_uri'  => 'https://example.test/callback',
         'environment'   => 'sandbox',
     ];
-    $begun = $flow->begin('company-uuid', 'user-uuid', $credentials, false);
+    $begun = $flow->begin('company-uuid', 'user-uuid', $credentials);
 
     expect(fn () => $flow->complete($begun['state'], 'company-uuid', 'user-uuid', $credentials))
         ->toThrow(QuickBooksException::class, 'This QuickBooks authorization link is not valid. Connect again from Connection.');
@@ -1111,6 +1253,69 @@ function qbOAuthRedirect(JsonResponse $response): string
 /**
  * @return array<string, mixed>
  */
+/**
+ * @return array<int, object>
+ */
+function qbCaptureDispatches(callable $callback): array
+{
+    $dispatcher = new class implements Dispatcher {
+        /** @var array<int, object> */
+        public array $jobs = [];
+
+        public function dispatch($command)
+        {
+            $this->jobs[] = $command;
+
+            return $command;
+        }
+
+        public function dispatchSync($command, $handler = null)
+        {
+            return $command;
+        }
+
+        public function dispatchNow($command, $handler = null)
+        {
+            return $command;
+        }
+
+        public function hasCommandHandler($command)
+        {
+            return false;
+        }
+
+        public function getCommandHandler($command)
+        {
+            return false;
+        }
+
+        public function pipeThrough(array $pipes)
+        {
+            return $this;
+        }
+
+        public function map(array $map)
+        {
+            return $this;
+        }
+    };
+    $container          = Container::getInstance();
+    $previousDispatcher = $container->bound(Dispatcher::class) ? $container->make(Dispatcher::class) : null;
+    $container->instance(Dispatcher::class, $dispatcher);
+
+    try {
+        $callback();
+    } finally {
+        if ($previousDispatcher !== null) {
+            $container->instance(Dispatcher::class, $previousDispatcher);
+        } else {
+            $container->forgetInstance(Dispatcher::class);
+        }
+    }
+
+    return $dispatcher->jobs;
+}
+
 function qbSummaryBatch(string $uuid, string $companyUuid, string $trigger, string $status, string $finishedAt, int $created, int $updated = 0): array
 {
     return [

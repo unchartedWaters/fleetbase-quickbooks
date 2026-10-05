@@ -1,7 +1,7 @@
 import { module, test } from 'qunit';
 import { setupTest } from 'dummy/tests/helpers';
 import { changedFields, fieldState, normalizeSyncDirection, secretPresentation, validateSettings } from '@unchartedwaters/quickbooks-engine/utils/settings-form';
-import { connectPayload, connectionState } from '@unchartedwaters/quickbooks-engine/utils/connection-view';
+import { connectionState } from '@unchartedwaters/quickbooks-engine/utils/connection-view';
 import { activityRows } from '@unchartedwaters/quickbooks-engine/utils/activity-view';
 import ConnectionRoute from '@unchartedwaters/quickbooks-engine/routes/connection';
 import ActionsRoute from '@unchartedwaters/quickbooks-engine/routes/actions';
@@ -179,11 +179,10 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.deepEqual(disabledCustomer, {});
     });
 
-    test('connection state and the import payload default off', function (assert) {
+    test('connection state treats a realm without reauth as connected', function (assert) {
         assert.strictEqual(connectionState(null), 'disconnected');
         assert.strictEqual(connectionState({ realm_id: '1', environment: 'sandbox' }), 'connected');
         assert.strictEqual(connectionState({ realm_id: '1', needs_reauth: true }), 'needs-reauth');
-        assert.deepEqual(connectPayload(false), { import_customers: false });
     });
 
     test('activity rows keep outbound batches and inbound counts', function (assert) {

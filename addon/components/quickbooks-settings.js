@@ -2,6 +2,7 @@ import Component from '@glimmer/component';
 import { action } from '@ember/object';
 import { tracked } from '@glimmer/tracking';
 import { inject as service } from '@ember/service';
+import { schedule } from '@ember/runloop';
 import { DEFAULT_ENVIRONMENT, fieldState, normalizeSyncDirection, secretPresentation, validateSettings, webhookVerifierPresentation } from '../utils/settings-form';
 
 const NUMBER_FIELDS = ['interval_minutes', 'periodic_interval_hours', 'retry_limit', 'default_backoff_seconds'];
@@ -42,32 +43,65 @@ const CHOICE_DEFAULTS = {
     payment_direction: 'both',
     wallet_direction: 'both',
 };
+const ERROR_FIELD_ORDER = [
+    'client_id',
+    'environment',
+    'client_secret',
+    'webhook_verifier',
+    'interval_minutes',
+    'periodic_interval_hours',
+    'retry_limit',
+    'default_backoff_seconds',
+    'customer_conflict',
+    'customer_reference',
+    'customer_direction',
+    'invoice_conflict',
+    'invoice_reference',
+    'invoice_direction',
+    'payment_conflict',
+    'payment_reference',
+    'payment_direction',
+    'wallet_conflict',
+    'wallet_reference',
+    'wallet_direction',
+];
+
+const CREDENTIAL_FIELDS = ['client_id', 'environment', 'client_secret', 'webhook_verifier'];
+
+function firstErrorKey(errors) {
+    return ERROR_FIELD_ORDER.find((key) => errors?.[key]) || Object.keys(errors || {})[0] || null;
+}
+
+function errorFieldSelector(key) {
+    if (typeof key === 'string' && key.endsWith('_reference')) {
+        return `[data-test-sync="${key.replace(/_reference$/, '_conflict')}"]`;
+    }
+
+    if (CREDENTIAL_FIELDS.includes(key)) {
+        return `[data-test-field="${key}"]`;
+    }
+
+    return `[data-test-sync="${key}"]`;
+}
+
 const DISPLAY_URLS = [
     {
-        key: 'internal_webhook_receiver_url',
-        label: 'Internal Webhook Receiver URL',
-        hint: 'Intuit posts webhooks to this address.',
-        editable: false,
-    },
-    {
         key: 'public_webhook_receiver_url',
-        label: 'Public Webhook Receiver URL',
-        hint: 'Paste this into the Intuit webhook Endpoint URL.',
         editable: true,
         fallback: 'internal_webhook_receiver_url',
     },
     {
-        key: 'internal_oauth_redirect_url',
-        label: 'Internal Oauth Redirect URL',
-        hint: 'QuickBooks returns here after sign-in.',
+        key: 'internal_webhook_receiver_url',
         editable: false,
     },
     {
         key: 'public_oauth_redirect_url',
-        label: 'Public OAuth Redirect URL',
-        hint: 'Paste this into Intuit Redirect URIs.',
         editable: true,
         fallback: 'internal_oauth_redirect_url',
+    },
+    {
+        key: 'internal_oauth_redirect_url',
+        editable: false,
     },
 ];
 
@@ -111,14 +145,13 @@ export default class QuickbooksSettingsComponent extends Component {
 
     @tracked draft = {};
     @tracked errors = {};
-    // Sent with Connect only. Customers must also be enabled or the server skips the import.
-    @tracked importCustomers = false;
+    @tracked saving = false;
+
+    get saveDisabled() {
+        return this.args.settingsLoadFailed === true || this.saving;
+    }
 
     primaryTouched = new Set();
-
-    get title() {
-        return this.args.title || this.intl.t('quickbooks.connection.title');
-    }
 
     get authFields() {
         return AUTH_FIELDS.map((key) => this.present(key));
@@ -265,11 +298,6 @@ export default class QuickbooksSettingsComponent extends Component {
     }
 
     @action
-    setImportCustomers(enabled) {
-        this.importCustomers = enabled === true;
-    }
-
-    @action
     setEntityEnabled(entity, enabled) {
         enabled = enabled === true;
         this.draft = { ...this.draft, [`${entity}_enabled`]: enabled };
@@ -282,10 +310,29 @@ export default class QuickbooksSettingsComponent extends Component {
         }
     }
 
+    revealFirstError(errors) {
+        const key = firstErrorKey(errors);
+        schedule('afterRender', () => {
+            const root = document.querySelector('[data-test-settings-scope]');
+            if (!root || !key) {
+                return;
+            }
+
+            const field = root.querySelector(errorFieldSelector(key));
+            const target = field || root.querySelector(`[data-test-error="${CSS.escape(key)}"]`);
+            if (!target) {
+                return;
+            }
+
+            target.scrollIntoView?.({ block: 'center' });
+            target.focus?.();
+        });
+    }
+
     @action
     async save(event) {
         event?.preventDefault?.();
-        if (this.args.settingsLoadFailed === true || this.args.settingsLoaded === false) {
+        if (this.saveDisabled || this.args.settingsLoaded === false) {
             return;
         }
 
@@ -325,9 +372,11 @@ export default class QuickbooksSettingsComponent extends Component {
         });
         this.errors = this.localizeErrors(errors);
         if (Object.keys(errors).length) {
+            this.revealFirstError(errors);
             return;
         }
 
+        this.saving = true;
         try {
             await this.args.onSave?.({ scope: 'company', auth, sync });
             this.notifications.success(this.intl.t('quickbooks.settings.saved'));
@@ -338,9 +387,12 @@ export default class QuickbooksSettingsComponent extends Component {
             const serverErrors = error?.errors;
             if (serverErrors && typeof serverErrors === 'object' && !Array.isArray(serverErrors)) {
                 this.errors = this.localizeErrors(serverErrors);
+                this.revealFirstError(serverErrors);
             } else {
                 this.notifications.serverError(error);
             }
+        } finally {
+            this.saving = false;
         }
     }
 

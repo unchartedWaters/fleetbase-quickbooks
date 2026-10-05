@@ -70,21 +70,22 @@ function securityStatus(callable $action): int
     return 200;
 }
 
-test('organization settings do not require an admin scope', function () {
+test('install settings are the admin scope and an organization scope is not a settings screen', function () {
     session(['company' => 'company-uuid']);
     $store      = new MemorySettingsStore();
     $controller = securitySettingController($store);
 
     try {
-        expect(securityStatus(fn () => $controller->show(securityRequest('GET', ['scope' => 'admin'], true))))->toBe(404)
+        expect(securityStatus(fn () => $controller->show(securityRequest('GET', ['scope' => 'company'], true))))->toBe(404)
             ->and(securityStatus(fn () => $controller->save(securityRequest('POST', [
-                'scope' => 'admin',
+                'scope' => 'company',
                 'auth'  => ['client_id' => 'x'],
                 'sync'  => ['override' => true],
-            ], false))))->toBe(404)
+            ], false))))->toBe(403)
             ->and($store->rows)->toBe([])
             ->and($store->adminAuth())->toBe([])
-            ->and(securityStatus(fn () => $controller->show(securityRequest('GET', ['scope' => 'company'], false))))->toBe(200);
+            ->and(securityStatus(fn () => $controller->show(securityRequest('GET', ['scope' => 'admin'], false))))->toBe(403)
+            ->and(securityStatus(fn () => $controller->show(securityRequest('GET', ['scope' => 'admin'], true))))->toBe(200);
     } finally {
         session(['company' => null]);
     }
@@ -99,8 +100,8 @@ test('a request without a session organization is refused', function () {
 
 test('saving settings keeps stored auth fields that were not sent', function () {
     session(['company' => 'company-uuid']);
-    $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companyAuth('company-uuid')] = [
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
         'client_id'     => 'old-id',
         'client_secret' => 'kept-secret',
         'redirect_uri'  => 'https://example.test/callback',
@@ -109,15 +110,17 @@ test('saving settings keeps stored auth fields that were not sent', function () 
 
     try {
         $response = securitySettingController($store)->save(Request::create('/settings', 'POST', [
-            'scope' => 'company',
+            'scope' => 'admin',
             'auth'  => ['client_id' => 'new-id', 'client_secret' => ''],
             'sync'  => qbSettings(['override' => true]),
         ]));
-        $stored = $store->rows[SettingsKeys::companyAuth('company-uuid')];
+        $stored = $store->rows[SettingsKeys::adminAuth()];
 
         expect($response->getStatusCode())->toBe(200)
+            ->and($response->getContent())->not->toContain('kept-secret')
             ->and($stored['client_id'])->toBe('new-id')
-            ->and($stored['client_secret'])->toBe('kept-secret')
+            ->and($stored['client_secret'])->not->toBe('kept-secret')
+            ->and((new SecretCipher())->decrypt($stored['client_secret']))->toBe('kept-secret')
             ->and($stored['redirect_uri'])->toBe('https://example.test/callback')
             ->and($stored['environment'])->toBe('sandbox');
     } finally {
@@ -133,7 +136,7 @@ test('an authorization started by another organization cannot be completed by th
         'client_secret' => 'secret',
         'redirect_uri'  => 'https://example.test/callback',
         'environment'   => 'sandbox',
-    ], false);
+    ]);
     $controller = securityConnectionController($flow);
 
     // The victim's browser arrives with the attacker's state and the victim's code.
@@ -182,7 +185,7 @@ test('a cancelled authorization forgets the state and says it was cancelled', fu
         'client_secret' => 'secret',
         'redirect_uri'  => 'https://example.test/callback',
         'environment'   => 'sandbox',
-    ], false);
+    ]);
 
     $redirect = securityConnectionController($flow)->callback(Request::create('/oauth/callback', 'GET', [
         'state' => $begun['state'],
@@ -249,11 +252,11 @@ test('the callback refuses to redirect when only the fleetbase.io default host i
 test('string booleans in sync settings are read as booleans', function () {
     $resolver = new SyncSettingsResolver();
 
-    $off      = $resolver->resolve(['override' => true, 'enabled' => 'false'], ['enabled' => true], ['enabled' => true]);
-    $fallback = $resolver->resolve(['override' => true, 'enabled' => 'nonsense'], ['enabled' => '0'], ['enabled' => true]);
+    $off      = $resolver->resolve(['enabled' => true], ['override' => true, 'enabled' => 'false'], ['enabled' => true]);
+    $fallback = $resolver->resolve(['enabled' => '0'], ['override' => true, 'enabled' => 'nonsense'], ['enabled' => true]);
 
     expect($off['enabled'])->toBeFalse()
-        ->and($off['sources']['enabled'])->toBe('company')
+        ->and($off['sources']['enabled'])->toBe('admin')
         ->and($off)->not->toHaveKey('override')
         ->and($fallback['enabled'])->toBeTrue()
         ->and($fallback['sources']['enabled'])->toBe('default');
@@ -270,12 +273,12 @@ test('the reauth notification carries only the organization and realm', function
         ->and($notification->via(new stdClass()))->toBe($notification->notificationOptions);
 });
 
-test('a realm connection accepts its own verifier and rejects another organization', function () {
+test('the global verifier accepts a realm and another organization verifier is rejected', function () {
     $settings = webhookSettings();
     $body     = '{"eventNotifications":[{"realmId":"realm-1","dataChangeEvent":{"entities":[{"name":"Customer","id":"1","operation":"Create"}]}}]}';
 
     withoutWebhookVerifier(function () use ($settings, $body) {
-        $store                                               = new MemorySettingsStore();
+        $store                                               = webhookAdminStore($settings, 'verifier-a');
         $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth([
             'client_secret'    => 'secret-a',
             'webhook_verifier' => 'verifier-a',
@@ -356,18 +359,54 @@ test('a failed webhook check does not decrypt every company client secret', func
             expect($response->getStatusCode())->toBe(401)
                 ->and($events)->toBe([])
                 ->and($dispatcher->jobs)->toBe([])
-                ->and($cipher->decrypted)->toContain($company['webhook_verifier'])
+                ->and($cipher->decrypted)->toContain($admin['webhook_verifier'])
+                ->and($cipher->decrypted)->not->toContain($company['webhook_verifier'])
                 ->and($cipher->decrypted)->not->toContain($company['client_secret'])
                 ->and($cipher->decrypted)->not->toContain($other['client_secret'])
                 ->and($cipher->decrypted)->not->toContain($other['webhook_verifier'])
                 ->and($cipher->decrypted)->not->toContain($admin['client_secret'])
-                ->and($cipher->decrypted)->not->toContain($admin['webhook_verifier'])
-                ->and($store->asked)->toBe([SettingsKeys::companyAuth('company-a')]);
+                ->and($store->asked)->toBe([SettingsKeys::adminAuth()]);
         });
     });
 });
 
+if (!function_exists('qbEnsureCustomerTable')) {
+    function qbEnsureCustomerTable(): void
+    {
+        $config = config();
+        if (is_object($config) && method_exists($config, 'set')) {
+            $config->set('fleetbase.connection.db', 'sqlite');
+        }
+        $database = app('db');
+        if (!is_object($database) || !method_exists($database, 'connection')) {
+            return;
+        }
+        $schema = $database->connection('sqlite')->getSchemaBuilder();
+        if ($schema->hasTable('contacts')) {
+            return;
+        }
+        $schema->create('contacts', function ($table): void {
+            $table->increments('id');
+            $table->string('uuid')->nullable();
+            $table->string('public_id')->nullable();
+            $table->string('internal_id')->nullable();
+            $table->string('company_uuid')->nullable();
+            $table->string('name')->nullable();
+            $table->string('email')->nullable();
+            $table->string('phone')->nullable();
+            $table->string('type')->nullable();
+            $table->text('notes')->nullable();
+            $table->text('meta')->nullable();
+            $table->string('slug')->nullable();
+            $table->softDeletes();
+            $table->timestamps();
+        });
+    }
+}
+
 test('imported contacts get a fresh uuid rather than one built from the quickbooks id', function () {
+    $previous = config('fleetbase.connection.db');
+    qbEnsureCustomerTable();
     $client                = new FakeQuickBooks();
     $client->customerPages = [1 => [['Id' => '1', 'DisplayName' => 'Ada', 'SyncToken' => '0']]];
     $ledger                = new SyncLedger();
@@ -377,4 +416,8 @@ test('imported contacts get a fresh uuid rather than one built from the quickboo
     $uuid = (string) array_key_first($ledger->customers);
 
     expect(Str::isUuid($uuid))->toBeTrue();
+    $config = config();
+    if (is_object($config) && method_exists($config, 'set')) {
+        $config->set('fleetbase.connection.db', $previous);
+    }
 });

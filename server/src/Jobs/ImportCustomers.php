@@ -14,6 +14,7 @@ use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Illuminate\Bus\Queueable;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
@@ -85,9 +86,11 @@ class ImportCustomers implements ShouldQueue
 
         $continue = false;
         try {
-            $continue = $this->import($importer, $directory, $tokens, $settings, $store);
+            $continue = $this->import($importer, $directory, $tokens, $settings, $store, $lock);
         } finally {
-            $lock->release();
+            if (BatchRunner::holds($this->companyUuid)) {
+                $lock->release();
+            }
             if ($continue) {
                 // Mark only deadline-created jobs as continuations, and dispatch after releasing the company lock.
                 self::dispatchJob(new self($this->companyUuid, 0));
@@ -121,6 +124,7 @@ class ImportCustomers implements ShouldQueue
         ?ConnectionTokens $tokens,
         ?SettingsService $settings,
         ?SettingsStore $store,
+        Lock $lock,
     ): bool {
         $connection = $directory->connection($this->companyUuid);
         if (!is_array($connection) || !ConnectionGate::hasRealm($connection)) {
@@ -135,8 +139,8 @@ class ImportCustomers implements ShouldQueue
 
         if ($settings !== null && $store !== null) {
             $resolved = $settings->resolveSync(
-                $store->companySync($this->companyUuid),
                 [],
+                $store->adminSync(),
                 $store->defaultSync()
             );
             if (array_key_exists('customer_enabled', $resolved) && $resolved['customer_enabled'] === false) {
@@ -146,10 +150,15 @@ class ImportCustomers implements ShouldQueue
             }
         }
 
+        // Token refresh and customer page queries must not sit inside the company lock.
+        // The lock is taken again only for the local save.
+        $this->releaseCompanyLock($lock);
+
         if ($tokens !== null) {
             $connection = $tokens->refreshIfDue($connection, time());
             $blocked    = ConnectionTokens::blockedMessage($connection, time());
             if ($blocked !== null) {
+                $this->ensureCompanyLock($lock);
                 $directory->saveSkipped($this->companyUuid, 'import', 'inbound', $blocked);
 
                 return false;
@@ -173,7 +182,36 @@ class ImportCustomers implements ShouldQueue
             return !empty($batch['continue']);
         } finally {
             // Saved even when a page query throws, so customers already created keep their links.
+            $this->ensureCompanyLock($lock);
             $directory->save($ledger);
+        }
+    }
+
+    private function releaseCompanyLock(Lock $lock): void
+    {
+        if (BatchRunner::holds($this->companyUuid)) {
+            $lock->release();
+        }
+    }
+
+    /**
+     * Take the company lock again after QuickBooks HTTP released it.
+     * A local save still runs when the lock cannot be taken, so customers
+     * already created are not dropped.
+     */
+    private function ensureCompanyLock(Lock $lock): void
+    {
+        if (BatchRunner::holds($this->companyUuid)) {
+            return;
+        }
+        if ($lock->get()) {
+            return;
+        }
+
+        try {
+            $lock->block(BatchRunner::LOCK_SECONDS);
+        } catch (\Throwable) {
+            // Save anyway. The links are already decided.
         }
     }
 
@@ -182,8 +220,8 @@ class ImportCustomers implements ShouldQueue
         $batch = CustomerImporter::MAX_PAGE_SIZE;
         if ($settings !== null && $store !== null) {
             $resolved = $settings->resolveSync(
-                $store->companySync($this->companyUuid),
                 [],
+                $store->adminSync(),
                 $store->defaultSync()
             );
             $batch = (int) ($resolved['batch_size'] ?? CustomerImporter::MAX_PAGE_SIZE);

@@ -177,7 +177,7 @@ test('retry delay doubles on each retry and the row fails only after those retri
         ->and($ledger->pending[0]['attempts'])->toBe(1)
         ->and($ledger->pending[0]['next_attempt_at'])->toBe($now + 30);
 
-    $second = $now + 30;
+    $second                                               = $now + 30;
     $ledger->pending[0]['next_attempt_at']                = null;
     $ledger->connections['company-uuid']['last_batch_at'] = null;
     $client->creates                                      = 0;
@@ -186,7 +186,7 @@ test('retry delay doubles on each retry and the row fails only after those retri
         ->and($ledger->pending[0]['attempts'])->toBe(2)
         ->and($ledger->pending[0]['next_attempt_at'])->toBe($second + 60);
 
-    $third = $second + 60;
+    $third                                                = $second + 60;
     $ledger->pending[0]['next_attempt_at']                = null;
     $ledger->connections['company-uuid']['last_batch_at'] = null;
     $client->creates                                      = 0;
@@ -195,7 +195,7 @@ test('retry delay doubles on each retry and the row fails only after those retri
         ->and($ledger->pending[0]['attempts'])->toBe(3)
         ->and($ledger->pending[0]['next_attempt_at'])->toBe($third + 120);
 
-    $fourth = $third + 120;
+    $fourth                                               = $third + 120;
     $ledger->pending[0]['next_attempt_at']                = null;
     $ledger->connections['company-uuid']['last_batch_at'] = null;
     $client->creates                                      = 0;
@@ -309,7 +309,7 @@ test('a paid invoice creates a linked payment', function () {
     $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
     expect($client->calls)->toContain('createPayment')
-        ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'inv-1')['qbo_id'])->toBe('pay-1');
+        ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'pay-1')['qbo_id'])->toBe('pay-1');
 });
 
 test('manual reconcile includes entities that were never flagged', function () {
@@ -432,18 +432,18 @@ test('a block of quickbooks invoice creates resolves doc numbers once and skips 
             return 'INV-009';
         }
     };
-    $client->customTxnNumbers        = true;
-    $client->invoices['old']         = ['Id' => 'old', 'SyncToken' => '0', 'DocNumber' => 'INV-009', 'TotalAmt' => 1];
-    $client->invoices['taken']       = ['Id' => 'taken', 'SyncToken' => '0', 'DocNumber' => 'INV-010', 'TotalAmt' => 1];
-    [$engine, $client]               = qbEngine($client);
-    $ledger                          = batchLedger();
-    $ledger->customers['cust-1']     = customerRow('cust-1');
-    $ledger->links[]                 = linkRow('customer', 'cust-1', 'qbo-customer');
+    $client->customTxnNumbers          = true;
+    $client->invoices['old']           = ['Id' => 'old', 'SyncToken' => '0', 'DocNumber' => 'INV-009', 'TotalAmt' => 1];
+    $client->invoices['taken']         = ['Id' => 'taken', 'SyncToken' => '0', 'DocNumber' => 'INV-010', 'TotalAmt' => 1];
+    [$engine, $client]                 = qbEngine($client);
+    $ledger                            = batchLedger();
+    $ledger->customers['cust-1']       = customerRow('cust-1');
+    $ledger->links[]                   = linkRow('customer', 'cust-1', 'qbo-customer');
     $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
-    $ledger->invoices['inv-1']       = invoiceFixture('inv-1', 1000, 'sent', 'LOCAL-1');
-    $ledger->invoices['inv-2']       = invoiceFixture('inv-2', 1000, 'sent', 'LOCAL-2');
-    $ledger->pending[]               = pendingRow('invoice', 'inv-1');
-    $ledger->pending[]               = pendingRow('invoice', 'inv-2');
+    $ledger->invoices['inv-1']         = invoiceFixture('inv-1', 1000, 'sent', 'LOCAL-1');
+    $ledger->invoices['inv-2']         = invoiceFixture('inv-2', 1000, 'sent', 'LOCAL-2');
+    $ledger->pending[]                 = pendingRow('invoice', 'inv-1');
+    $ledger->pending[]                 = pendingRow('invoice', 'inv-2');
 
     $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_reference' => 'quickbooks']), time());
 
@@ -455,6 +455,42 @@ test('a block of quickbooks invoice creates resolves doc numbers once and skips 
         ->and($client->invoices['inv-2']['DocNumber'])->toBe('INV-012')
         ->and($ledger->invoices['inv-1']['number'])->toBe('INV-011')
         ->and($ledger->invoices['inv-2']['number'])->toBe('INV-012');
+});
+
+test('a block create fails when quickbooks does not confirm a free invoice number', function () {
+    $client = new class extends FakeQuickBooks {
+        protected function latestInvoiceDocNumber(array $connection): string
+        {
+            $this->calls[] = 'latestInvoiceDocNumber';
+
+            return 'INV-009';
+        }
+    };
+    $client->customTxnNumbers = true;
+    for ($i = 10; $i <= 16; $i++) {
+        $doc                    = sprintf('INV-%03d', $i);
+        $client->invoices[$doc] = ['Id' => $doc, 'SyncToken' => '0', 'DocNumber' => $doc, 'TotalAmt' => 1];
+    }
+    [$engine, $client]                 = qbEngine($client);
+    $ledger                            = batchLedger();
+    $ledger->customers['cust-1']       = customerRow('cust-1');
+    $ledger->links[]                   = linkRow('customer', 'cust-1', 'qbo-customer');
+    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
+    $ledger->invoices['inv-1']         = invoiceFixture('inv-1', 1000, 'sent', 'LOCAL-1');
+    $ledger->invoices['inv-2']         = invoiceFixture('inv-2', 1000, 'sent', 'LOCAL-2');
+    $ledger->pending[]                 = pendingRow('invoice', 'inv-1');
+    $ledger->pending[]                 = pendingRow('invoice', 'inv-2');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_reference' => 'quickbooks']), time());
+    $rows  = array_column($ledger->pending, null, 'local_uuid');
+
+    expect($batch['created'])->toBe(0)
+        ->and($batch['failed'])->toBe(2)
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and($rows['inv-1']['status'])->not->toBe('done')
+        ->and($rows['inv-2']['status'])->not->toBe('done')
+        ->and($ledger->attempts[0]['error'])->toBe('QuickBooks did not confirm a free invoice number, so Fleetbase did not create this invoice.')
+        ->and($ledger->invoices['inv-1']['number'])->toBe('LOCAL-1');
 });
 
 test('quickbooks invoice numbers replace the fleetbase number', function () {
@@ -501,7 +537,7 @@ test('sync now and reconcile still run when automatic sync is off', function () 
     expect($now['status'])->toBe('finished')
         ->and($client->calls)->toContain('createCustomer');
 
-    $ledger->connections['company-uuid']['last_batch_at'] = null;
+    $ledger->connections['company-uuid']['last_batch_at']  = null;
     $second                                                = $engine->reconcile($ledger, 'company-uuid', $settings, time());
 
     expect($second['status'])->toBe('finished');
@@ -520,39 +556,42 @@ test('a forced sync with no connection does not record a skipped batch', functio
 });
 
 test('a differing payment is compared and a quickbooks reference still creates a missing payment', function () {
-    [$engine, $client]                 = qbEngine();
-    $ledger                            = batchLedger();
-    $ledger->customers['cust-1']       = customerRow('cust-1');
-    $ledger->links[]                   = linkRow('customer', 'cust-1', 'qbo-customer');
-    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
-    $ledger->invoices['inv-1']         = invoiceFixture('inv-1', 1000, 'paid', 'INV-PAID');
+    [$engine, $client]                    = qbEngine();
+    $ledger                               = batchLedger();
+    $ledger->customers['cust-1']          = customerRow('cust-1');
+    $ledger->links[]                      = linkRow('customer', 'cust-1', 'qbo-customer');
+    $client->customers['qbo-customer']    = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
+    $ledger->invoices['inv-1']            = invoiceFixture('inv-1', 1000, 'paid', 'INV-PAID');
     $ledger->invoices['inv-1']['paid_at'] = '2026-09-20';
-    $client->invoices['inv-id']        = ['Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
-    $ledger->links[]                   = linkRow('invoice', 'inv-1', 'inv-id');
-    $client->payments['pay-9']         = ['Id' => 'pay-9', 'SyncToken' => '1', 'TotalAmt' => 5, 'TxnDate' => '2026-09-01'];
-    $ledger->links[]                   = linkRow('payment', 'inv-1', 'pay-9');
-    $ledger->pending[]                 = pendingRow('invoice', 'inv-1');
+    $client->invoices['inv-id']           = ['Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
+    $ledger->links[]                      = linkRow('invoice', 'inv-1', 'inv-id');
+    $client->payments['pay-9']            = ['Id' => 'pay-9', 'SyncToken' => '1', 'TotalAmt' => 5, 'TxnDate' => '2026-09-01'];
+    $ledger->links[]                      = linkRow('payment', 'inv-1', 'pay-9');
+    $ledger->pending[]                    = pendingRow('invoice', 'inv-1');
 
     $settings = (new SyncSettingsResolver())->resolve(
+        [],
         qbSettings([
             'override'         => true,
             'interval_minutes' => 1,
             'payment_conflict' => 'report',
         ]),
-        [],
         qbSettings()
     );
 
-    expect($settings['payment_conflict'])->toBe('fleetbase');
+    expect($settings['payment_conflict'])->toBe('report')
+        ->and($settings['payment_direction'])->toBe('off')
+        ->and($settings['payment_enabled'])->toBeTrue();
 
     $reported = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($reported['updated'])->toBe(1)
+    expect($reported['updated'])->toBe(0)
+        ->and($reported['aligned'])->toBe(1)
         ->and($reported['skipped'])->toBe(0)
         ->and($ledger->attempts[0]['error'])->toBeNull()
-        ->and($client->calls)->toContain('updatePayment')
-        ->and($client->payments['pay-9']['TxnDate'])->toBe('2026-09-20')
-        ->and($client->payments['pay-9']['TotalAmt'])->toBe('10.00');
+        ->and($client->calls)->not->toContain('updatePayment')
+        ->and($client->payments['pay-9']['TxnDate'])->toBe('2026-09-01')
+        ->and($client->payments['pay-9']['TotalAmt'])->toBe(5);
 
     $ledger->connections['company-uuid']['last_batch_at'] = null;
     $ledger->pending[0]['status']                         = 'pending';
@@ -567,32 +606,38 @@ test('a differing payment is compared and a quickbooks reference still creates a
         ->and($client->payments['pay-9']['TxnDate'])->toBe('2026-09-20')
         ->and($client->payments['pay-9']['TotalAmt'])->toBe('10.00');
 
-    $fresh                            = batchLedger();
-    $fresh->customers['cust-1']       = customerRow('cust-1');
-    $fresh->links[]                   = linkRow('customer', 'cust-1', 'qbo-customer');
+    $fresh                             = batchLedger();
+    $fresh->customers['cust-1']        = customerRow('cust-1');
+    $fresh->links[]                    = linkRow('customer', 'cust-1', 'qbo-customer');
     $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
-    $fresh->invoices['inv-2']         = invoiceFixture('inv-2', 1000, 'paid', 'INV-2');
-    $fresh->pending[]                 = pendingRow('invoice', 'inv-2');
-    $before                           = count(array_filter($client->calls, fn ($call) => $call === 'createPayment'));
+    $fresh->invoices['inv-2']          = invoiceFixture('inv-2', 1000, 'paid', 'INV-2');
+    $fresh->pending[]                  = pendingRow('invoice', 'inv-2');
+    $before                            = count(array_filter($client->calls, fn ($call) => $call === 'createPayment'));
     $engine->runScheduled($fresh, 'company-uuid', qbSettings([
         'interval_minutes'  => 1,
         'payment_reference' => 'quickbooks',
     ]), time());
 
-    expect(count(array_filter($client->calls, fn ($call) => $call === 'createPayment')))->toBe($before + 1)
-        ->and($fresh->link('company-uuid', 'realm-1', 'payment', 'inv-2'))->not->toBeNull();
+    expect(count(array_filter($client->calls, fn ($call) => $call === 'createPayment')))->toBe($before + 1);
+    $stored = array_values(array_filter(
+        $fresh->links,
+        fn (array $link): bool => ($link['local_type'] ?? '') === 'payment'
+    ));
+    expect($stored)->toHaveCount(1)
+        ->and($stored[0]['local_uuid'])->toBe($stored[0]['qbo_id'])
+        ->and($stored[0]['qbo_id'])->not->toBe('');
 });
 
 test('the first fleetbase payment is created when quickbooks has no payment yet', function () {
-    [$engine, $client] = qbEngine();
-    $ledger            = batchLedger();
-    $ledger->customers['cust-1'] = customerRow('cust-1');
-    $ledger->links[]             = linkRow('customer', 'cust-1', 'qbo-customer');
+    [$engine, $client]                 = qbEngine();
+    $ledger                            = batchLedger();
+    $ledger->customers['cust-1']       = customerRow('cust-1');
+    $ledger->links[]                   = linkRow('customer', 'cust-1', 'qbo-customer');
     $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
-    $ledger->invoices['inv-1']   = invoiceFixture('inv-1', 1000, 'paid', 'INV-PAID');
-    $client->invoices['inv-id']  = ['Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
-    $ledger->links[]             = linkRow('invoice', 'inv-1', 'inv-id');
-    $ledger->pending[]           = pendingRow('invoice', 'inv-1');
+    $ledger->invoices['inv-1']         = invoiceFixture('inv-1', 1000, 'paid', 'INV-PAID');
+    $client->invoices['inv-id']        = ['Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
+    $ledger->links[]                   = linkRow('invoice', 'inv-1', 'inv-id');
+    $ledger->pending[]                 = pendingRow('invoice', 'inv-1');
 
     $reported = $engine->runScheduled($ledger, 'company-uuid', qbSettings([
         'interval_minutes'  => 1,
@@ -604,7 +649,7 @@ test('the first fleetbase payment is created when quickbooks has no payment yet'
         ->and($reported['aligned'])->toBe(1)
         ->and($ledger->attempts[0]['error'])->toBeNull()
         ->and($client->calls)->toContain('createPayment')
-        ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'inv-1')['qbo_id'])->toBe('pay-1');
+        ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'pay-1')['qbo_id'])->toBe('pay-1');
 
     $fresh                      = batchLedger();
     $fresh->customers['cust-1'] = customerRow('cust-1');
@@ -623,24 +668,30 @@ test('the first fleetbase payment is created when quickbooks has no payment yet'
 
     expect($adopted['skipped'])->toBe(0)
         ->and($fresh->attempts[0]['error'])->toBeNull()
-        ->and(count(array_filter($client->calls, fn ($call) => $call === 'createPayment')))->toBe($before + 1)
-        ->and($fresh->link('company-uuid', 'realm-1', 'payment', 'inv-2'))->not->toBeNull();
+        ->and(count(array_filter($client->calls, fn ($call) => $call === 'createPayment')))->toBe($before + 1);
+    $stored = array_values(array_filter(
+        $fresh->links,
+        fn (array $link): bool => ($link['local_type'] ?? '') === 'payment'
+    ));
+    expect($stored)->toHaveCount(1)
+        ->and($stored[0]['local_uuid'])->toBe($stored[0]['qbo_id'])
+        ->and($stored[0]['qbo_id'])->not->toBe('');
 });
 
 test('a quickbooks payment copied onto the invoice matches on the next sync', function () {
-    [$engine, $client]                 = qbEngine();
-    $ledger                            = batchLedger();
-    $ledger->customers['cust-1']       = customerRow('cust-1');
-    $ledger->links[]                   = linkRow('customer', 'cust-1', 'qbo-customer');
-    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
-    $ledger->invoices['inv-1']         = invoiceFixture('inv-1', 1000, 'paid', 'INV-PAID');
+    [$engine, $client]                    = qbEngine();
+    $ledger                               = batchLedger();
+    $ledger->customers['cust-1']          = customerRow('cust-1');
+    $ledger->links[]                      = linkRow('customer', 'cust-1', 'qbo-customer');
+    $client->customers['qbo-customer']    = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
+    $ledger->invoices['inv-1']            = invoiceFixture('inv-1', 1000, 'paid', 'INV-PAID');
     $ledger->invoices['inv-1']['paid_at'] = '2026-09-20';
-    $client->invoices['inv-id']        = ['Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
-    $ledger->links[]                   = linkRow('invoice', 'inv-1', 'inv-id');
-    $client->payments['pay-9']         = ['Id' => 'pay-9', 'SyncToken' => '1', 'TotalAmt' => 5, 'TxnDate' => '2026-09-01'];
-    $ledger->links[]                   = linkRow('payment', 'inv-1', 'pay-9');
-    $ledger->pending[]                 = pendingRow('invoice', 'inv-1');
-    $settings                          = qbSettings([
+    $client->invoices['inv-id']           = ['Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
+    $ledger->links[]                      = linkRow('invoice', 'inv-1', 'inv-id');
+    $client->payments['pay-9']            = ['Id' => 'pay-9', 'SyncToken' => '1', 'TotalAmt' => 5, 'TxnDate' => '2026-09-01'];
+    $ledger->links[]                      = linkRow('payment', 'inv-1', 'pay-9');
+    $ledger->pending[]                    = pendingRow('invoice', 'inv-1');
+    $settings                             = qbSettings([
         'interval_minutes'  => 1,
         'payment_conflict'  => 'quickbooks',
         'payment_reference' => 'fleetbase',

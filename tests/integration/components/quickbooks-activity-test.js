@@ -52,6 +52,11 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         assert.dom("[data-direction='inbound'] [data-test-activity-created]").hasText('4');
         assert.dom("[data-direction='inbound'] [data-test-activity-linked]").hasText('3');
         assert.dom('[data-test-activity-error]').hasText('QuickBooks timed out');
+        assert.dom('[data-test-activity-error]').hasClass('dark:text-red-400');
+        assert.dom('[data-test-activity]').hasClass('overflow-x-auto');
+        assert.dom('[data-test-activity] table').hasClass('whitespace-nowrap');
+        assert.dom('[data-test-activity]').doesNotHaveClass('overflow-y-hidden');
+        assert.dom('[data-test-activity]').doesNotHaveClass('h-screen');
         assert.dom('[data-test-activity-error]').hasAttribute('headers', 'quickbooks-activity-2');
         assert.dom('#quickbooks-activity-2').hasText('Reconcile');
         assert.dom('#quickbooks-activity-2').hasAttribute('scope', 'row');
@@ -59,7 +64,7 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         assert.dom('[data-test-activity-loading]').doesNotExist();
     });
 
-    test('a stored Connection Config sentence points at Connection', async function (assert) {
+    test('stored Connection sentences point at Quickbooks Setup', async function (assert) {
         this.set('batches', [
             {
                 uuid: 'import-sep-27',
@@ -67,13 +72,30 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
                 direction: 'inbound',
                 error: 'QuickBooks is not connected. Connect from Connection Config.',
             },
+            {
+                uuid: 'reauth',
+                trigger: 'now',
+                direction: 'outbound',
+                error: 'QuickBooks needs to be reconnected. Connect from Connection.',
+            },
+            {
+                uuid: 'credentials',
+                trigger: 'manual',
+                direction: 'outbound',
+                error: 'QuickBooks refused the app credentials. Check Client ID and Client secret on Connection.',
+            },
         ]);
 
         await render(hbs`<QuickbooksActivity @batches={{this.batches}} />`);
 
-        assert.dom('[data-test-activity-trigger]').hasText('Import customers');
-        assert.dom('[data-test-activity-error]').hasText('QuickBooks is not connected. Connect from Connection.');
-        assert.dom('[data-test-activity-error]').hasAttribute('headers', 'quickbooks-activity-0');
+        const errors = [...this.element.querySelectorAll('[data-test-activity-error]')].map((node) => node.textContent.trim());
+        assert.deepEqual(errors, [
+            'QuickBooks is not connected. Connect from Quickbooks Setup.',
+            'QuickBooks needs to be reconnected. Connect from Quickbooks Setup.',
+            'QuickBooks refused the app credentials. Check Client ID and Client secret on Quickbooks Setup.',
+        ]);
+        assert.dom(this.element.querySelector('[data-test-activity-trigger]')).hasText('Import customers');
+        assert.dom(this.element.querySelector('[data-test-activity-error]')).hasAttribute('headers', 'quickbooks-activity-0');
         assert.dom('#quickbooks-activity-0').hasAttribute('scope', 'row');
     });
 
@@ -85,12 +107,12 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         assert.dom('[data-test-activity-status]').hasText('Skipped');
     });
 
-    test('the empty state points to Connection and Actions', async function (assert) {
+    test('the empty state points to Connection', async function (assert) {
         this.set('batches', []);
 
         await render(hbs`<QuickbooksActivity @batches={{this.batches}} />`);
 
-        assert.dom('[data-test-activity-empty]').hasText('No syncs yet. Connect on Connection, then choose Sync now on Actions or wait for the schedule.');
+        assert.dom('[data-test-activity-empty]').hasText('No syncs yet. Connect on Quickbooks Setup, then choose Sync now or wait for the schedule.');
         assert.dom('[data-test-activity-load-failed]').doesNotExist();
         assert.dom('[data-test-activity-loading]').doesNotExist();
     });
@@ -102,7 +124,7 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
 
         await render(hbs`<QuickbooksActivity />`);
 
-        assert.dom('[data-test-activity-empty]').hasText('No syncs yet. Connect on Connection, then choose Sync now on Actions or wait for the schedule.');
+        assert.dom('[data-test-activity-empty]').hasText('No syncs yet. Connect on Quickbooks Setup, then choose Sync now or wait for the schedule.');
         assert.dom('[data-test-activity-load-failed]').doesNotExist();
         assert.dom('[data-test-activity-loading]').doesNotExist();
         assert.dom('#fleetbase-pagination').doesNotExist();
@@ -187,7 +209,7 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         await settled();
 
         assert.dom('[data-test-activity-loading]').doesNotExist();
-        assert.dom('[data-test-activity-empty]').hasText('No syncs yet. Connect on Connection, then choose Sync now on Actions or wait for the schedule.');
+        assert.dom('[data-test-activity-empty]').hasText('No syncs yet. Connect on Quickbooks Setup, then choose Sync now or wait for the schedule.');
     });
 
     test('a failed load does not show the empty state', async function (assert) {

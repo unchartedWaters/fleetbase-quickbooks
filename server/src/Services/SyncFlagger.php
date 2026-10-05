@@ -58,4 +58,26 @@ class SyncFlagger
 
         $this->flag($ledger, $companyUuid, 'wallet', $uuid, 'saved');
     }
+
+    /**
+     * Queue in-scope rows for each entity that is turned on.
+     *
+     * @param array<string, mixed> $settings
+     */
+    public function queueEnabled(FleetbaseDirectory $directory, string $companyUuid, array $settings): void
+    {
+        $directory->queueInScope($companyUuid, [
+            'customer' => $this->entityOn($settings, 'customer_enabled'),
+            'invoice'  => $this->entityOn($settings, 'invoice_enabled'),
+            'wallet'   => $this->entityOn($settings, 'wallet_enabled'),
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     */
+    private function entityOn(array $settings, string $key): bool
+    {
+        return !array_key_exists($key, $settings) || $settings[$key] !== false;
+    }
 }

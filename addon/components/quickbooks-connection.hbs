@@ -1,44 +1,20 @@
-{{#if (eq @variant "embedded")}}
-    <div data-test-actions>
-        <ContentPanel @title={{t "quickbooks.actions.title"}} @open={{true}} @wrapperClass="bordered-classic">
-            <p class="text-sm text-gray-500 mb-4">{{t "quickbooks.actions.description"}}</p>
-            {{#unless this.isLoading}}
-                <div class="flex flex-wrap gap-2">
-                    <Button @type="primary" @size="sm" @icon="play" @text={{t "quickbooks.actions.sync-now"}} @disabled={{this.syncDisabled}} @onClick={{this.syncNow}} data-test-sync-now />
-                    <Button @type="default" @size="sm" @icon="rotate" @text={{t "quickbooks.actions.reconcile"}} @disabled={{this.syncDisabled}} @onClick={{this.reconcile}} data-test-reconcile />
-                    <Button @type="default" @size="sm" @icon="download" @text={{t "quickbooks.actions.import"}} @disabled={{this.syncDisabled}} @onClick={{this.importNow}} data-test-import />
-                </div>
-            {{/unless}}
-            <p class="text-sm text-gray-500 mt-4" data-test-import-rules>{{t "quickbooks.actions.import-rules"}}</p>
-            {{#if this.credentialsMissing}}
-                <p class="text-sm text-gray-500 mt-4" data-test-credentials-missing>{{t "quickbooks.actions.credentials-missing"}}</p>
-            {{/if}}
-        </ContentPanel>
-    </div>
-{{else}}
-<div data-test-connection-state={{this.state}}>
-    <ContentPanel @title={{if (eq @variant "status") (t "quickbooks.connection.title") (t "quickbooks.actions.title")}} @open={{true}} @wrapperClass="bordered-classic">
-        {{#if this.loadFailed}}
-            <p class="text-sm text-gray-500 mb-4" data-test-status-unavailable>{{t "quickbooks.connection.unavailable"}}</p>
-        {{else if this.isLoading}}
-            <p class="text-sm text-gray-500 mb-4" data-test-connection-loading>{{t "quickbooks.connection.loading"}}</p>
-        {{else if this.needsReauth}}
-            <p class="text-sm text-red-600 mb-4" data-test-reauth>
-                {{#if (eq @variant "status")}}
-                    {{t "quickbooks.connection.reauth-status"}}
-                {{else}}
-                    {{t "quickbooks.connection.reauth-actions"}}
-                {{/if}}
-            </p>
-        {{else if this.isConnected}}
-            <p class="text-sm text-gray-500 mb-4" data-test-connected>
-                {{#if @connection.environment}}
-                    {{t "quickbooks.connection.connected" realm=@connection.realm_id environment=@connection.environment}}
-                {{else}}
-                    {{t "quickbooks.connection.connected-plain" realm=@connection.realm_id}}
-                {{/if}}
-            </p>
-            {{#if (eq @variant "status")}}
+{{#if (eq @variant "status")}}
+    <div data-test-connection-state={{this.state}}>
+        <ContentPanel @title={{t "quickbooks.connection.title"}} @open={{true}} @wrapperClass="bordered-classic">
+            {{#if this.loadFailed}}
+                <p class="text-sm text-gray-500 mb-4" data-test-status-unavailable>{{t "quickbooks.connection.unavailable"}}</p>
+            {{else if this.isLoading}}
+                <p class="text-sm text-gray-500 mb-4" data-test-connection-loading>{{t "quickbooks.connection.loading"}}</p>
+            {{else if this.needsReauth}}
+                <p class="text-sm text-red-600 dark:text-red-400 mb-4" data-test-reauth>{{t "quickbooks.connection.reauth-status"}}</p>
+            {{else if this.isConnected}}
+                <p class="text-sm text-gray-500 mb-4" data-test-connected>
+                    {{#if @connection.environment}}
+                        {{t "quickbooks.connection.connected" realm=@connection.realm_id environment=@connection.environment}}
+                    {{else}}
+                        {{t "quickbooks.connection.connected-plain" realm=@connection.realm_id}}
+                    {{/if}}
+                </p>
                 {{#if @connection.home_currency}}
                     <div class="text-sm text-gray-500 mb-4" data-test-home-currency>
                         <p>{{t "quickbooks.connection.home-currency" currency=@connection.home_currency}}</p>
@@ -51,46 +27,49 @@
                         </ul>
                     </div>
                 {{/if}}
-            {{/if}}
-        {{else}}
-            <p class="text-sm text-gray-500 mb-4" data-test-disconnected>
-                {{#if (eq @variant "status")}}
-                    {{t "quickbooks.connection.disconnected-status"}}
-                {{else}}
-                    {{t "quickbooks.connection.disconnected-actions"}}
-                {{/if}}
-            </p>
-        {{/if}}
-
-        {{#if (eq @variant "status")}}
-            <div class="flex flex-wrap gap-2">
-                <Button @type="default" @size="sm" @icon="plug" @text={{t "quickbooks.connection.test"}} @disabled={{this.testDisabled}} @onClick={{this.test}} data-test-test />
-                {{#unless this.isLoading}}
-                    {{#unless this.loadFailed}}
-                        {{#unless this.isConnected}}
-                            <Button @type="primary" @size="sm" @icon="plug" @text={{t "quickbooks.connection.connect"}} @disabled={{this.busy}} @onClick={{this.connect}} data-test-connect />
-                        {{/unless}}
-                        <Button @type="default" @size="sm" @icon="unlink" @text={{t "quickbooks.connection.disconnect"}} @disabled={{this.disconnectDisabled}} @onClick={{this.disconnect}} data-test-disconnect />
-                    {{/unless}}
-                {{/unless}}
-            </div>
-        {{else}}
-            <p class="text-sm text-gray-500 mb-4">{{t "quickbooks.actions.description"}}</p>
-            {{#unless this.isLoading}}
-                <div class="flex flex-wrap gap-2">
-                    <Button @type="primary" @size="sm" @icon="play" @text={{t "quickbooks.actions.sync-now"}} @disabled={{this.syncDisabled}} @onClick={{this.syncNow}} data-test-sync-now />
-                    <Button @type="default" @size="sm" @icon="rotate" @text={{t "quickbooks.actions.reconcile"}} @disabled={{this.syncDisabled}} @onClick={{this.reconcile}} data-test-reconcile />
-                    <Button @type="default" @size="sm" @icon="download" @text={{t "quickbooks.actions.import"}} @disabled={{this.syncDisabled}} @onClick={{this.importNow}} data-test-import />
-                    {{#if this.hasConnection}}
-                        <Button @type="default" @size="sm" @icon="unlink" @text={{t "quickbooks.connection.disconnect"}} @disabled={{this.busy}} @onClick={{this.disconnect}} data-test-disconnect />
+            {{else}}
+                <p class="text-sm text-gray-500 mb-4" data-test-disconnected>
+                    {{#if this.isConfigured}}
+                        {{t "quickbooks.connection.disconnected-status"}}
+                    {{else}}
+                        {{t "quickbooks.connection.disconnected-save-first"}}
                     {{/if}}
-                </div>
-            {{/unless}}
-            <p class="text-sm text-gray-500 mt-4" data-test-import-rules>{{t "quickbooks.actions.import-rules"}}</p>
-            {{#if this.credentialsMissing}}
-                <p class="text-sm text-gray-500 mt-4" data-test-credentials-missing>{{t "quickbooks.actions.credentials-missing"}}</p>
+                </p>
             {{/if}}
-        {{/if}}
-    </ContentPanel>
-</div>
+
+            {{#unless this.isLoading}}
+                {{#unless this.loadFailed}}
+                    <div class="flex flex-wrap gap-2" data-test-connection-actions>
+                        <Button
+                            @type="primary"
+                            @size="sm"
+                            @icon="play"
+                            @text={{t "quickbooks.actions.sync-now"}}
+                            @disabled={{this.syncDisabled}}
+                            @onClick={{this.syncNow}}
+                            data-test-sync-now
+                        />
+                        <Button
+                            @type="primary"
+                            @size="sm"
+                            @icon="plug"
+                            @text={{t "quickbooks.connection.connect"}}
+                            @disabled={{this.connectDisabled}}
+                            @onClick={{this.connect}}
+                            data-test-connect
+                        />
+                        <Button
+                            @type="default"
+                            @size="sm"
+                            @icon="unlink"
+                            @text={{t "quickbooks.connection.disconnect"}}
+                            @disabled={{this.disconnectDisabled}}
+                            @onClick={{this.disconnect}}
+                            data-test-disconnect
+                        />
+                    </div>
+                {{/unless}}
+            {{/unless}}
+        </ContentPanel>
+    </div>
 {{/if}}

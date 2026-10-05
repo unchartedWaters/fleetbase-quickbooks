@@ -36,25 +36,56 @@ class ConnectionTokens
 
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
         // A batch or import already holds this company's lock. Refresh inside it.
-        if ($companyUuid !== '' && BatchRunner::holds($companyUuid)) {
-            return $this->refreshNow($connection);
-        }
+        $heldAlready = $companyUuid !== '' && BatchRunner::holds($companyUuid);
+        $lock        = null;
+        if (!$heldAlready) {
+            $lock = BatchRunner::lock($companyUuid);
+            if ($lock === null) {
+                return $connection;
+            }
+            if (!$lock->get()) {
+                $connection['refresh_error'] = self::ALREADY_RUNNING;
 
-        $lock = BatchRunner::lock($companyUuid);
-        if ($lock === null) {
-            return $connection;
-        }
-        if (!$lock->get()) {
-            $connection['refresh_error'] = self::ALREADY_RUNNING;
-
-            return $connection;
+                return $connection;
+            }
         }
 
         try {
-            return $this->refreshNow($connection);
+            return $this->refreshWhileLocked($connection);
         } finally {
-            $lock->release();
+            if ($lock !== null) {
+                $lock->release();
+            }
         }
+    }
+
+    /**
+     * The company lock is held for the Intuit call and the compare-and-save.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>
+     */
+    private function refreshWhileLocked(array $connection): array
+    {
+        $companyUuid = (string) ($connection['company_uuid'] ?? '');
+        $sent        = (string) ($connection['refresh_token'] ?? '');
+        $stored      = $this->currentConnection($companyUuid);
+        if (!is_array($stored) || (string) ($stored['refresh_token'] ?? '') !== $sent) {
+            return is_array($stored) ? $stored : $connection;
+        }
+
+        $refreshed = $this->requestRefresh($connection);
+        if (!empty($refreshed['refresh_error'])) {
+            return $refreshed;
+        }
+        if (!$this->storeRefresh($connection, $refreshed, $sent)) {
+            $current = $this->currentConnection($companyUuid);
+
+            return is_array($current) ? $current : $connection;
+        }
+
+        return $refreshed;
     }
 
     /**
@@ -62,14 +93,45 @@ class ConnectionTokens
      *
      * @return array<string, mixed>
      */
-    private function refreshNow(array $connection): array
+    private function requestRefresh(array $connection): array
     {
-        $refreshed = $this->refresher->refresh($connection, $this->settings->credentialsFor($this->store, (string) ($connection['company_uuid'] ?? '')));
-        if (empty($refreshed['refresh_error']) && $refreshed !== $connection) {
-            $this->directory->saveConnection($refreshed);
+        return $this->refresher->refresh($connection, $this->settings->credentialsFor($this->store, (string) ($connection['company_uuid'] ?? '')));
+    }
+
+    /**
+     * Save the rotated token only when the stored refresh token is still the one that was sent.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $refreshed
+     */
+    private function storeRefresh(array $connection, array $refreshed, string $sentRefresh): bool
+    {
+        if (!empty($refreshed['refresh_error']) || $refreshed === $connection) {
+            return false;
         }
 
-        return $refreshed;
+        $stored = $this->currentConnection((string) ($connection['company_uuid'] ?? ''));
+        if (!is_array($stored) || (string) ($stored['refresh_token'] ?? '') !== $sentRefresh) {
+            return false;
+        }
+
+        $this->directory->saveConnection($refreshed);
+
+        return true;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function currentConnection(string $companyUuid): ?array
+    {
+        if ($companyUuid === '') {
+            return null;
+        }
+
+        $stored = $this->directory->connection($companyUuid);
+
+        return is_array($stored) ? $stored : null;
     }
 
     /**

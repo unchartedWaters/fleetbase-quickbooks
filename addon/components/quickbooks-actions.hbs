@@ -4,6 +4,7 @@
     <div class="container mx-auto h-screen">
         <div class="max-w-3xl my-10 mx-auto space-y-6">
             <QuickbooksConnection
+                @variant="embedded"
                 @connection={{this.connection}}
                 @configured={{this.configured}}
                 @loadFailed={{this.summaryLoadFailed}}

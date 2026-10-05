@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Str;
 
 /**
  * Loads and saves the SyncLedger through Eloquent. The engine compares times as
@@ -51,7 +52,7 @@ class FleetbaseDirectory
     public function load(string $companyUuid): ?array
     {
         $ledger     = $this->memory ?? $this->loadLedger($companyUuid);
-        $connection = $ledger->connection($companyUuid);
+        $connection = $this->connectionForLedger($ledger, $companyUuid);
         if ($connection === null) {
             return null;
         }
@@ -75,7 +76,39 @@ class FleetbaseDirectory
     public function loadPending(string $companyUuid, int $limit, int $now): ?array
     {
         $ledger     = $this->memory ?? $this->loadLedger($companyUuid, max(1, $limit), $now);
-        $connection = $ledger->connection($companyUuid);
+        $connection = $this->connectionForLedger($ledger, $companyUuid);
+        if ($connection === null) {
+            return null;
+        }
+
+        return [
+            'ledger'     => $ledger,
+            'connection' => $connection,
+            'customers'  => array_values(array_filter(
+                $ledger->customers,
+                static fn (array $customer): bool => ($customer['company_uuid'] ?? null) === $companyUuid
+            )),
+        ];
+    }
+
+    /**
+     * Webhook ids, not the company catalog. The same shape as load(), but only:
+     * the connection; links whose QuickBooks entity and id are in $entities for
+     * this company and realm; the customer, invoice, or wallet each of those
+     * links points at (a payment link points at its invoice); the customer on
+     * each of those invoices; and the links for those local rows, so a payment
+     * id also brings the invoice link on that same invoice. Soft-deleted
+     * invoices in that id set are included. Pending rows and every other
+     * customer, invoice, wallet, and link stay out.
+     *
+     * @param array<int, array{entity?: mixed, id?: mixed, operation?: mixed}> $entities
+     *
+     * @return array{ledger: SyncLedger, connection: array<string, mixed>, customers: array<int, array<string, mixed>>}|null
+     */
+    public function loadLinked(string $companyUuid, array $entities): ?array
+    {
+        $ledger     = $this->linkedLedger($companyUuid, $entities);
+        $connection = $this->connectionForLedger($ledger, $companyUuid);
         if ($connection === null) {
             return null;
         }
@@ -102,10 +135,12 @@ class FleetbaseDirectory
             return '';
         }
 
-        $ids = $this->inScopeInvoiceIds($companyUuid, max(1, $limit), $afterUuid);
+        $ids  = $this->inScopeInvoiceIds($companyUuid, max(1, $limit), $afterUuid);
+        $rows = [];
         foreach ($ids as $uuid) {
-            $this->writePending($this->catalogPending($companyUuid, 'invoice', $uuid));
+            $rows[] = $this->catalogPending($companyUuid, 'invoice', $uuid);
         }
+        $this->writePendingMany($rows);
 
         if ($ids === []) {
             return '';
@@ -185,7 +220,7 @@ class FleetbaseDirectory
         $this->loaded['customers'] = $ledger->customers;
         $this->loaded['links']     = [];
         foreach ($ledger->links as $link) {
-            $key = (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '') . '|' . (string) ($link['local_uuid'] ?? '');
+            $key                         = (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '') . '|' . (string) ($link['local_uuid'] ?? '');
             $this->loaded['links'][$key] = $link;
         }
 
@@ -222,19 +257,40 @@ class FleetbaseDirectory
      */
     public function flagCatalog(string $companyUuid): void
     {
-        if ($this->memory !== null) {
+        $this->queueInScope($companyUuid, [
+            'customer' => true,
+            'invoice'  => true,
+            'wallet'   => true,
+        ]);
+    }
+
+    /**
+     * Queue in-scope customers, non-draft invoices, invoice links, and wallets.
+     * Disabled entities are left alone. Already-pending rows are not inserted again.
+     *
+     * @param array{customer?: bool, invoice?: bool, wallet?: bool} $enabled
+     */
+    public function queueInScope(string $companyUuid, array $enabled): void
+    {
+        if ($this->memory !== null || $companyUuid === '') {
             return;
         }
 
-        foreach ($this->catalogIds('Fleetbase\\FleetOps\\Models\\Customer', $companyUuid, true) as $uuid) {
-            $this->writePending($this->catalogPending($companyUuid, 'customer', $uuid));
+        if (!empty($enabled['customer'])) {
+            $this->queueCatalog('Fleetbase\\FleetOps\\Models\\Customer', $companyUuid, true, 'customer');
         }
-        foreach ($this->catalogIds('Fleetbase\\Ledger\\Models\\Invoice', $companyUuid, false) as $uuid) {
-            $this->writePending($this->catalogPending($companyUuid, 'invoice', $uuid));
+        if (!empty($enabled['invoice'])) {
+            $this->queueCatalog('Fleetbase\\Ledger\\Models\\Invoice', $companyUuid, false, 'invoice');
+            $this->queueInvoiceLinks($companyUuid);
         }
-        foreach ($this->catalogIds('Fleetbase\\Ledger\\Models\\Wallet', $companyUuid, false) as $uuid) {
-            $this->writePending($this->catalogPending($companyUuid, 'wallet', $uuid));
+        if (!empty($enabled['wallet'])) {
+            $this->queueCatalog('Fleetbase\\Ledger\\Models\\Wallet', $companyUuid, false, 'wallet');
         }
+    }
+
+    protected function catalogPageSize(): int
+    {
+        return 200;
     }
 
     public function save(SyncLedger $ledger): void
@@ -258,6 +314,8 @@ class FleetbaseDirectory
 
     private function write(SyncLedger $ledger): void
     {
+        $this->stampOwnedCompanies($ledger);
+
         foreach ($ledger->connections as $connection) {
             $this->writeConnection($connection);
         }
@@ -267,34 +325,56 @@ class FleetbaseDirectory
         // writeConnection already no-ops in those cases; these rows do not.
         $skipped = $this->companiesSkippingLedgerWrites($ledger);
 
+        $freshLinks   = [];
+        $changedLinks = [];
         foreach ($ledger->links as $link) {
             if (isset($skipped[(string) ($link['company_uuid'] ?? '')])) {
                 continue;
             }
-            $key = (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '') . '|' . (string) ($link['local_uuid'] ?? '');
-            if (self::changedColumns($link, $this->loaded['links'][$key] ?? null, ['realm_id', 'qbo_entity', 'qbo_id', 'sync_token']) === []
-                && isset($this->loaded['links'][$key])) {
+            $key     = (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '') . '|' . (string) ($link['local_uuid'] ?? '');
+            $loaded  = $this->loaded['links'][$key] ?? null;
+            $changed = self::changedColumns($link, is_array($loaded) ? $loaded : null, ['company_uuid', 'realm_id', 'qbo_entity', 'qbo_id', 'sync_token']);
+            if ($changed === [] && is_array($loaded)) {
                 continue;
             }
-            Link::query()->updateOrCreate(
-                [
-                    'company_uuid' => $link['company_uuid'],
-                    'local_type'   => $link['local_type'],
-                    'local_uuid'   => $link['local_uuid'],
-                ],
-                $link
-            );
+            if (is_array($loaded)) {
+                $uuid = (string) ($loaded['uuid'] ?? '');
+                if ($uuid === '') {
+                    Link::query()->updateOrCreate(
+                        [
+                            'company_uuid' => $link['company_uuid'],
+                            'local_type'   => $link['local_type'],
+                            'local_uuid'   => $link['local_uuid'],
+                        ],
+                        $link
+                    );
+                    continue;
+                }
+                $changedLinks[] = ['uuid' => $uuid, 'columns' => $changed];
+                continue;
+            }
+            $freshLinks[] = $link;
         }
+        $this->insertLinks($freshLinks);
+        $this->updateByUuid(new Link(), $changedLinks, ['company_uuid', 'realm_id', 'qbo_entity', 'qbo_id', 'sync_token']);
+        $freshPending   = [];
+        $changedPending = [];
         foreach ($ledger->pending as $row) {
             if (isset($skipped[(string) ($row['company_uuid'] ?? '')])) {
                 continue;
             }
             if (empty($row['uuid'])) {
-                $this->writePending($row);
+                $freshPending[] = $row;
                 continue;
             }
-            $this->writeLoadedPending($row, $this->loaded['pending'][(string) $row['uuid']] ?? null);
+            $columns = $this->pendingUpdateColumns($row, $this->loaded['pending'][(string) $row['uuid']] ?? null);
+            if ($columns === []) {
+                continue;
+            }
+            $changedPending[] = ['uuid' => (string) $row['uuid'], 'columns' => $columns];
         }
+        $this->updateByUuid(new PendingSync(), $changedPending, ['company_uuid', 'local_type', 'local_uuid', 'reason', 'status', 'attempts', 'next_attempt_at']);
+        $this->writePendingMany($freshPending);
         $batchUuid = null;
         foreach ($ledger->batches as $batch) {
             if (!empty($batch['uuid'])) {
@@ -314,14 +394,7 @@ class FleetbaseDirectory
                 $ledger->attempts[$index]['batch_uuid'] = $batchUuid;
             }
         }
-        foreach ($ledger->attempts as $attempt) {
-            if (!empty($attempt['uuid'])) {
-                continue;
-            }
-            $record = new SyncAttempt();
-            $record->fill($attempt);
-            $record->save();
-        }
+        $this->insertAttempts($ledger->attempts);
         $this->persistCustomers($ledger, $skipped);
         $this->persistInvoices($ledger, $skipped);
         $this->persistWallets($ledger, $skipped);
@@ -393,11 +466,95 @@ class FleetbaseDirectory
      */
     public function connection(string $companyUuid): ?array
     {
+        $own = $this->storedConnection($companyUuid);
+        if ($own !== null) {
+            return $this->withEntityCompany($own, $companyUuid);
+        }
+
+        $shared = $this->soleConnection();
+        if ($shared === null) {
+            return null;
+        }
+
+        return $this->withEntityCompany($shared, $companyUuid);
+    }
+
+    /**
+     * The connection this company syncs with. A company without its own row
+     * uses the single install-wide connection. A second organization's row
+     * is not used when more than one connection is stored.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function connectionForLedger(SyncLedger $ledger, string $companyUuid): ?array
+    {
+        $connection = $ledger->connection($companyUuid);
+        if (!is_array($connection)) {
+            $connection = $this->soleConnection($ledger);
+        }
+        if (!is_array($connection)) {
+            return null;
+        }
+
+        $connection                            = $this->withEntityCompany($connection, $companyUuid);
+        $ledger->connections[$companyUuid]     = $connection;
+
+        return $connection;
+    }
+
+    /**
+     * Links and pending rows belong to the organization that owns the record.
+     * A shared connection row keeps the owner's uuid; the working copy does not.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>
+     */
+    private function withEntityCompany(array $connection, string $companyUuid): array
+    {
+        $connection['company_uuid'] = $companyUuid;
+
+        return $connection;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function storedConnection(string $companyUuid): ?array
+    {
         if ($this->memory !== null) {
             return $this->memory->connection($companyUuid);
         }
 
         $connection = (new Connection())->newQuery()->where('company_uuid', $companyUuid)->first();
+
+        return $connection instanceof Connection ? self::connectionToArray($connection) : null;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function soleConnection(?SyncLedger $ledger = null): ?array
+    {
+        if ($this->memory !== null) {
+            $ledger = $this->memory;
+        }
+        if ($ledger !== null) {
+            $connections = [];
+            foreach ($ledger->connections as $connection) {
+                if (is_array($connection)) {
+                    $connections[] = $connection;
+                }
+            }
+
+            return count($connections) === 1 ? $connections[0] : null;
+        }
+
+        $rows = (new Connection())->newQuery()->orderByDesc('updated_at')->limit(2)->get();
+        if ($rows->count() !== 1) {
+            return null;
+        }
+        $connection = $rows->first();
 
         return $connection instanceof Connection ? self::connectionToArray($connection) : null;
     }
@@ -471,20 +628,20 @@ class FleetbaseDirectory
     }
 
     /**
-     * @param array<string, mixed> $row
-     */
-    /**
-     * Update a pending row the batch already loaded. A missing row is not inserted,
-     * so a uuid from an earlier load cannot collide with a row created since then.
+     * Columns that differ on a pending row the batch already loaded.
+     * A missing row is not inserted, so a uuid from an earlier load cannot
+     * collide with a row created since then.
      *
      * @param array<string, mixed>      $row
      * @param array<string, mixed>|null $loaded
+     *
+     * @return array<string, mixed>
      */
-    private function writeLoadedPending(array $row, ?array $loaded): void
+    private function pendingUpdateColumns(array $row, ?array $loaded): array
     {
         $uuid = (string) ($row['uuid'] ?? '');
         if ($uuid === '') {
-            return;
+            return [];
         }
 
         $columns = [];
@@ -497,11 +654,15 @@ class FleetbaseDirectory
             }
             $columns[$field] = $row[$field];
         }
+        $companyUuid = trim((string) ($row['company_uuid'] ?? ''));
+        if ($companyUuid !== '' && ($loaded === null || (string) ($loaded['company_uuid'] ?? '') !== $companyUuid)) {
+            $columns['company_uuid'] = $companyUuid;
+        }
         if ($columns === []) {
-            return;
+            return [];
         }
 
-        PendingSync::query()->whereKey($uuid)->update(self::toDates($columns, self::PENDING_TIMES));
+        return self::toDates($columns, self::PENDING_TIMES);
     }
 
     public function hasDuePending(string $companyUuid, int $now): bool
@@ -545,14 +706,14 @@ class FleetbaseDirectory
     {
         try {
             PendingSync::query()->firstOrCreate(
-            [
-                'company_uuid' => $row['company_uuid'],
-                'local_type'   => $row['local_type'],
-                'local_uuid'   => $row['local_uuid'],
-                'status'       => 'pending',
-            ],
-            self::toDates($row, self::PENDING_TIMES)
-        );
+                [
+                    'company_uuid' => $row['company_uuid'],
+                    'local_type'   => $row['local_type'],
+                    'local_uuid'   => $row['local_uuid'],
+                    'status'       => 'pending',
+                ],
+                self::toDates($row, self::PENDING_TIMES)
+            );
         } catch (\Illuminate\Database\QueryException $exception) {
             if (!self::isDuplicatePendingWrite($exception)) {
                 throw $exception;
@@ -608,10 +769,10 @@ class FleetbaseDirectory
             if (!$row instanceof PendingSync) {
                 continue;
             }
-            $pending = self::toTimestamps($row->toArray(), self::PENDING_TIMES);
-            $ledger->pending[] = $pending;
+            $pending                                      = self::toTimestamps($row->toArray(), self::PENDING_TIMES);
+            $ledger->pending[]                            = $pending;
             $this->loaded['pending'][(string) $row->uuid] = $pending;
-            $localUuid = (string) $row->local_uuid;
+            $localUuid                                    = (string) $row->local_uuid;
             if ($row->local_type === 'customer') {
                 $customerIds[] = $localUuid;
             } elseif ($row->local_type === 'wallet') {
@@ -652,12 +813,264 @@ class FleetbaseDirectory
     }
 
     /**
+     * @param array<int, array{entity?: mixed, id?: mixed, operation?: mixed}> $entities
+     */
+    private function linkedLedger(string $companyUuid, array $entities): SyncLedger
+    {
+        $ledger     = new SyncLedger();
+        $connection = $this->connection($companyUuid);
+        if ($connection === null) {
+            return $ledger;
+        }
+
+        $ledger->connections[$companyUuid] = $connection;
+        $this->loaded['pending']           = [];
+        $this->loaded['links']             = [];
+        $idsByEntity                       = $this->remoteIdsByEntity($entities);
+        $realm                             = (string) ($connection['realm_id'] ?? '');
+        $matched                           = $this->memory !== null
+            ? $this->memoryLinksForRemoteIds($companyUuid, $realm, $idsByEntity)
+            : $this->linksForRemoteIds($companyUuid, $realm, $idsByEntity);
+        [$customerIds, $invoiceIds, $walletIds] = $this->localIdsFromLinks($matched);
+        $this->attachLinkedRows($ledger, $companyUuid, $customerIds, $invoiceIds, $walletIds);
+        $ledger->rebuildIndex();
+        $this->loaded['customers'] = $ledger->customers;
+        $this->loaded['invoices']  = $ledger->invoices;
+        $this->loaded['wallets']   = $ledger->wallets;
+
+        return $ledger;
+    }
+
+    /**
+     * QuickBooks entity name to the ids named by this delivery.
+     *
+     * @param array<int, mixed> $entities
+     *
+     * @return array<string, array<string, true>>
+     */
+    private function remoteIdsByEntity(array $entities): array
+    {
+        $known = [
+            'Customer' => true,
+            'Invoice'  => true,
+            'Payment'  => true,
+            'Account'  => true,
+        ];
+        $ids = [];
+        foreach ($entities as $entity) {
+            if (!is_array($entity)) {
+                continue;
+            }
+            $name = $entity['entity'] ?? null;
+            if (!is_string($name) || !isset($known[$name])) {
+                continue;
+            }
+            $id = $entity['id'] ?? null;
+            if (is_int($id)) {
+                $id = (string) $id;
+            }
+            if (!is_string($id) || $id === '') {
+                continue;
+            }
+            $ids[$name][$id] = true;
+        }
+
+        return $ids;
+    }
+
+    /**
+     * @param array<string, array<string, true>> $idsByEntity
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function linksForRemoteIds(string $companyUuid, string $realm, array $idsByEntity): array
+    {
+        if ($idsByEntity === []) {
+            return [];
+        }
+
+        $query = (new Link())->newQuery()->where('company_uuid', $companyUuid);
+        if ($realm !== '') {
+            $query->where('realm_id', $realm);
+        }
+        $query->where(function ($scope) use ($idsByEntity): void {
+            $started = false;
+            foreach ($idsByEntity as $entity => $ids) {
+                $idList = array_keys($ids);
+                $method = $started ? 'orWhere' : 'where';
+                $scope->{$method}(function ($inner) use ($entity, $idList): void {
+                    $inner->where('qbo_entity', $entity)->whereIn('qbo_id', $idList);
+                });
+                $started = true;
+            }
+        });
+
+        $rows = [];
+        foreach ($query->get() as $link) {
+            if ($link instanceof Link) {
+                $rows[] = $link->toArray();
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param array<string, array<string, true>> $idsByEntity
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function memoryLinksForRemoteIds(string $companyUuid, string $realm, array $idsByEntity): array
+    {
+        if ($this->memory === null || $idsByEntity === []) {
+            return [];
+        }
+
+        $rows = [];
+        foreach ($this->memory->links as $link) {
+            if (!is_array($link) || (string) ($link['company_uuid'] ?? '') !== $companyUuid) {
+                continue;
+            }
+            if ($realm !== '' && (string) ($link['realm_id'] ?? '') !== $realm) {
+                continue;
+            }
+            $entity = (string) ($link['qbo_entity'] ?? '');
+            $id     = (string) ($link['qbo_id'] ?? '');
+            if (!isset($idsByEntity[$entity][$id])) {
+                continue;
+            }
+            $rows[] = $link;
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $links
+     *
+     * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, string>}
+     */
+    private function localIdsFromLinks(array $links): array
+    {
+        $customerIds = [];
+        $invoiceIds  = [];
+        $walletIds   = [];
+        foreach ($links as $link) {
+            $uuid = (string) ($link['local_uuid'] ?? '');
+            if ($uuid === '') {
+                continue;
+            }
+            $type = (string) ($link['local_type'] ?? '');
+            if ($type === 'customer') {
+                $customerIds[] = $uuid;
+            } elseif ($type === 'wallet') {
+                $walletIds[] = $uuid;
+            } elseif ($type === 'invoice' || $type === 'payment') {
+                $invoiceIds[] = $uuid;
+            }
+        }
+
+        return [$customerIds, $invoiceIds, $walletIds];
+    }
+
+    /**
+     * Invoices for the linked ids, their customers, and the links for those rows.
+     * A pending batch loads this same neighborhood once it knows the local ids.
+     *
+     * @param array<int, string> $customerIds
+     * @param array<int, string> $invoiceIds
+     * @param array<int, string> $walletIds
+     */
+    private function attachLinkedRows(SyncLedger $ledger, string $companyUuid, array $customerIds, array $invoiceIds, array $walletIds): void
+    {
+        $invoiceIds = array_values(array_unique(array_filter($invoiceIds, static fn (string $id): bool => $id !== '')));
+        $walletIds  = array_values(array_unique(array_filter($walletIds, static fn (string $id): bool => $id !== '')));
+        if ($this->memory !== null) {
+            foreach ($invoiceIds as $uuid) {
+                $invoice = $this->memory->invoices[$uuid] ?? null;
+                if (is_array($invoice)) {
+                    $ledger->invoices[$uuid] = $invoice;
+                }
+            }
+            $customerIds = $this->withInvoiceCustomers($ledger->invoices, $customerIds);
+            foreach ($customerIds as $uuid) {
+                $customer = $this->memory->customers[$uuid] ?? null;
+                if (is_array($customer)) {
+                    $ledger->customers[$uuid] = $customer;
+                }
+            }
+            foreach ($walletIds as $uuid) {
+                $wallet = $this->memory->wallets[$uuid] ?? null;
+                if (is_array($wallet)) {
+                    $ledger->wallets[$uuid] = $wallet;
+                }
+            }
+            foreach ($this->memory->links as $link) {
+                if (!is_array($link) || !$this->linkMatchesLocalIds($link, $companyUuid, $customerIds, $invoiceIds, $walletIds)) {
+                    continue;
+                }
+                $this->rememberLoadedLink($ledger, $link);
+            }
+
+            return;
+        }
+
+        $ledger->invoices  = $this->readInvoices($companyUuid, $invoiceIds, $invoiceIds);
+        $customerIds       = $this->withInvoiceCustomers($ledger->invoices, $customerIds);
+        $ledger->customers = $this->readCustomers($companyUuid, $customerIds);
+        $ledger->wallets   = $this->readWallets($companyUuid, $walletIds);
+        $this->readLinksFor($ledger, $companyUuid, $customerIds, $invoiceIds, $walletIds);
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $invoices
+     * @param array<int, string>                  $customerIds
+     *
+     * @return array<int, string>
+     */
+    private function withInvoiceCustomers(array $invoices, array $customerIds): array
+    {
+        foreach ($invoices as $invoice) {
+            $customerId = (string) ($invoice['customer_uuid'] ?? '');
+            if ($customerId !== '') {
+                $customerIds[] = $customerId;
+            }
+        }
+
+        return array_values(array_unique(array_filter($customerIds, static fn (string $id): bool => $id !== '')));
+    }
+
+    /**
+     * @param array<string, mixed> $link
+     * @param array<int, string>   $customerIds
+     * @param array<int, string>   $invoiceIds
+     * @param array<int, string>   $walletIds
+     */
+    private function linkMatchesLocalIds(array $link, string $companyUuid, array $customerIds, array $invoiceIds, array $walletIds): bool
+    {
+        if ((string) ($link['company_uuid'] ?? '') !== $companyUuid) {
+            return false;
+        }
+
+        $type = (string) ($link['local_type'] ?? '');
+        $uuid = (string) ($link['local_uuid'] ?? '');
+        if ($type === 'customer' && in_array($uuid, $customerIds, true)) {
+            return true;
+        }
+        if ($type === 'wallet' && in_array($uuid, $walletIds, true)) {
+            return true;
+        }
+
+        return ($type === 'invoice' || $type === 'payment') && in_array($uuid, $invoiceIds, true);
+    }
+
+    /**
      * @param array<string, mixed> $link
      */
     private function rememberLoadedLink(SyncLedger $ledger, array $link): void
     {
-        $ledger->links[] = $link;
-        $key = (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '') . '|' . (string) ($link['local_uuid'] ?? '');
+        $ledger->links[]             = $link;
+        $key                         = (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '') . '|' . (string) ($link['local_uuid'] ?? '');
         $this->loaded['links'][$key] = $link;
     }
 
@@ -694,7 +1107,6 @@ class FleetbaseDirectory
      * Null when no row exists, or the stored realm is set and no longer matches.
      *
      * @param array<string, mixed> $connection
-     * @param string|null          $storedRealm
      * @param array<int, string>   $fields
      *
      * @return array<string, mixed>|null
@@ -799,7 +1211,13 @@ class FleetbaseDirectory
             return;
         }
 
-        $existing    = (new Connection())->newQuery()->where('company_uuid', $companyUuid)->first();
+        $existing = (new Connection())->newQuery()->where('company_uuid', $companyUuid)->first();
+        if (!$existing instanceof Connection) {
+            $realm = trim((string) ($connection['realm_id'] ?? ''));
+            if ($realm !== '') {
+                $existing = $this->soleStoredConnection($realm);
+            }
+        }
         $storedRealm = $existing instanceof Connection ? (string) ($existing->realm_id ?? '') : null;
         $columns     = self::connectionColumns($connection, $storedRealm, $fields);
         if ($columns === null || !$existing instanceof Connection) {
@@ -928,7 +1346,7 @@ class FleetbaseDirectory
      * Deleted invoices are only read when flagged, so the engine can void them once.
      *
      * @param array<int, string>|null $onlyUuids
-     * @param array<int, string>     $flaggedUuids
+     * @param array<int, string>      $flaggedUuids
      *
      * @return array<string, array<string, mixed>>
      */
@@ -1039,37 +1457,57 @@ class FleetbaseDirectory
             return;
         }
 
+        $fresh = [];
+        $uuids = [];
         foreach ($ledger->customers as $customer) {
             if (isset($skipped[(string) ($customer['company_uuid'] ?? '')])) {
                 continue;
             }
-            if (empty($customer['uuid']) || empty($customer['company_uuid'])) {
+            $uuid = (string) ($customer['uuid'] ?? '');
+            if ($uuid === '' || empty($customer['company_uuid'])) {
+                continue;
+            }
+            $uuids[] = $uuid;
+        }
+        $present = $this->existingCustomerUuids($class, $uuids);
+
+        foreach ($ledger->customers as $customer) {
+            if (isset($skipped[(string) ($customer['company_uuid'] ?? '')])) {
+                continue;
+            }
+            $uuid = (string) ($customer['uuid'] ?? '');
+            if ($uuid === '' || empty($customer['company_uuid'])) {
                 continue;
             }
             // Only fields the engine changed are written, so an edit during the batch stays.
-            $values = self::changedColumns($customer, $this->loaded['customers'][(string) $customer['uuid']] ?? null, ['name', 'email', 'phone', 'notes']);
-            if ($values === []) {
+            $loaded = $this->loaded['customers'][$uuid] ?? null;
+            $values = self::changedColumns($customer, $loaded, ['name', 'email', 'phone', 'notes']);
+            if (isset($present[$uuid])) {
+                if ($values === []) {
+                    continue;
+                }
+                /** @var Model|null $model */
+                $model = $class::query()
+                    ->where('uuid', $uuid)
+                    ->where('company_uuid', $customer['company_uuid'])
+                    ->first();
+                if ($model === null) {
+                    $fresh[] = $customer;
+                    continue;
+                }
+                $model->fill($values);
+                if ($model->isDirty()) {
+                    $model->save();
+                }
                 continue;
             }
-            /** @var Model|null $model */
-            $model = $class::query()
-                ->where('uuid', $customer['uuid'])
-                ->where('company_uuid', $customer['company_uuid'])
-                ->first();
-            if ($model === null) {
-                $model = new $class();
-                $model->forceFill([
-                    'uuid'         => $customer['uuid'],
-                    'company_uuid' => $customer['company_uuid'],
-                    'type'         => 'customer',
-                    'meta'         => $customer['meta'] ?? null,
-                ]);
+            if ($values === [] && is_array($loaded)) {
+                continue;
             }
-            $model->fill($values);
-            if (!$model->exists || $model->isDirty()) {
-                $model->save();
-            }
+            $fresh[] = $customer;
         }
+
+        $this->insertCustomers($class, $fresh);
     }
 
     /**
@@ -1106,35 +1544,23 @@ class FleetbaseDirectory
                 $model->{$field} = $value;
             }
             if (!empty($invoice['replace_from_quickbooks'])) {
-                $model->tax          = (int) ($invoice['tax'] ?? 0);
-                $model->total_amount = (int) ($invoice['total'] ?? 0);
-                $model->subtotal     = max(0, (int) $model->total_amount - (int) $model->tax);
-                $model->balance      = (int) $model->total_amount - (int) ($invoice['amount_paid'] ?? $model->amount_paid);
+                $paid    = array_key_exists('amount_paid', $invoice)
+                    ? (int) $invoice['amount_paid']
+                    : self::minorAttribute($model, 'amount_paid');
+                $amounts = self::invoiceAmounts((int) ($invoice['total'] ?? 0), (int) ($invoice['tax'] ?? 0), $paid);
+                foreach (['tax', 'total_amount', 'subtotal', 'balance'] as $field) {
+                    self::writeSignedMinor($model, $field, $amounts[$field]);
+                }
                 if (!empty($invoice['status'])) {
                     $model->status = (string) $invoice['status'];
                 }
                 if (!empty($invoice['items_from_quickbooks']) && is_array($invoice['items'] ?? null)) {
-                    foreach ($model->items()->get() as $existing) {
-                        if ($existing instanceof Model) {
-                            $existing->delete();
-                        }
-                    }
-                    foreach ($invoice['items'] as $item) {
-                        if (!is_array($item)) {
-                            continue;
-                        }
-                        $model->items()->create([
-                            'description' => (string) ($item['description'] ?? ''),
-                            'quantity'    => (int) ($item['quantity'] ?? 1),
-                            'unit_price'  => (int) ($item['unit_price'] ?? 0),
-                            'amount'      => (int) ($item['amount'] ?? 0),
-                        ]);
-                    }
+                    $this->replaceInvoiceLines($model, $invoice['items']);
                 }
             }
             if (!empty($invoice['payment_from_quickbooks'])) {
                 if (array_key_exists('amount_paid', $invoice)) {
-                    $model->amount_paid = (int) $invoice['amount_paid'];
+                    self::writeSignedMinor($model, 'amount_paid', (int) $invoice['amount_paid']);
                 }
                 if (!empty($invoice['paid_at'])) {
                     $model->paid_at = $invoice['paid_at'];
@@ -1142,7 +1568,12 @@ class FleetbaseDirectory
                 if (!empty($invoice['status'])) {
                     $model->status = (string) $invoice['status'];
                 }
-                $model->balance = (int) $model->total_amount - (int) $model->amount_paid;
+                $balance = self::invoiceAmounts(
+                    self::minorAttribute($model, 'total_amount'),
+                    self::minorAttribute($model, 'tax'),
+                    self::minorAttribute($model, 'amount_paid')
+                )['balance'];
+                self::writeSignedMinor($model, 'balance', $balance);
             }
             if ($model->isDirty()) {
                 $model->save();
@@ -1254,9 +1685,13 @@ class FleetbaseDirectory
     }
 
     /**
+     * One page of catalog ids, ordered by uuid, after the previous page.
+     *
+     * @param class-string $class
+     *
      * @return array<int, string>
      */
-    private function catalogIds(string $class, string $companyUuid, bool $customersOnly): array
+    private function catalogIdPage(string $class, string $companyUuid, bool $customersOnly, string $afterUuid): array
     {
         if (!class_exists($class)) {
             return [];
@@ -1268,13 +1703,80 @@ class FleetbaseDirectory
         } elseif ($class === 'Fleetbase\\Ledger\\Models\\Invoice') {
             $query->where('status', '!=', 'draft');
         }
+        $query->orderBy('uuid');
+        if ($afterUuid !== '') {
+            $query->where('uuid', '>', $afterUuid);
+        }
 
         $ids = [];
-        foreach ($query->pluck('uuid') as $uuid) {
+        foreach ($query->limit($this->catalogPageSize())->pluck('uuid') as $uuid) {
             $ids[] = (string) $uuid;
         }
 
         return $ids;
+    }
+
+    /**
+     * @param class-string $class
+     */
+    private function queueCatalog(string $class, string $companyUuid, bool $customersOnly, string $localType): void
+    {
+        $after    = '';
+        $pageSize = $this->catalogPageSize();
+        while (true) {
+            try {
+                $ids = $this->catalogIdPage($class, $companyUuid, $customersOnly, $after);
+            } catch (\Throwable) {
+                return;
+            }
+            if ($ids === []) {
+                return;
+            }
+            $rows = [];
+            foreach ($ids as $uuid) {
+                $rows[] = $this->catalogPending($companyUuid, $localType, $uuid);
+            }
+            $this->writePendingMany($rows);
+            $after = (string) $ids[array_key_last($ids)];
+            if (count($ids) < $pageSize) {
+                return;
+            }
+        }
+    }
+
+    private function queueInvoiceLinks(string $companyUuid): void
+    {
+        $after    = '';
+        $pageSize = $this->catalogPageSize();
+        while (true) {
+            try {
+                $query = (new Link())->newQuery()
+                    ->where('company_uuid', $companyUuid)
+                    ->where('local_type', 'invoice')
+                    ->orderBy('local_uuid');
+                if ($after !== '') {
+                    $query->where('local_uuid', '>', $after);
+                }
+                $ids = [];
+                foreach ($query->limit($pageSize)->pluck('local_uuid') as $uuid) {
+                    $ids[] = (string) $uuid;
+                }
+            } catch (\Throwable) {
+                return;
+            }
+            if ($ids === []) {
+                return;
+            }
+            $rows = [];
+            foreach ($ids as $uuid) {
+                $rows[] = $this->catalogPending($companyUuid, 'invoice', $uuid);
+            }
+            $this->writePendingMany($rows);
+            $after = (string) $ids[array_key_last($ids)];
+            if (count($ids) < $pageSize) {
+                return;
+            }
+        }
     }
 
     /**
@@ -1315,6 +1817,397 @@ class FleetbaseDirectory
             if ($link instanceof Link) {
                 $this->rememberLoadedLink($ledger, $link->toArray());
             }
+        }
+    }
+
+    /**
+     * Minor units stored as signed integers. The Money cast strips a leading minus.
+     *
+     * @return array{tax: int, total_amount: int, subtotal: int, balance: int}
+     */
+    public static function invoiceAmounts(int $total, int $tax, int $amountPaid): array
+    {
+        return [
+            'tax'          => $tax,
+            'total_amount' => $total,
+            'subtotal'     => $total - $tax,
+            'balance'      => $total - $amountPaid,
+        ];
+    }
+
+    /**
+     * Write a signed minor-unit integer without the Money cast.
+     */
+    public static function writeSignedMinor(Model $model, string $field, int $minor): void
+    {
+        $attributes = $model->getAttributes();
+        $current    = $attributes[$field] ?? null;
+        if ($current === $minor || (is_string($current) && $current === (string) $minor)) {
+            return;
+        }
+
+        $attributes[$field] = $minor;
+        $model->setRawAttributes($attributes);
+    }
+
+    private static function minorAttribute(Model $model, string $field): int
+    {
+        $value = $model->getAttributes()[$field] ?? 0;
+        if ($value === null || $value === '' || is_bool($value)) {
+            return 0;
+        }
+        if (is_int($value)) {
+            return $value;
+        }
+        if (is_string($value) && preg_match('/^-?\d+$/', $value) === 1) {
+            return (int) $value;
+        }
+
+        return 0;
+    }
+
+    /**
+     * The one stored connection for this realm, when the working company has no row of its own.
+     */
+    private function soleStoredConnection(string $realm): ?Connection
+    {
+        $rows = (new Connection())->newQuery()->where('realm_id', $realm)->limit(2)->get();
+        if ($rows->count() !== 1) {
+            return null;
+        }
+        $connection = $rows->first();
+
+        return $connection instanceof Connection ? $connection : null;
+    }
+
+    private function stampOwnedCompanies(SyncLedger $ledger): void
+    {
+        foreach ($ledger->links as $index => $link) {
+            if (!is_array($link)) {
+                continue;
+            }
+            $link['company_uuid']   = $this->entityCompanyFor(
+                $ledger,
+                (string) ($link['local_type'] ?? ''),
+                (string) ($link['local_uuid'] ?? ''),
+                (string) ($link['company_uuid'] ?? '')
+            );
+            $ledger->links[$index] = $link;
+        }
+        foreach ($ledger->pending as $index => $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $row['company_uuid']      = $this->entityCompanyFor(
+                $ledger,
+                (string) ($row['local_type'] ?? ''),
+                (string) ($row['local_uuid'] ?? ''),
+                (string) ($row['company_uuid'] ?? '')
+            );
+            $ledger->pending[$index] = $row;
+        }
+    }
+
+    private function entityCompanyFor(SyncLedger $ledger, string $localType, string $localUuid, string $fallback): string
+    {
+        $row = null;
+        if ($localType === 'customer') {
+            $row = $ledger->customers[$localUuid] ?? null;
+        } elseif ($localType === 'wallet') {
+            $row = $ledger->wallets[$localUuid] ?? null;
+        } elseif ($localType === 'invoice' || $localType === 'payment') {
+            $row = $ledger->invoices[$localUuid] ?? null;
+        }
+        if (!is_array($row)) {
+            return $fallback;
+        }
+        $companyUuid = trim((string) ($row['company_uuid'] ?? ''));
+
+        return $companyUuid !== '' ? $companyUuid : $fallback;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $links
+     */
+    private function insertLinks(array $links): void
+    {
+        if ($links === []) {
+            return;
+        }
+
+        $now  = Carbon::now()->toDateTimeString();
+        $rows = [];
+        foreach ($links as $link) {
+            $rows[] = [
+                'uuid'         => (string) (($link['uuid'] ?? '') !== '' ? $link['uuid'] : Str::uuid()),
+                'company_uuid' => $link['company_uuid'] ?? null,
+                'realm_id'     => (string) ($link['realm_id'] ?? ''),
+                'local_type'   => (string) ($link['local_type'] ?? ''),
+                'local_uuid'   => (string) ($link['local_uuid'] ?? ''),
+                'qbo_entity'   => (string) ($link['qbo_entity'] ?? ''),
+                'qbo_id'       => (string) ($link['qbo_id'] ?? ''),
+                'sync_token'   => (string) ($link['sync_token'] ?? '0'),
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ];
+        }
+        foreach (array_chunk($rows, 200) as $chunk) {
+            Link::query()->insertOrIgnore($chunk);
+        }
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     */
+    private function writePendingMany(array $rows): void
+    {
+        if ($rows === []) {
+            return;
+        }
+
+        $now     = Carbon::now()->toDateTimeString();
+        $payload = [];
+        foreach ($rows as $row) {
+            $companyUuid = (string) ($row['company_uuid'] ?? '');
+            $localType   = (string) ($row['local_type'] ?? '');
+            $localUuid   = (string) ($row['local_uuid'] ?? '');
+            if ($companyUuid === '' || $localType === '' || $localUuid === '') {
+                continue;
+            }
+            $payload[] = [
+                'uuid'            => (string) (($row['uuid'] ?? '') !== '' ? $row['uuid'] : Str::uuid()),
+                'company_uuid'    => $companyUuid,
+                'local_type'      => $localType,
+                'local_uuid'      => $localUuid,
+                'reason'          => $row['reason'] ?? null,
+                'status'          => 'pending',
+                'attempts'        => (int) ($row['attempts'] ?? 0),
+                'next_attempt_at' => null,
+                'created_at'      => $now,
+                'updated_at'      => $now,
+            ];
+        }
+        foreach (array_chunk($payload, 200) as $chunk) {
+            try {
+                PendingSync::query()->insertOrIgnore($chunk);
+            } catch (\Illuminate\Database\QueryException $exception) {
+                if (!self::isDuplicatePendingWrite($exception)) {
+                    throw $exception;
+                }
+                foreach ($chunk as $row) {
+                    $this->writePending($row);
+                }
+            }
+        }
+    }
+
+    /**
+     * One update for a chunk of rows that already exist. Each row carries only
+     * the columns that changed. New rows stay on the insert path.
+     *
+     * @param array<int, array{uuid: string, columns: array<string, mixed>}> $rows
+     * @param array<int, string>                                             $allowed
+     */
+    private function updateByUuid(Model $model, array $rows, array $allowed): void
+    {
+        $rows = array_values(array_filter(
+            $rows,
+            static fn (array $row): bool => ($row['uuid'] ?? '') !== '' && ($row['columns'] ?? []) !== []
+        ));
+        if ($rows === []) {
+            return;
+        }
+
+        $connection = $model->getConnection();
+        $grammar    = $connection->getQueryGrammar();
+        $table      = $grammar->wrapTable($model->getTable());
+        $uuidColumn = $grammar->wrap('uuid');
+        foreach (array_chunk($rows, 200) as $chunk) {
+            $names = [];
+            foreach ($chunk as $row) {
+                foreach ($row['columns'] as $column => $value) {
+                    if (in_array($column, $allowed, true)) {
+                        $names[$column] = true;
+                    }
+                }
+            }
+            if ($names === []) {
+                continue;
+            }
+
+            $assignments = [];
+            $bindings    = [];
+            foreach (array_keys($names) as $column) {
+                $cases = [];
+                foreach ($chunk as $row) {
+                    if (!array_key_exists($column, $row['columns']) || !in_array($column, $allowed, true)) {
+                        continue;
+                    }
+                    $cases[]    = 'WHEN ? THEN ?';
+                    $bindings[] = $row['uuid'];
+                    $bindings[] = $this->sqlValue($row['columns'][$column]);
+                }
+                if ($cases === []) {
+                    continue;
+                }
+                $assignments[] = $grammar->wrap($column) . ' = CASE ' . $uuidColumn . ' ' . implode(' ', $cases) . ' ELSE ' . $grammar->wrap($column) . ' END';
+            }
+            if ($assignments === []) {
+                continue;
+            }
+            $assignments[] = $grammar->wrap('updated_at') . ' = ?';
+            $bindings[]    = Carbon::now()->toDateTimeString();
+            $placeholders  = implode(', ', array_fill(0, count($chunk), '?'));
+            foreach ($chunk as $row) {
+                $bindings[] = $row['uuid'];
+            }
+            $sql = 'UPDATE ' . $table . ' SET ' . implode(', ', $assignments) . ' WHERE ' . $uuidColumn . ' IN (' . $placeholders . ')';
+            $connection->update($sql, $bindings);
+        }
+    }
+
+    private function sqlValue(mixed $value): mixed
+    {
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d H:i:s');
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $attempts
+     */
+    private function insertAttempts(array $attempts): void
+    {
+        $now  = Carbon::now()->toDateTimeString();
+        $rows = [];
+        foreach ($attempts as $attempt) {
+            if (!is_array($attempt) || !empty($attempt['uuid'])) {
+                continue;
+            }
+            $diff = $attempt['diff'] ?? null;
+            if (is_array($diff)) {
+                $encoded = json_encode($diff);
+                $diff    = $encoded === false ? null : $encoded;
+            }
+            $rows[] = [
+                'uuid'         => (string) Str::uuid(),
+                'batch_uuid'   => $attempt['batch_uuid'] ?? null,
+                'company_uuid' => $attempt['company_uuid'] ?? null,
+                'local_type'   => (string) ($attempt['local_type'] ?? ''),
+                'local_uuid'   => (string) ($attempt['local_uuid'] ?? ''),
+                'outcome'      => (string) ($attempt['outcome'] ?? ''),
+                'error'        => $attempt['error'] ?? null,
+                'diff'         => $diff,
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ];
+        }
+        foreach (array_chunk($rows, 200) as $chunk) {
+            SyncAttempt::query()->insert($chunk);
+        }
+    }
+
+    /**
+     * Replace every current line for one invoice with the inbound lines.
+     *
+     * @param array<int, mixed> $items
+     */
+    private function replaceInvoiceLines(Model $model, array $items): void
+    {
+        $model->items()->delete();
+        $now  = Carbon::now()->toDateTimeString();
+        $rows = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $rows[] = [
+                'uuid'         => (string) Str::uuid(),
+                'invoice_uuid' => (string) $model->getAttribute('uuid'),
+                'description'  => (string) ($item['description'] ?? ''),
+                'quantity'     => (int) ($item['quantity'] ?? 1),
+                'unit_price'   => (int) ($item['unit_price'] ?? 0),
+                'amount'       => (int) ($item['amount'] ?? 0),
+                'tax_rate'     => 0,
+                'tax_amount'   => 0,
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ];
+        }
+        if ($rows === []) {
+            return;
+        }
+
+        $model->items()->insert($rows);
+    }
+
+    /**
+     * @param class-string       $class
+     * @param array<int, string> $uuids
+     *
+     * @return array<string, true>
+     */
+    private function existingCustomerUuids(string $class, array $uuids): array
+    {
+        $present = [];
+        if ($uuids === []) {
+            return $present;
+        }
+
+        foreach (array_chunk($uuids, 500) as $chunk) {
+            foreach ($class::query()->withoutGlobalScopes()->whereIn('uuid', $chunk)->pluck('uuid') as $uuid) {
+                $present[(string) $uuid] = true;
+            }
+        }
+
+        return $present;
+    }
+
+    /**
+     * @param class-string                     $class
+     * @param array<int, array<string, mixed>> $customers
+     */
+    private function insertCustomers(string $class, array $customers): void
+    {
+        if ($customers === []) {
+            return;
+        }
+
+        $now  = Carbon::now()->toDateTimeString();
+        $rows = [];
+        foreach ($customers as $customer) {
+            $uuid = (string) ($customer['uuid'] ?? '');
+            if ($uuid === '') {
+                continue;
+            }
+            $name = (string) ($customer['name'] ?? '');
+            $slug = $name === '' ? null : Str::slug($name);
+            $meta = $customer['meta'] ?? null;
+            if (is_array($meta)) {
+                $encoded = json_encode($meta);
+                $meta    = $encoded === false ? null : $encoded;
+            }
+            $publicId = 'contact_' . strtolower(Str::random(10));
+            $rows[]   = [
+                'uuid'         => $uuid,
+                'public_id'    => $publicId,
+                'internal_id'  => (string) random_int(100000, 999999),
+                'company_uuid' => $customer['company_uuid'],
+                'name'         => $name !== '' ? $name : null,
+                'email'        => $customer['email'] ?? null,
+                'phone'        => $customer['phone'] ?? null,
+                'type'         => 'customer',
+                'notes'        => $customer['notes'] ?? null,
+                'meta'         => $meta,
+                'slug'         => $slug === '' ? null : $slug,
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ];
+        }
+        foreach (array_chunk($rows, 200) as $chunk) {
+            $class::query()->insert($chunk);
         }
     }
 }

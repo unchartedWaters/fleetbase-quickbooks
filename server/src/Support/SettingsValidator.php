@@ -34,7 +34,10 @@ class SettingsValidator
 
         $this->requireInt($errors, $sync, 'interval_minutes', 1, 'Enter a whole number of minutes, at least 1.');
         $this->requireInt($errors, $sync, 'periodic_interval_hours', 1, 'Enter a whole number of hours, at least 1.');
-        // The Connection form does not send batch_size. A stored value stays when the key is omitted.
+        // A missing batch_size stays stored. A sent value is the query limit, from 1 to 100.
+        if (array_key_exists('batch_size', $sync)) {
+            $this->requireBoundedInt($errors, $sync, 'batch_size', 1, 100, 'Enter a whole number from 1 to 100.');
+        }
         $this->requireInt($errors, $sync, 'retry_limit', 1, 'Enter a whole number of retries, at least 1.');
         $this->requireInt($errors, $sync, 'default_backoff_seconds', 5, 'Enter a whole number of seconds, at least 5.');
 
@@ -48,7 +51,7 @@ class SettingsValidator
             if (!$this->entityEnabled($sync, $entity)) {
                 continue;
             }
-            $this->requireChoice($errors, $sync, $entity . '_conflict', ['fleetbase', 'quickbooks', 'report'], 'Choose Fleetbase or QuickBooks as Primary for ' . $label . '.');
+            $this->requireChoice($errors, $sync, $entity . '_conflict', ['fleetbase', 'quickbooks'], 'Choose Fleetbase or QuickBooks as Primary for ' . $label . '.');
             $this->requireChoice($errors, $sync, $entity . '_reference', ['fleetbase', 'quickbooks'], 'Choose Fleetbase or QuickBooks as Primary for ' . $label . '.');
             $this->requireDirection($errors, $sync, $entity . '_direction', 'Choose Both, Outbound, or Inbound for ' . $label . '.');
         }
@@ -108,6 +111,21 @@ class SettingsValidator
         $value = $sync[$field] ?? null;
         $whole = is_int($value) || (is_string($value) && preg_match('/^-?\d+$/', $value) === 1);
         if ($whole && (int) $value >= $minimum) {
+            return;
+        }
+
+        $errors[$field] = $message;
+    }
+
+    /**
+     * @param array<string, string> $errors
+     * @param array<string, mixed>  $sync
+     */
+    private function requireBoundedInt(array &$errors, array $sync, string $field, int $minimum, int $maximum, string $message): void
+    {
+        $value = $sync[$field] ?? null;
+        $whole = is_int($value) || (is_string($value) && preg_match('/^-?\d+$/', $value) === 1);
+        if ($whole && (int) $value >= $minimum && (int) $value <= $maximum) {
             return;
         }
 

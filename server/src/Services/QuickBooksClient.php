@@ -195,7 +195,10 @@ class QuickBooksClient
      * Distinct unused invoice numbers for a block of creates.
      * One latest-invoice query, then existence checks: one query when one candidate,
      * otherwise DocNumber IN through batch() in chunks of BATCH_LIMIT.
-     * Successes are not retried one candidate at a time.
+     * A number is returned only after that check says it is free. When the check
+     * budget is exhausted, the result is shorter than $count and the caller fails
+     * the creates that did not receive a number. Successes are not retried one
+     * candidate at a time.
      *
      * @param array<string, mixed> $connection
      *
@@ -227,7 +230,7 @@ class QuickBooksClient
                 $candidate = $next;
             }
 
-            return [$candidate];
+            return [];
         }
 
         $numbers    = [];
@@ -255,11 +258,6 @@ class QuickBooksClient
                 }
             }
             $candidate = $cursor;
-        }
-
-        while (count($numbers) < $count && $candidate !== null) {
-            $numbers[] = $candidate;
-            $candidate = NextDocNumber::after($candidate);
         }
 
         return $numbers;

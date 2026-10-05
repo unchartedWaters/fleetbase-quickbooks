@@ -2,7 +2,7 @@ import Component from '@glimmer/component';
 import { action } from '@ember/object';
 import { tracked } from '@glimmer/tracking';
 import { inject as service } from '@ember/service';
-import { connectionState, connectPayload } from '../utils/connection-view';
+import { connectionState } from '../utils/connection-view';
 
 const NAMESPACE = 'quickbooks/int/v1';
 
@@ -11,6 +11,7 @@ export default class QuickbooksConnectionComponent extends Component {
     @service currentUser;
     @service notifications;
     @service intl;
+    @service modalsManager;
 
     // Set only after Disconnect succeeds on a screen that does not pass onDisconnect.
     @tracked removed = false;
@@ -20,7 +21,7 @@ export default class QuickbooksConnectionComponent extends Component {
         return this.args.loadFailed === true;
     }
 
-    // Connection and Actions leave connection undefined until the summary request finishes.
+    // Connection leaves connection undefined until the summary request finishes.
     // Null is a finished request with no QuickBooks organization.
     get isLoading() {
         return !this.loadFailed && this.args.connection === undefined;
@@ -55,13 +56,9 @@ export default class QuickbooksConnectionComponent extends Component {
         return this.state === 'needs-reauth';
     }
 
-    get hasConnection() {
-        return this.isConnected || this.needsReauth;
-    }
-
-    // Shown beside Connect on Connection. Disabled until a connection is saved.
+    // Active means a saved realm that does not need to be connected again.
     get disconnectDisabled() {
-        return this.busy || !this.hasConnection;
+        return this.busy || !this.isConnected;
     }
 
     get busy() {
@@ -72,35 +69,50 @@ export default class QuickbooksConnectionComponent extends Component {
         return this.args.configured === true;
     }
 
-    get credentialsMissing() {
-        return this.isConnected && !this.isConfigured;
-    }
-
-    get testDisabled() {
-        return this.busy || !this.isConnected;
-    }
-
     get syncDisabled() {
-        return this.busy || this.isLoading || !this.isConnected || !this.isConfigured;
+        return this.busy || this.isLoading || !this.isConnected;
+    }
+
+    // Connect uses the saved Client ID and Client secret. A connection that only needs reauth can connect again.
+    // An active connection stays in the row and does not start a second sign-in.
+    get connectDisabled() {
+        if (this.busy || this.isLoading || this.loadFailed || this.isConnected) {
+            return true;
+        }
+
+        if (this.needsReauth) {
+            return false;
+        }
+
+        return !this.isConfigured;
     }
 
     @action
     async connect(event) {
         event?.preventDefault?.();
-        if (this.isLoading || this.loadFailed) {
+        if (this.connectDisabled || this.isLoading || this.loadFailed) {
             return;
         }
 
-        await this.args.onConnect?.(connectPayload(this.args.importCustomers));
+        await this.args.onConnect?.();
     }
 
     // Local delete through POST disconnect. This does not unsubscribe Intuit.
     @action
-    async disconnect() {
+    disconnect() {
         if (this.disconnectDisabled) {
             return;
         }
 
+        this.modalsManager.confirm({
+            title: this.intl.t('quickbooks.connection.disconnect-confirm-title'),
+            body: this.intl.t('quickbooks.connection.disconnect-confirm'),
+            acceptButtonText: this.intl.t('quickbooks.connection.disconnect'),
+            confirm: () => this.performDisconnect(),
+        });
+    }
+
+    async performDisconnect() {
         if (typeof this.args.onDisconnect === 'function') {
             await this.args.onDisconnect();
             return;
@@ -119,38 +131,11 @@ export default class QuickbooksConnectionComponent extends Component {
     }
 
     @action
-    reconcile() {
-        if (this.syncDisabled) {
-            return;
-        }
-
-        this.args.onReconcile?.();
-    }
-
-    @action
-    importNow() {
-        if (this.syncDisabled) {
-            return;
-        }
-
-        this.args.onImport?.();
-    }
-
-    @action
     syncNow() {
         if (this.syncDisabled) {
             return;
         }
 
         this.args.onSync?.();
-    }
-
-    @action
-    async test() {
-        if (typeof this.args.onTest !== 'function') {
-            return;
-        }
-
-        await this.args.onTest();
     }
 }

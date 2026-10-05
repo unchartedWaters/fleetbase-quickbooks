@@ -355,6 +355,54 @@ test('more than 30 invoice number candidates are checked in batch chunks of 30',
     });
 });
 
+test('an invoice number is not returned until it is confirmed free', function () {
+    $checked = [];
+    Http::fake(function (Request $request) use (&$checked) {
+        $url = urldecode($request->url());
+        if (str_contains($url, 'orderby MetaData.CreateTime')) {
+            return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1000']]]], 200);
+        }
+        if (preg_match("/DocNumber = '([^']+)'/", $url, $match) === 1) {
+            $checked[] = $match[1];
+
+            return Http::response(['QueryResponse' => ['Invoice' => [['Id' => 'taken', 'DocNumber' => $match[1]]]]], 200);
+        }
+
+        return Http::response(['QueryResponse' => ['Invoice' => []]], 200);
+    });
+
+    expect((new QuickBooksClient())->nextInvoiceDocNumbers(clientConnection(), 1))->toBe([])
+        ->and($checked)->toBe(['1001', '1002', '1003', '1004', '1005']);
+    Http::assertNotSent(fn (Request $request) => str_contains(urldecode($request->url()), "DocNumber = '1006'"));
+});
+
+test('a block does not issue invoice numbers after the check budget is exhausted', function () {
+    Http::fake(function (Request $request) {
+        $url = urldecode($request->url());
+        if ($request->method() === 'GET' && str_contains($url, 'orderby MetaData.CreateTime')) {
+            return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1000']]]], 200);
+        }
+
+        $responses = [];
+        foreach ($request->data()['BatchItemRequest'] ?? [] as $item) {
+            preg_match_all("/'([^']+)'/", (string) ($item['Query'] ?? ''), $matches);
+            $rows = [];
+            foreach ($matches[1] as $doc) {
+                $rows[] = ['Id' => $doc, 'DocNumber' => $doc];
+            }
+            $responses[] = [
+                'bId'           => $item['bId'],
+                'QueryResponse' => ['Invoice' => $rows],
+            ];
+        }
+
+        return Http::response(['BatchItemResponse' => $responses], 200);
+    });
+
+    expect((new QuickBooksClient())->nextInvoiceDocNumbers(clientConnection(), 2))->toBe([]);
+    Http::assertSentCount(2);
+});
+
 test('update writes are chunked at 20 and other batch calls stay at 30', function () {
     $updates = [];
     for ($i = 1; $i <= 21; $i++) {

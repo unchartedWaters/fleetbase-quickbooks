@@ -23,6 +23,7 @@ use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
+use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
@@ -57,9 +58,71 @@ test('disconnected sync reconcile drain catalog and import do not record activit
         ->and($client->calls)->toBe([]);
 });
 
+test('the global connection gates sync and a missing connection writes no activity', function () {
+    $now   = time();
+    $empty = new SyncLedger();
+    $idle  = gateRunner($empty);
+
+    expect($idle->hasConnection('company-uuid'))->toBeFalse()
+        ->and($idle->run('company-uuid', 'now')['status'])->toBe('skipped')
+        ->and($empty->batches)->toBe([])
+        ->and($empty->attempts)->toBe([]);
+
+    $ledger                                = new SyncLedger();
+    $ledger->connections['other-company']  = [
+        'company_uuid'             => 'other-company',
+        'realm_id'                 => 'realm-1',
+        'access_token'             => 'access',
+        'refresh_token'            => 'refresh',
+        'token_expires_at'         => $now + 86400,
+        'needs_reauth'             => false,
+        'last_batch_at'            => $now - 400,
+        'last_customer_catalog_at' => $now,
+        'home_currency'            => 'USD',
+        'default_item_id'          => 'item-1',
+    ];
+    $ledger->customers['cust-1'] = [
+        'uuid'         => 'cust-1',
+        'company_uuid' => 'company-uuid',
+        'name'         => 'Ada',
+        'email'        => 'ada@example.test',
+    ];
+    $ledger->pending[] = [
+        'company_uuid'    => 'company-uuid',
+        'local_type'      => 'customer',
+        'local_uuid'      => 'cust-1',
+        'status'          => 'pending',
+        'attempts'        => 0,
+        'next_attempt_at' => null,
+    ];
+    [$runner, $client] = gateRunnerWith($ledger, new MemorySettingsStore());
+
+    expect($runner->hasConnection('company-uuid'))->toBeTrue();
+
+    $batch = null;
+    gateDispatch(function () use ($runner, &$batch) {
+        $batch = $runner->run('company-uuid', 'now');
+    });
+
+    expect($batch['status'])->toBe('finished')
+        ->and($client->calls)->toContain('createCustomer')
+        ->and($ledger->batches)->not->toBe([])
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-1')['company_uuid'])->toBe('company-uuid')
+        ->and($ledger->pending[0]['company_uuid'])->toBe('company-uuid')
+        ->and($ledger->pending[0]['status'])->toBe('done');
+});
+
+test('one connection schedules every organization with due pending rows', function () {
+    expect(SyncQuickbooks::companiesToSchedule(['owner-company'], ['owner-company', 'other-company']))
+        ->toEqualCanonicalizing(['owner-company', 'other-company'])
+        ->and(SyncQuickbooks::companiesToSchedule(['owner-company', 'second-company'], ['other-company']))
+        ->toEqualCanonicalizing(['owner-company', 'second-company'])
+        ->and(SyncQuickbooks::companiesToSchedule([], ['other-company']))->toBe([]);
+});
+
 test('a connected organization still syncs when due even if sync enabled is stored false', function () {
-    $now    = time();
-    $ledger = gateConnectedLedger($now - 400);
+    $now                         = time();
+    $ledger                      = gateConnectedLedger($now - 400);
     $ledger->customers['cust-1'] = [
         'uuid'         => 'cust-1',
         'company_uuid' => 'company-uuid',
@@ -91,9 +154,41 @@ test('a connected organization still syncs when due even if sync enabled is stor
         ->and($ledger->batches)->not->toBe([]);
 });
 
+test('the sync command stays quiet when nothing is connected even if credentials are saved', function () {
+    $output  = new BufferedOutput();
+    $command = new class([]) extends SyncQuickbooks {
+        /**
+         * @param array<int, string> $companies
+         */
+        public function __construct(private array $companies)
+        {
+            parent::__construct();
+        }
+
+        protected function connectedCompanies(): array
+        {
+            return $this->companies;
+        }
+    };
+    $command->setOutput(new OutputStyle(new ArrayInput([]), $output));
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'     => 'saved-id',
+        'client_secret' => 'saved-secret',
+    ];
+    [$runner] = gateRunnerWith(new SyncLedger(), $store);
+
+    gateDispatch(function ($dispatcher) use ($command, $runner, $output) {
+        expect($command->handle($runner))->toBe(0)
+            ->and($dispatcher->jobs)->toBe([])
+            ->and($output->fetch())->toBe('')
+            ->and(SyncSchedule::shouldStart(time()))->toBeTrue();
+    });
+});
+
 test('the scheduler does not queue work when no organization is connected', function () {
-    $ledger = new SyncLedger();
-    $store  = new MemorySettingsStore();
+    $ledger                                                 = new SyncLedger();
+    $store                                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::companySync('company-uuid')] = [
         'enabled'                 => true,
         'periodic_interval_hours' => 1,
@@ -113,8 +208,8 @@ test('the scheduler does not queue work when no organization is connected', func
 });
 
 test('the scheduler queues a connected organization that is due when sync enabled is stored false', function () {
-    $now    = time();
-    $ledger = gateConnectedLedger(null);
+    $now               = time();
+    $ledger            = gateConnectedLedger(null);
     $ledger->pending[] = [
         'company_uuid'    => 'company-uuid',
         'local_type'      => 'customer',
@@ -205,6 +300,13 @@ test('a webhook change is not applied when the organization has no connection', 
         }
 
         public function load(string $companyUuid): ?array
+        {
+            $this->loads++;
+
+            return null;
+        }
+
+        public function loadLinked(string $companyUuid, array $entities): ?array
         {
             $this->loads++;
 
@@ -324,7 +426,7 @@ function gateConnectedLedger(?int $lastBatchAt): SyncLedger
         'company_uuid'             => 'company-uuid',
         'realm_id'                 => 'realm-1',
         'access_token'             => 'access',
-        'refresh_token'           => 'refresh',
+        'refresh_token'            => 'refresh',
         'token_expires_at'         => time() + 86400,
         'needs_reauth'             => false,
         'last_batch_at'            => $lastBatchAt,

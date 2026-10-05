@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class CustomerImporter
@@ -14,6 +15,13 @@ class CustomerImporter
 
     /** @var callable|null */
     private $creator;
+
+    /**
+     * Email and phone rows for one import(), keyed by company. Reset when import() starts.
+     *
+     * @var array{company: string, rows: array<int, object>}|null
+     */
+    private ?array $companyCandidates = null;
 
     /**
      * @param callable|null $creator function(array $connection, array $remote): array
@@ -50,7 +58,8 @@ class CustomerImporter
             return $batch;
         }
 
-        $pageSize = max(1, min(self::MAX_PAGE_SIZE, $pageSize));
+        $pageSize                = max(1, min(self::MAX_PAGE_SIZE, $pageSize));
+        $this->companyCandidates = null;
         $ledger->ensureIndex();
         foreach ($fleetbaseCustomers as $customer) {
             if (is_array($customer) && (string) ($customer['uuid'] ?? '') !== '') {
@@ -59,15 +68,32 @@ class CustomerImporter
         }
 
         $start = $this->cursor($connection);
-        do {
+        while (true) {
             $page = $this->client->queryCustomers($connection, $start, $pageSize);
-            $this->rememberCandidates($ledger, $connection, $page);
+            if (!$this->rememberCandidates($ledger, $connection, $page)) {
+                $this->failPage($ledger, $connection, $page, $batch);
+                break;
+            }
+            $failedAt = null;
+            $position = 0;
             foreach ($page as $remote) {
                 if (!is_array($remote)) {
+                    $position++;
                     continue;
                 }
                 $outcome         = $this->importOne($ledger, $connection, $fleetbaseCustomers, $remote);
                 $batch[$outcome] = ($batch[$outcome] ?? 0) + 1;
+                if ($outcome === 'failed' && $failedAt === null) {
+                    $failedAt = $position;
+                }
+                $position++;
+            }
+            if ($failedAt !== null) {
+                $next = $start + $failedAt;
+                if ($next > 1) {
+                    $this->writeCursor($ledger, $connection, $next);
+                }
+                break;
             }
             if (count($page) < $pageSize) {
                 $this->writeCursor($ledger, $connection, 1);
@@ -79,7 +105,7 @@ class CustomerImporter
                 $batch['continue'] = true;
                 break;
             }
-        } while (true);
+        }
 
         $batch['finished_at'] = time();
         $ledger->batches[]    = $batch;
@@ -127,21 +153,75 @@ class CustomerImporter
         }
 
         try {
-            (new Connection())->newQuery()->where('company_uuid', $companyUuid)->update([
+            $updated = (new Connection())->newQuery()->where('company_uuid', $companyUuid)->update([
                 self::CURSOR_COLUMN => $start,
             ]);
+            if ($updated > 0) {
+                return;
+            }
+            $rows = (new Connection())->newQuery()->limit(2)->get();
+            if ($rows->count() !== 1) {
+                return;
+            }
+            $only = $rows->first();
+            if ($only instanceof Connection) {
+                (new Connection())->newQuery()->whereKey($only->getKey())->update([
+                    self::CURSOR_COLUMN => $start,
+                ]);
+            }
         } catch (\Throwable $exception) {
             // Unit tests keep the cursor on the ledger when the connections table is absent.
         }
     }
 
     /**
+     * @param array<string, mixed> $connection
+     * @param array<int, mixed>    $page
+     * @param array<string, mixed> $batch
+     */
+    private function failPage(SyncLedger $ledger, array $connection, array $page, array &$batch): void
+    {
+        foreach ($page as $remote) {
+            if (!is_array($remote)) {
+                continue;
+            }
+            if ($this->skippedRemote($remote)) {
+                $batch['skipped'] = ($batch['skipped'] ?? 0) + 1;
+                continue;
+            }
+            $batch['failed']    = ($batch['failed'] ?? 0) + 1;
+            $ledger->attempts[] = [
+                'company_uuid' => $connection['company_uuid'],
+                'local_type'   => 'customer',
+                'local_uuid'   => (string) ($remote['Id'] ?? ''),
+                'outcome'      => 'failed',
+                'error'        => 'Customer import failed.',
+            ];
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $remote
+     */
+    private function skippedRemote(array $remote): bool
+    {
+        if (array_key_exists('Active', $remote) && $remote['Active'] === false) {
+            return true;
+        }
+        if (!empty($remote['ParentRef'])) {
+            return true;
+        }
+
+        return !empty($remote['Job']);
+    }
+
+    /**
      * One lookup for this page. The ledger hash index matches; local customers are not scanned per row.
      *
-     * @param array<string, mixed>              $connection
-     * @param array<int, array<string, mixed>>  $page
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $page
      */
-    private function rememberCandidates(SyncLedger $ledger, array $connection, array $page): void
+    private function rememberCandidates(SyncLedger $ledger, array $connection, array $page): bool
     {
         $emails = [];
         $phones = [];
@@ -151,16 +231,12 @@ class CustomerImporter
                 continue;
             }
             $email    = strtolower(trim((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')));
-            $rawPhone = trim((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? ''));
-            $phone    = $this->digits($rawPhone);
+            $phone    = $this->digits(trim((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')));
             $name     = $this->displayName($remote);
             if ($email !== '') {
                 $emails[] = $email;
             }
-            if ($rawPhone !== '') {
-                $phones[] = $rawPhone;
-            }
-            if ($phone !== '' && $phone !== $rawPhone) {
+            if ($phone !== '') {
                 $phones[] = $phone;
             }
             if ($name !== '') {
@@ -172,40 +248,36 @@ class CustomerImporter
         $phones = array_values(array_unique($phones));
         $names  = array_values(array_unique($names));
         if ($emails === [] && $phones === [] && $names === []) {
-            return;
+            return true;
         }
 
         $class = 'Fleetbase\\FleetOps\\Models\\Customer';
         if (!class_exists($class)) {
-            return;
+            return true;
         }
 
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
         try {
-            $query = $class::query()->where('company_uuid', $companyUuid)->where(function ($scope) use ($emails, $phones, $names): void {
-                $started = false;
-                if ($emails !== []) {
-                    $scope->whereIn('email', $emails);
-                    $started = true;
-                }
-                if ($phones !== []) {
-                    $method = $started ? 'orWhereIn' : 'whereIn';
-                    $scope->{$method}('phone', $phones);
-                    $started = true;
-                }
-                if ($names !== []) {
-                    $method = $started ? 'orWhereIn' : 'whereIn';
-                    $scope->{$method}('name', $names);
-                }
-            });
-            $candidates = $query->get();
+            $candidates = $this->candidateContacts($class, $companyUuid);
         } catch (\Throwable $exception) {
-            return;
+            return false;
         }
 
+        $emailSet = array_fill_keys($emails, true);
+        $phoneSet = array_fill_keys($phones, true);
+        $nameSet  = array_fill_keys($names, true);
         foreach ($candidates as $customer) {
             $uuid = (string) ($customer->uuid ?? '');
             if ($uuid === '') {
+                continue;
+            }
+            $email = strtolower(trim((string) ($customer->email ?? '')));
+            $phone = $this->digits(trim((string) ($customer->phone ?? '')));
+            $name  = (string) ($customer->name ?? '');
+            $hit   = ($email !== '' && isset($emailSet[$email]))
+                || ($phone !== '' && isset($phoneSet[$phone]))
+                || ($name !== '' && isset($nameSet[$name]));
+            if (!$hit) {
                 continue;
             }
             $row = [
@@ -219,6 +291,8 @@ class CustomerImporter
             $ledger->customers[$uuid] = $row;
             $ledger->rememberCustomer($uuid, $row);
         }
+
+        return true;
     }
 
     /**
@@ -228,14 +302,15 @@ class CustomerImporter
      */
     private function importOne(SyncLedger $ledger, array $connection, array &$fleetbaseCustomers, array $remote): string
     {
-        if (array_key_exists('Active', $remote) && $remote['Active'] === false) {
+        if ($this->skippedRemote($remote)) {
             return 'skipped';
         }
-        if (!empty($remote['ParentRef'])) {
-            return 'skipped';
-        }
-        if (!empty($remote['Job'])) {
-            return 'skipped';
+
+        $remoteId = (string) ($remote['Id'] ?? '');
+        $company  = (string) ($connection['company_uuid'] ?? '');
+        $realm    = (string) ($connection['realm_id'] ?? '');
+        if ($remoteId !== '' && $ledger->linkForRemote($realm, 'Customer', $remoteId) !== null) {
+            return 'linked';
         }
 
         $match = $ledger->matchCustomer(
@@ -244,19 +319,24 @@ class CustomerImporter
             $this->displayName($remote)
         );
         if ($match !== null) {
-            if ($ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', (string) $match['uuid']) === null) {
-                $ledger->putLink([
-                    'company_uuid' => $connection['company_uuid'],
-                    'realm_id'     => $connection['realm_id'],
-                    'local_type'   => 'customer',
-                    'local_uuid'   => $match['uuid'],
-                    'qbo_entity'   => 'Customer',
-                    'qbo_id'       => (string) ($remote['Id'] ?? ''),
-                    'sync_token'   => (string) ($remote['SyncToken'] ?? '0'),
-                ]);
-            }
+            $matchCompany = (string) ($match['company_uuid'] ?? $company);
+            $link         = $ledger->link($matchCompany, $realm, 'customer', (string) $match['uuid']);
+            $storedId     = is_array($link) ? (string) ($link['qbo_id'] ?? '') : '';
+            if ($link === null || $storedId === '' || $storedId === $remoteId) {
+                if ($remoteId !== '') {
+                    $ledger->putLink([
+                        'company_uuid' => $matchCompany,
+                        'realm_id'     => $realm,
+                        'local_type'   => 'customer',
+                        'local_uuid'   => $match['uuid'],
+                        'qbo_entity'   => 'Customer',
+                        'qbo_id'       => $remoteId,
+                        'sync_token'   => (string) ($remote['SyncToken'] ?? '0'),
+                    ]);
+                }
 
-            return 'linked';
+                return 'linked';
+            }
         }
 
         try {
@@ -277,7 +357,7 @@ class CustomerImporter
             $ledger->rememberCustomer((string) $created['uuid'], $created);
             $fleetbaseCustomers[]                = $created;
             $ledger->putLink([
-                'company_uuid' => $connection['company_uuid'],
+                'company_uuid' => $created['company_uuid'] ?? $connection['company_uuid'],
                 'realm_id'     => $connection['realm_id'],
                 'local_type'   => 'customer',
                 'local_uuid'   => $created['uuid'],
@@ -317,5 +397,56 @@ class CustomerImporter
     private function digits(string $value): string
     {
         return preg_replace('/\D+/', '', $value) ?? '';
+    }
+
+    /**
+     * Identity rows for this company's customers, loaded once per import.
+     * The query filters on company and type so it can use that index. Email
+     * case and phone punctuation are compared in PHP, not in SQL.
+     *
+     * @param class-string $class
+     *
+     * @return array<int, object>
+     */
+    private function candidateContacts(string $class, string $companyUuid): array
+    {
+        if ($this->companyCandidates !== null && $this->companyCandidates['company'] === $companyUuid) {
+            return $this->companyCandidates['rows'];
+        }
+
+        $model      = new $class();
+        $connection = DB::connection($model->getConnectionName());
+        $rows       = [];
+        $after      = '';
+        while (true) {
+            $query = $connection->table($model->getTable())
+                ->where('company_uuid', $companyUuid)
+                ->where('type', 'customer')
+                ->whereNull('deleted_at')
+                ->orderBy('uuid')
+                ->limit(500);
+            if ($after !== '') {
+                $query->where('uuid', '>', $after);
+            }
+            $page = $query->get(['uuid', 'name', 'email', 'phone']);
+            if ($page->isEmpty()) {
+                break;
+            }
+            $last = $after;
+            foreach ($page as $row) {
+                $rows[] = $row;
+                $uuid   = (string) ($row->uuid ?? '');
+                if ($uuid !== '') {
+                    $after = $uuid;
+                }
+            }
+            if ($after === $last || $page->count() < 500) {
+                break;
+            }
+        }
+
+        $this->companyCandidates = ['company' => $companyUuid, 'rows' => $rows];
+
+        return $rows;
     }
 }

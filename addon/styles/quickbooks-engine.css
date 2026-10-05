@@ -1,0 +1,10 @@
+/*
+ * The settings form stays in a narrow column. Activity has 12 columns, and the
+ * host settings page also wraps this component in max-w-3xl, so the block has
+ * to grow past that column and stay centered in the page.
+ */
+.quickbooks-activity-block {
+    width: max(100%, min(80rem, calc(100vw - 22rem)));
+    max-width: none;
+    margin-left: calc(50% - max(100%, min(80rem, calc(100vw - 22rem))) / 2);
+}

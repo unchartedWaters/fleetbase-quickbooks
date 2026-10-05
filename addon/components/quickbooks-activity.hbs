@@ -1,7 +1,15 @@
-<ContentPanel @title={{t "quickbooks.activity.title"}} @open={{true}} @wrapperClass="bordered-classic">
-    <section class="quickbooks-activity overflow-x-auto" data-test-activity>
+<ContentPanel
+    @title={{t "quickbooks.activity.title"}}
+    @open={{true}}
+    @wrapperClass="bordered-classic min-w-0 max-w-full"
+    @containerClass="min-w-0 max-w-full"
+    @panelClass="min-w-0 max-w-full"
+    @panelBodyClass="min-w-0 max-w-full"
+    @panelBodyWrapperClass="min-w-0 max-w-full"
+>
+    <section class="quickbooks-activity min-w-0 max-w-full overflow-x-auto" data-test-activity>
         {{#if this.rows.length}}
-            <table class="w-full text-sm">
+            <table class="w-full whitespace-nowrap text-sm">
                 <thead>
                     <tr class="text-left text-gray-500 border-b">
                         <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.when"}}</th>
@@ -36,7 +44,7 @@
                         </tr>
                         {{#if row.error}}
                             <tr>
-                                <td colspan="12" headers={{row.headerId}} class="pb-2 text-red-600" data-test-activity-error>{{row.error}}</td>
+                                <td colspan="12" headers={{row.headerId}} class="pb-2 text-red-600 dark:text-red-400" data-test-activity-error>{{row.error}}</td>
                             </tr>
                         {{/if}}
                     {{/each}}

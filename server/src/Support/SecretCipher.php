@@ -67,6 +67,46 @@ class SecretCipher
         return $this->encrypt($this->decrypt($payload));
     }
 
+    /**
+     * Store a secret with Laravel Crypt.
+     * A Crypt payload is unchanged. A legacy AES blob is upgraded.
+     * Any other readable value is plaintext and is encrypted.
+     */
+    public function seal(string $payload): string
+    {
+        if ($payload === '' || $this->isCryptPayload($payload)) {
+            return $payload;
+        }
+        if ($this->isLegacyCiphertext($payload)) {
+            return $this->upgrade($payload);
+        }
+
+        return $this->encrypt($payload);
+    }
+
+    /**
+     * Open a stored secret.
+     * A Crypt payload and a legacy AES blob decrypt to the original value.
+     * After a failed decrypt, or when the value is neither of those, the result is
+     * null. The raw string is not a live client secret or token.
+     * seal() still encrypts that string on the next save so an older row can be upgraded.
+     */
+    public function reveal(string $payload): ?string
+    {
+        if ($payload === '') {
+            return $payload;
+        }
+        if (!$this->isCryptPayload($payload) && !$this->isLegacyCiphertext($payload)) {
+            return null;
+        }
+
+        try {
+            return $this->decrypt($payload);
+        } catch (\RuntimeException) {
+            return null;
+        }
+    }
+
     private function isCryptPayload(string $payload): bool
     {
         $decoded = base64_decode($payload, true);

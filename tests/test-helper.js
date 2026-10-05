@@ -6,6 +6,15 @@ import { setApplication } from '@ember/test-helpers';
 import { setup } from 'qunit-dom';
 import { start } from 'ember-qunit';
 
+// ContentPanel stores icon nodes with EmberArray#pushObject. The console turns
+// that on for every array. This dummy app does not, so mirror that one method.
+if (typeof Array.prototype.pushObject !== 'function') {
+    Array.prototype.pushObject = function pushObject(item) {
+        this.push(item);
+        return item;
+    };
+}
+
 // The universe extension manager imports a module the console host generates at build
 // time. The engine's dummy app has no host, so provide an inert stand-in before boot.
 if (typeof window.define === 'function' && !window.requirejs?.entries?.['@fleetbase/console/extensions']) {

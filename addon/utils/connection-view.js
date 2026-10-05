@@ -8,9 +8,3 @@ export function connectionState(connection) {
 
     return 'connected';
 }
-
-export function connectPayload(importCustomers = false) {
-    return {
-        import_customers: Boolean(importCustomers),
-    };
-}

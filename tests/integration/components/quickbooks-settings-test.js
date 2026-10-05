@@ -1,8 +1,9 @@
 import { module, test } from 'qunit';
 import { setupRenderingTest } from 'dummy/tests/helpers';
-import { click, fillIn, render } from '@ember/test-helpers';
+import { click, fillIn, render, settled, waitUntil } from '@ember/test-helpers';
 import { hbs } from 'ember-cli-htmlbars';
 import Service from '@ember/service';
+import ModalsManagerStub from '../../helpers/modals-manager-stub';
 
 class NotificationsStubService extends Service {
     messages = [];
@@ -30,22 +31,71 @@ class CurrentUserStubService extends Service {
     companyId = 'company-uuid';
 }
 
-function assertSelectableUrl(assert, key, label, value) {
-    assert.dom(`[data-test-sync-field="${key}"] label`).hasText(label);
+const URL_COPY = {
+    internal_webhook_receiver_url: {
+        label: 'Fleetbase webhook receiver',
+        hint: 'Fleetbase listens for webhooks here. Copy the Public Webhook Receiver URL into Intuit.',
+    },
+    public_webhook_receiver_url: {
+        label: 'Public Webhook Receiver URL',
+        hint: 'Paste this into the Intuit webhook Endpoint URL.',
+    },
+    internal_oauth_redirect_url: {
+        label: 'Fleetbase OAuth redirect',
+        hint: 'Fleetbase receives the QuickBooks sign-in return here. Copy the Public OAuth Redirect URL into Intuit.',
+    },
+    public_oauth_redirect_url: {
+        label: 'Public OAuth Redirect URL',
+        hint: 'Paste this into Intuit Redirect URIs.',
+    },
+};
+
+function assertSelectableUrl(assert, key, value) {
+    const copy = URL_COPY[key];
+    const field = `[data-test-sync-field="${key}"]`;
+    assert.dom(`${field} [data-test-url-label]`).hasText(copy.label);
+    assert.dom(`${field} label`).doesNotExist();
+    assert.dom(`${field} .input-group`).doesNotExist();
+    assert.dom(`${field} input`).doesNotExist();
+    assert.dom(`${field} textarea`).doesNotExist();
     assert.dom(`[data-test-field="${key}"]`).hasTagName('div');
     assert.dom(`[data-test-field="${key}"]`).hasClass('select-text');
+    assert.dom(`[data-test-field="${key}"]`).doesNotHaveClass('form-input');
+    assert.dom(`[data-test-field="${key}"]`).doesNotHaveClass('cursor-text');
+    assert.dom(`[data-test-field="${key}"]`).doesNotHaveClass('border');
+    assert.dom(`[data-test-field="${key}"]`).doesNotHaveClass('bg-gray-50');
     assert.dom(`[data-test-field="${key}"]`).hasText(value);
-    assert.dom(`input[data-test-field="${key}"]`).doesNotExist();
-    assert.dom(`textarea[data-test-field="${key}"]`).doesNotExist();
     assert.dom(`[data-test-field="${key}"]`).doesNotHaveAttribute('readonly');
     assert.dom(`[data-test-field="${key}"]`).doesNotHaveAttribute('disabled');
+    assert.dom(`[data-test-field-help="${key}"]`).hasText(copy.hint);
 }
 
-function assertPublicUrl(assert, key, label, value) {
-    assert.dom(`[data-test-sync-field="${key}"] label`).hasText(label);
-    assert.dom(`input[data-test-field="${key}"]`).hasValue(value);
-    assert.dom(`input[data-test-field="${key}"]`).isNotDisabled();
-    assert.dom(`input[data-test-field="${key}"]`).doesNotHaveAttribute('readonly');
+function assertPublicUrl(assert, key, value) {
+    const copy = URL_COPY[key];
+    const field = `[data-test-sync-field="${key}"]`;
+    assert.dom(`${field} label`).hasText(copy.label);
+    assert.dom(`${field} input[data-test-field="${key}"]`).hasValue(value);
+    assert.dom(`${field} input[data-test-field="${key}"]`).isNotDisabled();
+    assert.dom(`${field} input[data-test-field="${key}"]`).doesNotHaveAttribute('readonly');
+    assert.dom(`${field} .input-group [data-test-field-help="${key}"]`).hasText(copy.hint);
+    assert.dom(`${field} [data-test-field-help="${key}"]`).hasClass('text-xs');
+    assert.dom(`${field} [data-test-field-help="${key}"]`).hasClass('mt-1');
+}
+
+function assertFieldError(assert, controlSelector, errorKey) {
+    const control = document.querySelector(controlSelector);
+    const error = document.querySelector(`[data-test-error="${errorKey}"]`);
+    const group = control.closest('.input-group');
+    const help = group.querySelector('[data-test-field-help]');
+
+    assert.strictEqual(error.closest('.input-group'), group);
+    assert.ok(control.compareDocumentPosition(error) & Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.ok(error.compareDocumentPosition(help) & Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.strictEqual(control.getAttribute('aria-describedby'), error.id);
+    assert.dom(control).hasClass('border-red-500');
+    assert.dom(control).hasClass('dark:border-red-400');
+    assert.strictEqual(control.style.borderColor, 'rgb(220, 38, 38)');
+    assert.dom(control).hasAttribute('aria-invalid', 'true');
 }
 
 function assertUrlsStayOutOfPayload(assert, payload, publicUrls = {}) {
@@ -76,7 +126,18 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         this.owner.register('service:notifications', NotificationsStubService);
         this.owner.register('service:fetch', ActivityFetchStubService);
         this.owner.register('service:current-user', CurrentUserStubService);
+        this.owner.register('service:modals-manager', ModalsManagerStub);
         this.notifications = this.owner.lookup('service:notifications');
+        this.header = document.createElement('div');
+        this.header.id = 'next-view-section-subheader';
+        const actions = document.createElement('div');
+        actions.id = 'next-view-section-subheader-actions';
+        this.header.appendChild(actions);
+        document.body.appendChild(this.header);
+    });
+
+    hooks.afterEach(function () {
+        this.header?.remove();
     });
 
     test('company settings save the selected direction and show webhook and oauth urls as text', async function (assert) {
@@ -120,12 +181,28 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             />
         `);
 
-        assert.dom('.next-view-section-subheader-title').hasText('Connection');
+        assert.dom('[data-test-settings-scope] #next-view-section-subheader').doesNotExist();
+        assert.dom('.next-view-section-body').doesNotExist();
+        assert.dom('.h-screen').doesNotExist();
+        assert.dom('.overflow-y-scroll').doesNotExist();
+        assert.dom('.sticky [data-test-save]').doesNotExist();
+        assert.dom('[data-test-settings-scope] [data-test-save]').doesNotExist();
+        assert.dom('#next-view-section-subheader-actions [data-test-save]', document).exists();
         assert.dom('[data-test-override]').doesNotExist();
         assert.dom().doesNotIncludeText('Override');
         assert.dom().doesNotIncludeText("Enable to use this organization's QuickBooks keys.");
-        assert.dom('.next-view-section-body').includesText('Authentication');
+        assert.dom('[data-test-settings-scope]').includesText('Authentication');
+        assert.dom('[data-test-credentials-guidance]').hasClass('ui-input-info-block');
+        assert.dom('[data-test-credentials-guidance]').includesText('Getting your QuickBooks credentials');
+        assert.dom('[data-test-credentials-guidance]').includesText('Sign in at developer.intuit.com and open Keys & credentials.');
+        assert.dom('[data-test-credentials-guidance] a').hasAttribute('href', 'https://developer.intuit.com');
+        assert.dom('[data-test-credentials-guidance] a').hasAttribute('target', '_blank');
+        assert.dom('[data-test-credentials-guidance] a').hasAttribute('rel', 'noopener noreferrer');
+        assert.dom('[data-test-credentials-guidance] a').hasText('developer.intuit.com');
+        assert.dom('[data-test-credentials-guidance] a').hasClass('underline');
+        assert.dom('[data-test-credentials-guidance] a').hasClass('text-white');
         assert.dom('[data-test-redirect-step]').hasText('Under Redirect URIs, paste the Public OAuth Redirect URL.');
+        assert.dom('[data-test-webhook-step]').hasText('Paste the Public Webhook Receiver URL into Intuit and save the webhook verifier.');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
@@ -135,23 +212,46 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-field='redirect_uri']").doesNotExist();
         assert.dom("[data-test-field='webhook_verifier']").isNotDisabled();
         assert.dom('[data-test-verifier-set]').hasText('A verifier token is already saved. Leave this blank to keep it.');
+        assert.dom("[data-test-field-help='webhook_verifier']").includesText('Leave blank to keep the webhook verifier.');
+        assert.dom("[data-test-field='client_id']").hasAttribute('autocomplete', 'off');
+        assert.dom("[data-test-field='client_secret']").hasAttribute('autocomplete', 'new-password');
+        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('autocomplete', 'new-password');
         assert.dom('[data-test-admin-verifier]').doesNotExist();
         assert.dom().doesNotIncludeText('QUICKBOOKS_WEBHOOK_VERIFIER');
         assert.dom().doesNotIncludeText('If this address is localhost');
         assert.dom('[data-test-localhost-warning]').doesNotExist();
-        assert.dom('.next-view-section-body').includesText('Schedule');
+        assert.dom('[data-test-settings-scope]').includesText('Schedule');
         assert.dom("[data-test-sync='enabled']").doesNotExist();
         assert.dom('input[aria-label="Sync"]').doesNotExist();
         assert.dom().doesNotIncludeText('Enable schedule');
         assert.dom().doesNotIncludeText('The schedule syncs records. Sync now and Reconcile still run when it is off.');
-        assert.dom('.next-view-section-body').includesText('Data Resolution');
-        assert
-            .dom('[data-test-data-resolution-description]')
-            .hasText('Controls the data to be synchronized, the data that should be accepted in the event of a conflict, and the directionality of the synchronization.');
-        const resolution = this.element.querySelector('[data-test-data-resolution-description]');
-        const activity = this.element.querySelector('[data-test-activity]');
-        assert.ok(activity);
-        assert.strictEqual(resolution.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING, Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.dom('[data-test-settings-scope]').includesText('Data Resolution');
+        const resolution = 'Controls the data to be synchronized, the data that should be accepted in the event of a conflict, and the directionality of the synchronization.';
+        assert.dom('[data-test-data-resolution-description]').exists();
+        assert.true(
+            [...document.querySelectorAll('.ui-input-info')].some((node) => node.textContent.includes(resolution)),
+            'the data resolution description is in the info tooltip'
+        );
+        assert.dom('[data-test-data-resolution] .ui-input-info-block').doesNotExist();
+        assert.dom('[data-test-data-resolution] .next-content-panel-header-right .fa-circle-info').doesNotExist();
+        const resolutionHelp = this.element.querySelector('[data-test-data-resolution] .next-content-panel-header-left');
+        assert.ok(resolutionHelp);
+        resolutionHelp.focus();
+        assert.strictEqual(document.activeElement, resolutionHelp);
+        assert.false(
+            [...this.element.querySelectorAll('[data-test-data-resolution] p')].some((node) => node.textContent.includes('Controls the data to be synchronized')),
+            'the data resolution description is not a paragraph under the heading'
+        );
+        assert.dom('[data-test-actions]').doesNotExist();
+        assert.dom('[data-test-reconcile]').doesNotExist();
+        assert.dom('[data-test-import]').doesNotExist();
+        assert.dom().doesNotIncludeText('Import customers');
+        assert.dom().doesNotIncludeText('Reconcile');
+        assert.dom('[data-test-activity]').doesNotExist();
+        assert.dom('[data-test-activity-block]').doesNotExist();
+        assert.dom('[data-test-settings-scope]').hasClass('space-y-6');
+        assert.strictEqual(this.element.querySelector('[data-test-settings-scope] .max-w-3xl'), null);
+        assert.strictEqual(this.element.querySelector("[data-test-field='client_id']").closest('.max-w-3xl'), null);
         assert.dom('#fleetbase-pagination').doesNotExist();
         assert.dom().doesNotIncludeText('The Primary choice for each category decides which system wins when the records differ and which system supplies identifiers.');
         assert.dom("[data-test-field='environment']").hasValue('sandbox');
@@ -179,27 +279,24 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom().doesNotIncludeText('Records in each sync');
         assert.dom().doesNotIncludeText('Clear Enable');
         assert.dom().doesNotIncludeText('when Enable is on');
-        assertSelectableUrl(assert, 'internal_webhook_receiver_url', 'Internal Webhook Receiver URL', 'http://internal.example/quickbooks/int/v1/webhooks');
-        assertPublicUrl(assert, 'public_webhook_receiver_url', 'Public Webhook Receiver URL', 'http://internal.example/quickbooks/int/v1/webhooks');
-        assertSelectableUrl(assert, 'internal_oauth_redirect_url', 'Internal Oauth Redirect URL', 'http://internal.example/quickbooks/int/v1/oauth/callback');
-        assertPublicUrl(assert, 'public_oauth_redirect_url', 'Public OAuth Redirect URL', 'http://internal.example/quickbooks/int/v1/oauth/callback');
+        assertPublicUrl(assert, 'public_webhook_receiver_url', 'http://internal.example/quickbooks/int/v1/webhooks');
+        assertSelectableUrl(assert, 'internal_webhook_receiver_url', 'http://internal.example/quickbooks/int/v1/webhooks');
+        assertPublicUrl(assert, 'public_oauth_redirect_url', 'http://internal.example/quickbooks/int/v1/oauth/callback');
+        assertSelectableUrl(assert, 'internal_oauth_redirect_url', 'http://internal.example/quickbooks/int/v1/oauth/callback');
+        assert.dom().doesNotIncludeText('Intuit posts webhooks to this address.');
+        assert.dom().doesNotIncludeText('QuickBooks returns here after sign-in.');
         assert.dom("[data-test-policy='customer'] [data-test-sync='customer_conflict']").exists();
         assert.dom("[data-test-sync='customer_enabled']").hasAttribute('role', 'checkbox');
         assert.dom("input[data-test-sync='customer_enabled']").doesNotExist();
-        assert.dom("[data-test-sync-field='customer_enabled'] span.ml-2").hasText('Enable');
+        assert.dom("[data-test-sync-field='customer_enabled'] span.ml-2").hasText('Customers');
         assert.dom("[data-test-sync='customer_enabled']").isChecked();
-        assert.dom("[data-test-policy='customer']").includesText('Enable');
-        assert.dom('[data-test-connection-state] [data-test-import-checkbox]').doesNotExist();
-        assert.dom("[data-test-policy='customer'] [data-test-import-checkbox]").hasAttribute('role', 'checkbox');
-        assert.dom("input[data-test-import-checkbox]").doesNotExist();
-        assert.dom("[data-test-sync-field='import_customers']").includesText('Import customers');
-        assert.dom("[data-test-sync-field='import_customers'] [data-test-field-help='import_customers']").hasText(
-            'On connect, copy QuickBooks customers into Fleetbase once, only when Customers is enabled in Data Resolution. If Customers is off, the import is skipped. Inactive customers and sub-customers are skipped. Existing Fleetbase names, emails, and phones are left as they are.'
-        );
-        assert.dom("[data-test-import-checkbox]").isNotChecked();
-        assert.dom("[data-test-policy='invoice'] [data-test-import-checkbox]").doesNotExist();
-        assert.dom("[data-test-policy='payment'] [data-test-import-checkbox]").doesNotExist();
-        assert.dom("[data-test-policy='wallet'] [data-test-import-checkbox]").doesNotExist();
+        assert.dom("[data-test-policy='customer']").includesText('Customers');
+        assert.dom("[data-test-sync-field='invoice_enabled'] span.ml-2").hasText('Invoices');
+        assert.dom("[data-test-sync-field='payment_enabled'] span.ml-2").hasText('Payments');
+        assert.dom("[data-test-sync-field='wallet_enabled'] span.ml-2").hasText('Accounts / Wallets');
+        assert.dom('[data-test-import-checkbox]').doesNotExist();
+        assert.dom("[data-test-sync-field='import_customers']").doesNotExist();
+        assert.dom().doesNotIncludeText('On connect, copy QuickBooks customers');
         assert.dom("[data-test-policy='customer'] [data-test-sync='customer_direction']").exists();
         assert.dom("[data-test-sync-field='customer_direction'] label").hasText('Sync direction');
         assert.dom("[data-test-sync='customer_direction']").hasValue('both');
@@ -210,9 +307,19 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-policy='customer'] [data-test-sync='customer_direction'] option[value='off']").doesNotExist();
 
         await fillIn("[data-test-field='client_id']", '');
+        const clientId = this.element.querySelector("[data-test-field='client_id']");
+        const scrolled = [];
+        clientId.scrollIntoView = (options) => scrolled.push(options);
         await click('[data-test-save]');
         assert.dom("[data-test-error='client_id']").exists();
+        assert.dom("[data-test-error='client_id']").hasClass('dark:text-red-400');
         assert.dom("[data-test-error='redirect_uri']").doesNotExist();
+        assertFieldError(assert, "[data-test-field='client_id']", 'client_id');
+        assert.dom("[data-test-field='environment']").doesNotHaveClass('border-red-500');
+        assert.dom("[data-test-field='environment']").doesNotHaveAttribute('aria-describedby');
+        assert.strictEqual(document.activeElement, clientId);
+        assert.deepEqual(scrolled, [{ block: 'center' }]);
+        assert.dom('[data-test-save]', document).doesNotHaveClass('btn-is-loading');
         assert.strictEqual(this.saved, null);
 
         await fillIn("[data-test-field='client_id']", 'changed-id');
@@ -242,7 +349,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         });
         assert.dom('[data-test-policy="wallet"]').includesText('Primary');
         assert.dom('[data-test-policy="wallet"]').includesText('Sync direction');
-        assert.dom('[data-test-policy="wallet"]').includesText('Enable');
+        assert.dom('[data-test-policy="wallet"]').includesText('Accounts / Wallets');
+        assert.dom('[data-test-policy="wallet"]').doesNotIncludeText('Enable');
         assert.dom("[data-test-sync='wallet_enabled']").isChecked();
         assert.dom("[data-test-policy='wallet'] option[value='fleetbase']").hasText('Fleetbase');
         assert.dom("[data-test-policy='wallet'] option[value='quickbooks']").hasText('QuickBooks');
@@ -268,8 +376,10 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
         `);
 
-        assert.dom('[data-test-settings-scope]').hasAttribute('data-test-settings-scope', 'company');
+        assert.dom('[data-test-settings-scope]').hasAttribute('data-test-settings-scope', 'admin');
         assert.dom().doesNotIncludeText('Admin → QuickBooks');
+        assert.dom('[data-test-credentials-guidance]').hasClass('ui-input-info-block');
+        assert.dom('[data-test-credentials-guidance]').includesText('Getting your QuickBooks credentials');
         assert.dom('[data-test-credential-save-step]').hasText('Choose Save Changes, then Connect to QuickBooks. Connect uses the saved keys.');
         assert.dom('[data-test-redirect-step]').hasText('Under Redirect URIs, paste the Public OAuth Redirect URL.');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
@@ -280,11 +390,16 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-connect]').doesNotExist();
         assert.dom('[data-test-admin-disconnect]').doesNotExist();
         assert.dom(this.element.querySelector("[data-test-field='client_secret']").closest('.input-group').querySelector('label')).hasClass('required');
+        assert.dom("[data-test-field-help='webhook_verifier']").includesText('Intuit signs webhooks with this token. Stored encrypted.');
+        assert.dom("[data-test-field-help='webhook_verifier']").doesNotIncludeText('Leave blank');
+        assert.dom('[data-test-webhook-step]').hasText('Paste the Public Webhook Receiver URL into Intuit and save the webhook verifier.');
 
         await click('[data-test-save]');
         assert.dom("[data-test-error='client_id']").exists();
         assert.dom("[data-test-error='redirect_uri']").doesNotExist();
         assert.dom("[data-test-error='client_secret']").exists();
+        assertFieldError(assert, "[data-test-field='client_id']", 'client_id');
+        assertFieldError(assert, "[data-test-field='client_secret']", 'client_secret');
         assert.strictEqual(this.saved, null);
 
         await fillIn("[data-test-field='client_id']", 'admin-id');
@@ -392,13 +507,13 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         assert.dom('[data-test-settings-unavailable]').hasText('QuickBooks settings could not be loaded.');
         assert.dom('[data-test-override]').doesNotExist();
-        assert.dom('[data-test-save]').isDisabled();
+        assert.dom('[data-test-save]', document).isDisabled();
         assert.strictEqual(this.saved, null);
         assert.deepEqual(this.notifications.messages, []);
 
         this.set('settingsLoadFailed', false);
         assert.dom('[data-test-settings-unavailable]').doesNotExist();
-        assert.dom('[data-test-save]').isNotDisabled();
+        assert.dom('[data-test-save]', document).isNotDisabled();
         await click('[data-test-save]');
         assert.strictEqual(this.saved, null);
         assert.deepEqual(this.notifications.messages, []);
@@ -464,10 +579,10 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-field='webhook_verifier']").hasValue('');
         assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', 'A verifier token is saved');
         assert.dom('[data-test-verifier-set]').hasText('A verifier token is already saved. Leave this blank to keep it.');
-        assertSelectableUrl(assert, 'internal_webhook_receiver_url', 'Internal Webhook Receiver URL', 'http://internal.example/hooks');
-        assertPublicUrl(assert, 'public_webhook_receiver_url', 'Public Webhook Receiver URL', 'http://internal.example/hooks');
-        assertSelectableUrl(assert, 'internal_oauth_redirect_url', 'Internal Oauth Redirect URL', 'http://internal.example/oauth');
-        assertPublicUrl(assert, 'public_oauth_redirect_url', 'Public OAuth Redirect URL', 'http://internal.example/oauth');
+        assertPublicUrl(assert, 'public_webhook_receiver_url', 'http://internal.example/hooks');
+        assertSelectableUrl(assert, 'internal_webhook_receiver_url', 'http://internal.example/hooks');
+        assertPublicUrl(assert, 'public_oauth_redirect_url', 'http://internal.example/oauth');
+        assertSelectableUrl(assert, 'internal_oauth_redirect_url', 'http://internal.example/oauth');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
         assert.dom("[data-test-field-help='environment']").hasClass('text-gray-400');
         assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
@@ -552,10 +667,10 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         assert.dom("[data-test-field='environment']").hasValue('production');
         assert.dom("[data-test-sync='batch_size']").doesNotExist();
-        assertSelectableUrl(assert, 'internal_webhook_receiver_url', 'Internal Webhook Receiver URL', '');
-        assertPublicUrl(assert, 'public_webhook_receiver_url', 'Public Webhook Receiver URL', '');
-        assertSelectableUrl(assert, 'internal_oauth_redirect_url', 'Internal Oauth Redirect URL', '');
-        assertPublicUrl(assert, 'public_oauth_redirect_url', 'Public OAuth Redirect URL', '');
+        assertPublicUrl(assert, 'public_webhook_receiver_url', '');
+        assertSelectableUrl(assert, 'internal_webhook_receiver_url', '');
+        assertPublicUrl(assert, 'public_oauth_redirect_url', '');
+        assertSelectableUrl(assert, 'internal_oauth_redirect_url', '');
         await click('[data-test-save]');
         assert.strictEqual(this.saved.auth.environment, 'production');
         assertUrlsStayOutOfPayload(assert, this.saved);
@@ -687,7 +802,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-error='payment_direction']").doesNotExist();
     });
 
-    test('the customers import control is sent on connect and is not saved with settings', async function (assert) {
+    test('connect does not send an import flag and customers stay on the Customers switch', async function (assert) {
         this.set('settings', {
             client_id: 'id',
             environment: 'sandbox',
@@ -710,25 +825,124 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
                 @settings={{this.settings}}
                 @sync={{this.sync}}
                 @connection={{this.connection}}
+                @configured={{true}}
                 @onConnect={{this.onConnect}}
                 @onSave={{this.onSave}}
             />
         `);
 
-        assert.dom('[data-test-connection-state] [data-test-import-checkbox]').doesNotExist();
-        assert.dom("[data-test-policy='customer'] [data-test-import-checkbox]").isNotChecked();
-        assert.dom("[data-test-policy='invoice'] [data-test-import-checkbox]").doesNotExist();
+        assert.dom('[data-test-import-checkbox]').doesNotExist();
+        assert.dom("[data-test-sync='customer_enabled']").isChecked();
         await click('[data-test-connect]');
-        assert.deepEqual(this.payload, { import_customers: false });
-
-        await click("[data-test-policy='customer'] [data-test-import-checkbox]");
-        assert.dom("[data-test-policy='customer'] [data-test-import-checkbox]").isChecked();
-        await click('[data-test-connect]');
-        assert.deepEqual(this.payload, { import_customers: true });
+        assert.strictEqual(this.payload, undefined);
 
         await click('[data-test-save]');
         assert.strictEqual(this.saved.sync.import_customers, undefined);
         assert.strictEqual(this.saved.auth.import_customers, undefined);
         assert.true(this.saved.sync.customer_enabled);
+    });
+
+    test('save shows a loading state while the request is in flight', async function (assert) {
+        this.set('settings', {
+            client_id: 'id',
+            environment: 'sandbox',
+            client_secret_set: true,
+        });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+        let release;
+        this.set(
+            'onSave',
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
+
+        const pending = click('[data-test-save]');
+        await waitUntil(() => document.querySelector('[data-test-save]')?.classList.contains('btn-is-loading'));
+        assert.dom('[data-test-save]', document).isDisabled();
+        release();
+        await pending;
+        await settled();
+        assert.dom('[data-test-save]', document).doesNotHaveClass('btn-is-loading');
+        assert.dom('[data-test-save]', document).isNotDisabled();
+    });
+
+    test('each validation error sits under its control, before the hint', async function (assert) {
+        this.set('settings', {
+            client_id: '',
+            environment: 'nope',
+            client_secret_set: false,
+        });
+        this.set('sync', {
+            interval_minutes: 0,
+            periodic_interval_hours: 24,
+            retry_limit: 5,
+            default_backoff_seconds: 30,
+        });
+        this.set('onSave', () => {
+            const error = new Error('save failed');
+            error.errors = {
+                webhook_verifier: 'Enter the webhook verifier.',
+                customer_conflict: 'quickbooks.validation.choice',
+                customer_reference: 'Choose the system that supplies identifiers.',
+                customer_direction: 'quickbooks.validation.direction-customer',
+            };
+            throw error;
+        });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
+
+        const clientId = this.element.querySelector("[data-test-field='client_id']");
+        const scrolled = [];
+        clientId.scrollIntoView = (options) => scrolled.push(options);
+        await click('[data-test-save]');
+
+        assertFieldError(assert, "[data-test-field='client_id']", 'client_id');
+        assertFieldError(assert, "[data-test-field='environment']", 'environment');
+        assertFieldError(assert, "[data-test-field='client_secret']", 'client_secret');
+        assertFieldError(assert, "[data-test-sync='interval_minutes']", 'interval_minutes');
+        assert.dom("[data-test-sync='retry_limit']").doesNotHaveClass('border-red-500');
+        assert.dom("[data-test-sync='retry_limit']").doesNotHaveAttribute('aria-describedby');
+        assert.strictEqual(document.activeElement, clientId);
+        assert.deepEqual(scrolled, [{ block: 'center' }]);
+
+        await fillIn("[data-test-field='client_id']", 'id');
+        assert.dom("[data-test-error='client_id']").doesNotExist();
+        assert.dom("[data-test-field='client_id']").doesNotHaveClass('border-red-500');
+        assert.dom("[data-test-field='client_id']").doesNotHaveAttribute('aria-describedby');
+        assert.dom("[data-test-field='client_id']").doesNotHaveAttribute('aria-invalid');
+
+        await fillIn("[data-test-field='environment']", 'sandbox');
+        await fillIn("[data-test-field='client_secret']", 'secret');
+        await fillIn("[data-test-sync='interval_minutes']", '5');
+        await click('[data-test-save]');
+
+        assertFieldError(assert, "[data-test-field='webhook_verifier']", 'webhook_verifier');
+        assert.strictEqual(document.activeElement, this.element.querySelector("[data-test-field='webhook_verifier']"));
+
+        const primary = this.element.querySelector("[data-test-sync='customer_conflict']");
+        const direction = this.element.querySelector("[data-test-sync='customer_direction']");
+        const conflictError = this.element.querySelector("[data-test-error='customer_conflict']");
+        const referenceError = this.element.querySelector("[data-test-error='customer_reference']");
+        const directionError = this.element.querySelector("[data-test-error='customer_direction']");
+        const primaryHelp = primary.closest('.input-group').querySelector('[data-test-field-help="primary"]');
+        const directionHelp = direction.closest('.input-group').querySelector('[data-test-field-help="sync_direction"]');
+
+        assert.ok(primary.compareDocumentPosition(conflictError) & Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.ok(conflictError.compareDocumentPosition(referenceError) & Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.ok(referenceError.compareDocumentPosition(primaryHelp) & Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.strictEqual(primary.getAttribute('aria-describedby'), `${conflictError.id} ${referenceError.id}`);
+        assert.dom(primary).hasClass('border-red-500');
+        assert.dom(primary).hasClass('dark:border-red-400');
+        assert.strictEqual(primary.style.borderColor, 'rgb(220, 38, 38)');
+        assert.ok(direction.compareDocumentPosition(directionError) & Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.ok(directionError.compareDocumentPosition(directionHelp) & Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.strictEqual(direction.getAttribute('aria-describedby'), directionError.id);
+        assert.dom(direction).hasClass('border-red-500');
+        assert.strictEqual(direction.style.borderColor, 'rgb(220, 38, 38)');
+        assert.dom("[data-test-error='payment_direction']").doesNotExist();
     });
 });

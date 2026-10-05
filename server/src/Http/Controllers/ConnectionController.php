@@ -9,12 +9,15 @@ use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Services\ConnectionProbe;
+use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\OAuthFlow;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
+use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Services\WebhookSubscriptions;
 use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
+use Fleetbase\Quickbooks\Support\PublicHttps;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -153,8 +156,7 @@ class ConnectionController extends QuickbooksController
         $begun       = $this->oauth->begin(
             $companyUuid,
             (string) session('user', ''),
-            $credentials,
-            (bool) $request->input('import_customers', false)
+            $credentials
         );
 
         return response()->json($begun);
@@ -210,20 +212,16 @@ class ConnectionController extends QuickbooksController
             }
 
             // The webhook endpoint is set in the Intuit developer portal. This does not call Intuit.
-            app(WebhookSubscriptions::class)->apply('company', $companyUuid);
+            app(WebhookSubscriptions::class)->apply('admin', $companyUuid);
 
             return response()->json(['connected' => true]);
         }
 
-        $importCustomers = !empty($connection['import_customers']);
-        unset($connection['import_customers']);
         $this->persist($connection);
         // The webhook endpoint is set in the Intuit developer portal. This does not call Intuit.
-        app(WebhookSubscriptions::class)->apply('company', $companyUuid);
-
-        if ($importCustomers) {
-            ImportCustomers::dispatch($companyUuid);
-        }
+        app(WebhookSubscriptions::class)->apply('admin', $companyUuid);
+        $this->queueExistingRecords($companyUuid);
+        SyncCompanyBatch::dispatch($companyUuid, 'now');
 
         return response()->json(['connected' => true]);
     }
@@ -231,8 +229,9 @@ class ConnectionController extends QuickbooksController
     public function disconnect(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks disconnect connection');
-        // Intuit has no webhook unsubscribe API. This deletes the local connection only.
-        Connection::query()->where('company_uuid', $this->companyUuid($request))->delete();
+        // Intuit has no webhook unsubscribe API. This deletes the install-wide connection only.
+        $this->companyUuid($request);
+        Connection::query()->delete();
 
         return response()->json(['disconnected' => true]);
     }
@@ -282,7 +281,7 @@ class ConnectionController extends QuickbooksController
         $row = $this->latestConnection($this->companyUuid($request));
 
         return response()->json($this->probe->probe(
-            $row instanceof Connection ? \Fleetbase\Quickbooks\Services\FleetbaseDirectory::connectionToArray($row) : null
+            $row instanceof Connection ? FleetbaseDirectory::connectionToArray($row) : null
         ));
     }
 
@@ -318,19 +317,36 @@ class ConnectionController extends QuickbooksController
         ]);
     }
 
+    /**
+     * Queue in-scope rows for entities that are turned on, then the sync job drains them.
+     */
+    private function queueExistingRecords(string $companyUuid): void
+    {
+        $resolved = $this->settings->resolveSync(
+            [],
+            $this->store->adminSync(),
+            $this->store->defaultSync()
+        );
+        (new SyncFlagger())->queueEnabled(app(FleetbaseDirectory::class), $companyUuid, $resolved);
+    }
+
     protected function connectionIsStored(string $companyUuid): bool
     {
         return Connection::query()->where('company_uuid', $companyUuid)->exists();
     }
 
     /**
-     * Save the freshly authorized connection, replacing any earlier one for the company.
+     * Save the freshly authorized connection. The install keeps one connection row.
      *
      * @param array<string, mixed> $connection
      */
     protected function persist(array $connection): void
     {
-        $existing = $this->latestConnection((string) $connection['company_uuid']);
+        $companyUuid = (string) ($connection['company_uuid'] ?? '');
+        if ($companyUuid !== '') {
+            Connection::query()->where('company_uuid', '!=', $companyUuid)->delete();
+        }
+        $existing = $this->latestConnection($companyUuid);
         $model    = $existing instanceof Connection ? $existing : new Connection();
         $model->fill($connection);
         $model->save();
@@ -417,8 +433,17 @@ class ConnectionController extends QuickbooksController
             ->where('company_uuid', $companyUuid)
             ->latest('updated_at')
             ->first();
+        if ($connection instanceof Connection) {
+            return $connection;
+        }
 
-        return $connection instanceof Connection ? $connection : null;
+        $rows = Connection::query()->latest('updated_at')->limit(2)->get();
+        if ($rows->count() !== 1) {
+            return null;
+        }
+        $only = $rows->first();
+
+        return $only instanceof Connection ? $only : null;
     }
 
     /**
@@ -487,30 +512,29 @@ class ConnectionController extends QuickbooksController
     }
 
     /**
-     * Intuit is sent the saved public OAuth URL when that value is a full http(s) URL.
-     * Otherwise it is sent the computed internal callback.
+     * Intuit is sent a public https URL: the saved public OAuth URL when it passes
+     * the same check used on save, otherwise the computed callback when that passes.
      *
      * @return array{client_id: string, client_secret: string, redirect_uri: string, environment: string}
      */
     private function credentials(string $companyUuid): array
     {
         $credentials = $this->settings->credentialsFor($this->store, $companyUuid);
-        $public      = trim((string) ($this->store->companyAuth($companyUuid)['public_oauth_redirect_url'] ?? ''));
-        $credentials['redirect_uri'] = $this->isAbsoluteHttpUrl($public)
-            ? $public
-            : SettingController::internalOAuthRedirectUrl();
+        $public      = trim((string) ($this->store->adminAuth()['public_oauth_redirect_url'] ?? ''));
+        $internal    = SettingController::internalOAuthRedirectUrl();
+        if ($this->isAbsoluteHttpUrl($public)) {
+            $credentials['redirect_uri'] = $public;
+        } elseif ($this->isAbsoluteHttpUrl($internal)) {
+            $credentials['redirect_uri'] = $internal;
+        } else {
+            $credentials['redirect_uri'] = '';
+        }
 
         return $credentials;
     }
 
     private function isAbsoluteHttpUrl(string $url): bool
     {
-        $url = trim($url);
-        if (preg_match('#\Ahttps?://#i', $url) !== 1) {
-            return false;
-        }
-        $host = parse_url($url, PHP_URL_HOST);
-
-        return is_string($host) && $host !== '';
+        return PublicHttps::isPublicHttpsUrl($url);
     }
 }

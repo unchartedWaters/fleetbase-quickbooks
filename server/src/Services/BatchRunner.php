@@ -10,9 +10,34 @@ use Illuminate\Support\Facades\Cache;
 class BatchRunner
 {
     /**
-     * Also the SyncCompanyBatch timeout, so the lock never expires while a batch still runs.
+     * Company lock TTL, shared with customer import.
+     *
+     * The lock is held for the local read and the local save. QuickBooks queries
+     * and batch writes run with this lock released. A due token refresh takes it
+     * again for the Intuit call and the token save, so two workers cannot rotate
+     * the same refresh token. Follow-up jobs are dispatched only after release.
+     * The worker still stops one LOCK_MARGIN_SECONDS before this TTL.
      */
     public const LOCK_SECONDS = 600;
+
+    /**
+     * Stop the sync worker this long before the company lock expires.
+     */
+    public const LOCK_MARGIN_SECONDS = 30;
+
+    /**
+     * Fleetbase Redis retry_after. This package does not change the global queue config.
+     * A reserved sync can be popped again after this many seconds while the first
+     * worker is still inside the job timeout. SyncCompanyBatch allows that one extra
+     * pop and drops it, so the second worker does not fail the in-flight job.
+     */
+    public const REDIS_RETRY_AFTER_SECONDS = 90;
+
+    /**
+     * The original pop, plus the one Redis redelivery above. A thrown error is still
+     * terminal: SyncCompanyBatch sets maxExceptions to 1, so Laravel does not retry it.
+     */
+    public const SYNC_JOB_TRIES = 2;
 
     public const LOCK_UNAVAILABLE = 'QuickBooks could not lock this organization, so this run was skipped.';
 
@@ -62,6 +87,15 @@ class BatchRunner
         $followUp        = false;
         $ranCatalog      = false;
         $continueCatalog = false;
+        $dispatchDrain   = false;
+        $dispatchCatalog = false;
+        $this->engine->setHttpBoundary(function (callable $call) use ($lock, $companyUuid) {
+            if (self::holds($companyUuid)) {
+                $lock->release();
+            }
+
+            return $call();
+        });
         try {
             if ($trigger === 'manual') {
                 $this->claimReconcilePage($companyUuid, (int) $resolved['batch_size']);
@@ -74,7 +108,7 @@ class BatchRunner
                 }
                 $ranCatalog = true;
 
-                return $this->runCustomerCatalog($companyUuid, $resolved, $trigger, $continueCatalog);
+                return $this->runCustomerCatalog($companyUuid, $resolved, $trigger, $continueCatalog, $ledger, $save, $lock);
             }
             $now    = time();
             $loaded = $this->directory->loadPending($companyUuid, (int) $resolved['batch_size'], $now);
@@ -83,9 +117,10 @@ class BatchRunner
             }
 
             $now        = time();
-            $connection = $this->tokens->refreshIfDue($loaded['connection'], $now);
+            $connection = $this->engine->runHttp(fn () => $this->tokens->refreshIfDue($loaded['connection'], $now));
             $blocked    = ConnectionTokens::blockedMessage($connection, $now);
             if ($blocked !== null) {
+                $this->ensureLock($lock, $companyUuid);
                 $this->directory->saveSkipped($companyUuid, $trigger, 'outbound', $blocked);
 
                 return $skipped;
@@ -96,7 +131,7 @@ class BatchRunner
 
             $save = true;
             // The size trigger already decided this scheduled run may start early.
-            // Skip only the interval wait. The company lock above still covers the run.
+            // Skip only the interval wait. Queries and batch writes release the company lock.
             $ignoreInterval = $trigger === 'scheduled' && !$this->intervalElapsed($connection, $resolved, $now);
             $batch          = match ($trigger) {
                 'manual'       => $this->engine->reconcile($ledger, $companyUuid, $resolved, $now),
@@ -109,18 +144,26 @@ class BatchRunner
 
             return $batch;
         } finally {
-            // Saved even when the engine throws, so links for records already created in QuickBooks are kept.
-            if ($save && $ledger !== null) {
-                $this->directory->save($ledger);
+            $this->engine->setHttpBoundary(null);
+            try {
+                // Saved even when the engine throws, so links for records already created in QuickBooks are kept.
+                if ($save && $ledger !== null) {
+                    $this->ensureLock($lock, $companyUuid);
+                    $this->directory->save($ledger);
+                }
+                if ($followUp && Cache::get($this->reconcileOpenKey($companyUuid))) {
+                    $this->ensureLock($lock, $companyUuid);
+                    $this->claimReconcilePage($companyUuid, (int) ($resolved['batch_size'] ?? 100));
+                }
+                // Decide while the claim is visible, then release before dispatch.
+                // The follow-up has to take quickbooks.batch.{company} as soon as it starts.
+                $dispatchDrain   = $followUp && $this->directory->hasDuePending($companyUuid, time());
+                $dispatchCatalog = $continueCatalog || ($trigger === 'scheduled' && !$ranCatalog && $catalogDue);
+            } finally {
+                if (self::holds($companyUuid)) {
+                    $lock->release();
+                }
             }
-            if ($followUp && Cache::get($this->reconcileOpenKey($companyUuid))) {
-                $this->claimReconcilePage($companyUuid, (int) ($resolved['batch_size'] ?? 100));
-            }
-            // Decide while the claim is visible, then release. The follow-up has tries = 1,
-            // so it must be able to take quickbooks.batch.{company} as soon as it starts.
-            $dispatchDrain   = $followUp && $this->directory->hasDuePending($companyUuid, time());
-            $dispatchCatalog = $continueCatalog || ($trigger === 'scheduled' && !$ranCatalog && $catalogDue);
-            $lock->release();
             if ($dispatchDrain) {
                 SyncCompanyBatch::dispatch($companyUuid, 'drain');
             }
@@ -198,7 +241,7 @@ class BatchRunner
      *
      * @return array<string, mixed>
      */
-    private function runCustomerCatalog(string $companyUuid, array $settings, string $trigger, bool &$continueCatalog): array
+    private function runCustomerCatalog(string $companyUuid, array $settings, string $trigger, bool &$continueCatalog, ?SyncLedger &$ledger, bool &$save, Lock $lock): array
     {
         $now   = time();
         $after = (string) Cache::get($this->catalogCursorKey($companyUuid), '');
@@ -218,9 +261,10 @@ class BatchRunner
             return ['trigger' => 'catalog', 'status' => 'skipped'];
         }
 
-        $connection = $this->tokens->refreshIfDue($loaded['connection'], $now);
+        $connection = $this->engine->runHttp(fn () => $this->tokens->refreshIfDue($loaded['connection'], $now));
         $blocked    = ConnectionTokens::blockedMessage($connection, $now);
         if ($blocked !== null) {
+            $this->ensureLock($lock, $companyUuid);
             $this->directory->saveSkipped($companyUuid, 'catalog', 'outbound', $blocked);
 
             return ['trigger' => 'catalog', 'status' => 'skipped'];
@@ -228,6 +272,7 @@ class BatchRunner
 
         $ledger                            = $loaded['ledger'];
         $ledger->connections[$companyUuid] = $connection;
+        $save                              = true;
         $rows                              = [];
         foreach ($ids as $uuid) {
             $rows[] = [
@@ -241,7 +286,9 @@ class BatchRunner
         try {
             $batch = $this->engine->syncEntities($ledger, $companyUuid, $rows, $settings, $now);
         } finally {
+            $this->ensureLock($lock, $companyUuid);
             $this->directory->save($ledger);
+            $save = false;
         }
         if (!$this->catalogPageSucceeded($batch, $ledger, $companyUuid, count($ids), $now)) {
             return $batch;
@@ -301,9 +348,11 @@ class BatchRunner
      */
     private function settingsFor(string $companyUuid): array
     {
+        unset($companyUuid);
+
         return $this->settings->resolveSync(
-            $this->store->companySync($companyUuid),
             [],
+            $this->store->adminSync(),
             $this->store->defaultSync()
         );
     }
@@ -365,8 +414,38 @@ class BatchRunner
     }
 
     /**
+     * Worker timeout for a company sync. Shorter than the company lock by LOCK_MARGIN_SECONDS,
+     * and longer than REDIS_RETRY_AFTER_SECONDS so a full batch is not killed at 90 seconds.
+     */
+    public static function jobTimeout(): int
+    {
+        return self::LOCK_SECONDS - self::LOCK_MARGIN_SECONDS;
+    }
+
+    /**
      * One lock per company, shared by batches and customer import, since both save the ledger.
      */
+    /**
+     * Take the company lock again after QuickBooks HTTP released it.
+     * A local save still runs when the lock cannot be taken, so ids already
+     * created in QuickBooks are not dropped.
+     */
+    private function ensureLock(Lock $lock, string $companyUuid): void
+    {
+        if (self::holds($companyUuid)) {
+            return;
+        }
+        if ($lock->get()) {
+            return;
+        }
+
+        try {
+            $lock->block(self::LOCK_SECONDS);
+        } catch (\Throwable) {
+            // Save anyway. The links are already decided.
+        }
+    }
+
     public static function lock(string $companyUuid): ?Lock
     {
         $cache = Cache::getFacadeRoot();

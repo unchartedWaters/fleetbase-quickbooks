@@ -2,6 +2,7 @@
 
 namespace Fleetbase\Quickbooks\Http\Controllers;
 
+use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Support\Authorizer;
@@ -34,10 +35,37 @@ class SettingController extends QuickbooksController
         'wallet_direction',
     ];
 
+    /** @var array<int, string> */
+    private const SYNC_KEYS = [
+        'enabled',
+        'interval_minutes',
+        'periodic_interval_hours',
+        'batch_size',
+        'retry_limit',
+        'default_backoff_seconds',
+        'customer_conflict',
+        'customer_reference',
+        'customer_direction',
+        'customer_enabled',
+        'invoice_conflict',
+        'invoice_reference',
+        'invoice_direction',
+        'invoice_enabled',
+        'payment_conflict',
+        'payment_reference',
+        'payment_direction',
+        'payment_enabled',
+        'wallet_conflict',
+        'wallet_reference',
+        'wallet_direction',
+        'wallet_enabled',
+    ];
+
     public function __construct(
         Authorizer $authorizer,
         private SettingsService $settings,
         private SettingsStore $store,
+        private ?FleetbaseDirectory $directory = null,
     ) {
         parent::__construct($authorizer);
     }
@@ -47,10 +75,10 @@ class SettingController extends QuickbooksController
         $this->authorizeQuickbooks('quickbooks update settings');
 
         $companyUuid  = $this->companyUuid($request);
-        $this->rejectAdminScope($request);
-        $authKey      = SettingsKeys::companyAuth($companyUuid);
-        $syncKey      = SettingsKeys::companySync($companyUuid);
-        $existingAuth = $this->store->companyAuth($companyUuid);
+        $this->rejectCompanyScope($request);
+        $authKey      = SettingsKeys::adminAuth();
+        $syncKey      = SettingsKeys::adminSync();
+        $existingAuth = $this->store->adminAuth();
         $existingSync = $this->store->get($syncKey);
         $incomingAuth = $request->input('auth', []);
         $incomingSync = $request->input('sync', []);
@@ -60,6 +88,7 @@ class SettingController extends QuickbooksController
         if (!is_array($incomingSync)) {
             $incomingSync = [];
         }
+        $incomingSync = $this->onlySyncKeys($incomingSync);
         $this->stripReadOnly($incomingAuth);
         $this->stripReadOnly($incomingSync);
         $this->stripPublicUrls($incomingSync);
@@ -78,7 +107,7 @@ class SettingController extends QuickbooksController
             $mergedAuth['client_secret'] = $secret;
         }
 
-        $mergedSync = array_merge($existingSync, $incomingSync);
+        $mergedSync = array_merge($this->onlySyncKeys($existingSync), $incomingSync);
         $this->stripReadOnly($mergedSync);
         $this->stripPublicUrls($mergedSync);
         $this->normalizeDirections($mergedSync);
@@ -100,41 +129,42 @@ class SettingController extends QuickbooksController
         $this->stripReadOnly($mergedSync);
         $this->stripPublicUrls($mergedSync);
         $this->store->put($syncKey, $mergedSync);
+        $this->queueTurnedOnEntities($companyUuid, $this->onlySyncKeys($existingSync), $mergedSync);
         $this->applyWebhookSubscriptions($companyUuid);
 
-        return response()->json($this->payload($companyUuid));
+        return response()->json($this->payload());
     }
 
     public function show(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks view settings');
 
-        $companyUuid = $this->companyUuid($request);
-        $this->rejectAdminScope($request);
+        $this->companyUuid($request);
+        $this->rejectCompanyScope($request);
 
-        return response()->json($this->payload($companyUuid));
+        return response()->json($this->payload());
     }
 
     /**
-     * Organization settings are the only settings screen. A stored system row is unused.
+     * QuickBooks settings are install-wide. An organization scope is not a settings screen.
      */
-    private function rejectAdminScope(Request $request): void
+    private function rejectCompanyScope(Request $request): void
     {
-        if ((string) $request->input('scope', 'company') === 'admin') {
-            abort(404, 'QuickBooks settings are saved for the signed-in organization.');
+        if ((string) $request->input('scope', 'admin') === 'company') {
+            abort(404, 'QuickBooks settings are saved for the Fleetbase install.');
         }
     }
 
     /**
      * @return array<string, mixed>
      */
-    private function payload(string $companyUuid): array
+    private function payload(): array
     {
-        $companySync = $this->store->companySync($companyUuid);
-        $companyAuth = $this->store->companyAuth($companyUuid);
+        $companySync = $this->store->adminSync();
+        $companyAuth = $this->store->adminAuth();
         $resolved    = $this->settings->resolveAuth(
-            $companyAuth,
             [],
+            $companyAuth,
             $this->store->envAuth()
         );
         $browser                                  = $this->settings->forBrowser($resolved);
@@ -155,8 +185,8 @@ class SettingController extends QuickbooksController
         return [
             'auth'                            => $browser,
             'sync'                            => $this->settings->resolveSync(
-                $companySync,
                 [],
+                $companySync,
                 $this->store->defaultSync()
             ),
             'company_auth'                    => $this->settings->forBrowser($companyAuth),
@@ -417,7 +447,7 @@ class SettingController extends QuickbooksController
             return;
         }
 
-        $subscriptions->apply('company', $companyUuid);
+        $subscriptions->apply('admin', $companyUuid);
     }
 
     /**
@@ -442,7 +472,7 @@ class SettingController extends QuickbooksController
     }
 
     /**
-     * Public URLs belong on organization auth. A sync payload must not keep them.
+     * Public URLs belong on the install-wide auth row. A sync payload must not keep them.
      *
      * @param array<string, mixed> $bag
      */
@@ -473,7 +503,8 @@ class SettingController extends QuickbooksController
     }
 
     /**
-     * A non-empty public URL is stored. An empty one is cleared so the response uses the internal URL.
+     * A public https URL is stored. An empty or internal one is cleared so the
+     * response and the OAuth callback stay on the computed address.
      *
      * @param array<string, mixed>  $auth
      * @param array<string, string> $public
@@ -482,12 +513,22 @@ class SettingController extends QuickbooksController
      */
     private function applyPublicUrls(array $auth, array $public): array
     {
-        foreach ($public as $key => $value) {
-            if ($value === '') {
+        foreach (self::PUBLIC_URL_KEYS as $key) {
+            if (!array_key_exists($key, $public)) {
+                $current = $auth[$key] ?? null;
+                if (is_string($current) && self::isPublicHttpsUrl($current)) {
+                    $auth[$key] = trim($current);
+                    continue;
+                }
                 unset($auth[$key]);
                 continue;
             }
-            $auth[$key] = $value;
+            $value = trim($public[$key]);
+            if ($value !== '' && self::isPublicHttpsUrl($value)) {
+                $auth[$key] = $value;
+                continue;
+            }
+            unset($auth[$key]);
         }
 
         return $auth;
@@ -496,13 +537,16 @@ class SettingController extends QuickbooksController
     private static function publicOrInternal(mixed $saved, string $internal): string
     {
         $saved = is_string($saved) ? trim($saved) : '';
+        if ($saved !== '' && self::isPublicHttpsUrl($saved)) {
+            return $saved;
+        }
 
-        return $saved !== '' ? $saved : $internal;
+        return $internal;
     }
 
     /**
-     * A blank, path-only, loopback, or console-port redirect is replaced with the
-     * computed API callback. A usable stored address is left alone.
+     * A blank, path-only, non-https, loopback, link-local, private, or console-port
+     * redirect is replaced with the computed API callback. A public https address is left alone.
      *
      * @param array<string, mixed> $auth
      *
@@ -522,23 +566,103 @@ class SettingController extends QuickbooksController
 
     private function usableRedirect(string $redirect): bool
     {
-        if (filter_var($redirect, FILTER_VALIDATE_URL) === false) {
+        if (!self::isPublicHttpsUrl($redirect)) {
             return false;
         }
-        if (!str_starts_with($redirect, 'http://') && !str_starts_with($redirect, 'https://')) {
-            return false;
-        }
-
         $parts = parse_url($redirect);
-        if (!is_array($parts) || !isset($parts['host']) || !is_string($parts['host']) || $parts['host'] === '') {
+
+        return is_array($parts) && (int) ($parts['port'] ?? 0) !== 4200;
+    }
+
+    /**
+     * Accept only an https URL whose host is not loopback, link-local, or private.
+     * The host is taken from the URL. This does not resolve the name or request it.
+     */
+    private static function isPublicHttpsUrl(string $url): bool
+    {
+        $url = trim($url);
+        if ($url === '' || !str_starts_with(strtolower($url), 'https://')) {
+            return false;
+        }
+        if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return false;
+        }
+        $parts = parse_url($url);
+        if (!is_array($parts) || isset($parts['user']) || isset($parts['pass'])) {
+            return false;
+        }
+        $host = $parts['host'] ?? null;
+        if (!is_string($host) || $host === '') {
             return false;
         }
 
-        if (self::hostnameIsLoopback($parts['host'])) {
-            return false;
+        return !self::hostIsInternal($host);
+    }
+
+    private static function hostIsInternal(string $host): bool
+    {
+        $host = strtolower(trim($host, '[]'));
+        if ($host === '' || self::hostnameIsLoopback($host)) {
+            return true;
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return self::ipv4IsInternal($host);
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            return self::ipv6IsInternal($host);
         }
 
-        return (int) ($parts['port'] ?? 0) !== 4200;
+        return false;
+    }
+
+    private static function ipv4IsInternal(string $ip): bool
+    {
+        $long = ip2long($ip);
+        if ($long === false) {
+            return true;
+        }
+        $value  = (int) sprintf('%u', $long);
+        $ranges = [
+            ['10.0.0.0', '10.255.255.255'],
+            ['127.0.0.0', '127.255.255.255'],
+            ['169.254.0.0', '169.254.255.255'],
+            ['172.16.0.0', '172.31.255.255'],
+            ['192.168.0.0', '192.168.255.255'],
+        ];
+        foreach ($ranges as [$start, $end]) {
+            $from = (int) sprintf('%u', ip2long($start));
+            $to   = (int) sprintf('%u', ip2long($end));
+            if ($value >= $from && $value <= $to) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function ipv6IsInternal(string $ip): bool
+    {
+        $packed = inet_pton($ip);
+        if ($packed === false || strlen($packed) !== 16) {
+            return true;
+        }
+        $mapped = str_repeat("\x00", 10) . "\xff\xff";
+        if (str_starts_with($packed, $mapped)) {
+            $ipv4 = inet_ntop(substr($packed, 12));
+
+            return !is_string($ipv4) || self::ipv4IsInternal($ipv4);
+        }
+        if ($packed === inet_pton('::1')) {
+            return true;
+        }
+        $first  = ord($packed[0]);
+        $second = ord($packed[1]);
+        // fe80::/10 is link-local. fc00::/7 is the private unique-local range.
+        if ($first === 0xFE && ($second & 0xC0) === 0x80) {
+            return true;
+        }
+
+        return ($first & 0xFE) === 0xFC;
     }
 
     /**
@@ -561,6 +685,7 @@ class SettingController extends QuickbooksController
      */
     private function companySyncForBrowser(array $sync): array
     {
+        $sync = $this->onlySyncKeys($sync);
         $this->stripReadOnly($sync);
         $this->stripPublicUrls($sync);
         foreach (self::DIRECTION_FIELDS as $field) {
@@ -574,5 +699,54 @@ class SettingController extends QuickbooksController
         }
 
         return $sync;
+    }
+
+    /**
+     * @param array<string, mixed> $sync
+     *
+     * @return array<string, mixed>
+     */
+    private function onlySyncKeys(array $sync): array
+    {
+        return array_intersect_key($sync, array_fill_keys(self::SYNC_KEYS, true));
+    }
+
+    /**
+     * Queue the rows that just became eligible. A switch that stays on, or
+     * that is turned off, does not queue.
+     *
+     * @param array<string, mixed> $existing
+     * @param array<string, mixed> $merged
+     */
+    private function queueTurnedOnEntities(string $companyUuid, array $existing, array $merged): void
+    {
+        $enabled = [];
+        foreach ([
+            'customer_enabled' => 'customer',
+            'invoice_enabled'  => 'invoice',
+            'wallet_enabled'   => 'wallet',
+        ] as $key => $entity) {
+            if (!$this->entitySwitchOn($existing, $key) && $this->entitySwitchOn($merged, $key)) {
+                $enabled[$entity] = true;
+            }
+        }
+        if ($enabled === [] || $companyUuid === '') {
+            return;
+        }
+
+        $this->directory()->queueInScope($companyUuid, $enabled);
+    }
+
+    /**
+     * @param array<string, mixed> $sync
+     */
+    private function entitySwitchOn(array $sync, string $key): bool
+    {
+        return !array_key_exists($key, $sync) || $sync[$key] !== false;
+    }
+
+    private function directory(): FleetbaseDirectory
+    {
+        return $this->directory ??= app(FleetbaseDirectory::class);
     }
 }

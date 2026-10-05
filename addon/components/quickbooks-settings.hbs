@@ -1,36 +1,25 @@
-<Layout::Section::Header @title={{this.title}} data-test-settings-scope="company">
-    <Button @type="primary" @size="sm" @icon="save" @text={{t "quickbooks.settings.save"}} @disabled={{@settingsLoadFailed}} @onClick={{this.save}} data-test-save />
-</Layout::Section::Header>
-<Layout::Section::Body class="overflow-y-scroll h-full">
-    <div class="container mx-auto h-screen">
-        <div class="max-w-3xl my-10 mx-auto space-y-6">
-            {{#if @settingsLoadFailed}}
-                <p class="text-sm text-gray-500" data-test-settings-unavailable>{{t "quickbooks.connection.settings-unavailable"}}</p>
-            {{/if}}
-            <QuickbooksSettingsFields
-                @errors={{this.errors}}
-                @connection={{@connection}}
-                @loadFailed={{@loadFailed}}
-                @busy={{@busy}}
-                @onTest={{@onTest}}
-                @onConnect={{@onConnect}}
-                @onDisconnect={{@onDisconnect}}
-                @configured={{@configured}}
-                @onSync={{@onSync}}
-                @onReconcile={{@onReconcile}}
-                @onImport={{@onImport}}
-                @authFields={{this.authFields}}
-                @syncFields={{this.syncFields}}
-                @policies={{this.policies}}
-                @secret={{this.secret}}
-                @displayedUrls={{this.displayedUrls}}
-                @onUpdate={{this.update}}
-                @onSetEntityEnabled={{this.setEntityEnabled}}
-                @importCustomers={{this.importCustomers}}
-                @onSetImportCustomers={{this.setImportCustomers}}
-            />
-            <QuickbooksActivity />
-        </div>
-        <Spacer @height="600px" />
-    </div>
-</Layout::Section::Body>
+<EmberWormhole @to="next-view-section-subheader-actions">
+    <Button @type="primary" @size="sm" @icon="save" @text={{t "quickbooks.settings.save"}} @disabled={{this.saveDisabled}} @isLoading={{this.saving}} @onClick={{this.save}} data-test-save />
+</EmberWormhole>
+<div data-test-settings-scope="admin" class="space-y-6">
+    {{#if @settingsLoadFailed}}
+        <p class="text-sm text-gray-500" data-test-settings-unavailable>{{t "quickbooks.connection.settings-unavailable"}}</p>
+    {{/if}}
+    <QuickbooksSettingsFields
+        @errors={{this.errors}}
+        @connection={{@connection}}
+        @loadFailed={{@loadFailed}}
+        @busy={{@busy}}
+        @onConnect={{@onConnect}}
+        @onDisconnect={{@onDisconnect}}
+        @configured={{@configured}}
+        @onSync={{@onSync}}
+        @authFields={{this.authFields}}
+        @syncFields={{this.syncFields}}
+        @policies={{this.policies}}
+        @secret={{this.secret}}
+        @displayedUrls={{this.displayedUrls}}
+        @onUpdate={{this.update}}
+        @onSetEntityEnabled={{this.setEntityEnabled}}
+    />
+</div>

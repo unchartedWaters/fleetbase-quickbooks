@@ -32,7 +32,7 @@ export default class QuickbooksCompanySettingsComponent extends Component {
         const companyUuid = this.currentUser.companyId;
 
         try {
-            const result = await this.fetch.get('settings', { scope: 'company', company_uuid: companyUuid }, { namespace: NAMESPACE });
+            const result = await this.fetch.get('settings', { scope: 'admin', company_uuid: companyUuid }, { namespace: NAMESPACE });
             this.settings = result.auth;
             this.sync = result.sync ?? { interval_minutes: 5 };
             this.companySettings = result.company_auth ?? null;
@@ -70,7 +70,7 @@ export default class QuickbooksCompanySettingsComponent extends Component {
         const result = await this.fetch.post(
             'settings',
             {
-                scope: 'company',
+                scope: 'admin',
                 company_uuid: this.currentUser.companyId,
                 auth: payload.auth,
                 sync: payload.sync,
@@ -84,7 +84,7 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     }
 
     @action
-    async connect(payload) {
+    async connect() {
         if (this.connectionLoading || this.connection === undefined) {
             return;
         }
@@ -96,7 +96,6 @@ export default class QuickbooksCompanySettingsComponent extends Component {
                 {
                     company_uuid: this.currentUser.companyId,
                     user_uuid: this.currentUser.id,
-                    import_customers: payload?.import_customers === true,
                 },
                 { namespace: NAMESPACE }
             );
@@ -133,22 +132,6 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     }
 
     @action
-    async reconcile() {
-        await this.runAction(async () => {
-            await this.fetch.post('reconcile', { company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
-            this.notifications.success(this.intl.t('quickbooks.actions.reconcile-queued'));
-        });
-    }
-
-    @action
-    async importCustomers() {
-        await this.runAction(async () => {
-            await this.fetch.post('import', { company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
-            this.notifications.success(this.intl.t('quickbooks.actions.import-queued'));
-        });
-    }
-
-    @action
     async syncNow() {
         await this.runAction(async () => {
             await this.fetch.post('sync', { company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
@@ -160,26 +143,6 @@ export default class QuickbooksCompanySettingsComponent extends Component {
         this.busy = true;
         try {
             await work();
-        } catch (error) {
-            this.notifications.serverError(error);
-        } finally {
-            this.busy = false;
-        }
-    }
-
-    @action
-    async testConnection() {
-        this.busy = true;
-        try {
-            const result = await this.fetch.post('connection/test', { company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
-            if (result?.ok) {
-                this.notifications.success(
-                    result.company_name ? this.intl.t('quickbooks.connection.test-ok-named', { company: result.company_name }) : this.intl.t('quickbooks.connection.test-ok')
-                );
-            } else {
-                this.notifications.error(result?.message || this.intl.t('quickbooks.connection.test-failed'));
-                await this.loadConnection();
-            }
         } catch (error) {
             this.notifications.serverError(error);
         } finally {

@@ -68,7 +68,7 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         this.fetch.credentialsConfigured = false;
         await render(hbs`<Widget::QuickbooksSync />`);
         assert.dom('[data-test-widget-sync]').isDisabled();
-        assert.dom('[data-test-widget-credentials-missing]').hasText('Enter Client ID and Client secret on Connection before Sync now.');
+        assert.dom('[data-test-widget-credentials-missing]').hasText('Enter Client ID and Client secret on Quickbooks Setup before Sync now.');
 
         this.fetch.credentialsConfigured = true;
         await render(hbs`<Widget::QuickbooksSync />`);

@@ -72,8 +72,8 @@ test('a wallet maps to a quickbooks chart of accounts entry', function () {
 });
 
 test('a scheduled batch creates a linked quickbooks account for a wallet', function () {
-    [$engine, $client] = qbEngine();
-    $ledger            = connectedLedger();
+    [$engine, $client]        = qbEngine();
+    $ledger                   = connectedLedger();
     $ledger->wallets['wal-1'] = [
         'uuid'         => 'wal-1',
         'company_uuid' => 'company-uuid',
@@ -234,8 +234,8 @@ test('use the quickbooks invoice copies the total and understood line items', fu
     $ledger->pending[] = pending('invoice', 'inv-1');
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings([
-        'interval_minutes' => 1,
-        'invoice_conflict' => 'quickbooks',
+        'interval_minutes'  => 1,
+        'invoice_conflict'  => 'quickbooks',
         'invoice_reference' => 'fleetbase',
     ]), time());
 
@@ -247,8 +247,8 @@ test('use the quickbooks invoice copies the total and understood line items', fu
 });
 
 test('quickbooks wallet identifier copies the account number onto the wallet', function () {
-    [$engine, $client] = qbEngine();
-    $ledger            = connectedLedger();
+    [$engine, $client]        = qbEngine();
+    $ledger                   = connectedLedger();
     $ledger->wallets['wal-1'] = [
         'uuid'         => 'wal-1',
         'company_uuid' => 'company-uuid',
@@ -284,8 +284,8 @@ test('quickbooks wallet identifier copies the account number onto the wallet', f
 });
 
 test('use the quickbooks account copies wallet details and leaves the fleetbase id in place', function () {
-    [$engine, $client] = qbEngine();
-    $ledger            = connectedLedger();
+    [$engine, $client]        = qbEngine();
+    $ledger                   = connectedLedger();
     $ledger->wallets['wal-1'] = [
         'uuid'         => 'wal-1',
         'company_uuid' => 'company-uuid',
@@ -338,8 +338,8 @@ test('use the quickbooks account copies wallet details and leaves the fleetbase 
 });
 
 test('quickbooks primary copies the linked account currency onto the wallet', function () {
-    [$engine, $client] = qbEngine();
-    $ledger            = connectedLedger();
+    [$engine, $client]        = qbEngine();
+    $ledger                   = connectedLedger();
     $ledger->wallets['wal-1'] = [
         'uuid'         => 'wal-1',
         'company_uuid' => 'company-uuid',
@@ -376,8 +376,8 @@ test('quickbooks primary copies the linked account currency onto the wallet', fu
 });
 
 test('quickbooks primary uses the home currency when the account has no currency', function () {
-    [$engine, $client] = qbEngine();
-    $ledger            = connectedLedger();
+    [$engine, $client]        = qbEngine();
+    $ledger                   = connectedLedger();
     $ledger->wallets['wal-1'] = [
         'uuid'         => 'wal-1',
         'company_uuid' => 'company-uuid',
@@ -414,8 +414,8 @@ test('quickbooks primary uses the home currency when the account has no currency
 });
 
 test('quickbooks customer name is kept when a remote customer already exists', function () {
-    [$engine, $client] = qbEngine();
-    $ledger            = connectedLedger();
+    [$engine, $client]           = qbEngine();
+    $ledger                      = connectedLedger();
     $ledger->customers['cust-1'] = [
         'uuid'         => 'cust-1',
         'company_uuid' => 'company-uuid',
@@ -443,12 +443,13 @@ test('quickbooks customer name is kept when a remote customer already exists', f
 test('a retry after a lost link adopts the existing record by doc number', function () {
     [$engine, $client]    = qbEngine();
     $client->invoiceByDoc = [
-        'Id'        => 'existing-9',
-        'SyncToken' => '4',
-        'DocNumber' => 'INV-1',
-        'TotalAmt'  => 10,
-        'TxnDate'   => '2026-09-01',
-        'DueDate'   => '2026-09-15',
+        'Id'          => 'existing-9',
+        'SyncToken'   => '4',
+        'DocNumber'   => 'INV-1',
+        'TotalAmt'    => 10,
+        'TxnDate'     => '2026-09-01',
+        'DueDate'     => '2026-09-15',
+        'CustomerRef' => ['value' => 'qbo-customer'],
     ];
     $client->invoices['existing-9'] = $client->invoiceByDoc;
     $ledger                         = connectedLedger();

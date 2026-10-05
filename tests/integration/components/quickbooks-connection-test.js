@@ -3,173 +3,161 @@ import { setupRenderingTest } from 'dummy/tests/helpers';
 import { click, render } from '@ember/test-helpers';
 import { hbs } from 'ember-cli-htmlbars';
 import Service from '@ember/service';
+import ModalsManagerStub from '../../helpers/modals-manager-stub';
 
-function assertDisconnectFollowsConnect(assert) {
+function assertConnectionButtons(assert) {
+    const sync = document.querySelector('[data-test-sync-now]');
     const connect = document.querySelector('[data-test-connect]');
     const disconnect = document.querySelector('[data-test-disconnect]');
+    const syncWrap = sync.closest('.btn-wrapper');
     const connectWrap = connect.closest('.btn-wrapper');
     const disconnectWrap = disconnect.closest('.btn-wrapper');
 
-    assert.strictEqual(connectWrap.parentElement, disconnectWrap.parentElement, 'Connect and Disconnect share one row');
+    assert.strictEqual(syncWrap.parentElement, connectWrap.parentElement, 'Sync now, Connect, and Disconnect share one row');
+    assert.strictEqual(connectWrap.parentElement, disconnectWrap.parentElement, 'Sync now, Connect, and Disconnect share one row');
+    assert.strictEqual(syncWrap.nextElementSibling, connectWrap, 'Connect is immediately beside Sync now');
     assert.strictEqual(connectWrap.nextElementSibling, disconnectWrap, 'Disconnect is immediately beside Connect');
+    assert.dom('[data-test-test]').doesNotExist();
+    assert.dom('[data-test-reconcile]').doesNotExist();
+    assert.dom('[data-test-import]').doesNotExist();
+    assert.dom('[data-test-actions]').doesNotExist();
 }
 
 module('Integration | Component | quickbooks-connection', function (hooks) {
     setupRenderingTest(hooks);
 
-    test('embedded actions keep sync, reconcile, and import without a second disconnect', async function (assert) {
-        this.set('connection', null);
+    hooks.beforeEach(function () {
+        this.owner.register('service:modals-manager', ModalsManagerStub);
+    });
+
+    test('the actions section is not rendered', async function (assert) {
+        this.set('connection', { realm_id: '123', environment: 'sandbox' });
         await render(hbs`<QuickbooksConnection @variant="embedded" @connection={{this.connection}} @configured={{true}} />`);
 
         assert.dom('[data-test-connection-state]').doesNotExist();
-        assert.dom('[data-test-actions]').includesText('Sync now sends customers, invoices, payments, and wallets that are waiting.');
-        assert.dom('[data-test-actions]').includesText('Reconcile syncs one page of invoices already in Fleetbase.');
-        assert.dom('[data-test-import-rules]').hasText('Import customers skips inactive customers and sub-customers. Existing Fleetbase names, emails, and phones are left as they are.');
-        assert.dom('[data-test-sync-now]').isDisabled();
-        assert.dom('[data-test-reconcile]').isDisabled();
-        assert.dom('[data-test-import]').isDisabled();
-        assert.dom('[data-test-disconnect]').doesNotExist();
-        assert.dom('[data-test-connect]').doesNotExist();
+        assert.dom('[data-test-actions]').doesNotExist();
+        assert.dom('[data-test-sync-now]').doesNotExist();
+        assert.dom('[data-test-reconcile]').doesNotExist();
+        assert.dom('[data-test-import]').doesNotExist();
+        assert.dom('[data-test-import-rules]').doesNotExist();
         assert.dom('[data-test-credentials-missing]').doesNotExist();
-
-        this.set('connection', { realm_id: '123', environment: 'sandbox' });
-        assert.dom('[data-test-sync-now]').isNotDisabled();
-        assert.dom('[data-test-reconcile]').isNotDisabled();
-        assert.dom('[data-test-import]').isNotDisabled();
-        assert.dom('[data-test-disconnect]').doesNotExist();
-
-        this.set('connection', { realm_id: '123', needs_reauth: true });
-        assert.dom('[data-test-sync-now]').isDisabled();
-        assert.dom('[data-test-disconnect]').doesNotExist();
+        assert.dom().doesNotIncludeText('Actions');
+        assert.dom().doesNotIncludeText('Import customers');
+        assert.dom().doesNotIncludeText('Reconcile');
     });
 
-    test('actions stays on sync, reconcile, and import, and points to Connection', async function (assert) {
+    test('an unknown variant does not describe a separate Connection or Actions page', async function (assert) {
         this.set('connection', null);
         await render(hbs`<QuickbooksConnection @connection={{this.connection}} @configured={{true}} />`);
-        assert.dom('[data-test-connection-state]').hasAttribute('data-test-connection-state', 'disconnected');
-        assert.dom('[data-test-disconnected]').includesText('Connection');
-        assert.dom('[data-test-disconnected]').includesText('syncs customers, invoices, payments, and wallets with QuickBooks Online');
-        assert.dom('[data-test-disconnected]').doesNotIncludeText('sends');
-        assert.dom().includesText('Sync now sends customers, invoices, payments, and wallets that are waiting.');
-        assert.dom().includesText('Reconcile syncs one page of invoices already in Fleetbase.');
-        assert.dom().includesText('It does not go through every customer or wallet.');
-        assert.dom().includesText('It does not import QuickBooks invoices that are not already in Fleetbase, and it does not delete QuickBooks records.');
-        assert.dom().doesNotIncludeText('Schedule → Sync is off');
-        assert.dom().doesNotIncludeText('Enable schedule');
-        assert.dom('[data-test-import-rules]').hasText('Import customers skips inactive customers and sub-customers. Existing Fleetbase names, emails, and phones are left as they are.');
-        assert.dom().doesNotIncludeText('compares every');
-        assert.dom('[data-test-disconnected]').doesNotIncludeText('Open Actions');
+
+        assert.dom('[data-test-connection-state]').doesNotExist();
+        assert.dom('[data-test-actions]').doesNotExist();
         assert.dom('[data-test-connect]').doesNotExist();
         assert.dom('[data-test-disconnect]').doesNotExist();
-        assert.dom('[data-test-import-checkbox]').doesNotExist();
-        assert.dom('[data-test-sync-now]').isDisabled();
-        assert.dom('[data-test-reconcile]').isDisabled();
-        assert.dom('[data-test-import]').isDisabled();
-
-        this.set('connection', { realm_id: '123', environment: 'sandbox' });
-        assert.dom('[data-test-connected]').includesText('123');
-        assert.dom('[data-test-connected]').doesNotIncludeText('Home currency');
-        assert.dom('[data-test-sync-now]').isNotDisabled();
-        assert.dom('[data-test-reconcile]').isNotDisabled();
-        assert.dom('[data-test-import]').isNotDisabled();
-        assert.dom('[data-test-connect]').doesNotExist();
-        assert.dom('[data-test-disconnect]').exists();
-
-        this.set('connection', { realm_id: '123', needs_reauth: true });
-        assert.dom('[data-test-reauth]').includesText('Connection');
-        assert.dom('[data-test-sync-now]').isDisabled();
-        assert.dom('[data-test-connect]').doesNotExist();
-        assert.dom('[data-test-disconnect]').exists();
-    });
-
-    test('sync, reconcile, and import stay disabled when QuickBooks is not configured', async function (assert) {
-        this.set('connection', { realm_id: '123', environment: 'sandbox' });
-        await render(hbs`<QuickbooksConnection @connection={{this.connection}} @configured={{false}} />`);
-        assert.dom('[data-test-sync-now]').isDisabled();
-        assert.dom('[data-test-reconcile]').isDisabled();
-        assert.dom('[data-test-import]').isDisabled();
-        assert.dom('[data-test-credentials-missing]').hasText('Enter Client ID and Client secret on Connection before these actions.');
-    });
-
-    test('connect sends import_customers from Data Resolution and defaults off', async function (assert) {
-        this.set('connection', null);
-        this.set('payload', null);
-        this.set('importCustomers', false);
-        this.set('onConnect', (payload) => this.set('payload', payload));
-        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @importCustomers={{this.importCustomers}} @onConnect={{this.onConnect}} />`);
-
-        assert.dom('[data-test-import-checkbox]').doesNotExist();
-        assert.dom('[data-test-connect]').exists();
         assert.dom('[data-test-sync-now]').doesNotExist();
-        await click('[data-test-connect]');
-        assert.deepEqual(this.payload, { import_customers: false });
-
-        this.set('importCustomers', true);
-        await click('[data-test-connect]');
-        assert.deepEqual(this.payload, { import_customers: true });
+        assert.dom().doesNotIncludeText('Open Connection');
+        assert.dom().doesNotIncludeText('Open Actions');
     });
 
-    test('reconcile and import disable themselves while a run is in progress', async function (assert) {
+    test('sync now stays available for an active connection even when credentials are not marked configured', async function (assert) {
         this.set('connection', { realm_id: '123', environment: 'sandbox' });
-        await render(hbs`<QuickbooksConnection @connection={{this.connection}} @configured={{true}} @busy={{true}} />`);
-        assert.dom('[data-test-sync-now]').isDisabled();
-        assert.dom('[data-test-reconcile]').isDisabled();
-        assert.dom('[data-test-import]').isDisabled();
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{false}} />`);
+
+        assert.dom('[data-test-sync-now]').isNotDisabled();
+        assert.dom('[data-test-connect]').isDisabled();
+        assert.dom('[data-test-disconnect]').isNotDisabled();
+        assert.dom('[data-test-credentials-missing]').doesNotExist();
+        assert.dom('[data-test-reconcile]').doesNotExist();
+        assert.dom('[data-test-import]').doesNotExist();
+        assertConnectionButtons(assert);
     });
 
-    test('Connection shows connect when disconnected and disconnect when connected', async function (assert) {
-        this.set('tested', false);
+    test('connect does not send an import flag', async function (assert) {
+        this.set('connection', null);
+        this.set('payload', 'unset');
+        this.set('synced', false);
+        this.set('onConnect', (payload) => this.set('payload', payload));
+        this.set('onSync', () => this.set('synced', true));
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @onConnect={{this.onConnect}} @onSync={{this.onSync}} />`);
+
+        assert.dom('[data-test-import-checkbox]').doesNotExist();
+        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom().doesNotIncludeText('Import customers');
+        assertConnectionButtons(assert);
+        await click('[data-test-connect]');
+        assert.strictEqual(this.payload, undefined);
+        assert.false(this.synced, 'a disconnected connection does not sync from Sync now');
+
+        this.set('connection', { realm_id: '123', environment: 'sandbox' });
+        assert.dom('[data-test-sync-now]').isNotDisabled();
+        assert.dom('[data-test-connect]').isDisabled();
+        await click('[data-test-sync-now]');
+        assert.true(this.synced);
+        await click('[data-test-connect]');
+        assert.strictEqual(this.payload, undefined, 'an active connection does not start another sign-in');
+    });
+
+    test('the connection buttons disable themselves while a run is in progress', async function (assert) {
+        this.set('connection', { realm_id: '123', environment: 'sandbox' });
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @busy={{true}} />`);
+        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom('[data-test-connect]').isDisabled();
+        assert.dom('[data-test-disconnect]').isDisabled();
+        assert.dom('[data-test-reconcile]').doesNotExist();
+        assert.dom('[data-test-import]').doesNotExist();
+    });
+
+    test('Connection shows Sync now, Connect, and Disconnect', async function (assert) {
         this.set('disconnected', false);
-        this.set('onTest', async () => this.set('tested', true));
         this.set('onDisconnect', () => {
             this.set('disconnected', true);
             this.set('connection', null);
         });
         this.set('connection', null);
 
-        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @onTest={{this.onTest}} @onDisconnect={{this.onDisconnect}} />`);
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @onDisconnect={{this.onDisconnect}} />`);
 
-        assert.dom('[data-test-test]').isDisabled();
+        assert.dom('[data-test-test]').doesNotExist();
         assert.dom('[data-test-disconnected]').includesText('Choose Connect to QuickBooks');
         assert.dom('[data-test-disconnected]').includesText('syncs customers, invoices, payments, and wallets with QuickBooks Online');
         assert.dom('[data-test-disconnected]').doesNotIncludeText('sends');
         assert.dom('[data-test-disconnected]').doesNotIncludeText('Open Actions');
-        assert.dom('[data-test-connect]').exists();
+        assert.dom('[data-test-sync-now]').isDisabled();
         assert.dom('[data-test-connect]').isNotDisabled();
         assert.dom('[data-test-connect]').hasClass('btn-sm');
-        assert.dom('[data-test-disconnect]').exists();
         assert.dom('[data-test-disconnect]').isDisabled();
         assert.dom('[data-test-disconnect]').hasClass('btn-sm');
         assert.dom('[data-test-disconnect]').includesText('Disconnect');
-        assertDisconnectFollowsConnect(assert);
+        assert.dom().doesNotIncludeText('Import customers');
+        assert.dom().doesNotIncludeText('Reconcile');
+        assertConnectionButtons(assert);
 
         this.set('connection', { realm_id: '123', environment: 'sandbox' });
+        assert.dom('[data-test-sync-now]').isNotDisabled();
+        assert.dom('[data-test-connect]').isDisabled();
         assert.dom('[data-test-disconnect]').isNotDisabled();
-        assert.dom('[data-test-connect]').doesNotExist();
         assert.dom('[data-test-import-checkbox]').doesNotExist();
         assert.false(this.disconnected, 'disconnect waits for a click');
-
-        await click('[data-test-test]');
-        assert.true(this.tested, 'onTest runs when Test connection is clicked');
-        assert.false(this.disconnected, 'testing the connection does not disconnect it');
-
-        this.set('connection', { realm_id: '123', needs_reauth: true });
-        assert.dom('[data-test-reauth]').exists();
-        assert.dom('[data-test-disconnect]').includesText('Disconnect');
-        assert.dom('[data-test-disconnect]').doesNotIncludeText('unsubscribe');
-        assert.dom('[data-test-disconnect]').isNotDisabled();
-        assert.dom('[data-test-connect]').exists();
-        assert.dom('[data-test-connect]').hasClass('btn-sm');
-        assert.dom('[data-test-disconnect]').hasClass('btn-sm');
-        assert.dom('[data-test-test]').exists();
-        assertDisconnectFollowsConnect(assert);
+        assertConnectionButtons(assert);
 
         await click('[data-test-disconnect]');
         assert.true(this.disconnected);
         assert.dom('[data-test-disconnected]').includesText('Not connected');
-        assert.dom('[data-test-connect]').exists();
+        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom('[data-test-connect]').isNotDisabled();
         assert.dom('[data-test-disconnect]').isDisabled();
-        assertDisconnectFollowsConnect(assert);
+        assertConnectionButtons(assert);
+
+        this.set('connection', { realm_id: '123', needs_reauth: true });
+        assert.dom('[data-test-reauth]').exists();
+        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom('[data-test-connect]').isNotDisabled();
+        assert.dom('[data-test-connect]').hasClass('btn-sm');
+        assert.dom('[data-test-disconnect]').includesText('Disconnect');
+        assert.dom('[data-test-disconnect]').doesNotIncludeText('unsubscribe');
+        assert.dom('[data-test-disconnect]').isDisabled();
+        assert.dom('[data-test-disconnect]').hasClass('btn-sm');
+        assertConnectionButtons(assert);
     });
 
     test('connected status explains invoice and wallet currency rules', async function (assert) {
@@ -188,37 +176,20 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-disconnect]').exists();
     });
 
-    test('Actions stays loading until a connection result arrives', async function (assert) {
-        await render(hbs`<QuickbooksConnection @configured={{true}} />`);
+    test('an embedded variant does not show connection status while loading', async function (assert) {
+        await render(hbs`<QuickbooksConnection @variant="embedded" @configured={{true}} />`);
 
-        assert.dom('[data-test-connection-state]').hasAttribute('data-test-connection-state', 'loading');
-        assert.dom('[data-test-connection-loading]').hasText('Loading QuickBooks connection.');
+        assert.dom('[data-test-actions]').doesNotExist();
+        assert.dom('[data-test-connection-state]').doesNotExist();
+        assert.dom('[data-test-connection-loading]').doesNotExist();
         assert.dom('[data-test-disconnected]').doesNotExist();
-        assert.dom('[data-test-status-unavailable]').doesNotExist();
         assert.dom('[data-test-sync-now]').doesNotExist();
         assert.dom('[data-test-reconcile]').doesNotExist();
         assert.dom('[data-test-import]').doesNotExist();
         assert.dom('[data-test-disconnect]').doesNotExist();
         assert.dom().doesNotIncludeText('Not connected');
-
-        this.set('connection', null);
-        await render(hbs`<QuickbooksConnection @connection={{this.connection}} @configured={{true}} />`);
-
-        assert.dom('[data-test-connection-state]').hasAttribute('data-test-connection-state', 'disconnected');
-        assert.dom('[data-test-connection-loading]').doesNotExist();
-        assert.dom('[data-test-disconnected]').includesText('Not connected');
-        assert.dom('[data-test-sync-now]').isDisabled();
-        assert.dom('[data-test-reconcile]').isDisabled();
-        assert.dom('[data-test-import]').isDisabled();
-
-        await render(hbs`<QuickbooksConnection @loadFailed={{true}} @configured={{true}} />`);
-
-        assert.dom('[data-test-connection-state]').hasAttribute('data-test-connection-state', 'unavailable');
-        assert.dom('[data-test-connection-loading]').doesNotExist();
-        assert.dom('[data-test-status-unavailable]').hasText('QuickBooks status could not be loaded.');
-        assert.dom('[data-test-disconnected]').doesNotExist();
-        assert.dom().doesNotIncludeText('Not connected');
-        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom().doesNotIncludeText('Open Connection');
+        assert.dom().doesNotIncludeText('Actions');
     });
 
     test('Connection stays loading until a connection result arrives', async function (assert) {
@@ -227,14 +198,15 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-connection-state]').hasAttribute('data-test-connection-state', 'loading');
         assert.dom('[data-test-connection-loading]').hasText('Loading QuickBooks connection.');
         assert.dom('[data-test-disconnected]').doesNotExist();
+        assert.dom('[data-test-sync-now]').doesNotExist();
         assert.dom('[data-test-connect]').doesNotExist();
         assert.dom('[data-test-disconnect]').doesNotExist();
         assert.dom('[data-test-import-checkbox]').doesNotExist();
-        assert.dom('[data-test-test]').isDisabled();
+        assert.dom('[data-test-test]').doesNotExist();
         assert.dom().doesNotIncludeText('Not connected');
 
         this.set('connection', null);
-        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} />`);
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} />`);
 
         assert.dom('[data-test-connection-state]').hasAttribute('data-test-connection-state', 'disconnected');
         assert.dom('[data-test-connection-loading]').doesNotExist();
@@ -242,7 +214,7 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-connect]').isNotDisabled();
         assert.dom('[data-test-disconnect]').isDisabled();
         assert.dom('[data-test-import-checkbox]').doesNotExist();
-        assertDisconnectFollowsConnect(assert);
+        assertConnectionButtons(assert);
 
         await render(hbs`<QuickbooksConnection @variant="status" @loadFailed={{true}} />`);
 
@@ -266,17 +238,37 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom().doesNotIncludeText('Not connected');
     });
 
-    test('a failed actions load does not say not connected', async function (assert) {
-        await render(hbs`<QuickbooksConnection @loadFailed={{true}} @configured={{true}} />`);
+    test('connect stays disabled until credentials are saved, and stays available when reauth is needed', async function (assert) {
+        this.set('connection', null);
+        this.set('configured', false);
+        this.set('connected', false);
+        this.set('onConnect', () => this.set('connected', true));
 
-        assert.dom('[data-test-status-unavailable]').hasText('QuickBooks status could not be loaded.');
-        assert.dom('[data-test-disconnected]').doesNotExist();
-        assert.dom('[data-test-disconnect]').doesNotExist();
-        assert.dom().doesNotIncludeText('Not connected');
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{this.configured}} @onConnect={{this.onConnect}} />`);
+
+        assert.dom('[data-test-connect]').isDisabled();
+        assert.dom('[data-test-disconnect]').isDisabled();
+        assert.dom('[data-test-disconnected]').includesText('Choose Save Changes first');
+        assert.dom('[data-test-disconnected]').doesNotIncludeText('Choose Connect to QuickBooks');
+        assertConnectionButtons(assert);
+
+        this.set('configured', true);
+        assert.dom('[data-test-connect]').isNotDisabled();
+        assert.dom('[data-test-disconnected]').includesText('Choose Connect to QuickBooks');
+        assertConnectionButtons(assert);
+
+        this.set('connection', { realm_id: '123', needs_reauth: true });
+        this.set('configured', false);
         assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom('[data-test-connect]').isNotDisabled();
+        assert.dom('[data-test-disconnect]').isDisabled();
+        assertConnectionButtons(assert);
+
+        await click('[data-test-connect]');
+        assert.true(this.connected, 'Connect still runs when the saved connection only needs reauth');
     });
 
-    test('Actions disconnect calls the disconnect endpoint and shows not connected', async function (assert) {
+    test('Disconnect without a parent handler posts to the disconnect endpoint', async function (assert) {
         class NotificationsStubService extends Service {
             messages = [];
 
@@ -308,20 +300,32 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         this.owner.register('service:current-user', CurrentUserStubService);
         this.set('connection', { realm_id: '123', environment: 'sandbox' });
 
-        await render(hbs`<QuickbooksConnection @connection={{this.connection}} @configured={{true}} />`);
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} />`);
 
         assert.dom('[data-test-connected]').exists();
-        assert.dom('[data-test-disconnect]').exists();
-        assert.dom('[data-test-connect]').doesNotExist();
+        assert.dom('[data-test-sync-now]').isNotDisabled();
+        assert.dom('[data-test-disconnect]').isNotDisabled();
+        assert.dom('[data-test-connect]').isDisabled();
         assert.deepEqual(this.owner.lookup('service:fetch').posts, []);
 
+        const modals = this.owner.lookup('service:modals-manager');
+        modals.decline = true;
+        await click('[data-test-disconnect]');
+        assert.strictEqual(modals.last.title, 'Disconnect QuickBooks?');
+        assert.strictEqual(modals.last.body, 'This removes the saved QuickBooks connection. Sync now stays off until you connect again.');
+        assert.false(/unsubscribe/i.test(`${modals.last.title} ${modals.last.body}`));
+        assert.deepEqual(this.owner.lookup('service:fetch').posts, []);
+        assert.dom('[data-test-connected]').exists();
+
+        modals.decline = false;
         await click('[data-test-disconnect]');
 
         assert.deepEqual(this.owner.lookup('service:fetch').posts, [{ path: 'disconnect', body: { company_uuid: 'company-uuid' } }]);
         assert.deepEqual(this.owner.lookup('service:notifications').messages, [['success', 'QuickBooks disconnected.']]);
         assert.false(this.owner.lookup('service:notifications').messages.some((entry) => /unsubscribe|intuit/i.test(String(entry[1]))));
         assert.dom('[data-test-disconnected]').includesText('Not connected');
-        assert.dom('[data-test-disconnect]').doesNotExist();
-        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom('[data-test-disconnect]').isDisabled();
+        assert.dom('[data-test-connect]').isNotDisabled();
+        assertConnectionButtons(assert);
     });
 });

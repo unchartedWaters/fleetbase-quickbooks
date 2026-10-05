@@ -20,16 +20,15 @@ class OAuthFlow
      *
      * @return array{url: string, state: string}
      */
-    public function begin(string $companyUuid, string $userUuid, array $credentials, bool $importCustomers): array
+    public function begin(string $companyUuid, string $userUuid, array $credentials): array
     {
         $state    = bin2hex(random_bytes(16));
         $verifier = $this->codeVerifier();
         Cache::put($this->key($state), [
-            'company_uuid'     => $companyUuid,
-            'user_uuid'        => $userUuid,
-            'import_customers' => $importCustomers,
-            'code_verifier'    => $verifier,
-            'expires_at'       => time() + 600,
+            'company_uuid'  => $companyUuid,
+            'user_uuid'     => $userUuid,
+            'code_verifier' => $verifier,
+            'expires_at'    => time() + 600,
         ], 600);
 
         return [
@@ -123,8 +122,6 @@ class OAuthFlow
             $connection['home_currency']   = null;
             $connection['default_item_id'] = null;
         }
-
-        $connection['import_customers'] = (bool) ($stored['import_customers'] ?? false);
 
         return $connection;
     }

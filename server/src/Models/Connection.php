@@ -84,17 +84,12 @@ class Connection extends QuickbooksModel
             return $value;
         }
 
-        try {
-            return (new SecretCipher())->decrypt($value);
-        } catch (\RuntimeException $exception) {
-            // A token we cannot open is useless; never hand back the raw stored value.
-            return null;
-        }
+        return (new SecretCipher())->reveal($value);
     }
 
     /**
-     * Replace a pre-Crypt AES-256-CBC token with Laravel Crypt before the row is written.
-     * A Crypt payload is left as stored. A legacy blob that cannot be opened still throws.
+     * Replace a plaintext or pre-Crypt AES-256-CBC token with Laravel Crypt before the row is written.
+     * A Crypt payload is left as stored.
      */
     private function upgradeLegacyAttribute(string $attribute): void
     {
@@ -103,11 +98,6 @@ class Connection extends QuickbooksModel
             return;
         }
 
-        $cipher = new SecretCipher();
-        if (!$cipher->isLegacyCiphertext($value)) {
-            return;
-        }
-
-        $this->attributes[$attribute] = $cipher->upgrade($value);
+        $this->attributes[$attribute] = (new SecretCipher())->seal($value);
     }
 }

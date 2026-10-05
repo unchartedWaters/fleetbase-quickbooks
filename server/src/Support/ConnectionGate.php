@@ -19,6 +19,23 @@ class ConnectionGate
     }
 
     /**
+     * The install has a saved connection with a realm that does not need reauthorization.
+     * Client ID and client secret are not read.
+     */
+    public static function hasActiveConnection(): bool
+    {
+        try {
+            return Connection::query()
+                ->where('needs_reauth', false)
+                ->whereNotNull('realm_id')
+                ->where('realm_id', '!=', '')
+                ->exists();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
      * A realm is stored and QuickBooks does not need to be connected again.
      *
      * @param array<string, mixed>|Connection|null $connection

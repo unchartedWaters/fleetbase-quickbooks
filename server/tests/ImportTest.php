@@ -13,6 +13,20 @@ use Illuminate\Cache\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+
+beforeEach(function () {
+    $this->previousFleetbaseDb = config('fleetbase.connection.db');
+    qbEnsureCustomerTable();
+    DB::connection('sqlite')->table('contacts')->delete();
+});
+
+afterEach(function () {
+    $config = config();
+    if (is_object($config) && method_exists($config, 'set')) {
+        $config->set('fleetbase.connection.db', $this->previousFleetbaseDb);
+    }
+});
 
 test('a quickbooks customer with no fleetbase match creates a contact', function () {
     $batch = importWith([remoteCustomer('1', 'Ada Lovelace', 'ada@example.test', '5550100')], []);
@@ -309,16 +323,16 @@ test('an initial manual import does not requeue when the company lock is busy', 
 
 test('a continuation does not requeue for non lock blocked states or import failures', function () {
     withImportDispatcher(function ($dispatcher): void {
-        $disconnected          = new FleetbaseDirectory();
-        $disconnected->memory  = new SyncLedger();
-        $needsReauth           = new FleetbaseDirectory();
-        $needsReauth->memory   = importLedger();
+        $disconnected                                                     = new FleetbaseDirectory();
+        $disconnected->memory                                             = new SyncLedger();
+        $needsReauth                                                      = new FleetbaseDirectory();
+        $needsReauth->memory                                              = importLedger();
         $needsReauth->memory->connections['company-uuid']['needs_reauth'] = true;
-        $blocked               = new FleetbaseDirectory();
-        $blocked->memory       = importLedger();
-        $failing               = new FleetbaseDirectory();
-        $failing->memory       = importLedger();
-        $blockedTokens         = new class extends ConnectionTokens {
+        $blocked                                                          = new FleetbaseDirectory();
+        $blocked->memory                                                  = importLedger();
+        $failing                                                          = new FleetbaseDirectory();
+        $failing->memory                                                  = importLedger();
+        $blockedTokens                                                    = new class extends ConnectionTokens {
             public function __construct()
             {
             }
@@ -376,7 +390,228 @@ test('a single failing record is recorded and the rest of the import continues',
         ->and($ledger->attempts)->toHaveCount(1)
         ->and($ledger->attempts[0]['outcome'])->toBe('failed')
         ->and($ledger->attempts[0]['local_uuid'])->toBe('2')
-        ->and($ledger->attempts[0]['error'])->toBe('Customer import failed.');
+        ->and($ledger->attempts[0]['error'])->toBe('Customer import failed.')
+        ->and($ledger->connections['company-uuid']['customer_import_start'])->toBe(2);
+});
+
+test('a short page with a failure does not reset the cursor to the start', function () {
+    $client                                                       = new FakeQuickBooks();
+    $client->customerPages                                        = [5 => [remoteCustomer('9', 'Bad', 'bad@example.test', null)]];
+    $ledger                                                       = importLedger();
+    $ledger->connections['company-uuid']['customer_import_start'] = 5;
+    $importer                                                     = new CustomerImporter($client, function () {
+        throw new RuntimeException('row failed');
+    });
+
+    $batch = $importer->import($ledger, $ledger->connections['company-uuid'], [], true, 2);
+
+    expect($batch['failed'])->toBe(1)
+        ->and($batch['created'])->toBe(0)
+        ->and($ledger->connections['company-uuid']['customer_import_start'])->toBe(5);
+});
+
+test('a failed candidate lookup does not create the page', function () {
+    qbEnsureCustomerTable();
+    $schema = app('db')->connection('sqlite')->getSchemaBuilder();
+    $schema->drop('contacts');
+
+    try {
+        $client                = new FakeQuickBooks();
+        $client->customerPages = [1 => [
+            remoteCustomer('1', 'Ada', 'ada@example.test', null),
+            remoteCustomer('2', 'Bea', 'bea@example.test', null),
+        ]];
+        $ledger = importLedger();
+        $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true);
+
+        expect($batch['created'])->toBe(0)
+            ->and($batch['failed'])->toBe(2)
+            ->and($ledger->customers)->toBe([])
+            ->and($ledger->links)->toBe([])
+            ->and($ledger->connections['company-uuid'])->not->toHaveKey('customer_import_start');
+    } finally {
+        qbEnsureCustomerTable();
+    }
+});
+
+test('imported customers match stored email case and digits-only phone', function () {
+    qbEnsureCustomerTable();
+    DB::connection('sqlite')->table('contacts')->insert([
+        [
+            'uuid'         => 'local-email',
+            'company_uuid' => 'company-uuid',
+            'type'         => 'customer',
+            'name'         => 'Kept',
+            'email'        => 'Ada@Example.test',
+            'phone'        => '111',
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ],
+        [
+            'uuid'         => 'local-phone',
+            'company_uuid' => 'company-uuid',
+            'type'         => 'customer',
+            'name'         => 'Kept',
+            'email'        => null,
+            'phone'        => '(555) 010-0',
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ],
+    ]);
+
+    $client                = new FakeQuickBooks();
+    $client->customerPages = [1 => [
+        remoteCustomer('1', 'Other', 'ada@example.test', '000'),
+        remoteCustomer('2', 'Other', 'nope@example.test', '5550100'),
+    ]];
+    $ledger = importLedger();
+    $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true);
+
+    expect($batch['created'])->toBe(0)
+        ->and($batch['linked'])->toBe(2)
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-email')['qbo_id'])->toBe('1')
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-phone')['qbo_id'])->toBe('2');
+});
+
+test('customer matching compares normalized email and phone in php', function () {
+    qbEnsureCustomerTable();
+    $now  = now();
+    $rows = [
+        [
+            'uuid'         => 'local-trim',
+            'company_uuid' => 'company-uuid',
+            'type'         => 'customer',
+            'name'         => 'Kept',
+            'email'        => '  Ada@Example.test ',
+            'phone'        => '111',
+            'deleted_at'   => null,
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ],
+        [
+            'uuid'         => 'other-company',
+            'company_uuid' => 'other-company',
+            'type'         => 'customer',
+            'name'         => 'Kept',
+            'email'        => 'bea@example.test',
+            'phone'        => '222',
+            'deleted_at'   => null,
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ],
+        [
+            'uuid'         => 'vendor-row',
+            'company_uuid' => 'company-uuid',
+            'type'         => 'vendor',
+            'name'         => 'Kept',
+            'email'        => 'bea@example.test',
+            'phone'        => '222',
+            'deleted_at'   => null,
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ],
+        [
+            'uuid'         => 'deleted-row',
+            'company_uuid' => 'company-uuid',
+            'type'         => 'customer',
+            'name'         => 'Kept',
+            'email'        => 'bea@example.test',
+            'phone'        => '222',
+            'deleted_at'   => $now,
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ],
+    ];
+    foreach ($rows as $row) {
+        DB::connection('sqlite')->table('contacts')->insert($row);
+    }
+    $sql    = [];
+    $listen = DB::connection('sqlite');
+    $listen->listen(function ($query) use (&$sql): void {
+        $sql[] = $query->sql;
+    });
+
+    $client                = new FakeQuickBooks();
+    $client->customerPages = [1 => [
+        remoteCustomer('1', 'Other', 'ada@example.test', '000'),
+        remoteCustomer('2', 'Other', 'bea@example.test', '222'),
+    ]];
+    $ledger = importLedger();
+    $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true);
+    $joined = strtolower(implode("\n", $sql));
+
+    expect($batch['linked'])->toBe(1)
+        ->and($batch['created'])->toBe(1)
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-trim')['qbo_id'])->toBe('1')
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'other-company'))->toBeNull()
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'vendor-row'))->toBeNull()
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'deleted-row'))->toBeNull()
+        ->and($joined)->not->toContain('lower(')
+        ->and($joined)->not->toContain('regexp');
+});
+
+test('customer import releases the company lock for token refresh and quickbooks pages', function () {
+    $client = new class extends FakeQuickBooks {
+        public ?bool $heldDuringQuery = null;
+
+        public function queryCustomers(array $connection, int $start, int $max): array
+        {
+            $this->heldDuringQuery = BatchRunner::holds((string) ($connection['company_uuid'] ?? ''));
+
+            return parent::queryCustomers($connection, $start, $max);
+        }
+    };
+    $client->customerPages = [1 => [remoteCustomer('1', 'Ada', 'ada@example.test', null)]];
+    $tokens                = new class extends ConnectionTokens {
+        public ?bool $heldDuringRefresh = null;
+
+        public function __construct()
+        {
+        }
+
+        public function refreshIfDue(array $connection, int $now): array
+        {
+            $this->heldDuringRefresh = BatchRunner::holds((string) ($connection['company_uuid'] ?? ''));
+
+            return $connection;
+        }
+    };
+    withImportDispatcher(function ($dispatcher) use ($client, $tokens): void {
+        $directory = new class extends FleetbaseDirectory {
+            public ?bool $heldDuringSave = null;
+
+            public function save(SyncLedger $ledger): void
+            {
+                $this->heldDuringSave = BatchRunner::holds('company-uuid');
+                parent::save($ledger);
+            }
+        };
+        $directory->memory = importLedger();
+        (new ImportCustomers('company-uuid'))->handle(new CustomerImporter($client), $directory, $tokens);
+
+        expect($tokens->heldDuringRefresh)->toBeFalse()
+            ->and($client->heldDuringQuery)->toBeFalse()
+            ->and($directory->heldDuringSave)->toBeTrue()
+            ->and(BatchRunner::holds('company-uuid'))->toBeFalse()
+            ->and($client->calls)->toBe(['queryCustomers:1'])
+            ->and($dispatcher->jobs)->toBe([]);
+    });
+});
+
+test('a second remote customer is not linked unless its quickbooks id is stored', function () {
+    $client                = new FakeQuickBooks();
+    $client->customerPages = [1 => [
+        remoteCustomer('1', 'Ada', 'ada@example.test', null),
+        remoteCustomer('2', 'Ada Again', 'ada@example.test', null),
+    ]];
+    $ledger = importLedger();
+    $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true);
+
+    $ids = array_map(static fn (array $link): string => (string) $link['qbo_id'], $ledger->links);
+
+    expect($batch['created'])->toBe(2)
+        ->and($batch['linked'])->toBe(0)
+        ->and($ids)->toEqualCanonicalizing(['1', '2']);
 });
 
 test('customer import is refused when quickbooks is not connected', function () {
@@ -472,6 +707,40 @@ function remoteCustomer(string $id, string $name, ?string $email, ?string $phone
         'PrimaryEmailAddr' => $email ? ['Address' => $email] : null,
         'PrimaryPhone'     => $phone ? ['FreeFormNumber' => $phone] : null,
     ], $extra);
+}
+
+if (!function_exists('qbEnsureCustomerTable')) {
+    function qbEnsureCustomerTable(): void
+    {
+        $config = config();
+        if (is_object($config) && method_exists($config, 'set')) {
+            $config->set('fleetbase.connection.db', 'sqlite');
+        }
+        $database = app('db');
+        if (!is_object($database) || !method_exists($database, 'connection')) {
+            return;
+        }
+        $schema = $database->connection('sqlite')->getSchemaBuilder();
+        if ($schema->hasTable('contacts')) {
+            return;
+        }
+        $schema->create('contacts', function ($table): void {
+            $table->increments('id');
+            $table->string('uuid')->nullable();
+            $table->string('public_id')->nullable();
+            $table->string('internal_id')->nullable();
+            $table->string('company_uuid')->nullable();
+            $table->string('name')->nullable();
+            $table->string('email')->nullable();
+            $table->string('phone')->nullable();
+            $table->string('type')->nullable();
+            $table->text('notes')->nullable();
+            $table->text('meta')->nullable();
+            $table->string('slug')->nullable();
+            $table->softDeletes();
+            $table->timestamps();
+        });
+    }
 }
 
 function withImportDispatcher(callable $callback): void

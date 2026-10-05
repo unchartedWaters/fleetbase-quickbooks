@@ -50,7 +50,7 @@ test('the sync interval sends any due rows and 20 due rows may start early', fun
     expect($full['due'])->toBeTrue()
         ->and($full['batch']['status'])->toBe('finished')
         ->and($full['batch']['trigger'])->toBe('scheduled')
-        ->and($full['client']->heldLock)->toBeTrue()
+        ->and($full['client']->heldLock)->toBeFalse()
         ->and($full['client']->calls)->not->toBe([]);
 
     $empty = scheduleTriggerRun($now - 400, 0);
@@ -65,7 +65,7 @@ test('sync now and reconcile still run before the interval elapses', function ()
     expect($sync['due'])->toBeFalse()
         ->and($sync['batch']['status'])->toBe('finished')
         ->and($sync['client']->calls)->toContain('createCustomer')
-        ->and($sync['client']->heldLock)->toBeTrue();
+        ->and($sync['client']->heldLock)->toBeFalse();
 
     $reconcile = scheduleTriggerRun($now, 0, 'manual');
     expect($reconcile['batch']['status'])->toBe('finished')

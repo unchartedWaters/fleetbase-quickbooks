@@ -4,9 +4,11 @@ namespace Fleetbase\Quickbooks\Console\Commands;
 
 use Fleetbase\Quickbooks\Jobs\SyncCompanyBatch;
 use Fleetbase\Quickbooks\Models\Connection;
+use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Services\BatchRunner;
 use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Illuminate\Console\Command;
+use Illuminate\Support\Carbon;
 
 class SyncQuickbooks extends Command
 {
@@ -20,11 +22,8 @@ class SyncQuickbooks extends Command
         $now       = time();
         $companies = $this->connectedCompanies();
         // Connection is the gate. A stored sync.enabled flag is not read.
-        // Stop before due-record checks and before any organization is queued.
+        // Saved credentials are not read. Stop before any log, defer, or queue.
         if ($companies === []) {
-            SyncSchedule::defer($now, 300);
-            $this->info('Queued QuickBooks sync for 0 organizations.');
-
             return self::SUCCESS;
         }
 
@@ -59,11 +58,76 @@ class SyncQuickbooks extends Command
      */
     protected function connectedCompanies(): array
     {
-        $ids       = [];
-        $companies = Connection::query()
+        $connected = [];
+        $rows      = Connection::query()
             ->where('needs_reauth', false)
             ->whereNotNull('realm_id')
             ->where('realm_id', '!=', '')
+            ->get(['company_uuid', 'realm_id']);
+        foreach ($rows as $row) {
+            $companyUuid = trim((string) $row->company_uuid);
+            $realm       = trim((string) $row->realm_id);
+            if ($companyUuid === '' || $realm === '') {
+                continue;
+            }
+            $connected[] = $companyUuid;
+        }
+
+        $due = count($connected) === 1 ? $this->dueCompanies() : [];
+
+        return self::companiesToSchedule($connected, $due);
+    }
+
+    /**
+     * One shared connection schedules every organization with due pending rows
+     * for that realm. Several connections schedule only the organization on each row.
+     *
+     * @param array<int, string> $connected
+     * @param array<int, string> $dueCompanies
+     *
+     * @return array<int, string>
+     */
+    public static function companiesToSchedule(array $connected, array $dueCompanies): array
+    {
+        $owners = [];
+        foreach ($connected as $companyUuid) {
+            $companyUuid = trim((string) $companyUuid);
+            if ($companyUuid !== '') {
+                $owners[$companyUuid] = true;
+            }
+        }
+        if ($owners === []) {
+            return [];
+        }
+        if (count($owners) !== 1) {
+            return array_keys($owners);
+        }
+
+        foreach ($dueCompanies as $companyUuid) {
+            $companyUuid = trim((string) $companyUuid);
+            if ($companyUuid !== '') {
+                $owners[$companyUuid] = true;
+            }
+        }
+
+        return array_keys($owners);
+    }
+
+    /**
+     * Organizations with a pending row that is due now.
+     *
+     * @return array<int, string>
+     */
+    private function dueCompanies(): array
+    {
+        $ids       = [];
+        $now       = Carbon::now();
+        $companies = PendingSync::query()
+            ->where('status', 'pending')
+            ->where(function ($query) use ($now): void {
+                $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', $now);
+            })
+            ->distinct()
             ->pluck('company_uuid');
         foreach ($companies as $companyUuid) {
             $companyUuid = trim((string) $companyUuid);

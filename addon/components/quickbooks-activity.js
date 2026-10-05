@@ -94,7 +94,9 @@ export default class QuickbooksActivityComponent extends Component {
             return error || null;
         }
 
-        return error.split('Connection Config').join(this.intl.t('quickbooks.connection.title'));
+        const page = 'Quickbooks Setup';
+
+        return error.split('Connection Config').join(this.intl.t('quickbooks.connection.title')).split('from Connection').join(`from ${page}`).split('on Connection').join(`on ${page}`);
     }
 
     get meta() {

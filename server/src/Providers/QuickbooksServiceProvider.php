@@ -13,6 +13,7 @@ use Fleetbase\Quickbooks\Observers\FlagInvoiceItemObserver;
 use Fleetbase\Quickbooks\Observers\FlagInvoiceObserver;
 use Fleetbase\Quickbooks\Observers\FlagWalletObserver;
 use Fleetbase\Quickbooks\Support\Authorizer;
+use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Fleetbase\Support\NotificationRegistry;
 use Illuminate\Support\Facades\Event;
@@ -59,13 +60,14 @@ class QuickbooksServiceProvider extends CoreServiceProvider
         $this->registerCommands();
         $this->scheduleCommands(function ($schedule) {
             // everyMinute stays so a 1-minute frequency can still run.
-            // when() is what keeps an idle minute from starting the command.
+            // when() skips the command entirely unless a connection is active,
+            // so schedule:run does not log a sync that has nothing to do.
             $schedule
                 ->command('quickbooks:sync')
                 ->everyMinute()
                 ->withoutOverlapping()
                 ->name('quickbooks-sync')
-                ->when(static fn (): bool => SyncSchedule::shouldStart(time()));
+                ->when(static fn (): bool => SyncSchedule::shouldRun(time(), ConnectionGate::hasActiveConnection()));
         });
         $this->registerObservers();
         $this->loadRoutesFrom(__DIR__ . '/../routes.php');

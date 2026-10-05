@@ -13,6 +13,15 @@ class SyncSchedule
     private const NOT_BEFORE = 'quickbooks.schedule.not_before';
 
     /**
+     * True when QuickBooks is connected and no future hold is stored.
+     * A saved client id without a connection does not start a sync.
+     */
+    public static function shouldRun(int $now, bool $connected): bool
+    {
+        return $connected && self::shouldStart($now);
+    }
+
+    /**
      * True when no future hold is stored. A missing cache store fails open.
      */
     public static function shouldStart(int $now): bool
@@ -27,7 +36,12 @@ class SyncSchedule
             return true;
         }
 
-        return !is_int($until) || $until <= $now;
+        // Redis hands this value back as a numeric string. That is still a hold.
+        if (!is_int($until) && !(is_string($until) && ctype_digit($until))) {
+            return true;
+        }
+
+        return (int) $until <= $now;
     }
 
     /**

@@ -4,9 +4,9 @@ namespace Fleetbase\Quickbooks\Support;
 
 /**
  * Resolves Intuit app credentials without reading the session.
- * Organization values are the only source for client id, client secret,
- * redirect URI, and webhook verifier. A blank organization field stays blank.
- * A stored system row is unused. Environment may fall back to the env value.
+ * The install-wide system row is the only source for client id, client secret,
+ * redirect URI, and webhook verifier. A blank system field stays blank.
+ * An organization row is unused. Environment may fall back to the env value.
  *
  * @phpstan-type ResolvedAuth array{client_id: string, client_secret: string, redirect_uri: string, environment: string, webhook_verifier: string, sources: array<string, string>}
  */
@@ -21,12 +21,12 @@ class CredentialResolver
      */
     public function resolve(array $company, array $admin, array $env): array
     {
-        unset($admin);
-        $clientId    = $this->companyValue($company, 'client_id');
-        $secret      = $this->companyValue($company, 'client_secret');
-        $redirectUri = $this->companyValue($company, 'redirect_uri');
-        $environment = $this->pick($company, $env, 'environment');
-        $verifier    = $this->companyValue($company, 'webhook_verifier');
+        unset($company);
+        $clientId    = $this->storedValue($admin, 'client_id');
+        $secret      = $this->storedValue($admin, 'client_secret');
+        $redirectUri = $this->storedValue($admin, 'redirect_uri');
+        $environment = $this->pick($admin, $env, 'environment');
+        $verifier    = $this->storedValue($admin, 'webhook_verifier');
 
         return [
             'client_id'        => $clientId['value'],
@@ -69,31 +69,31 @@ class CredentialResolver
     }
 
     /**
-     * Organization value only. A blank field stays blank and does not read env.
+     * System value only. A blank field stays blank and does not read env.
      *
-     * @param array<string, mixed> $company
+     * @param array<string, mixed> $admin
      *
      * @return array{value: string, source: string}
      */
-    private function companyValue(array $company, string $field): array
+    private function storedValue(array $admin, string $field): array
     {
-        $value = $company[$field] ?? null;
+        $value = $admin[$field] ?? null;
         if (is_string($value) && $value !== '') {
-            return ['value' => $value, 'source' => 'company'];
+            return ['value' => $value, 'source' => 'admin'];
         }
 
         return ['value' => '', 'source' => 'none'];
     }
 
     /**
-     * @param array<string, mixed> $company
+     * @param array<string, mixed> $admin
      * @param array<string, mixed> $env
      *
      * @return array{value: string, source: string}
      */
-    private function pick(array $company, array $env, string $field): array
+    private function pick(array $admin, array $env, string $field): array
     {
-        foreach (['company' => $company, 'env' => $env] as $source => $bag) {
+        foreach (['admin' => $admin, 'env' => $env] as $source => $bag) {
             $value = $bag[$field] ?? null;
             if (is_string($value) && $value !== '') {
                 return ['value' => $value, 'source' => $source];

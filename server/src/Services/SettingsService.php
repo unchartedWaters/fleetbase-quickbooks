@@ -32,13 +32,14 @@ class SettingsService
     }
 
     /**
-     * The app credentials a company connects and refreshes tokens with.
+     * The app credentials the install connects and refreshes tokens with.
      *
      * @return array{client_id: string, client_secret: string, redirect_uri: string, environment: string}
      */
     public function credentialsFor(SettingsStore $store, string $companyUuid): array
     {
-        $resolved = $this->resolveAuth($store->companyAuth($companyUuid), [], $store->envAuth());
+        unset($companyUuid);
+        $resolved = $this->resolveAuth([], $store->adminAuth(), $store->envAuth());
 
         return [
             'client_id'     => (string) $resolved['client_id'],
@@ -71,8 +72,8 @@ class SettingsService
         $secret = $incoming['client_secret'] ?? '';
         if (!is_string($secret) || $secret === '') {
             $kept = $existing['client_secret'] ?? '';
-            // A blank form field keeps the stored secret. A legacy blob is upgraded in place.
-            $incoming['client_secret'] = is_string($kept) ? $this->cipher->upgrade($kept) : $kept;
+            // A blank form field keeps the stored secret. Plaintext and legacy AES are re-encrypted.
+            $incoming['client_secret'] = is_string($kept) ? $this->cipher->seal($kept) : $kept;
         } else {
             $incoming['client_secret'] = $this->cipher->encrypt($secret);
         }
@@ -81,20 +82,21 @@ class SettingsService
     }
 
     /**
-     * Verifiers that belong to this connection.
+     * The install-wide webhook verifier.
      *
-     * The only accepted verifier is this organization's own webhook_verifier.
-     * When that organization has none configured, the list is empty and the
-     * signature check fails. A stored system or admin row, another
-     * organization's verifier, config('quickbooks.webhook_verifier'), and
-     * QUICKBOOKS_WEBHOOK_VERIFIER are not substitutes. Only webhook_verifier
-     * is decrypted, never client_secret, and no other company's auth row is read.
+     * The only accepted verifier is the system webhook_verifier. When that
+     * row has none, the list is empty and the signature check fails. An
+     * organization verifier, another organization's secret,
+     * config('quickbooks.webhook_verifier'), and QUICKBOOKS_WEBHOOK_VERIFIER
+     * are not substitutes. Only webhook_verifier is decrypted, never
+     * client_secret, and no organization auth row is read.
      *
      * @return array<int, string>
      */
     public function webhookVerifiersFor(SettingsStore $store, string $companyUuid): array
     {
-        $own = $this->plainWebhookVerifier($store->companyAuth($companyUuid));
+        unset($companyUuid);
+        $own = $this->plainWebhookVerifier($store->adminAuth());
         if ($own === null) {
             return [];
         }
@@ -124,14 +126,14 @@ class SettingsService
             return $incoming;
         }
 
-        // A blank form field keeps the stored verifier. A legacy blob is upgraded in place.
-        $incoming['webhook_verifier'] = $this->cipher->upgrade($kept);
+        // A blank form field keeps the stored verifier. Plaintext and legacy AES are re-encrypted.
+        $incoming['webhook_verifier'] = $this->cipher->seal($kept);
 
         return $incoming;
     }
 
     /**
-     * Organization sync settings, then config defaults. The system row is unused.
+     * Install-wide sync settings, then config defaults. An organization row is unused.
      *
      * @param array<string, mixed> $company
      * @param array<string, mixed> $admin
@@ -146,7 +148,7 @@ class SettingsService
 
     /**
      * Decrypts webhook_verifier only. client_secret is left untouched.
-     * A plaintext env or test value is left as-is.
+     * A value that does not open is missing, not the stored string.
      *
      * @param array<string, mixed> $stored
      */
@@ -156,16 +158,8 @@ class SettingsService
         if (!is_string($secret) || $secret === '') {
             return null;
         }
-        try {
-            $secret = $this->cipher->decrypt($secret);
-        } catch (\RuntimeException $exception) {
-            // A plaintext env or test value is left as-is.
-        }
-        if ($secret === '') {
-            return null;
-        }
 
-        return $secret;
+        return $this->openSecret($secret);
     }
 
     /**
@@ -180,13 +174,28 @@ class SettingsService
             if (!is_string($secret) || $secret === '') {
                 continue;
             }
-            try {
-                $stored[$field] = $this->cipher->decrypt($secret);
-            } catch (\RuntimeException $exception) {
-                // A plaintext env or test value is left as-is.
+            $opened = $this->openSecret($secret);
+            if ($opened === null) {
+                unset($stored[$field]);
+                continue;
             }
+            $stored[$field] = $opened;
         }
 
         return $stored;
+    }
+
+    /**
+     * Crypt payloads and legacy AES blobs open. Anything else, including a decrypt
+     * that fails, is missing so the stored text is not used as the secret.
+     */
+    private function openSecret(string $secret): ?string
+    {
+        $opened = $this->cipher->reveal($secret);
+        if (!is_string($opened) || $opened === '') {
+            return null;
+        }
+
+        return $opened;
     }
 }

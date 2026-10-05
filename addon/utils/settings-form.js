@@ -48,13 +48,13 @@ export function normalizeSyncDirection(stored) {
 }
 
 const CHOICES = {
-    customer_conflict: ['fleetbase', 'quickbooks', 'report'],
+    customer_conflict: ['fleetbase', 'quickbooks'],
     customer_reference: ['fleetbase', 'quickbooks'],
-    invoice_conflict: ['fleetbase', 'quickbooks', 'report'],
+    invoice_conflict: ['fleetbase', 'quickbooks'],
     invoice_reference: ['fleetbase', 'quickbooks'],
-    payment_conflict: ['fleetbase', 'quickbooks', 'report'],
+    payment_conflict: ['fleetbase', 'quickbooks'],
     payment_reference: ['fleetbase', 'quickbooks'],
-    wallet_conflict: ['fleetbase', 'quickbooks', 'report'],
+    wallet_conflict: ['fleetbase', 'quickbooks'],
     wallet_reference: ['fleetbase', 'quickbooks'],
 };
 
