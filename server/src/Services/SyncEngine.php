@@ -971,7 +971,9 @@ class SyncEngine
                 ? ($this->invoiceById[$remoteId] ?? null)
                 : $this->client->getInvoice($connection, $remoteId);
         }
-        if ($remote === null && $link !== null) {
+        // Fleetbase keeps its number and does not replace an invoice QuickBooks deleted.
+        // A QuickBooks number source creates the invoice again and takes the next free number.
+        if ($remote === null && $link !== null && $reference !== 'quickbooks') {
             return 'aligned';
         }
         if ($remote === null) {
@@ -3340,7 +3342,12 @@ class SyncEngine
             return true;
         }
 
-        return false;
+        $remoteId = (string) ($link['qbo_id'] ?? '');
+        if ($remoteId === '' || $this->invoiceById === null || isset($this->invoiceById[$remoteId]) || isset($this->invoiceReadFailed[$remoteId])) {
+            return false;
+        }
+
+        return true;
     }
 
     private function prefetchInvoices(array $connection, SyncLedger $ledger, array $rows): void
