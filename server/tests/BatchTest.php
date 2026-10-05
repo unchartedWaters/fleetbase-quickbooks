@@ -388,7 +388,7 @@ test('with custom transaction numbers off, a quickbooks primary sends no number 
         ->and($client->invoices['inv-1']['DocNumber'])->toBe('INV-010');
 });
 
-test('re-creating a missing invoice with a quickbooks primary also queries the next number', function () {
+test('a missing linked invoice with a quickbooks primary is not created again', function () {
     [$engine, $client]                 = qbEngine();
     $client->customTxnNumbers          = true;
     $ledger                            = batchLedger();
@@ -400,10 +400,14 @@ test('re-creating a missing invoice with a quickbooks primary also queries the n
     $ledger->invoices['inv-1']         = invoiceFixture('inv-1', 1000, 'sent', 'LOCAL-9');
     $ledger->pending[]                 = pendingRow('invoice', 'inv-1');
 
-    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_reference' => 'quickbooks']), time());
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_reference' => 'quickbooks']), time());
 
-    expect($client->calls)->toContain('nextInvoiceDocNumber')
-        ->and($ledger->invoices['inv-1']['number'])->toBe('INV-010');
+    expect($batch['created'])->toBe(0)
+        ->and($batch['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('nextInvoiceDocNumber')
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and($ledger->invoices['inv-1']['number'])->toBe('LOCAL-9')
+        ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-1')['qbo_id'])->toBe('gone');
 });
 
 test('a fleetbase identifier source sends the fleetbase invoice number', function () {

@@ -494,7 +494,11 @@ test('inbound invoice lines are replaced with one delete and one insert', functi
         $loaded                                               = $directory->load('company-uuid');
         $ledger                                               = $loaded['ledger'];
         $ledger->invoices['inv-9']['replace_from_quickbooks'] = true;
+        $ledger->invoices['inv-9']['payment_from_quickbooks'] = true;
         $ledger->invoices['inv-9']['items_from_quickbooks']   = true;
+        $ledger->invoices['inv-9']['total']                   = -100;
+        $ledger->invoices['inv-9']['tax']                     = -25;
+        $ledger->invoices['inv-9']['amount_paid']             = -40;
         $ledger->invoices['inv-9']['items']                   = [
             ['description' => 'New', 'quantity' => 3, 'unit_price' => -50, 'amount' => -150],
             ['description' => 'Newer', 'quantity' => 1, 'unit_price' => 25, 'amount' => 25],
@@ -504,20 +508,181 @@ test('inbound invoice lines are replaced with one delete and one insert', functi
         $connection->enableQueryLog();
 
         $directory->save($ledger);
+        $queries = array_column($connection->getQueryLog(), 'query');
         $itemSql = array_values(array_filter(
-            array_column($connection->getQueryLog(), 'query'),
+            $queries,
             static fn (string $sql): bool => str_contains($sql, 'ledger_invoice_items')
         ));
         $stored = DB::table('ledger_invoice_items')->where('invoice_uuid', 'inv-9')->whereNull('deleted_at')->orderBy('description')->get();
 
         $deletes = array_values(array_filter($itemSql, static fn (string $sql): bool => str_contains(strtolower($sql), 'deleted_at') && str_starts_with(strtolower(ltrim($sql)), 'update')));
         $inserts = array_values(array_filter($itemSql, static fn (string $sql): bool => str_contains(strtolower($sql), 'insert')));
+        $eager   = array_values(array_filter(
+            $queries,
+            static fn (string $sql): bool => str_contains($sql, 'templates')
+                || str_contains($sql, 'tracking_numbers')
+                || str_contains($sql, '"orders"')
+                || (str_contains($sql, 'ledger_invoice_items') && str_starts_with(strtolower(ltrim($sql)), 'select'))
+                || (str_contains($sql, 'contacts') && !str_contains($sql, 'select "uuid"'))
+        ));
+        $invoice = DB::table('ledger_invoices')->where('uuid', 'inv-9')->first();
+
         expect($deletes)->toHaveCount(1)
             ->and($inserts)->toHaveCount(1)
+            ->and($eager)->toBe([])
             ->and($stored)->toHaveCount(2)
             ->and((int) $stored[0]->unit_price)->toBe(-50)
             ->and((int) $stored[0]->amount)->toBe(-150)
+            ->and((int) $invoice->tax)->toBe(-25)
+            ->and((int) $invoice->total_amount)->toBe(-100)
+            ->and((int) $invoice->subtotal)->toBe(-75)
+            ->and((int) $invoice->balance)->toBe(-60)
+            ->and((int) $invoice->amount_paid)->toBe(-40)
             ->and(DB::table('ledger_invoice_items')->where('uuid', 'line-old-1')->whereNotNull('deleted_at')->exists())->toBeTrue();
+    } finally {
+        $restore();
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
+test('stale invoice payment links for a chunk are deleted in one statement', function () {
+    [$restore] = directorySqlite();
+    try {
+        directoryWebhookSchema(DB::connection('sqlite')->getSchemaBuilder());
+        directoryWebhookRows();
+        $now = now();
+        DB::table('quickbooks_links')->insert([
+            [
+                'uuid'       => 'link-pay-4', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'payment',
+                'local_uuid' => '4', 'qbo_entity' => 'Payment', 'qbo_id' => '4', 'sync_token' => '1', 'created_at' => $now, 'updated_at' => $now,
+            ],
+            [
+                'uuid'       => 'link-pay-9-id', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'payment',
+                'local_uuid' => '9', 'qbo_entity' => 'Payment', 'qbo_id' => '9', 'sync_token' => '1', 'created_at' => $now, 'updated_at' => $now,
+            ],
+            [
+                'uuid'       => 'link-pay-9-invoice', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'payment',
+                'local_uuid' => 'inv-other', 'qbo_entity' => 'Payment', 'qbo_id' => '9', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now,
+            ],
+        ]);
+        $directory     = new FleetbaseDirectory();
+        $loaded        = $directory->load('company-uuid');
+        $ledger        = $loaded['ledger'];
+        $ledger->links = array_values(array_filter(
+            $ledger->links,
+            static fn (array $link): bool => !((string) ($link['local_type'] ?? '') === 'payment' && in_array((string) ($link['local_uuid'] ?? ''), ['inv-9', 'inv-other'], true))
+        ));
+        $connection = DB::connection('sqlite');
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+
+        $directory->save($ledger);
+        $deletes = array_values(array_filter(
+            array_column($connection->getQueryLog(), 'query'),
+            static fn (string $sql): bool => str_contains($sql, 'quickbooks_links') && str_starts_with(strtolower(ltrim($sql)), 'delete')
+        ));
+
+        expect($deletes)->toHaveCount(1)
+            ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', 'inv-9')->exists())->toBeFalse()
+            ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', 'inv-other')->exists())->toBeFalse()
+            ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', '4')->exists())->toBeTrue()
+            ->and(Link::query()->where('local_type', 'payment')->where('local_uuid', '9')->exists())->toBeTrue();
+    } finally {
+        $restore();
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
+test('a payment link stored under the quickbooks id unmarks the paid invoice', function () {
+    $ledger                       = new SyncLedger();
+    $ledger->invoices['inv-paid'] = [
+        'uuid' => 'inv-paid', 'company_uuid' => 'company-a', 'status' => 'paid', 'amount_paid' => 2500, 'total' => 2500,
+    ];
+    $ledger->invoices['inv-open'] = [
+        'uuid' => 'inv-open', 'company_uuid' => 'company-a', 'status' => 'paid', 'amount_paid' => 100, 'total' => 100,
+    ];
+    $ledger->links = [
+        ['company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'payment', 'local_uuid' => '4', 'qbo_entity' => 'Payment', 'qbo_id' => '4'],
+        ['company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'payment-invoice', 'local_uuid' => '4', 'qbo_entity' => 'PaymentInvoice', 'qbo_id' => 'inv-paid'],
+        ['company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-open', 'qbo_entity' => 'Invoice', 'qbo_id' => '8'],
+    ];
+    $ledger->pending = [
+        ['company_uuid' => 'company-a', 'local_type' => 'invoice', 'local_uuid' => 'inv-paid', 'status' => 'pending'],
+        ['company_uuid' => 'company-a', 'local_type' => 'invoice', 'local_uuid' => 'inv-open', 'status' => 'pending'],
+    ];
+    $directory         = new FleetbaseDirectory();
+    $directory->memory = $ledger;
+
+    $directory->releaseRemoteDelete('company-a', 'realm-1', 'payment', '4', '4');
+
+    expect($ledger->invoices['inv-paid']['status'])->toBe('sent')
+        ->and($ledger->invoices['inv-paid']['amount_paid'])->toBe(2500)
+        ->and($ledger->invoices['inv-open']['status'])->toBe('paid')
+        ->and($ledger->invoices['inv-open']['amount_paid'])->toBe(100)
+        ->and($ledger->pending[0]['status'])->toBe('done')
+        ->and($ledger->pending[1]['status'])->toBe('pending')
+        ->and($ledger->link('company-a', 'realm-1', 'payment', '4'))->toBeNull()
+        ->and($ledger->link('company-a', 'realm-1', 'invoice', 'inv-open')['qbo_id'])->toBe('8');
+});
+
+test('a delete batch uses one link select and bulk status, link, and pending writes', function () {
+    [$restore] = directorySqlite();
+    try {
+        directoryWebhookSchema(DB::connection('sqlite')->getSchemaBuilder());
+        $now = now();
+        DB::table('ledger_invoices')->insert([
+            ['uuid' => 'inv-void-me', 'company_uuid' => 'company-uuid', 'status' => 'sent', 'total_amount' => 1000, 'amount_paid' => 0, 'tax' => 0, 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'inv-paid', 'company_uuid' => 'company-uuid', 'status' => 'paid', 'total_amount' => 2500, 'amount_paid' => 2500, 'tax' => 0, 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'inv-same-id', 'company_uuid' => 'company-uuid', 'status' => 'paid', 'total_amount' => 800, 'amount_paid' => 800, 'tax' => 0, 'created_at' => $now, 'updated_at' => $now],
+        ]);
+        DB::table('quickbooks_links')->insert([
+            ['uuid' => 'link-inv', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-void-me', 'qbo_entity' => 'Invoice', 'qbo_id' => '8', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'link-same', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-same-id', 'qbo_entity' => 'Invoice', 'qbo_id' => '4', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'link-pay', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'payment', 'local_uuid' => '4', 'qbo_entity' => 'Payment', 'qbo_id' => '4', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'link-cust', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'customer', 'local_uuid' => 'cust-1', 'qbo_entity' => 'Customer', 'qbo_id' => '4', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+        ]);
+        foreach (['inv-void-me', 'inv-paid', 'inv-same-id', 'cust-1'] as $index => $uuid) {
+            DB::table('quickbooks_pending_syncs')->insert([
+                'uuid'       => 'pend-' . $index, 'company_uuid' => 'company-uuid', 'local_type' => $uuid === 'cust-1' ? 'customer' : 'invoice',
+                'local_uuid' => $uuid, 'status' => 'pending', 'attempts' => 0, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+        }
+        $connection = DB::connection('sqlite');
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+
+        (new FleetbaseDirectory())->releaseRemoteDeletes('company-uuid', [
+            ['realm_id' => 'realm-1', 'local_type' => 'invoice', 'qbo_id' => '8', 'local_uuid' => 'inv-void-me', 'invoice_uuids' => []],
+            ['realm_id' => 'realm-1', 'local_type' => 'payment', 'qbo_id' => '4', 'local_uuid' => '4', 'invoice_uuids' => ['inv-paid']],
+        ]);
+
+        $queries        = array_column($connection->getQueryLog(), 'query');
+        $linkSelects    = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'quickbooks_links') && str_starts_with(strtolower(ltrim($sql)), 'select')));
+        $invoiceUpdates = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'ledger_invoices') && str_starts_with(strtolower(ltrim($sql)), 'update')));
+        $invoiceSelects = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'ledger_invoices') && str_starts_with(strtolower(ltrim($sql)), 'select')));
+        $linkDeletes    = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'quickbooks_links') && str_starts_with(strtolower(ltrim($sql)), 'delete')));
+        $pendingUpdates = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'quickbooks_pending_syncs') && str_starts_with(strtolower(ltrim($sql)), 'update')));
+        $voided         = DB::table('ledger_invoices')->where('uuid', 'inv-void-me')->first();
+        $paid           = DB::table('ledger_invoices')->where('uuid', 'inv-paid')->first();
+        $same           = DB::table('ledger_invoices')->where('uuid', 'inv-same-id')->first();
+
+        expect($linkSelects)->toHaveCount(1)
+            ->and($invoiceUpdates)->toHaveCount(1)
+            ->and($invoiceSelects)->toBe([])
+            ->and($linkDeletes)->toHaveCount(1)
+            ->and($pendingUpdates)->toHaveCount(1)
+            ->and((string) $voided->status)->toBe('void')
+            ->and((int) $voided->amount_paid)->toBe(0)
+            ->and((string) $paid->status)->toBe('sent')
+            ->and((int) $paid->amount_paid)->toBe(2500)
+            ->and((string) $same->status)->toBe('paid')
+            ->and((int) $same->amount_paid)->toBe(800)
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-inv')->exists())->toBeFalse()
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-pay')->exists())->toBeFalse()
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-same')->exists())->toBeTrue()
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-cust')->exists())->toBeTrue()
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-paid')->value('status'))->toBe('done')
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-void-me')->value('status'))->toBe('done')
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-same-id')->value('status'))->toBe('pending')
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'cust-1')->value('status'))->toBe('pending');
     } finally {
         $restore();
     }

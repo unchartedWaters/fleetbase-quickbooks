@@ -50,12 +50,13 @@ class EnqueueWebhookSync
             $payments = $this->paymentInvoices($companyUuid, $payable);
             $records  = [];
             $inbound  = [];
+            $deletes  = [];
             foreach ($events as $event) {
                 // Delete and void both arrive as operation "delete". A pending row would
                 // run the outbound sync and create the remote record again. Retire the
                 // local row here. Do not hand the delete to SyncEngine or to a pending create.
                 if ($event->operation === 'delete') {
-                    $this->releaseRemoteDelete($companyUuid, $event);
+                    $deletes[] = $event;
                     continue;
                 }
                 if (!$this->allows($settings, $event->entityType)) {
@@ -118,6 +119,9 @@ class EnqueueWebhookSync
                     ];
                 }
             }
+            if ($deletes !== []) {
+                $this->retireDeletes($companyUuid, $deletes);
+            }
             $inbound = $this->uniqueInbound($inbound);
             if ($inbound !== []) {
                 ApplyRemoteChange::dispatch($companyUuid, $inbound);
@@ -129,7 +133,12 @@ class EnqueueWebhookSync
         }
     }
 
-    private function releaseRemoteDelete(string $companyUuid, QuickBooksEntityChanged $event): void
+    /**
+     * One link select and bulk status, link, and pending writes for the delivery.
+     *
+     * @param array<int, QuickBooksEntityChanged> $events
+     */
+    private function retireDeletes(string $companyUuid, array $events): void
     {
         try {
             $directory = app(FleetbaseDirectory::class);
@@ -140,13 +149,31 @@ class EnqueueWebhookSync
             return;
         }
 
-        $directory->releaseRemoteDelete(
-            $companyUuid,
-            $event->realmId,
-            $event->entityType,
-            $event->quickbooksId,
-            $event->localUuid
-        );
+        $payments = [];
+        foreach ($events as $event) {
+            if ($event->entityType === 'payment') {
+                $payments[] = $event;
+            }
+        }
+        $resolved  = $payments === [] ? [] : $this->paymentInvoices($companyUuid, $payments, true);
+        $deletions = [];
+        foreach ($events as $event) {
+            $invoiceUuids = [];
+            if ($event->entityType === 'payment') {
+                $target = $resolved[$event->realmId . '|' . $event->quickbooksId] ?? null;
+                if (is_array($target) && $target['invoice'] !== '') {
+                    $invoiceUuids[] = $target['invoice'];
+                }
+            }
+            $deletions[] = [
+                'realm_id'      => $event->realmId,
+                'local_type'    => $event->entityType,
+                'qbo_id'        => $event->quickbooksId,
+                'local_uuid'    => $event->localUuid,
+                'invoice_uuids' => $invoiceUuids,
+            ];
+        }
+        $directory->releaseRemoteDeletes($companyUuid, $deletions);
     }
 
     private function remoteEntity(string $entityType): ?string
@@ -273,11 +300,11 @@ class EnqueueWebhookSync
      *
      * @return array<string, array{invoice: string, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}>
      */
-    private function paymentInvoices(string $companyUuid, array $events): array
+    private function paymentInvoices(string $companyUuid, array $events, bool $allowDelete = false): array
     {
         $idsByRealm = [];
         foreach ($events as $event) {
-            if ($event->entityType !== 'payment' || $event->operation === 'delete') {
+            if ($event->entityType !== 'payment' || (!$allowDelete && $event->operation === 'delete')) {
                 continue;
             }
             $idsByRealm[$event->realmId][] = $event->quickbooksId;

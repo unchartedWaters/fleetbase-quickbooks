@@ -971,9 +971,9 @@ class SyncEngine
                 ? ($this->invoiceById[$remoteId] ?? null)
                 : $this->client->getInvoice($connection, $remoteId);
         }
-        // Fleetbase keeps its number and does not replace an invoice QuickBooks deleted.
-        // A QuickBooks number source creates the invoice again and takes the next free number.
-        if ($remote === null && $link !== null && $reference !== 'quickbooks') {
+        // An empty read means QuickBooks deleted this linked invoice. Do not create a replacement.
+        // A failed read is stored separately and returns failed above, so it is not an empty result.
+        if ($remote === null && $link !== null) {
             return 'aligned';
         }
         if ($remote === null) {
@@ -3331,19 +3331,14 @@ class SyncEngine
             return false;
         }
 
-        $link = $ledger->link($companyUuid, $realm, 'invoice', $uuid);
-        if ($link === null) {
-            $number   = trim((string) ($invoice['number'] ?? ''));
-            $existing = ($number !== '' && $this->invoiceByDoc !== null) ? ($this->invoiceByDoc[$number] ?? null) : null;
-            if (is_array($existing) && $this->invoiceCustomerMatches($existing, (string) ($customerLink['qbo_id'] ?? ''))) {
-                return false;
-            }
-
-            return true;
+        // A linked invoice is not a first create, even when the QuickBooks read is empty.
+        if ($ledger->link($companyUuid, $realm, 'invoice', $uuid) !== null) {
+            return false;
         }
 
-        $remoteId = (string) ($link['qbo_id'] ?? '');
-        if ($remoteId === '' || $this->invoiceById === null || isset($this->invoiceById[$remoteId]) || isset($this->invoiceReadFailed[$remoteId])) {
+        $number   = trim((string) ($invoice['number'] ?? ''));
+        $existing = ($number !== '' && $this->invoiceByDoc !== null) ? ($this->invoiceByDoc[$number] ?? null) : null;
+        if (is_array($existing) && $this->invoiceCustomerMatches($existing, (string) ($customerLink['qbo_id'] ?? ''))) {
             return false;
         }
 
