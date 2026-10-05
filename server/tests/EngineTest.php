@@ -1945,6 +1945,86 @@ test('a voided cancelled deleted or removed invoice is not pushed', function () 
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-deleted'))->toBeNull();
 });
 
+test('a payment stored under its quickbooks id is not replaced when the invoice no longer lists it', function () {
+    $client = new class extends FakeQuickBooks {
+        /** @var array<int, string> */
+        public array $paymentIdQueries = [];
+
+        public function batch(array $connection, array $items): array
+        {
+            foreach ($items as $item) {
+                $query = (string) ($item['query'] ?? '');
+                if (str_contains($query, 'from Payment where Id')) {
+                    $this->paymentIdQueries[] = $query;
+                }
+            }
+
+            return parent::batch($connection, $items);
+        }
+    };
+    [$engine, $client]            = qbEngine($client);
+    $ledger                       = engineLedger();
+    $ledger->customers['cust-1']  = engineCustomer('cust-1');
+    $ledger->links[]              = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']    = engineInvoice('inv-1', ['status' => 'paid', 'amount_paid' => 1000]);
+    $ledger->invoices['inv-open'] = engineInvoice('inv-open', ['number' => 'INV-OPEN', 'status' => 'sent']);
+    $client->invoices['qb-1']     = [
+        'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 10,
+        'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+    ];
+    $client->invoices['qb-open'] = [
+        'Id'      => 'qb-open', 'SyncToken' => '1', 'DocNumber' => 'INV-OPEN', 'TotalAmt' => 10, 'Balance' => 10,
+        'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+    ];
+    $client->payments['pay-kept'] = [
+        'Id'   => 'pay-kept', 'SyncToken' => '1', 'TotalAmt' => '10.00', 'TxnDate' => '2026-09-10',
+        'Line' => [['Amount' => '10.00', 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]]],
+    ];
+    $ledger->links[]   = engineLink('invoice', 'inv-1', 'qb-1');
+    $ledger->links[]   = engineLink('invoice', 'inv-open', 'qb-open');
+    $ledger->links[]   = engineLink('payment', 'pay-kept', 'pay-kept');
+    $ledger->links[]   = [
+        'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'payment-invoice',
+        'local_uuid'   => 'pay-kept', 'qbo_entity' => 'PaymentInvoice', 'qbo_id' => 'inv-1', 'sync_token' => '0',
+    ];
+    $ledger->pending[] = enginePending('invoice', 'inv-1');
+    $ledger->pending[] = enginePending('invoice', 'inv-open');
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    $sawKept = in_array('getPayment:pay-kept', $client->calls, true)
+        || str_contains(implode("\n", $client->paymentIdQueries), 'pay-kept');
+
+    expect($client->calls)->not->toContain('createPayment')
+        ->and($sawKept)->toBeTrue()
+        ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(1000)
+        ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'pay-kept')['qbo_id'])->toBe('pay-kept');
+
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', ['status' => 'paid', 'amount_paid' => 1000]);
+    $client->invoices['qb-1']    = [
+        'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 10,
+        'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+    ];
+    $ledger->links[]   = engineLink('invoice', 'inv-1', 'qb-1');
+    $ledger->links[]   = engineLink('payment', 'pay-gone', 'pay-gone');
+    $ledger->links[]   = [
+        'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'payment-invoice',
+        'local_uuid'   => 'pay-gone', 'qbo_entity' => 'PaymentInvoice', 'qbo_id' => 'inv-1', 'sync_token' => '0',
+    ];
+    $ledger->pending[] = enginePending('invoice', 'inv-1');
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->calls)->not->toContain('createPayment')
+        ->and($ledger->invoices['inv-1']['status'])->toBe('paid')
+        ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(1000)
+        ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'pay-gone')['qbo_id'])->toBe('pay-gone');
+});
+
 test('a linked payment that quickbooks no longer has is not replaced', function () {
     [$engine, $client]           = qbEngine();
     $ledger                      = engineLedger();

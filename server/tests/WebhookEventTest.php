@@ -1135,6 +1135,219 @@ test('a payment read does not unmark an invoice that payment did not pay', funct
     }
 })->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
 
+test('a deleted payment unmarks every invoice it paid and leaves the others', function () {
+    $defaultConnection = config('database.default');
+    $sqliteConnection  = config('database.connections.sqlite');
+    $ledgerConnection  = config('fleetbase.connection.db');
+    config()->set('database.default', 'sqlite');
+    config()->set('database.connections.sqlite', [
+        'driver'                  => 'sqlite',
+        'database'                => ':memory:',
+        'prefix'                  => '',
+        'foreign_key_constraints' => true,
+    ]);
+    config()->set('fleetbase.connection.db', 'sqlite');
+    DB::purge('sqlite');
+    $schema = DB::connection('sqlite')->getSchemaBuilder();
+
+    try {
+        $schema->create('quickbooks_links', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('realm_id');
+            $table->string('local_type');
+            $table->char('local_uuid', 36);
+            $table->string('qbo_entity');
+            $table->string('qbo_id');
+            $table->string('sync_token')->default('0');
+            $table->timestamps();
+        });
+        $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('local_type');
+            $table->char('local_uuid', 36);
+            $table->string('status');
+            $table->unsignedInteger('attempts')->default(0);
+            $table->timestamps();
+        });
+        $schema->create('ledger_invoices', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36)->nullable();
+            $table->integer('total_amount')->default(0);
+            $table->integer('amount_paid')->default(0);
+            $table->integer('tax')->default(0);
+            $table->string('status')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        $now = now();
+        DB::table('ledger_invoices')->insert([
+            ['uuid' => 'inv-paid', 'company_uuid' => 'company-a', 'total_amount' => 2500, 'amount_paid' => 2500, 'tax' => 0, 'status' => 'paid', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'inv-partial', 'company_uuid' => 'company-a', 'total_amount' => 900, 'amount_paid' => 400, 'tax' => 0, 'status' => 'partial', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'inv-other', 'company_uuid' => 'company-a', 'total_amount' => 700, 'amount_paid' => 700, 'tax' => 0, 'status' => 'paid', 'created_at' => $now, 'updated_at' => $now],
+        ]);
+        DB::table('quickbooks_links')->insert([
+            ['uuid' => 'link-pay', 'company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'payment', 'local_uuid' => '4', 'qbo_entity' => 'Payment', 'qbo_id' => '4', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'link-map', 'company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'payment-invoice', 'local_uuid' => '4', 'qbo_entity' => 'PaymentInvoice', 'qbo_id' => 'inv-other', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'link-paid', 'company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-paid', 'qbo_entity' => 'Invoice', 'qbo_id' => '10', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'link-partial', 'company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-partial', 'qbo_entity' => 'Invoice', 'qbo_id' => '12', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'link-other', 'company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-other', 'qbo_entity' => 'Invoice', 'qbo_id' => '11', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+        ]);
+        foreach (['inv-paid', 'inv-partial', 'inv-other'] as $index => $uuid) {
+            DB::table('quickbooks_pending_syncs')->insert([
+                'uuid'   => 'pend-' . $index, 'company_uuid' => 'company-a', 'local_type' => 'invoice', 'local_uuid' => $uuid,
+                'status' => 'pending', 'attempts' => 0, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+        }
+
+        $settings                               = qboChangedSettings();
+        $store                                  = new MemorySettingsStore();
+        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'invoice_direction' => 'both'];
+        $listener                               = new class($settings) extends EnqueueWebhookSync {
+            protected function quickbooksInvoiceIdsForPayments(string $companyUuid, string $realmId, array $paymentIds): array
+            {
+                return ['4' => ['10', '12']];
+            }
+        };
+        $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'delete', '4'));
+
+        qboChangedBus(function ($dispatcher) use ($listener, $store) {
+            $listener->flush($store);
+
+            expect($dispatcher->jobs)->toBe([]);
+        });
+
+        $paid    = DB::table('ledger_invoices')->where('uuid', 'inv-paid')->first();
+        $partial = DB::table('ledger_invoices')->where('uuid', 'inv-partial')->first();
+        $other   = DB::table('ledger_invoices')->where('uuid', 'inv-other')->first();
+
+        expect((string) $paid->status)->toBe('sent')
+            ->and((int) $paid->amount_paid)->toBe(2500)
+            ->and((string) $partial->status)->toBe('sent')
+            ->and((int) $partial->amount_paid)->toBe(400)
+            ->and((string) $other->status)->toBe('paid')
+            ->and((int) $other->amount_paid)->toBe(700)
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-pay')->exists())->toBeFalse()
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-other')->exists())->toBeTrue()
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-paid')->value('status'))->toBe('done')
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-partial')->value('status'))->toBe('done')
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-other')->value('status'))->toBe('pending');
+    } finally {
+        DB::purge('sqlite');
+        config()->set('database.default', $defaultConnection);
+        config()->set('database.connections.sqlite', $sqliteConnection);
+        config()->set('fleetbase.connection.db', $ledgerConnection);
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
+test('a missing payment read unmarks every stored invoice on that payment', function () {
+    $defaultConnection = config('database.default');
+    $sqliteConnection  = config('database.connections.sqlite');
+    $ledgerConnection  = config('fleetbase.connection.db');
+    config()->set('database.default', 'sqlite');
+    config()->set('database.connections.sqlite', [
+        'driver'                  => 'sqlite',
+        'database'                => ':memory:',
+        'prefix'                  => '',
+        'foreign_key_constraints' => true,
+    ]);
+    config()->set('fleetbase.connection.db', 'sqlite');
+    DB::purge('sqlite');
+    $schema = DB::connection('sqlite')->getSchemaBuilder();
+
+    try {
+        $schema->create('quickbooks_links', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('realm_id');
+            $table->string('local_type');
+            $table->char('local_uuid', 36);
+            $table->string('qbo_entity');
+            $table->string('qbo_id');
+            $table->string('sync_token')->default('0');
+            $table->timestamps();
+        });
+        $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('local_type');
+            $table->char('local_uuid', 36);
+            $table->string('status');
+            $table->unsignedInteger('attempts')->default(0);
+            $table->timestamps();
+        });
+        $schema->create('ledger_invoices', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36)->nullable();
+            $table->integer('total_amount')->default(0);
+            $table->integer('amount_paid')->default(0);
+            $table->integer('tax')->default(0);
+            $table->string('status')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        $now = now();
+        DB::table('ledger_invoices')->insert([
+            ['uuid' => 'inv-paid', 'company_uuid' => 'company-a', 'total_amount' => 2500, 'amount_paid' => 2500, 'tax' => 0, 'status' => 'paid', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'inv-partial', 'company_uuid' => 'company-a', 'total_amount' => 900, 'amount_paid' => 400, 'tax' => 0, 'status' => 'partial', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'inv-other', 'company_uuid' => 'company-a', 'total_amount' => 700, 'amount_paid' => 700, 'tax' => 0, 'status' => 'paid', 'created_at' => $now, 'updated_at' => $now],
+        ]);
+        DB::table('quickbooks_links')->insert([
+            ['uuid' => 'link-pay', 'company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'payment', 'local_uuid' => '4', 'qbo_entity' => 'Payment', 'qbo_id' => '4', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'link-map-paid', 'company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'payment-invoice', 'local_uuid' => '4', 'qbo_entity' => 'PaymentInvoice', 'qbo_id' => 'inv-paid', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'link-map-partial', 'company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'payment-invoice', 'local_uuid' => '4', 'qbo_entity' => 'PaymentInvoice', 'qbo_id' => 'inv-partial', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+            ['uuid' => 'link-other', 'company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-other', 'qbo_entity' => 'Invoice', 'qbo_id' => '11', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
+        ]);
+        foreach (['inv-paid', 'inv-partial', 'inv-other'] as $index => $uuid) {
+            DB::table('quickbooks_pending_syncs')->insert([
+                'uuid'   => 'pend-' . $index, 'company_uuid' => 'company-a', 'local_type' => 'invoice', 'local_uuid' => $uuid,
+                'status' => 'pending', 'attempts' => 0, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+        }
+
+        $settings                               = qboChangedSettings();
+        $store                                  = new MemorySettingsStore();
+        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'invoice_direction' => 'both'];
+        $listener                               = new class($settings) extends EnqueueWebhookSync {
+            protected function quickbooksInvoiceIdsForPayments(string $companyUuid, string $realmId, array $paymentIds): array
+            {
+                return ['4' => null];
+            }
+        };
+        $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'delete', '4'));
+
+        qboChangedBus(function ($dispatcher) use ($listener, $store) {
+            $listener->flush($store);
+
+            expect($dispatcher->jobs)->toBe([]);
+        });
+
+        $paid    = DB::table('ledger_invoices')->where('uuid', 'inv-paid')->first();
+        $partial = DB::table('ledger_invoices')->where('uuid', 'inv-partial')->first();
+        $other   = DB::table('ledger_invoices')->where('uuid', 'inv-other')->first();
+
+        expect((string) $paid->status)->toBe('sent')
+            ->and((int) $paid->amount_paid)->toBe(2500)
+            ->and((string) $partial->status)->toBe('sent')
+            ->and((int) $partial->amount_paid)->toBe(400)
+            ->and((string) $other->status)->toBe('paid')
+            ->and((int) $other->amount_paid)->toBe(700)
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-pay')->exists())->toBeFalse()
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-map-paid')->exists())->toBeFalse()
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-map-partial')->exists())->toBeFalse()
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-other')->exists())->toBeTrue()
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-paid')->value('status'))->toBe('done')
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-partial')->value('status'))->toBe('done')
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-other')->value('status'))->toBe('pending');
+    } finally {
+        DB::purge('sqlite');
+        config()->set('database.default', $defaultConnection);
+        config()->set('database.connections.sqlite', $sqliteConnection);
+        config()->set('fleetbase.connection.db', $ledgerConnection);
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
 /**
  * Delete or void when the payment body was not read. The stored invoice is unmarked.
  * A client that names a different invoice must not be applied on these failures.

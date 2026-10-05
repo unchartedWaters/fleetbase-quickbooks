@@ -1028,8 +1028,9 @@ class FleetbaseDirectory
                     $ledger->wallets[$uuid] = $wallet;
                 }
             }
+            $paymentIds = $this->paymentIdsRememberedFor($this->memory->links, $companyUuid, $invoiceIds);
             foreach ($this->memory->links as $link) {
-                if (!is_array($link) || !$this->linkMatchesLocalIds($link, $companyUuid, $customerIds, $invoiceIds, $walletIds)) {
+                if (!is_array($link) || !$this->linkMatchesLocalIds($link, $companyUuid, $customerIds, $invoiceIds, $walletIds, $paymentIds)) {
                     continue;
                 }
                 $this->rememberLoadedLink($ledger, $link);
@@ -1068,8 +1069,9 @@ class FleetbaseDirectory
      * @param array<int, string>   $customerIds
      * @param array<int, string>   $invoiceIds
      * @param array<int, string>   $walletIds
+     * @param array<int, string>   $paymentIds  QuickBooks payment ids remembered for $invoiceIds
      */
-    private function linkMatchesLocalIds(array $link, string $companyUuid, array $customerIds, array $invoiceIds, array $walletIds): bool
+    private function linkMatchesLocalIds(array $link, string $companyUuid, array $customerIds, array $invoiceIds, array $walletIds, array $paymentIds = []): bool
     {
         if ((string) ($link['company_uuid'] ?? '') !== $companyUuid) {
             return false;
@@ -1083,8 +1085,48 @@ class FleetbaseDirectory
         if ($type === 'wallet' && in_array($uuid, $walletIds, true)) {
             return true;
         }
+        if ($type === 'payment-invoice' && in_array(trim((string) ($link['qbo_id'] ?? '')), $invoiceIds, true)) {
+            return true;
+        }
+        if ($type === 'payment' && $paymentIds !== [] && in_array($uuid, $paymentIds, true)) {
+            return true;
+        }
 
         return ($type === 'invoice' || $type === 'payment') && in_array($uuid, $invoiceIds, true);
+    }
+
+    /**
+     * payment-invoice.local_uuid is the QuickBooks payment id and qbo_id is the Fleetbase invoice.
+     *
+     * @param array<int, array<string, mixed>> $links
+     * @param array<int, string>               $invoiceIds
+     *
+     * @return array<int, string>
+     */
+    private function paymentIdsRememberedFor(array $links, string $companyUuid, array $invoiceIds): array
+    {
+        if ($invoiceIds === [] || $links === []) {
+            return [];
+        }
+
+        $wanted = array_fill_keys($invoiceIds, true);
+        $ids    = [];
+        foreach ($links as $link) {
+            if (!is_array($link) || (string) ($link['company_uuid'] ?? '') !== $companyUuid) {
+                continue;
+            }
+            if ((string) ($link['local_type'] ?? '') !== 'payment-invoice') {
+                continue;
+            }
+            $invoiceUuid = trim((string) ($link['qbo_id'] ?? ''));
+            $paymentId   = trim((string) ($link['local_uuid'] ?? ''));
+            if ($paymentId === '' || $invoiceUuid === '' || !isset($wanted[$invoiceUuid])) {
+                continue;
+            }
+            $ids[] = $paymentId;
+        }
+
+        return array_values(array_unique($ids));
     }
 
     /**
@@ -1380,7 +1422,9 @@ class FleetbaseDirectory
             return [];
         }
 
-        $query = $class::query()->where('company_uuid', $companyUuid)->with('items');
+        // The invoice model also eager-loads customer, template, and order.trackingNumber.
+        // This read copies line items only; those three relations stay unloaded.
+        $query = $class::query()->where('company_uuid', $companyUuid)->withOnly('items');
         if ($onlyUuids !== null) {
             $query->withoutGlobalScope(\Illuminate\Database\Eloquent\SoftDeletingScope::class)->whereIn('uuid', $onlyUuids);
         } elseif ($flaggedUuids !== []) {
@@ -1817,7 +1861,7 @@ class FleetbaseDirectory
             return;
         }
 
-        $query = (new Link())->newQuery()->where('company_uuid', $companyUuid)->where(function ($scope) use ($customerIds, $invoiceIds, $walletIds): void {
+        $query = (new Link())->newQuery()->where('company_uuid', $companyUuid)->where(function ($scope) use ($companyUuid, $customerIds, $invoiceIds, $walletIds): void {
             $started = false;
             if ($customerIds !== []) {
                 $scope->where(function ($inner) use ($customerIds): void {
@@ -1834,8 +1878,22 @@ class FleetbaseDirectory
             }
             if ($invoiceIds !== []) {
                 $method = $started ? 'orWhere' : 'where';
-                $scope->{$method}(function ($inner) use ($invoiceIds): void {
-                    $inner->whereIn('local_type', ['invoice', 'payment'])->whereIn('local_uuid', $invoiceIds);
+                $scope->{$method}(function ($inner) use ($invoiceIds, $companyUuid): void {
+                    $inner->where(function ($typed) use ($invoiceIds): void {
+                        $typed->whereIn('local_type', ['invoice', 'payment'])->whereIn('local_uuid', $invoiceIds);
+                    })->orWhere(function ($mapped) use ($invoiceIds): void {
+                        // qbo_id holds the Fleetbase invoice on a payment-invoice row.
+                        $mapped->where('local_type', 'payment-invoice')->whereIn('qbo_id', $invoiceIds);
+                    })->orWhere(function ($payments) use ($invoiceIds, $companyUuid): void {
+                        // The payment link itself is stored under the QuickBooks payment id.
+                        $payments->where('local_type', 'payment')->whereIn('local_uuid', function ($sub) use ($invoiceIds, $companyUuid): void {
+                            $sub->select('local_uuid')
+                                ->from((new Link())->getTable())
+                                ->where('company_uuid', $companyUuid)
+                                ->where('local_type', 'payment-invoice')
+                                ->whereIn('qbo_id', $invoiceIds);
+                        });
+                    });
                 });
             }
         });

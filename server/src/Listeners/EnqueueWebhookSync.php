@@ -75,10 +75,20 @@ class EnqueueWebhookSync
                     if (!is_array($target)) {
                         continue;
                     }
-                    $records['invoice|' . $target['invoice']] = [
-                        'local_type' => 'invoice',
-                        'local_uuid' => $target['invoice'],
-                    ];
+                    $invoiceUuids = is_array($target['invoices'] ?? null) ? $target['invoices'] : [];
+                    if ($invoiceUuids === [] && is_string($target['invoice'] ?? null) && $target['invoice'] !== '') {
+                        $invoiceUuids = [$target['invoice']];
+                    }
+                    foreach ($invoiceUuids as $invoiceUuid) {
+                        $invoiceUuid = (string) $invoiceUuid;
+                        if ($invoiceUuid === '') {
+                            continue;
+                        }
+                        $records['invoice|' . $invoiceUuid] = [
+                            'local_type' => 'invoice',
+                            'local_uuid' => $invoiceUuid,
+                        ];
+                    }
                     $inbound[] = [
                         'entity'    => 'Payment',
                         'id'        => $event->quickbooksId,
@@ -171,8 +181,17 @@ class EnqueueWebhookSync
             if ($event->entityType === 'payment') {
                 $key    = $event->realmId . '|' . $event->quickbooksId;
                 $target = $resolved[$key] ?? null;
-                if (is_array($target) && $target['invoice'] !== '') {
-                    $invoiceUuids[] = $target['invoice'];
+                if (is_array($target)) {
+                    $named = is_array($target['invoices'] ?? null) ? $target['invoices'] : [];
+                    if ($named === [] && is_string($target['invoice'] ?? null) && $target['invoice'] !== '') {
+                        $named = [$target['invoice']];
+                    }
+                    foreach ($named as $invoiceUuid) {
+                        $invoiceUuid = (string) $invoiceUuid;
+                        if ($invoiceUuid !== '') {
+                            $invoiceUuids[] = $invoiceUuid;
+                        }
+                    }
                 }
                 // The body counts as read only when QuickBooks returned that payment.
                 // Null, a throw, reauth, a realm mismatch, and a batch fault keep the stored invoice.
@@ -312,7 +331,7 @@ class EnqueueWebhookSync
      *
      * @param array<int, QuickBooksEntityChanged> $events
      *
-     * @return array<string, array{invoice: string, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}>
+     * @return array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}>
      */
     private function paymentInvoices(string $companyUuid, array $events, bool $allowDelete = false): array
     {
@@ -403,8 +422,10 @@ class EnqueueWebhookSync
                 $candidateUuids[] = $uuid;
             }
         }
-        foreach ($storedInvoice as $uuid) {
-            $candidateUuids[] = $uuid;
+        foreach ($storedInvoice as $uuids) {
+            foreach ($uuids as $uuid) {
+                $candidateUuids[] = $uuid;
+            }
         }
         $qboInvoiceIds = [];
         foreach ($remoteInvoices as $invoiceIds) {
@@ -457,10 +478,12 @@ class EnqueueWebhookSync
                 }
             }
         }
-        foreach ($storedInvoice as $key => $uuid) {
+        foreach ($storedInvoice as $key => $uuids) {
             $realm = explode('|', $key, 2)[0];
-            if (!isset($linkedByUuid[$realm . '|' . $uuid])) {
-                $needFile[] = $uuid;
+            foreach ($uuids as $uuid) {
+                if (!isset($linkedByUuid[$realm . '|' . $uuid])) {
+                    $needFile[] = $uuid;
+                }
             }
         }
         $onFile = [];
@@ -479,44 +502,29 @@ class EnqueueWebhookSync
             $realm = explode('|', $key, 2)[0];
             foreach ($uuids as $uuid) {
                 if (isset($linkedByUuid[$realm . '|' . $uuid]) || isset($onFile[$uuid])) {
-                    $resolved[$key] = [
-                        'invoice'              => $uuid,
-                        'keyed_by_payment'     => false,
-                        'quickbooks_invoices'  => [],
-                    ];
-                    break;
+                    $this->addResolvedInvoice($resolved, $key, $uuid, false, []);
                 }
             }
         }
         foreach ($remoteInvoices as $key => $invoiceIds) {
-            if (isset($resolved[$key])) {
-                continue;
-            }
             $realm = explode('|', $key, 2)[0];
             foreach ($invoiceIds as $invoiceId) {
                 $uuid = $uuidByQbo[$realm . '|' . $invoiceId] ?? null;
                 if (!is_string($uuid) || $uuid === '') {
                     continue;
                 }
-                $resolved[$key] = [
-                    'invoice'             => $uuid,
-                    'keyed_by_payment'    => true,
-                    'quickbooks_invoices' => $invoiceIds,
-                ];
-                break;
+                $this->addResolvedInvoice($resolved, $key, $uuid, true, $invoiceIds);
             }
         }
-        foreach ($storedInvoice as $key => $uuid) {
+        foreach ($storedInvoice as $key => $uuids) {
             if (isset($resolved[$key])) {
                 continue;
             }
             $realm = explode('|', $key, 2)[0];
-            if (isset($linkedByUuid[$realm . '|' . $uuid]) || isset($onFile[$uuid])) {
-                $resolved[$key] = [
-                    'invoice'             => $uuid,
-                    'keyed_by_payment'    => true,
-                    'quickbooks_invoices' => [],
-                ];
+            foreach ($uuids as $uuid) {
+                if (isset($linkedByUuid[$realm . '|' . $uuid]) || isset($onFile[$uuid])) {
+                    $this->addResolvedInvoice($resolved, $key, $uuid, true, []);
+                }
             }
         }
 
@@ -524,11 +532,36 @@ class EnqueueWebhookSync
     }
 
     /**
+     * Every Fleetbase invoice a resolved payment applies to. The first uuid stays
+     * in invoice for callers that still read that field.
+     *
+     * @param array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}> $resolved
+     * @param array<int, string>                                                                                                                   $quickbooksInvoices
+     */
+    private function addResolvedInvoice(array &$resolved, string $key, string $uuid, bool $keyedByPayment, array $quickbooksInvoices): void
+    {
+        if ($uuid === '') {
+            return;
+        }
+        if (!isset($resolved[$key])) {
+            $resolved[$key] = [
+                'invoice'             => $uuid,
+                'invoices'            => [],
+                'keyed_by_payment'    => $keyedByPayment,
+                'quickbooks_invoices' => $quickbooksInvoices,
+            ];
+        }
+        if (!in_array($uuid, $resolved[$key]['invoices'], true)) {
+            $resolved[$key]['invoices'][] = $uuid;
+        }
+    }
+
+    /**
      * Invoice uuids remembered when the payment link was stored under the payment id.
      *
      * @param array<string, array<int, string>> $idsByRealm
      *
-     * @return array<string, string> realm|payment id => invoice uuid
+     * @return array<string, array<int, string>> realm|payment id => invoice uuids
      */
     private function storedPaymentInvoices(string $companyUuid, array $idsByRealm): array
     {
@@ -562,7 +595,13 @@ class EnqueueWebhookSync
             if ($realm === '' || $paymentId === '' || $invoiceUuid === '' || $invoiceUuid === $paymentId) {
                 continue;
             }
-            $mapped[$realm . '|' . $paymentId] = $invoiceUuid;
+            $key = $realm . '|' . $paymentId;
+            if (!isset($mapped[$key])) {
+                $mapped[$key] = [];
+            }
+            if (!in_array($invoiceUuid, $mapped[$key], true)) {
+                $mapped[$key][] = $invoiceUuid;
+            }
         }
 
         return $mapped;

@@ -639,6 +639,78 @@ test('a first payment link stored under the quickbooks id remembers that invoice
     }
 })->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
 
+test('a pending invoice load includes a payment stored under its quickbooks id and the line items', function () {
+    [$restore] = directorySqlite();
+    try {
+        directoryWebhookSchema(DB::connection('sqlite')->getSchemaBuilder());
+        directoryWebhookRows();
+        $now = now();
+        DB::table('ledger_invoice_items')->insert([
+            'uuid'         => 'line-9',
+            'invoice_uuid' => 'inv-9',
+            'description'  => 'Delivery',
+            'quantity'     => 2,
+            'unit_price'   => 500,
+            'amount'       => 1000,
+        ]);
+        DB::table('quickbooks_links')->insert([
+            [
+                'uuid'       => 'link-pay-id', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'payment',
+                'local_uuid' => '4', 'qbo_entity' => 'Payment', 'qbo_id' => '4', 'sync_token' => '1', 'created_at' => $now, 'updated_at' => $now,
+            ],
+            [
+                'uuid'       => 'link-pay-map', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'payment-invoice',
+                'local_uuid' => '4', 'qbo_entity' => 'PaymentInvoice', 'qbo_id' => 'inv-9', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now,
+            ],
+            [
+                'uuid'       => 'link-pay-other', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'payment',
+                'local_uuid' => '77', 'qbo_entity' => 'Payment', 'qbo_id' => '77', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now,
+            ],
+        ]);
+        DB::table('quickbooks_pending_syncs')->insert([
+            'uuid'   => 'pend-inv-9', 'company_uuid' => 'company-uuid', 'local_type' => 'invoice', 'local_uuid' => 'inv-9',
+            'status' => 'pending', 'attempts' => 0, 'created_at' => $now, 'updated_at' => $now,
+        ]);
+        $connection = DB::connection('sqlite');
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+
+        $loaded     = (new FleetbaseDirectory())->loadPending('company-uuid', 20, time());
+        $queries    = array_column($connection->getQueryLog(), 'query');
+        $identities = [];
+        foreach ($loaded['ledger']->links as $link) {
+            $identities[] = (string) ($link['local_type'] ?? '') . ':' . (string) ($link['local_uuid'] ?? '');
+        }
+        $eager = array_values(array_filter(
+            $queries,
+            static fn (string $sql): bool => str_contains($sql, 'templates')
+                || str_contains($sql, 'tracking_numbers')
+                || str_contains($sql, 'orders')
+        ));
+        $customerEager = array_values(array_filter(
+            $queries,
+            static fn (string $sql): bool => str_contains($sql, 'contacts') && !str_contains($sql, 'type')
+        ));
+        $items = array_values(array_filter(
+            $queries,
+            static fn (string $sql): bool => str_contains($sql, 'ledger_invoice_items') && str_starts_with(strtolower(ltrim($sql)), 'select')
+        ));
+
+        expect($identities)->toContain('payment:4')
+            ->and($identities)->toContain('payment-invoice:4')
+            ->and($identities)->toContain('payment:inv-9')
+            ->and($identities)->not->toContain('payment:77')
+            ->and($loaded['ledger']->invoices['inv-9']['items'])->toBe([
+                ['description' => 'Delivery', 'quantity' => 2, 'unit_price' => 500, 'amount' => 1000],
+            ])
+            ->and($eager)->toBe([])
+            ->and($customerEager)->toBe([])
+            ->and($items)->not->toBe([]);
+    } finally {
+        $restore();
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
 test('a payment link stored under the quickbooks id unmarks the paid invoice', function () {
     $ledger                       = new SyncLedger();
     $ledger->invoices['inv-paid'] = [

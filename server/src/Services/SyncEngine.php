@@ -1775,9 +1775,11 @@ class SyncEngine
     {
         $remoteInvoice = $this->remoteInvoice($connection, $invoiceId);
         $ids           = [];
+        $listed        = [];
         if (is_array($remoteInvoice)) {
             foreach ($this->linkedPaymentIds($remoteInvoice) as $id) {
-                $ids[$id] = true;
+                $ids[$id]    = true;
+                $listed[$id] = true;
             }
         }
         if ($this->blockPayments !== null) {
@@ -1787,7 +1789,8 @@ class SyncEngine
                 }
                 $id = trim((string) ($payment['Id'] ?? ''));
                 if ($id !== '') {
-                    $ids[$id] = true;
+                    $ids[$id]    = true;
+                    $listed[$id] = true;
                 }
             }
         }
@@ -1795,8 +1798,15 @@ class SyncEngine
         if (is_array($legacy)) {
             $id = trim((string) ($legacy['qbo_id'] ?? ''));
             if ($id !== '') {
-                $ids[$id] = true;
+                $ids[$id]    = true;
+                $listed[$id] = true;
             }
+        }
+        // A payment stored under its QuickBooks id is absent from the invoice body after
+        // that link moves. The payment-invoice row is the local record that it still applies.
+        $remembered = $this->rememberedPaymentIds($ledger, $connection, [$invoiceUuid]);
+        foreach (array_keys($remembered) as $id) {
+            $ids[$id] = true;
         }
         foreach (array_keys($ids) as $id) {
             if (isset($this->paymentReadFailed[$id])) {
@@ -1808,16 +1818,20 @@ class SyncEngine
         $missing  = false;
         foreach (array_keys($ids) as $id) {
             $remote = $this->readPayment($connection, $id);
-            if (is_array($remote)) {
-                $payments[$id] = $remote;
-            } else {
+            if (!is_array($remote)) {
                 $missing = true;
+                continue;
             }
+            if (!isset($listed[$id]) && $this->linkedLineCents($remote, $invoiceId) === null) {
+                $missing = true;
+                continue;
+            }
+            $payments[$id] = $remote;
         }
         foreach ($this->paymentLinkRows($ledger, $connection) as $link) {
             $id    = trim((string) ($link['qbo_id'] ?? ''));
             $local = (string) ($link['local_uuid'] ?? '');
-            if ($id === '' || $local !== $id || isset($payments[$id]) || isset($this->paymentReadFailed[$id])) {
+            if ($id === '' || $local !== $id || isset($payments[$id]) || isset($ids[$id]) || isset($this->paymentReadFailed[$id])) {
                 continue;
             }
             $remote = $this->readPayment($connection, $id);
@@ -2024,6 +2038,52 @@ class SyncEngine
         }
 
         return in_array($paymentId, $this->linkedPaymentIds($remoteInvoice), true);
+    }
+
+    /**
+     * QuickBooks payment ids remembered for these Fleetbase invoices.
+     * payment-invoice.local_uuid is the payment id and qbo_id is the invoice uuid.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<int, string>   $invoiceUuids
+     *
+     * @return array<string, true>
+     */
+    private function rememberedPaymentIds(SyncLedger $ledger, array $connection, array $invoiceUuids): array
+    {
+        $wanted = [];
+        foreach ($invoiceUuids as $uuid) {
+            $uuid = trim($uuid);
+            if ($uuid !== '') {
+                $wanted[$uuid] = true;
+            }
+        }
+        if ($wanted === []) {
+            return [];
+        }
+
+        $company = (string) $connection['company_uuid'];
+        $realm   = (string) $connection['realm_id'];
+        $ids     = [];
+        foreach ($ledger->links as $link) {
+            if (!is_array($link)) {
+                continue;
+            }
+            if ((string) ($link['company_uuid'] ?? '') !== $company || (string) ($link['realm_id'] ?? '') !== $realm) {
+                continue;
+            }
+            if ((string) ($link['local_type'] ?? '') !== 'payment-invoice') {
+                continue;
+            }
+            $invoiceUuid = trim((string) ($link['qbo_id'] ?? ''));
+            $paymentId   = trim((string) ($link['local_uuid'] ?? ''));
+            if ($paymentId === '' || $invoiceUuid === '' || $paymentId === $invoiceUuid || !isset($wanted[$invoiceUuid])) {
+                continue;
+            }
+            $ids[$paymentId] = true;
+        }
+
+        return $ids;
     }
 
     /**
@@ -3452,8 +3512,19 @@ class SyncEngine
                 $invoiceIds[] = $invoiceId;
             }
         }
+        $localUuids = [];
+        foreach ($rows as $row) {
+            $uuid = (string) ($row['local_uuid'] ?? '');
+            if ($uuid !== '') {
+                $localUuids[] = $uuid;
+            }
+        }
         $this->paymentPrefetchIds = array_fill_keys($invoiceIds, true);
-        $this->loadPaymentsForInvoices($connection, $invoiceIds);
+        $this->loadPaymentsForInvoices(
+            $connection,
+            $invoiceIds,
+            array_keys($this->rememberedPaymentIds($ledger, $connection, $localUuids))
+        );
     }
 
     /**
@@ -3512,10 +3583,17 @@ class SyncEngine
      *
      * @param array<string, mixed> $connection
      * @param array<int, string>   $invoiceIds
+     * @param array<int, string>   $alsoPaymentIds Payment ids remembered locally for these invoices
      */
-    private function loadPaymentsForInvoices(array $connection, array $invoiceIds): void
+    private function loadPaymentsForInvoices(array $connection, array $invoiceIds, array $alsoPaymentIds = []): void
     {
         $paymentIds = [];
+        foreach ($alsoPaymentIds as $id) {
+            $id = trim($id);
+            if ($id !== '') {
+                $paymentIds[$id] = true;
+            }
+        }
         foreach ($invoiceIds as $invoiceId) {
             $invoice = $this->invoiceById[$invoiceId] ?? null;
             if (!is_array($invoice)) {
