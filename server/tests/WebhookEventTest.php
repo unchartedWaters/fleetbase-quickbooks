@@ -3,6 +3,7 @@
 use Fleetbase\Quickbooks\Events\QuickBooksEntityChanged;
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
 use Fleetbase\Quickbooks\Http\Controllers\WebhookController;
+use Fleetbase\Quickbooks\Jobs\ApplyRemoteChange;
 use Fleetbase\Quickbooks\Jobs\SyncWebhookBatch;
 use Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync;
 use Fleetbase\Quickbooks\Models\Connection;
@@ -22,7 +23,6 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Schema;
 
 function qboChangedSettings(): SettingsService
 {
@@ -112,6 +112,11 @@ function qboChangedController(SettingsService $settings, MemorySettingsStore $st
 
             return is_array($realmLinks) ? $realmLinks : [];
         }
+
+        protected function linksOnRealm(string $realmId, array $quickbooksIds): array
+        {
+            return [];
+        }
     };
 }
 
@@ -124,6 +129,9 @@ function qboChangedController(SettingsService $settings, MemorySettingsStore $st
  */
 function qboChangedWithoutVerifier(callable $callback): mixed
 {
+    if (class_exists(Illuminate\Support\Facades\Cache::class)) {
+        Illuminate\Support\Facades\Cache::flush();
+    }
     $previous  = getenv('QUICKBOOKS_WEBHOOK_VERIFIER');
     $hadEnv    = array_key_exists('QUICKBOOKS_WEBHOOK_VERIFIER', $_ENV);
     $hadServer = array_key_exists('QUICKBOOKS_WEBHOOK_VERIFIER', $_SERVER);
@@ -377,7 +385,7 @@ test('the same quickbooks id resolves only through the event realm', function ()
 test('the sync listener treats a stored off direction as both and skips outbound and unknown invoices', function () {
     $settings                                            = qboChangedSettings();
     $store                                               = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companySync('company-a')] = [
+    $store->rows[SettingsKeys::adminSync()]              = [
         'override'           => true,
         'customer_direction' => 'off',
         'payment_direction'  => 'outbound',
@@ -402,10 +410,17 @@ test('the sync listener treats a stored off direction as both and skips outbound
     qboChangedBus(function ($dispatcher) use ($listener, $store) {
         $listener->flush($store);
 
-        expect($dispatcher->jobs)->toHaveCount(1)
-            ->and($dispatcher->jobs[0])->toBeInstanceOf(SyncWebhookBatch::class)
+        expect($dispatcher->jobs)->toHaveCount(2)
+            ->and($dispatcher->jobs[0])->toBeInstanceOf(ApplyRemoteChange::class)
             ->and($dispatcher->jobs[0]->companyUuid)->toBe('company-a')
-            ->and($dispatcher->jobs[0]->records)->toBe([
+            ->and($dispatcher->jobs[0]->entities)->toBe([
+                ['entity' => 'Customer', 'id' => '1', 'operation' => 'create'],
+                ['entity' => 'Invoice', 'id' => '8', 'operation' => 'update'],
+                ['entity' => 'Account', 'id' => '7', 'operation' => 'update'],
+            ])
+            ->and($dispatcher->jobs[1])->toBeInstanceOf(SyncWebhookBatch::class)
+            ->and($dispatcher->jobs[1]->companyUuid)->toBe('company-a')
+            ->and($dispatcher->jobs[1]->records)->toBe([
                 ['local_type' => 'customer', 'local_uuid' => 'cust-1'],
                 ['local_type' => 'invoice', 'local_uuid' => 'inv-1'],
                 ['local_type' => 'wallet', 'local_uuid' => 'wal-1'],
@@ -631,6 +646,506 @@ test('apply does not call Intuit and the webhook url is the computed receiver ur
     expect($subscriptions->webhookUrl('company-a'))->toBe('/quickbooks/int/v1/webhooks');
 
     Http::assertNothingSent();
+});
+
+test('a delete or void webhook does not create a pending sync row', function () {
+    $defaultConnection = config('database.default');
+    $sqliteConnection  = config('database.connections.sqlite');
+    config()->set('database.default', 'sqlite');
+    config()->set('database.connections.sqlite', [
+        'driver'                  => 'sqlite',
+        'database'                => ':memory:',
+        'prefix'                  => '',
+        'foreign_key_constraints' => true,
+    ]);
+    DB::purge('sqlite');
+    $schema = DB::connection('sqlite')->getSchemaBuilder();
+
+    try {
+        $schema->create('quickbooks_connections', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('realm_id')->nullable();
+            $table->boolean('needs_reauth')->default(false);
+            $table->timestamps();
+        });
+        DB::table('quickbooks_connections')->insert([
+            'uuid'         => 'conn-company-a',
+            'company_uuid' => 'company-a',
+            'realm_id'     => 'realm-1',
+            'needs_reauth' => 0,
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ]);
+        $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('local_type');
+            $table->char('local_uuid', 36);
+            $table->string('reason')->nullable();
+            $table->string('status');
+            $table->unsignedInteger('attempts');
+            $table->timestamp('next_attempt_at')->nullable();
+            $table->timestamps();
+        });
+
+        $settings                               = qboChangedSettings();
+        $store                                  = new MemorySettingsStore();
+        $store->rows[SettingsKeys::adminSync()] = [
+            'customer_direction' => 'both',
+            'invoice_direction'  => 'both',
+            'wallet_direction'   => 'both',
+            'payment_direction'  => 'both',
+        ];
+        $listener = new class($settings) extends EnqueueWebhookSync {
+            protected function knownInvoices(string $companyUuid, array $events): array
+            {
+                return [
+                    'qbo'   => ['realm-1' => ['8' => 'inv-live']],
+                    'local' => ['inv-live' => true],
+                ];
+            }
+        };
+        // The controller maps both Delete and Void onto operation delete before this listener runs.
+        $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '1', 'delete', 'cust-1'));
+        $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'invoice', '8', 'delete', 'inv-voided'));
+        $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'wallet', '7', 'delete', 'wal-1'));
+        $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'invoice', '8', 'update', null));
+
+        qboChangedBus(function ($dispatcher) use ($listener, $store) {
+            $listener->flush($store);
+
+            $batch  = null;
+            $remote = null;
+            foreach ($dispatcher->jobs as $job) {
+                if ($job instanceof SyncWebhookBatch) {
+                    $batch = $job;
+                }
+                if ($job instanceof ApplyRemoteChange) {
+                    $remote = $job;
+                }
+            }
+
+            expect($batch)->toBeInstanceOf(SyncWebhookBatch::class)
+                ->and($remote)->toBeInstanceOf(ApplyRemoteChange::class)
+                ->and($batch->records)->toBe([
+                    ['local_type' => 'invoice', 'local_uuid' => 'inv-live'],
+                ])
+                ->and($remote->entities)->toBe([
+                    ['entity' => 'Invoice', 'id' => '8', 'operation' => 'update'],
+                ]);
+
+            $batch->handle();
+            $pending = DB::table('quickbooks_pending_syncs')->orderBy('local_uuid')->get(['local_type', 'local_uuid']);
+
+            expect($pending)->toHaveCount(1)
+                ->and($pending[0]->local_type)->toBe('invoice')
+                ->and($pending[0]->local_uuid)->toBe('inv-live')
+                ->and($pending->pluck('local_uuid')->all())->not->toContain('cust-1')
+                ->and($pending->pluck('local_uuid')->all())->not->toContain('inv-voided')
+                ->and($pending->pluck('local_uuid')->all())->not->toContain('wal-1');
+        });
+    } finally {
+        DB::purge('sqlite');
+        config()->set('database.default', $defaultConnection);
+        config()->set('database.connections.sqlite', $sqliteConnection);
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
+test('a payment webhook queues the linked invoice and skips an unlinked payment', function () {
+    $defaultConnection = config('database.default');
+    $sqliteConnection  = config('database.connections.sqlite');
+    config()->set('database.default', 'sqlite');
+    config()->set('database.connections.sqlite', [
+        'driver'                  => 'sqlite',
+        'database'                => ':memory:',
+        'prefix'                  => '',
+        'foreign_key_constraints' => true,
+    ]);
+    DB::purge('sqlite');
+    $schema = DB::connection('sqlite')->getSchemaBuilder();
+
+    try {
+        $schema->create('quickbooks_links', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('realm_id');
+            $table->string('local_type');
+            $table->char('local_uuid', 36);
+            $table->string('qbo_entity');
+            $table->string('qbo_id');
+            $table->string('sync_token')->default('0');
+            $table->timestamps();
+        });
+        $now = now();
+        DB::table('quickbooks_links')->insert([
+            [
+                'uuid'         => 'link-payment',
+                'company_uuid' => 'company-a',
+                'realm_id'     => 'realm-1',
+                'local_type'   => 'payment',
+                'local_uuid'   => 'inv-9',
+                'qbo_entity'   => 'Payment',
+                'qbo_id'       => '4',
+                'sync_token'   => '0',
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ],
+            [
+                'uuid'         => 'link-invoice',
+                'company_uuid' => 'company-a',
+                'realm_id'     => 'realm-1',
+                'local_type'   => 'invoice',
+                'local_uuid'   => 'inv-9',
+                'qbo_entity'   => 'Invoice',
+                'qbo_id'       => '8',
+                'sync_token'   => '0',
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ],
+        ]);
+
+        $settings                               = qboChangedSettings();
+        $store                                  = new MemorySettingsStore();
+        $store->rows[SettingsKeys::adminSync()] = [
+            'customer_direction' => 'both',
+            'invoice_direction'  => 'both',
+            'payment_direction'  => 'both',
+            'wallet_direction'   => 'both',
+        ];
+        $listener = new EnqueueWebhookSync($settings);
+        $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '1', 'update', 'cust-1'));
+        $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'create', 'pay-1'));
+        $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '99', 'create', null));
+
+        qboChangedBus(function ($dispatcher) use ($listener, $store) {
+            $connection = (new Fleetbase\Quickbooks\Models\Link())->getConnection();
+            $connection->flushQueryLog();
+            $connection->enableQueryLog();
+            $listener->flush($store);
+            $queries = array_column($connection->getQueryLog(), 'query');
+
+            $batch  = null;
+            $remote = null;
+            foreach ($dispatcher->jobs as $job) {
+                if ($job instanceof SyncWebhookBatch) {
+                    $batch = $job;
+                }
+                if ($job instanceof ApplyRemoteChange) {
+                    $remote = $job;
+                }
+            }
+
+            expect($batch)->toBeInstanceOf(SyncWebhookBatch::class)
+                ->and($remote)->toBeInstanceOf(ApplyRemoteChange::class)
+                ->and($batch->records)->toBe([
+                    ['local_type' => 'customer', 'local_uuid' => 'cust-1'],
+                    ['local_type' => 'invoice', 'local_uuid' => 'inv-9'],
+                ])
+                ->and(array_column($batch->records, 'local_type'))->not->toContain('payment')
+                ->and($remote->entities)->toBe([
+                    ['entity' => 'Customer', 'id' => '1', 'operation' => 'update'],
+                    ['entity' => 'Payment', 'id' => '4', 'operation' => 'create'],
+                ])
+                ->and($queries)->toHaveCount(2)
+                ->and($queries[0])->toContain('qbo_id')
+                ->and($queries[1])->toContain('local_uuid');
+        });
+    } finally {
+        DB::purge('sqlite');
+        config()->set('database.default', $defaultConnection);
+        config()->set('database.connections.sqlite', $sqliteConnection);
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
+test('a payment stored under its quickbooks id queues the fleetbase invoice', function () {
+    $defaultConnection = config('database.default');
+    $sqliteConnection  = config('database.connections.sqlite');
+    config()->set('database.default', 'sqlite');
+    config()->set('database.connections.sqlite', [
+        'driver'                  => 'sqlite',
+        'database'                => ':memory:',
+        'prefix'                  => '',
+        'foreign_key_constraints' => true,
+    ]);
+    DB::purge('sqlite');
+    $schema = DB::connection('sqlite')->getSchemaBuilder();
+
+    try {
+        $schema->create('quickbooks_links', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('realm_id');
+            $table->string('local_type');
+            $table->char('local_uuid', 36);
+            $table->string('qbo_entity');
+            $table->string('qbo_id');
+            $table->string('sync_token')->default('0');
+            $table->timestamps();
+        });
+        $now = now();
+        DB::table('quickbooks_links')->insert([
+            [
+                'uuid'         => 'link-payment-id',
+                'company_uuid' => 'company-a',
+                'realm_id'     => 'realm-1',
+                'local_type'   => 'payment',
+                'local_uuid'   => '4',
+                'qbo_entity'   => 'Payment',
+                'qbo_id'       => '4',
+                'sync_token'   => '0',
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ],
+            [
+                'uuid'         => 'link-unlinked-payment',
+                'company_uuid' => 'company-a',
+                'realm_id'     => 'realm-1',
+                'local_type'   => 'payment',
+                'local_uuid'   => '5',
+                'qbo_entity'   => 'Payment',
+                'qbo_id'       => '5',
+                'sync_token'   => '0',
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ],
+            [
+                'uuid'         => 'link-invoice',
+                'company_uuid' => 'company-a',
+                'realm_id'     => 'realm-1',
+                'local_type'   => 'invoice',
+                'local_uuid'   => 'inv-9',
+                'qbo_entity'   => 'Invoice',
+                'qbo_id'       => '8',
+                'sync_token'   => '0',
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ],
+        ]);
+
+        $settings                               = qboChangedSettings();
+        $store                                  = new MemorySettingsStore();
+        $store->rows[SettingsKeys::adminSync()] = [
+            'payment_direction' => 'both',
+            'invoice_direction' => 'both',
+        ];
+        $listener = new class($settings) extends EnqueueWebhookSync {
+            /** @var array<int, string> */
+            public array $asked = [];
+
+            protected function quickbooksInvoiceIdsForPayments(string $companyUuid, string $realmId, array $paymentIds): array
+            {
+                $this->asked = $paymentIds;
+
+                return ['4' => ['8'], '5' => ['missing-invoice']];
+            }
+        };
+        $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'update', null));
+        $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '5', 'create', null));
+
+        qboChangedBus(function ($dispatcher) use ($listener, $store) {
+            $listener->flush($store);
+
+            $batch  = null;
+            $remote = null;
+            foreach ($dispatcher->jobs as $job) {
+                if ($job instanceof SyncWebhookBatch) {
+                    $batch = $job;
+                }
+                if ($job instanceof ApplyRemoteChange) {
+                    $remote = $job;
+                }
+            }
+
+            expect($listener->asked)->toBe(['4', '5'])
+                ->and($batch)->toBeInstanceOf(SyncWebhookBatch::class)
+                ->and($batch->records)->toBe([
+                    ['local_type' => 'invoice', 'local_uuid' => 'inv-9'],
+                ])
+                ->and($remote)->toBeInstanceOf(ApplyRemoteChange::class)
+                ->and($remote->entities)->toBe([
+                    ['entity' => 'Payment', 'id' => '4', 'operation' => 'update'],
+                    ['entity' => 'Invoice', 'id' => '8', 'operation' => 'update'],
+                ]);
+        });
+    } finally {
+        DB::purge('sqlite');
+        config()->set('database.default', $defaultConnection);
+        config()->set('database.connections.sqlite', $sqliteConnection);
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
+test('a shared connection queues another organization invoice on that realm', function () {
+    $defaultConnection = config('database.default');
+    $sqliteConnection  = config('database.connections.sqlite');
+    $ledgerConnection  = config('fleetbase.connection.db');
+    config()->set('database.default', 'sqlite');
+    config()->set('database.connections.sqlite', [
+        'driver'                  => 'sqlite',
+        'database'                => ':memory:',
+        'prefix'                  => '',
+        'foreign_key_constraints' => true,
+    ]);
+    config()->set('fleetbase.connection.db', 'sqlite');
+    DB::purge('sqlite');
+    $schema = DB::connection('sqlite')->getSchemaBuilder();
+
+    try {
+        $schema->create('quickbooks_connections', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('realm_id')->nullable();
+            $table->boolean('needs_reauth')->default(false);
+            $table->timestamps();
+        });
+        $schema->create('quickbooks_links', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('realm_id');
+            $table->string('local_type');
+            $table->char('local_uuid', 36);
+            $table->string('qbo_entity');
+            $table->string('qbo_id');
+            $table->string('sync_token')->default('0');
+            $table->timestamps();
+        });
+        $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('local_type');
+            $table->char('local_uuid', 36);
+            $table->string('reason')->nullable();
+            $table->string('status');
+            $table->unsignedInteger('attempts');
+            $table->timestamp('next_attempt_at')->nullable();
+            $table->timestamps();
+        });
+        $schema->create('ledger_invoices', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36)->nullable();
+            $table->timestamp('deleted_at')->nullable();
+        });
+        $now = now();
+        DB::table('quickbooks_connections')->insert([
+            'uuid'         => 'conn-owner',
+            'company_uuid' => 'company-a',
+            'realm_id'     => 'realm-shared',
+            'needs_reauth' => 0,
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ]);
+        DB::table('quickbooks_links')->insert([
+            'uuid'         => 'link-other-invoice',
+            'company_uuid' => 'company-b',
+            'realm_id'     => 'realm-shared',
+            'local_type'   => 'invoice',
+            'local_uuid'   => 'inv-b',
+            'qbo_entity'   => 'Invoice',
+            'qbo_id'       => '8',
+            'sync_token'   => '0',
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ]);
+        DB::table('ledger_invoices')->insert([
+            'uuid'         => 'inv-b',
+            'company_uuid' => 'company-b',
+            'deleted_at'   => null,
+        ]);
+
+        $settings                               = qboChangedSettings();
+        $store                                  = new MemorySettingsStore();
+        $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::adminSync()] = [
+            'invoice_direction' => 'both',
+        ];
+        $body = '{"eventNotifications":[{"realmId":"realm-shared","dataChangeEvent":{"entities":[{"name":"Invoice","id":"8","operation":"Update"}]}}]}';
+
+        qboChangedWithoutVerifier(function () use ($settings, $store, $body) {
+            $controller = new WebhookController($settings, $store, new WebhookSignature());
+            qboChangedCollect();
+            qboChangedBus(function ($dispatcher) use ($controller, $body, $settings, $store) {
+                try {
+                    $response = $controller->handle(qboChangedRequest($body, qboChangedSignature($body, 'verifier-token')));
+                    $events   = qboChangedSeen();
+
+                    expect($response->getStatusCode())->toBe(200)
+                        ->and($events)->toHaveCount(2)
+                        ->and($events[0]->companyUuid)->toBe('company-a')
+                        ->and($events[0]->localUuid)->toBeNull()
+                        ->and($events[1]->companyUuid)->toBe('company-b')
+                        ->and($events[1]->entityType)->toBe('invoice')
+                        ->and($events[1]->quickbooksId)->toBe('8')
+                        ->and($events[1]->localUuid)->toBe('inv-b');
+
+                    $listener = new EnqueueWebhookSync($settings);
+                    foreach ($events as $event) {
+                        $listener->handle($event);
+                    }
+                    $listener->flush($store);
+
+                    $batch = null;
+                    foreach ($dispatcher->jobs as $job) {
+                        if ($job instanceof SyncWebhookBatch && $job->companyUuid === 'company-b') {
+                            $batch = $job;
+                        }
+                    }
+
+                    expect($batch)->toBeInstanceOf(SyncWebhookBatch::class)
+                        ->and($batch->records)->toBe([
+                            ['local_type' => 'invoice', 'local_uuid' => 'inv-b'],
+                        ]);
+
+                    $batch->handle();
+                    $pending = DB::table('quickbooks_pending_syncs')->get(['company_uuid', 'local_type', 'local_uuid']);
+
+                    expect($pending)->toHaveCount(1)
+                        ->and($pending[0]->company_uuid)->toBe('company-b')
+                        ->and($pending[0]->local_type)->toBe('invoice')
+                        ->and($pending[0]->local_uuid)->toBe('inv-b');
+                } finally {
+                    qboChangedRestoreEvents();
+                }
+            });
+        });
+    } finally {
+        DB::purge('sqlite');
+        config()->set('database.default', $defaultConnection);
+        config()->set('database.connections.sqlite', $sqliteConnection);
+        config()->set('fleetbase.connection.db', $ledgerConnection);
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
+test('the same signed webhook body is rejected on replay and a bad signature is not cached', function () {
+    $settings = qboChangedSettings();
+    $body     = '{"eventNotifications":[{"realmId":"realm-replay","dataChangeEvent":{"entities":[{"name":"Customer","id":"77","operation":"Create"}]}}]}';
+    $other    = '{"eventNotifications":[{"realmId":"realm-replay","dataChangeEvent":{"entities":[{"name":"Customer","id":"78","operation":"Update"}]}}]}';
+
+    qboChangedWithoutVerifier(function () use ($settings, $body, $other) {
+        $store                                  = new MemorySettingsStore();
+        $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
+        $controller                             = qboChangedController($settings, $store, ['realm-replay' => 'company-a'], []);
+        qboChangedCollect();
+
+        try {
+            $bad   = $controller->handle(qboChangedRequest($body, qboChangedSignature($body, 'other-token')));
+            $first = $controller->handle(qboChangedRequest($body, qboChangedSignature($body, 'verifier-token')));
+            expect($bad->getStatusCode())->toBe(401)
+                ->and($first->getStatusCode())->toBe(200)
+                ->and(qboChangedSeen())->toHaveCount(1);
+
+            qboChangedRestoreEvents();
+            qboChangedCollect();
+            $replay = $controller->handle(qboChangedRequest($body, qboChangedSignature($body, 'verifier-token')));
+            $again  = $controller->handle(qboChangedRequest($other, qboChangedSignature($other, 'verifier-token')));
+
+            expect($replay->getStatusCode())->toBe(401)
+                ->and(qboChangedSeen())->toHaveCount(1)
+                ->and(qboChangedSeen()[0]->quickbooksId)->toBe('78')
+                ->and($again->getStatusCode())->toBe(200);
+        } finally {
+            qboChangedRestoreEvents();
+        }
+    });
 });
 
 function qboChangedCollect(): void

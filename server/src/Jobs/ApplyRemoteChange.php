@@ -73,17 +73,18 @@ class ApplyRemoteChange implements ShouldQueue
         }
 
         try {
-            $loaded = $directory->load($this->companyUuid);
+            // Links for these QuickBooks ids, and the local rows those links need.
+            // Direction filtering happens inside acceptRemoteChanges. This does not reconcile the catalog.
+            $loaded = $directory->loadLinked($this->companyUuid, $entities);
             if (!is_array($loaded)) {
                 return;
             }
 
             $syncSettings = $settings->resolveSync(
-                $store->companySync($this->companyUuid),
                 [],
+                $store->adminSync(),
                 $store->defaultSync()
             );
-            // Direction filtering happens inside acceptRemoteChanges. This does not reconcile the catalog.
             $engine->acceptRemoteChanges($loaded['ledger'], $this->companyUuid, $entities, $syncSettings, time());
             $directory->save($loaded['ledger']);
         } finally {

@@ -12,6 +12,7 @@ use Fleetbase\Quickbooks\Support\WebhookSignature;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Cache;
 
 class WebhookController extends Controller
 {
@@ -32,6 +33,11 @@ class WebhookController extends Controller
         'merge'  => 'update',
     ];
 
+    /**
+     * How long a signed body stays remembered so the same delivery cannot be replayed.
+     */
+    private const REPLAY_TTL_SECONDS = 600;
+
     public function __construct(
         private SettingsService $settings,
         private SettingsStore $store,
@@ -46,8 +52,8 @@ class WebhookController extends Controller
             $rawBody = '';
         }
 
-        // The signature is checked per connection. Realm ids choose which
-        // connections to test. Entities are not trusted until a verifier matches.
+        // The signature is checked with the install-wide verifier. Realm ids
+        // choose which connection to apply. Entities are not trusted until it matches.
         $signature = $request->headers->get('intuit-signature');
         if (is_string($signature)) {
             $signature = trim($signature);
@@ -63,6 +69,12 @@ class WebhookController extends Controller
 
         $matched = $this->matchingConnections($rawBody, $signature, $realmIds);
         if ($matched === []) {
+            return response()->json(['message' => 'Invalid signature.'], 401);
+        }
+
+        // HMAC already matched. Remember this exact body for a short time and
+        // reject a second delivery of it. The check does not replace the signature test.
+        if (!$this->rememberSignedBody($rawBody)) {
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
 
@@ -104,8 +116,9 @@ class WebhookController extends Controller
     }
 
     /**
-     * Connections on the named realms whose own verifier matches this body.
-     * A match for one company does not include the other companies on the realm.
+     * Connections on the named realms when the install-wide verifier matches.
+     * An organization verifier is not consulted, and a second organization's
+     * secret is not a fallback.
      *
      * @param array<int, string> $realmIds
      *
@@ -113,15 +126,15 @@ class WebhookController extends Controller
      */
     private function matchingConnections(string $rawBody, string $signature, array $realmIds): array
     {
+        $verifiers = $this->settings->webhookVerifiersFor($this->store, '');
+        if (!$this->signatures->accepts($rawBody, $signature, $verifiers)) {
+            return [];
+        }
+
         $matched = [];
         foreach ($realmIds as $realmId) {
             foreach ($this->connectionsForRealm($realmId) as $connection) {
-                $companyUuid = (string) $connection->company_uuid;
-                if ($companyUuid === '') {
-                    continue;
-                }
-                $verifiers = $this->settings->webhookVerifiersFor($this->store, $companyUuid);
-                if (!$this->signatures->accepts($rawBody, $signature, $verifiers)) {
+                if ((string) $connection->company_uuid === '') {
                     continue;
                 }
                 $matched[$realmId][] = $connection;
@@ -129,6 +142,18 @@ class WebhookController extends Controller
         }
 
         return $matched;
+    }
+
+    /**
+     * True the first time this raw body is seen. A later copy of the same bytes is a replay.
+     */
+    private function rememberSignedBody(string $rawBody): bool
+    {
+        try {
+            return Cache::add('quickbooks.webhook.replay.' . hash('sha256', $rawBody), 1, self::REPLAY_TTL_SECONDS) === true;
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /**
@@ -241,7 +266,7 @@ class WebhookController extends Controller
 
     /**
      * @param array<int, array{realm: string, entities: array<int, array{entityType: string, qbo: string, id: string, operation: string}>}> $groups
-     * @param array<string, array<int, Connection>>                                                                                        $connectionsByRealm
+     * @param array<string, array<int, Connection>>                                                                                         $connectionsByRealm
      */
     private function dispatchEntities(array $groups, array $connectionsByRealm): void
     {
@@ -254,12 +279,29 @@ class WebhookController extends Controller
             foreach ($group['entities'] as $entity) {
                 $ids[] = $entity['id'];
             }
+            $localsByCompany = [];
             foreach ($connections as $connection) {
                 $companyUuid = (string) $connection->company_uuid;
                 if ($companyUuid === '') {
                     continue;
                 }
-                $locals = $this->localUuids($companyUuid, $group['realm'], $ids);
+                $localsByCompany[$companyUuid] = $this->localUuids($companyUuid, $group['realm'], $ids);
+            }
+            // Links belong to the organization that owns the record. A shared
+            // connection row only stores one company uuid, so the other
+            // organization's invoice is included from the link itself.
+            foreach ($this->linksOnRealm($group['realm'], $ids) as $link) {
+                $companyUuid = (string) $link->company_uuid;
+                if ($companyUuid === '') {
+                    continue;
+                }
+                $qbo = self::TYPES[strtolower((string) $link->qbo_entity)]['qbo'] ?? null;
+                if ($qbo === null) {
+                    continue;
+                }
+                $localsByCompany[$companyUuid][$qbo . '|' . (string) $link->qbo_id] = (string) $link->local_uuid;
+            }
+            foreach ($localsByCompany as $companyUuid => $locals) {
                 foreach ($group['entities'] as $entity) {
                     $localUuid = $locals[$entity['qbo'] . '|' . $entity['id']] ?? null;
                     event(new QuickBooksEntityChanged(
@@ -273,6 +315,32 @@ class WebhookController extends Controller
                 }
             }
         }
+    }
+
+    /**
+     * Every link for these QuickBooks ids on the realm, whichever organization owns it.
+     *
+     * @param array<int, string> $quickbooksIds
+     *
+     * @return array<int, Link>
+     */
+    protected function linksOnRealm(string $realmId, array $quickbooksIds): array
+    {
+        if ($quickbooksIds === []) {
+            return [];
+        }
+
+        $links = [];
+        foreach (Link::query()
+            ->where('realm_id', $realmId)
+            ->whereIn('qbo_id', array_values(array_unique($quickbooksIds)))
+            ->get() as $link) {
+            if ($link instanceof Link) {
+                $links[] = $link;
+            }
+        }
+
+        return $links;
     }
 
     /**

@@ -53,16 +53,31 @@ class SyncWebhookBatch implements ShouldQueue
     }
 
     /**
-     * A realm delivery is not applied when this organization has no QuickBooks company.
+     * This organization can sync when it has its own usable connection, or when
+     * the install has exactly one usable connection and this organization shares it.
+     * A second connection row is not borrowed.
      */
     private function organizationIsConnected(): bool
     {
-        return Connection::query()
-            ->where('company_uuid', $this->companyUuid)
-            ->where('needs_reauth', false)
-            ->whereNotNull('realm_id')
-            ->where('realm_id', '!=', '')
-            ->exists();
+        $own = Connection::query()->where('company_uuid', $this->companyUuid)->first();
+        if ($own instanceof Connection) {
+            return $this->connectionIsUsable($own);
+        }
+
+        $rows = Connection::query()->limit(2)->get();
+        if ($rows->count() !== 1) {
+            return false;
+        }
+        $shared = $rows->first();
+
+        return $shared instanceof Connection && $this->connectionIsUsable($shared);
+    }
+
+    private function connectionIsUsable(Connection $connection): bool
+    {
+        $realm = $connection->realm_id;
+
+        return $connection->needs_reauth !== true && is_string($realm) && $realm !== '';
     }
 
     private function insertPending(): void
@@ -110,11 +125,20 @@ class SyncWebhookBatch implements ShouldQueue
             ];
         }
 
-        foreach ($rows as $row) {
-            try {
-                PendingSync::query()->insert($row);
-            } catch (QueryException $exception) {
-                $this->ignoreDuplicateOrThrow($exception);
+        try {
+            PendingSync::query()->insert($rows);
+        } catch (QueryException $exception) {
+            if (!$this->isDuplicateKey($exception)) {
+                throw $exception;
+            }
+            // One duplicate rolls the whole statement back. Save the other rows,
+            // and ignore only a duplicate-key failure on each of them.
+            foreach ($rows as $row) {
+                try {
+                    PendingSync::query()->insert($row);
+                } catch (QueryException $rowException) {
+                    $this->ignoreDuplicateOrThrow($rowException);
+                }
             }
         }
     }

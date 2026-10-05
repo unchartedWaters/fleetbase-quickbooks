@@ -118,6 +118,11 @@ function webhookController(SettingsService $settings, MemorySettingsStore $store
         {
             return [];
         }
+
+        protected function linksOnRealm(string $realmId, array $quickbooksIds): array
+        {
+            return [];
+        }
     };
 }
 
@@ -233,6 +238,9 @@ function withWebhookDispatcher(callable $callback): mixed
  */
 function withoutWebhookVerifier(callable $callback): mixed
 {
+    if (class_exists(Cache::class)) {
+        Cache::flush();
+    }
     $previous  = getenv('QUICKBOOKS_WEBHOOK_VERIFIER');
     $hadEnv    = array_key_exists('QUICKBOOKS_WEBHOOK_VERIFIER', $_ENV);
     $hadServer = array_key_exists('QUICKBOOKS_WEBHOOK_VERIFIER', $_SERVER);
@@ -433,7 +441,7 @@ test('a realm with no connection is not applied and the signature is still requi
     });
 });
 
-test('an organization webhook verifier is accepted when no system token is stored', function () {
+test('an organization webhook verifier is rejected when the global verifier is not stored', function () {
     $settings = webhookSettings();
     $body     = '{"eventNotifications":[{"realmId":"realm-1","dataChangeEvent":{"entities":[{"name":"Customer","id":"1","operation":"Create"}]}}]}';
 
@@ -449,19 +457,17 @@ test('an organization webhook verifier is accepted when no system token is store
             $response = $controller->handle(webhookRequest($body, webhookSignature($body, 'company-verifier')));
         });
 
-        expect($response->getStatusCode())->toBe(200)
-            ->and($events)->toHaveCount(1)
-            ->and($events[0]->companyUuid)->toBe('company-a')
-            ->and($events[0]->entityType)->toBe('customer');
+        expect($response->getStatusCode())->toBe(401)
+            ->and($events)->toBe([]);
     });
 });
 
-test('a matching company verifier is accepted and another organization verifier is rejected', function () {
+test('the global verifier is accepted and another organization verifier is rejected', function () {
     $settings = webhookSettings();
     $body     = '{"eventNotifications":[{"realmId":"realm-1","dataChangeEvent":{"entities":[{"name":"Customer","id":"1","operation":"Create"}]}}]}';
 
     withoutWebhookVerifier(function () use ($settings, $body) {
-        $store                                               = new MemorySettingsStore();
+        $store                                               = webhookAdminStore($settings, 'verifier-a');
         $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth([
             'client_secret'    => 'secret-a',
             'webhook_verifier' => 'verifier-a',
@@ -496,12 +502,12 @@ test('a matching company verifier is accepted and another organization verifier 
     });
 });
 
-test('a shared realm delivers only to the connection whose verifier matches', function () {
+test('a shared realm delivers to every connection when the global verifier matches', function () {
     $settings = webhookSettings();
     $body     = '{"eventNotifications":[{"realmId":"realm-shared","dataChangeEvent":{"entities":[{"name":"Customer","id":"55","operation":"Create"}]}}]}';
 
     withoutWebhookVerifier(function () use ($settings, $body) {
-        $store                                               = new MemorySettingsStore();
+        $store                                               = webhookAdminStore($settings, 'verifier-a');
         $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth([
             'webhook_verifier' => 'verifier-a',
         ], []);
@@ -518,16 +524,21 @@ test('a shared realm delivers only to the connection whose verifier matches', fu
         });
 
         expect($response->getStatusCode())->toBe(200)
-            ->and($events)->toHaveCount(1)
+            ->and($events)->toHaveCount(2)
             ->and($events[0]->companyUuid)->toBe('company-a')
+            ->and($events[1]->companyUuid)->toBe('company-b')
             ->and($events[0]->realmId)->toBe('realm-shared')
+            ->and($events[1]->realmId)->toBe('realm-shared')
             ->and($events[0]->entityType)->toBe('customer')
+            ->and($events[1]->entityType)->toBe('customer')
             ->and($events[0]->quickbooksId)->toBe('55')
-            ->and($events[0]->operation)->toBe('create');
+            ->and($events[1]->quickbooksId)->toBe('55')
+            ->and($events[0]->operation)->toBe('create')
+            ->and($events[1]->operation)->toBe('create');
     });
 });
 
-test('the admin and env verifiers authorize only a connection that has no verifier of its own', function () {
+test('the global verifier authorizes every connection and an organization or env verifier does not', function () {
     $previous = getenv('QUICKBOOKS_WEBHOOK_VERIFIER');
     $config   = config('quickbooks.webhook_verifier');
     putenv('QUICKBOOKS_WEBHOOK_VERIFIER=env-verifier');
@@ -569,15 +580,16 @@ JSON;
             $ownResponse = $controller->handle(webhookRequest($body, webhookSignature($body, 'verifier-a')));
         });
 
-        expect($adminResponse->getStatusCode())->toBe(401)
-            ->and($adminEvents)->toBe([])
+        expect($adminResponse->getStatusCode())->toBe(200)
+            ->and($adminEvents)->toHaveCount(2)
+            ->and($adminEvents[0]->companyUuid)->toBe('company-a')
+            ->and($adminEvents[0]->realmId)->toBe('realm-1')
+            ->and($adminEvents[1]->companyUuid)->toBe('company-b')
+            ->and($adminEvents[1]->realmId)->toBe('realm-2')
             ->and($envResponse->getStatusCode())->toBe(401)
             ->and($envEvents)->toBe([])
-            ->and($ownResponse->getStatusCode())->toBe(200)
-            ->and($ownEvents)->toHaveCount(1)
-            ->and($ownEvents[0]->companyUuid)->toBe('company-a')
-            ->and($ownEvents[0]->realmId)->toBe('realm-1')
-            ->and($ownEvents[0]->entityType)->toBe('customer');
+            ->and($ownResponse->getStatusCode())->toBe(401)
+            ->and($ownEvents)->toBe([]);
     } finally {
         if ($previous === false) {
             putenv('QUICKBOOKS_WEBHOOK_VERIFIER');
@@ -644,18 +656,18 @@ test('a failed signature check does not decrypt every company client secret', fu
             expect($response->getStatusCode())->toBe(401)
                 ->and($events)->toBe([])
                 ->and($dispatcher->jobs)->toBe([])
-                ->and($cipher->decrypted)->toContain($auth['a']['webhook_verifier'])
-                ->and($cipher->decrypted)->toContain($auth['b']['webhook_verifier'])
+                ->and($cipher->decrypted)->toContain($auth['admin']['webhook_verifier'])
+                ->and($cipher->decrypted)->not->toContain($auth['a']['webhook_verifier'])
+                ->and($cipher->decrypted)->not->toContain($auth['b']['webhook_verifier'])
                 ->and($cipher->decrypted)->not->toContain($auth['a']['client_secret'])
                 ->and($cipher->decrypted)->not->toContain($auth['b']['client_secret'])
                 ->and($cipher->decrypted)->not->toContain($auth['c']['client_secret'])
                 ->and($cipher->decrypted)->not->toContain($auth['c']['webhook_verifier'])
                 ->and($cipher->decrypted)->not->toContain($auth['admin']['client_secret'])
-                ->and($cipher->decrypted)->not->toContain($auth['admin']['webhook_verifier'])
-                ->and($store->asked)->toContain(SettingsKeys::companyAuth('company-a'))
-                ->and($store->asked)->toContain(SettingsKeys::companyAuth('company-b'))
-                ->and($store->asked)->not->toContain(SettingsKeys::companyAuth('company-c'))
-                ->and($store->asked)->not->toContain(SettingsKeys::adminAuth());
+                ->and($store->asked)->toContain(SettingsKeys::adminAuth())
+                ->and($store->asked)->not->toContain(SettingsKeys::companyAuth('company-a'))
+                ->and($store->asked)->not->toContain(SettingsKeys::companyAuth('company-b'))
+                ->and($store->asked)->not->toContain(SettingsKeys::companyAuth('company-c'));
         });
     });
 });
@@ -738,17 +750,17 @@ test('a blank webhook verifier is not returned and storeAuth encrypts a new toke
         ->and($cipher->decrypt($kept['client_secret']))->toBe('plain-secret')
         ->and($cipher->decrypt($omitted['webhook_verifier']))->toBe('new-token');
 
-    $resolved = $settings->resolveAuth(['webhook_verifier' => $stored['webhook_verifier']], [], []);
+    $resolved = $settings->resolveAuth([], ['webhook_verifier' => $stored['webhook_verifier']], []);
     $shown    = $settings->forBrowser($resolved);
 
     expect($resolved['webhook_verifier'])->toBe('new-token')
         ->and($shown)->not->toHaveKey('webhook_verifier')
         ->and($shown['webhook_verifier_set'])->toBeTrue();
 
-    $plain = $settings->resolveAuth(['webhook_verifier' => 'plain-verifier'], ['webhook_verifier' => 'admin-verifier'], []);
-    expect($plain['webhook_verifier'])->toBe('plain-verifier')
+    $plain = $settings->resolveAuth(['webhook_verifier' => 'company-verifier'], ['webhook_verifier' => 'admin-verifier'], []);
+    expect($plain['webhook_verifier'])->toBe('')
         ->and($settings->forBrowser($plain))->not->toHaveKey('webhook_verifier')
-        ->and($settings->resolveAuth([], ['webhook_verifier' => 'admin-verifier'], [])['webhook_verifier'])->toBe('');
+        ->and($settings->resolveAuth(['webhook_verifier' => 'company-verifier'], [], [])['webhook_verifier'])->toBe('');
 
     $appKey   = (string) config('app.key');
     $key      = substr(hash('sha256', base64_decode(substr($appKey, 7), true), true), 0, 32);
@@ -789,7 +801,7 @@ test('saving a blank webhook verifier keeps the stored ciphertext and does not p
     $cipher                                                 = new SecretCipher();
     $settings                                               = webhookSettings();
     $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companyAuth('company-uuid')] = $settings->storeAuth([
+    $store->rows[SettingsKeys::adminAuth()]                 = $settings->storeAuth([
         'client_id'        => 'client-id',
         'client_secret'    => 'plain-secret',
         'redirect_uri'     => 'https://example.test/callback',
@@ -805,7 +817,7 @@ test('saving a blank webhook verifier keeps the stored ciphertext and does not p
     session(['company' => 'company-uuid']);
     try {
         $response = $controller->save(Request::create('/settings', 'POST', [
-            'scope' => 'company',
+            'scope' => 'admin',
             'auth'  => [
                 'client_id'            => 'client-id',
                 'client_secret'        => '',
@@ -816,7 +828,7 @@ test('saving a blank webhook verifier keeps the stored ciphertext and does not p
             ],
             'sync' => webhookSyncSettings(),
         ]));
-        $stored = $store->rows[SettingsKeys::companyAuth('company-uuid')];
+        $stored = $store->rows[SettingsKeys::adminAuth()];
 
         expect($response->getStatusCode())->toBe(200)
             ->and($response->getContent())->not->toContain('verifier-token')
@@ -834,7 +846,7 @@ test('the remote change job passes the whole entity list to the engine once', fu
     $directory                                              = webhookDirectory();
     $settings                                               = webhookSettings();
     $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companySync('company-uuid')] = [
+    $store->rows[SettingsKeys::adminSync()]                 = [
         'override'           => true,
         'batch_size'         => 7,
         'customer_direction' => 'off',
@@ -869,6 +881,12 @@ test('the remote change job passes the whole entity list to the engine once', fu
             ])
             ->and($engine->calls[0]['settings']['batch_size'])->toBe(7)
             ->and($engine->calls[0]['settings']['customer_direction'])->toBe('both')
+            ->and($directory->loadedWith)->toBe([
+                ['entity' => 'Customer', 'id' => '1', 'operation' => 'Create'],
+                ['entity' => 'Invoice', 'id' => '3', 'operation' => 'Update'],
+                ['entity' => 'Payment', 'id' => '4', 'operation' => 'Create'],
+                ['entity' => 'Account', 'id' => '5', 'operation' => 'Delete'],
+            ])
             ->and($directory->saved)->toBe($engine->calls[0]['ledger'])
             ->and($client->calls)->toBe([])
             ->and($again)->not->toBeNull()
@@ -948,6 +966,9 @@ function webhookDirectory(): FleetbaseDirectory
         /** @var array<int, array<string, string>> */
         public array $skipped = [];
 
+        /** @var array<int, array<string, mixed>> */
+        public array $loadedWith = [];
+
         public function connection(string $companyUuid): ?array
         {
             return [
@@ -970,6 +991,13 @@ function webhookDirectory(): FleetbaseDirectory
                 'connection' => $ledger->connections[$companyUuid],
                 'customers'  => [],
             ];
+        }
+
+        public function loadLinked(string $companyUuid, array $entities): ?array
+        {
+            $this->loadedWith = $entities;
+
+            return $this->load($companyUuid);
         }
 
         public function save(SyncLedger $ledger): void
