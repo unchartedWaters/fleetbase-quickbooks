@@ -50,6 +50,17 @@ const URL_COPY = {
     },
 };
 
+function saveButton() {
+    return document.querySelector('#next-view-section-subheader-actions [data-test-save]');
+}
+
+function bodyTextOutsideScripts() {
+    const clone = document.body.cloneNode(true);
+    clone.querySelectorAll('script, style, #qunit').forEach((node) => node.remove());
+
+    return clone.textContent;
+}
+
 function assertSelectableUrl(assert, key, value) {
     const copy = URL_COPY[key];
     const field = `[data-test-sync-field="${key}"]`;
@@ -264,7 +275,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-sync-field='interval_minutes'] label").hasText('Sync Frequency (minutes)');
         const syncFrequencyHelp = 'Defines the time between possible sync operations. Sync operations will only occur when there is data to sync.';
         assert.dom("[data-test-sync-field='interval_minutes'] [data-test-field-help='interval_minutes']").hasText(syncFrequencyHelp);
-        assert.strictEqual(document.body.textContent.split(syncFrequencyHelp).length - 1, 1);
+        assert.strictEqual(bodyTextOutsideScripts().split(syncFrequencyHelp).length - 1, 1);
         assert.dom("[data-test-sync-field='interval_minutes'] .fa-circle-info").doesNotExist();
         assert.dom("[data-test-sync-field='periodic_interval_hours']").doesNotIncludeText(syncFrequencyHelp);
         assert.dom("[data-test-sync-field='retry_limit']").doesNotIncludeText(syncFrequencyHelp);
@@ -310,7 +321,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         const clientId = this.element.querySelector("[data-test-field='client_id']");
         const scrolled = [];
         clientId.scrollIntoView = (options) => scrolled.push(options);
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.dom("[data-test-error='client_id']").exists();
         assert.dom("[data-test-error='client_id']").hasClass('dark:text-red-400');
         assert.dom("[data-test-error='redirect_uri']").doesNotExist();
@@ -326,7 +337,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         await fillIn("[data-test-field='public_webhook_receiver_url']", 'https://edited.example/hooks');
         await fillIn("[data-test-field='public_oauth_redirect_url']", 'https://edited.example/oauth');
         await fillIn("[data-test-sync='customer_conflict']", 'quickbooks');
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.strictEqual(this.saved.auth.client_id, 'changed-id');
         assert.strictEqual(this.saved.auth.environment, 'sandbox');
         assert.strictEqual(this.saved.sync.enabled, undefined);
@@ -394,7 +405,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-field-help='webhook_verifier']").doesNotIncludeText('Leave blank');
         assert.dom('[data-test-webhook-step]').hasText('Paste the Public Webhook Receiver URL into Intuit and save the webhook verifier.');
 
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.dom("[data-test-error='client_id']").exists();
         assert.dom("[data-test-error='redirect_uri']").doesNotExist();
         assert.dom("[data-test-error='client_secret']").exists();
@@ -404,7 +415,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         await fillIn("[data-test-field='client_id']", 'admin-id');
         await fillIn("[data-test-field='client_secret']", 'secret');
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.strictEqual(this.saved.auth.client_id, 'admin-id');
         assert.strictEqual(this.saved.auth.client_secret, 'secret');
         assert.strictEqual(this.saved.auth.environment, 'sandbox');
@@ -432,7 +443,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom(this.element.querySelector("[data-test-field='client_id']").closest('.input-group').querySelector('label')).hasClass('required');
         assert.dom(this.element.querySelector("[data-test-field='client_secret']").closest('.input-group').querySelector('label')).doesNotHaveClass('required');
 
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
     });
 
@@ -471,7 +482,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-sync='payment_conflict']").hasValue('fleetbase');
         assert.dom("[data-test-sync='wallet_conflict']").hasValue('fleetbase');
 
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.strictEqual(this.saved.sync.customer_conflict, 'fleetbase');
         assert.strictEqual(this.saved.sync.customer_reference, 'fleetbase');
         assert.strictEqual(this.saved.sync.invoice_conflict, 'quickbooks');
@@ -514,7 +525,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         this.set('settingsLoadFailed', false);
         assert.dom('[data-test-settings-unavailable]').doesNotExist();
         assert.dom('[data-test-save]', document).isNotDisabled();
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.strictEqual(this.saved, null);
         assert.deepEqual(this.notifications.messages, []);
 
@@ -536,7 +547,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         this.set('settingsLoaded', true);
 
         assert.dom('[data-test-settings-unavailable]').doesNotExist();
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.strictEqual(this.saved.scope, 'company');
         assert.strictEqual(this.saved.auth.client_id, 'id');
         assert.strictEqual(this.saved.auth.environment, 'sandbox');
@@ -592,7 +603,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-sync='customer_conflict']").hasValue('quickbooks');
         assert.dom("[data-test-sync='customer_direction']").hasValue('both');
 
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.strictEqual(this.saved.auth.webhook_verifier, undefined);
         assert.strictEqual(this.saved.sync.customer_conflict, 'quickbooks');
         assert.strictEqual(this.saved.sync.customer_reference, 'quickbooks');
@@ -639,7 +650,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         await fillIn("[data-test-sync='customer_direction']", 'outbound');
         await fillIn("[data-test-field='webhook_verifier']", 'verifier-token');
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.strictEqual(this.saved.sync.customer_direction, 'outbound');
         assert.strictEqual(this.saved.sync.customer_conflict, 'quickbooks');
         assert.strictEqual(this.saved.sync.customer_reference, 'quickbooks');
@@ -671,7 +682,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assertSelectableUrl(assert, 'internal_webhook_receiver_url', '');
         assertPublicUrl(assert, 'public_oauth_redirect_url', '');
         assertSelectableUrl(assert, 'internal_oauth_redirect_url', '');
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.strictEqual(this.saved.auth.environment, 'production');
         assertUrlsStayOutOfPayload(assert, this.saved);
 
@@ -720,7 +731,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("option[value='off']").doesNotExist();
 
         await fillIn("[data-test-sync='customer_direction']", 'inbound');
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.strictEqual(this.saved.sync.customer_direction, 'inbound');
         assert.strictEqual(this.saved.sync.invoice_direction, 'inbound');
         assert.strictEqual(this.saved.sync.payment_direction, 'both');
@@ -785,7 +796,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom(this.element.querySelector("[data-test-sync='customer_conflict']").closest('.input-group').querySelector('label')).hasClass('required');
 
         await click("[data-test-sync='customer_enabled']");
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.false(this.saved.sync.customer_enabled);
         assert.false(this.saved.sync.payment_enabled);
         assert.true(this.saved.sync.invoice_enabled);
@@ -836,7 +847,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         await click('[data-test-connect]');
         assert.strictEqual(this.payload, undefined);
 
-        await click('[data-test-save]');
+        await click(saveButton());
         assert.strictEqual(this.saved.sync.import_customers, undefined);
         assert.strictEqual(this.saved.auth.import_customers, undefined);
         assert.true(this.saved.sync.customer_enabled);
@@ -860,7 +871,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
 
-        const pending = click('[data-test-save]');
+        const pending = click(saveButton());
         await waitUntil(() => document.querySelector('[data-test-save]')?.classList.contains('btn-is-loading'));
         assert.dom('[data-test-save]', document).isDisabled();
         release();
@@ -898,7 +909,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         const clientId = this.element.querySelector("[data-test-field='client_id']");
         const scrolled = [];
         clientId.scrollIntoView = (options) => scrolled.push(options);
-        await click('[data-test-save]');
+        await click(saveButton());
 
         assertFieldError(assert, "[data-test-field='client_id']", 'client_id');
         assertFieldError(assert, "[data-test-field='environment']", 'environment');
@@ -918,7 +929,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         await fillIn("[data-test-field='environment']", 'sandbox');
         await fillIn("[data-test-field='client_secret']", 'secret');
         await fillIn("[data-test-sync='interval_minutes']", '5');
-        await click('[data-test-save]');
+        await click(saveButton());
 
         assertFieldError(assert, "[data-test-field='webhook_verifier']", 'webhook_verifier');
         assert.strictEqual(document.activeElement, this.element.querySelector("[data-test-field='webhook_verifier']"));

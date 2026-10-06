@@ -123,6 +123,7 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
             }
         }
 
+        this.owner.unregister('service:fetch');
         this.owner.register('service:fetch', FailedSummaryFetchStubService);
         await render(hbs`<Widget::QuickbooksSync />`);
 
@@ -137,6 +138,7 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
 
     test('the widget shows a loading sentence until the summary request finishes', async function (assert) {
         finishPendingSummary = null;
+        this.owner.unregister('service:fetch');
         this.owner.register('service:fetch', PendingSummaryFetchStubService);
 
         await render(hbs`<Widget::QuickbooksSync />`);

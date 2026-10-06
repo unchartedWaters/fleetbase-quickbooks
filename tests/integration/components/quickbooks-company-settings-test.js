@@ -277,7 +277,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-settings-unavailable]').doesNotExist();
         assert.dom('[data-test-override]').doesNotExist();
         assert.dom("[data-test-sync='customer_enabled']").isChecked();
-        await click('[data-test-save]');
+        await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
         assert.deepEqual(fetch.posts.at(-1), {
             path: 'settings',
             body: {

@@ -128,7 +128,7 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-connect]').isDisabled();
         await click('[data-test-sync-now]');
         assert.true(this.synced);
-        await click('[data-test-connect]');
+        assert.dom('[data-test-connect]').isDisabled();
         assert.strictEqual(this.payload, undefined, 'an active connection does not start another sign-in');
     });
 
@@ -303,7 +303,7 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.true(this.connected, 'Connect still runs when the saved connection only needs reauth');
     });
 
-    test('Disconnect without a parent handler posts to the disconnect endpoint', async function (assert) {
+    test('Disconnect without a parent handler confirms and does not post', async function (assert) {
         class NotificationsStubService extends Service {
             messages = [];
 
@@ -355,12 +355,10 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         modals.decline = false;
         await click('[data-test-disconnect]');
 
-        assert.deepEqual(this.owner.lookup('service:fetch').posts, [{ path: 'disconnect', body: { company_uuid: 'company-uuid' } }]);
-        assert.deepEqual(this.owner.lookup('service:notifications').messages, [['success', 'QuickBooks disconnected.']]);
-        assert.false(this.owner.lookup('service:notifications').messages.some((entry) => /unsubscribe|intuit/i.test(String(entry[1]))));
-        assert.dom('[data-test-disconnected]').includesText('Not connected');
-        assert.dom('[data-test-disconnect]').isDisabled();
-        assert.dom('[data-test-connect]').isNotDisabled();
+        assert.deepEqual(this.owner.lookup('service:fetch').posts, [], 'Quickbooks Setup owns the disconnect request');
+        assert.deepEqual(this.owner.lookup('service:notifications').messages, []);
+        assert.dom('[data-test-connected]').exists();
+        assert.dom('[data-test-disconnect]').isNotDisabled();
         assertConnectionButtons(assert);
     });
 });
