@@ -266,9 +266,9 @@ test('a batch creates updates voids and skips a matching invoice', function () {
     $client->invoices['drift-id'] = ['Id' => 'drift-id', 'SyncToken' => '1', 'DocNumber' => 'INV-DRIFT', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
     $client->invoices['void-id']  = ['Id' => 'void-id', 'SyncToken' => '1', 'DocNumber' => 'INV-VOID', 'TotalAmt' => 10];
     $client->invoices['same-id']  = [
-        'Id' => 'same-id', 'SyncToken' => '1', 'DocNumber' => 'INV-SAME', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Id'   => 'same-id', 'SyncToken' => '1', 'DocNumber' => 'INV-SAME', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
         'Line' => [[
-            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
             'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
         ]],
     ];
@@ -511,9 +511,9 @@ test('quickbooks invoice numbers replace the fleetbase number', function () {
     $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
     $ledger->invoices['inv-1']         = invoiceFixture('inv-1', 1000, 'sent', 'LOCAL-1');
     $client->invoices['qb-1']          = [
-        'Id' => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'QB-100', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Id'   => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'QB-100', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
         'Line' => [[
-            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
             'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
         ]],
     ];
@@ -580,9 +580,9 @@ test('a differing payment is compared and a quickbooks reference still creates a
     $ledger->invoices['inv-1']            = invoiceFixture('inv-1', 1000, 'paid', 'INV-PAID');
     $ledger->invoices['inv-1']['paid_at'] = '2026-09-20';
     $client->invoices['inv-id']           = [
-        'Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Id'   => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
         'Line' => [[
-            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
             'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
         ]],
     ];
@@ -658,9 +658,9 @@ test('the first fleetbase payment is created when quickbooks has no payment yet'
     $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
     $ledger->invoices['inv-1']         = invoiceFixture('inv-1', 1000, 'paid', 'INV-PAID');
     $client->invoices['inv-id']        = [
-        'Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Id'   => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
         'Line' => [[
-            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
             'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
         ]],
     ];

@@ -141,7 +141,7 @@ test('a payment lookup follows the target invoice link without scanning customer
         $url = urldecode($request->url());
         if (str_contains($url, '/invoice/inv-9')) {
             return Http::response(['Invoice' => [
-                'Id' => 'inv-9',
+                'Id'        => 'inv-9',
                 'LinkedTxn' => [['TxnId' => 'pay-9', 'TxnType' => 'Payment']],
             ]], 200);
         }
@@ -171,9 +171,9 @@ test('targeted payment lookups batch invoice and payment ids in chunks of 30', f
                     ? ['Id' => $id, 'LinkedTxn' => [['TxnId' => 'pay-' . $id, 'TxnType' => 'Payment']]]
                     : ['Id' => $id, 'Line' => []];
             }
-            $entity = str_contains($query, 'from Invoice') ? 'Invoice' : 'Payment';
+            $entity      = str_contains($query, 'from Invoice') ? 'Invoice' : 'Payment';
             $responses[] = [
-                'bId' => $item['bId'],
+                'bId'           => $item['bId'],
                 'QueryResponse' => [$entity => $rows],
             ];
         }

@@ -84,7 +84,7 @@ test('install settings are the admin scope and an organization scope is not a se
         $store,
         static fn (string $permission): bool => in_array($permission, $operatorPermissions, true)
     );
-    $denied = securitySettingController($store, static fn (): bool => false);
+    $denied      = securitySettingController($store, static fn (): bool => false);
     $companySave = [
         'scope' => 'company',
         'auth'  => ['client_id' => 'x'],

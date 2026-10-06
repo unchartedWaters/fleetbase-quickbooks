@@ -234,10 +234,7 @@ class FakeQuickBooks extends QuickBooksClient
 
         $invoice = $this->invoices[$id] ?? ['Id' => $id];
         if (!empty($invoice['voided'])) {
-            throw new QuickBooksException(
-                400,
-                'QuickBooks request failed with status 400: The invoice is already voided.',
-            );
+            throw new QuickBooksException(400, 'QuickBooks request failed with status 400: The invoice is already voided.');
         }
 
         $invoice['Id']        = $id;
@@ -296,7 +293,7 @@ class FakeQuickBooks extends QuickBooksClient
     }
 
     /**
-     * @param array<string, mixed>                                                                                              $connection
+     * @param array<string, mixed>                                                                                                $connection
      * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
      *
      * @return array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}>
@@ -356,7 +353,7 @@ class FakeQuickBooks extends QuickBooksClient
     }
 
     /**
-     * @param array<string, mixed>                                                                                         $connection
+     * @param array<string, mixed>                                                                                    $connection
      * @param array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string} $item
      *
      * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}
@@ -415,7 +412,7 @@ class FakeQuickBooks extends QuickBooksClient
             'Account' => $this->accounts,
             default   => $this->customers,
         };
-        if (preg_match("/\\bId\\s+IN\\s*\\(([^)]*)\\)/i", $query, $match) === 1) {
+        if (preg_match('/\\bId\\s+IN\\s*\\(([^)]*)\\)/i', $query, $match) === 1) {
             return $this->entitiesByQuotedIds($store, $match[1]);
         }
         if (preg_match("/\\bId\\s*=\\s*'((?:\\\\'|\\\\\\\\|[^'])*)'/i", $query, $match) === 1) {
@@ -423,7 +420,7 @@ class FakeQuickBooks extends QuickBooksClient
 
             return isset($store[$id]) ? [$store[$id]] : [];
         }
-        if (preg_match("/DocNumber\\s+IN\\s*\\(([^)]*)\\)/i", $query, $match) === 1) {
+        if (preg_match('/DocNumber\\s+IN\\s*\\(([^)]*)\\)/i', $query, $match) === 1) {
             $wanted = $this->quotedValues($match[1]);
             $rows   = [];
             foreach ($store as $row) {
@@ -434,7 +431,7 @@ class FakeQuickBooks extends QuickBooksClient
 
             return $rows;
         }
-        if (preg_match("/CustomerRef\\s+IN\\s*\\(([^)]*)\\)/i", $query, $match) === 1 || preg_match("/CustomerRef\\s*=\\s*'/", $query) === 1) {
+        if (preg_match('/CustomerRef\\s+IN\\s*\\(([^)]*)\\)/i', $query, $match) === 1 || preg_match("/CustomerRef\\s*=\\s*'/", $query) === 1) {
             return array_values($this->payments);
         }
         if (preg_match("/PrimaryEmailAddr\\s*=\\s*'((?:\\\\'|\\\\\\\\|[^'])*)'/", $query, $match) === 1) {
@@ -572,7 +569,7 @@ class FakeQuickBooks extends QuickBooksClient
 
         $id                   = 'acct-' . $this->accountCreates;
         $record               = array_merge($payload, ['Id' => $id, 'SyncToken' => '0']);
-        $this->accounts[$id] = $record;
+        $this->accounts[$id]  = $record;
 
         return $record;
     }

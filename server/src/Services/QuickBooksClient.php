@@ -335,7 +335,7 @@ class QuickBooksClient
      */
     public function findInvoiceByDocNumber(array $connection, string $docNumber): ?array
     {
-        $query = "select * from Invoice where DocNumber = '" . self::escapeQuery($docNumber) . "'";
+        $query   = "select * from Invoice where DocNumber = '" . self::escapeQuery($docNumber) . "'";
         $rows    = $this->query($connection, $query, 'Invoice');
 
         return $rows[0] ?? null;
@@ -428,8 +428,8 @@ class QuickBooksClient
      * to customer id and uses the invoices' LinkedTxn ids, so history is never scanned.
      * A legacy list input retains the customer query for callers without invoice scope.
      *
-     * @param array<string, mixed>        $connection
-     * @param array<int|string, string>   $customerIds
+     * @param array<string, mixed>      $connection
+     * @param array<int|string, string> $customerIds
      *
      * @return array<int, array<string, mixed>>
      */
@@ -638,7 +638,7 @@ class QuickBooksClient
      */
     public function findAccountByAcctNum(array $connection, string $acctNum): ?array
     {
-        $query = "select * from Account where AcctNum = '" . self::escapeQuery($acctNum) . "'";
+        $query   = "select * from Account where AcctNum = '" . self::escapeQuery($acctNum) . "'";
         $rows    = $this->query($connection, $query, 'Account');
 
         return $rows[0] ?? null;
@@ -705,7 +705,7 @@ class QuickBooksClient
      * or a query:
      *   bId, query
      *
-     * @param array<string, mixed>                                                                                              $connection
+     * @param array<string, mixed>                                                                                                $connection
      * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
      *
      * @return array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}>
@@ -907,7 +907,7 @@ class QuickBooksClient
     }
 
     /**
-     * @param array<string, mixed>                                                                                              $connection
+     * @param array<string, mixed>                                                                                                $connection
      * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
      *
      * @return array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}>
@@ -1066,7 +1066,7 @@ class QuickBooksClient
             return;
         }
 
-        $message = 'QuickBooks request failed with status ' . $response->status();
+        $message   = 'QuickBooks request failed with status ' . $response->status();
         $fault     = $response->json('Fault.Error.0');
         $faultCode = null;
         if (is_array($fault)) {
@@ -1106,9 +1106,9 @@ class QuickBooksClient
     {
         $realm = (string) ($connection['realm_id'] ?? '');
         if (!array_key_exists($realm, $this->preferencesByRealm)) {
-            $response = $this->accounting($connection, 'get', 'preferences');
-            $body     = $this->decodeBody($response);
-            $prefs    = $body['Preferences'] ?? [];
+            $response                         = $this->accounting($connection, 'get', 'preferences');
+            $body                             = $this->decodeBody($response);
+            $prefs                            = $body['Preferences'] ?? [];
             $this->preferencesByRealm[$realm] = is_array($prefs) ? $prefs : [];
         }
 

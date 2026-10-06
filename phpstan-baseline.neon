@@ -1,0 +1,571 @@
+parameters:
+	ignoreErrors:
+		-
+			message: "#^Cannot access property \\$company_uuid on mixed\\.$#"
+			count: 1
+			path: server/src/Console/Commands/SyncQuickbooks.php
+
+		-
+			message: "#^Cannot access property \\$realm_id on mixed\\.$#"
+			count: 1
+			path: server/src/Console/Commands/SyncQuickbooks.php
+
+		-
+			message: "#^Cannot call method apply\\(\\) on mixed\\.$#"
+			count: 2
+			path: server/src/Http/Controllers/ConnectionController.php
+
+		-
+			message: "#^Parameter \\#1 \\$directory of method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncFlagger\\:\\:queueEnabled\\(\\) expects Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory, mixed given\\.$#"
+			count: 1
+			path: server/src/Http/Controllers/ConnectionController.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Http\\\\Controllers\\\\SettingController\\:\\:directory\\(\\) should return Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory but returns mixed\\.$#"
+			count: 1
+			path: server/src/Http/Controllers/SettingController.php
+
+		-
+			message: "#^Property Fleetbase\\\\Quickbooks\\\\Http\\\\Controllers\\\\SettingController\\:\\:\\$directory \\(Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory\\|null\\) does not accept mixed\\.$#"
+			count: 1
+			path: server/src/Http/Controllers/SettingController.php
+
+		-
+			message: "#^Cannot call method flush\\(\\) on mixed\\.$#"
+			count: 1
+			path: server/src/Http/Controllers/WebhookController.php
+
+		-
+			message: "#^Call to function is_int\\(\\) with string will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Jobs/ApplyRemoteChange.php
+
+		-
+			message: "#^Offset 'entity' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Jobs/ApplyRemoteChange.php
+
+		-
+			message: "#^Offset 'id' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Jobs/ApplyRemoteChange.php
+
+		-
+			message: "#^Offset 'operation' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Jobs/ApplyRemoteChange.php
+
+		-
+			message: "#^Cannot access property \\$local_type on mixed\\.$#"
+			count: 1
+			path: server/src/Jobs/SyncWebhookBatch.php
+
+		-
+			message: "#^Cannot access property \\$local_uuid on mixed\\.$#"
+			count: 1
+			path: server/src/Jobs/SyncWebhookBatch.php
+
+		-
+			message: "#^Offset 'local_type' on array\\{local_type\\: string, local_uuid\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Jobs/SyncWebhookBatch.php
+
+		-
+			message: "#^Offset 'local_uuid' on array\\{local_type\\: string, local_uuid\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Jobs/SyncWebhookBatch.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
+			count: 5
+			path: server/src/Listeners/EnqueueWebhookSync.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
+			count: 4
+			path: server/src/Listeners/EnqueueWebhookSync.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$realm_id\\.$#"
+			count: 3
+			path: server/src/Listeners/EnqueueWebhookSync.php
+
+		-
+			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
+			count: 2
+			path: server/src/Listeners/EnqueueWebhookSync.php
+
+		-
+			message: "#^Left side of && is always true\\.$#"
+			count: 1
+			path: server/src/Listeners/EnqueueWebhookSync.php
+
+		-
+			message: "#^Offset 'invoice' on array\\{invoice\\: string, invoices\\: array\\<int, string\\>, keyed_by_payment\\: bool, quickbooks_invoices\\: array\\<int, string\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 2
+			path: server/src/Listeners/EnqueueWebhookSync.php
+
+		-
+			message: "#^Offset 'invoices' on array\\{invoice\\: string, invoices\\: array\\<int, string\\>, keyed_by_payment\\: bool, quickbooks_invoices\\: array\\<int, string\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 2
+			path: server/src/Listeners/EnqueueWebhookSync.php
+
+		-
+			message: "#^Offset 'rows' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Listeners/EnqueueWebhookSync.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between non\\-empty\\-string and '' will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Listeners/EnqueueWebhookSync.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Models\\\\Connection\\:\\:save\\(\\) has parameter \\$options with no value type specified in iterable type array\\.$#"
+			count: 1
+			path: server/src/Models/Connection.php
+
+		-
+			message: "#^Parameter \\#1 \\$connection of method Fleetbase\\\\Quickbooks\\\\Services\\\\BatchRunner\\:\\:intervalElapsed\\(\\) expects array\\<string, mixed\\>, mixed given\\.$#"
+			count: 1
+			path: server/src/Services/BatchRunner.php
+
+		-
+			message: "#^Parameter \\#1 \\$connection of static method Fleetbase\\\\Quickbooks\\\\Services\\\\ConnectionTokens\\:\\:blockedMessage\\(\\) expects array\\<string, mixed\\>, mixed given\\.$#"
+			count: 2
+			path: server/src/Services/BatchRunner.php
+
+		-
+			message: "#^Property Fleetbase\\\\Quickbooks\\\\Services\\\\SyncLedger\\:\\:\\$connections \\(array\\<string, array\\<string, mixed\\>\\>\\) does not accept array\\<string, mixed\\>\\.$#"
+			count: 2
+			path: server/src/Services/BatchRunner.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$email\\.$#"
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$name\\.$#"
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$phone\\.$#"
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: "#^Call to an undefined method object\\:\\:getConnectionName\\(\\)\\.$#"
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: "#^Call to an undefined method object\\:\\:getTable\\(\\)\\.$#"
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: "#^Cannot access property \\$uuid on mixed\\.$#"
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\CustomerImporter\\:\\:candidateContacts\\(\\) should return array\\<int, object\\> but returns array\\<int\\<0, max\\>, mixed\\>\\.$#"
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: "#^Property Fleetbase\\\\Quickbooks\\\\Services\\\\CustomerImporter\\:\\:\\$companyCandidates \\(array\\{company\\: string, rows\\: array\\<int, object\\>\\}\\|null\\) does not accept array\\{company\\: string, rows\\: array\\<int\\<0, max\\>, mixed\\>\\}\\.$#"
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: "#^Access to an undefined property Illuminate\\\\Database\\\\Eloquent\\\\Builder\\|Illuminate\\\\Database\\\\Eloquent\\\\Model\\:\\:\\$local_type\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Access to an undefined property Illuminate\\\\Database\\\\Eloquent\\\\Builder\\|Illuminate\\\\Database\\\\Eloquent\\\\Model\\:\\:\\$local_uuid\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Access to an undefined property Illuminate\\\\Database\\\\Eloquent\\\\Builder\\|Illuminate\\\\Database\\\\Eloquent\\\\Model\\:\\:\\$qbo_id\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Access to an undefined property Illuminate\\\\Database\\\\Eloquent\\\\Builder\\|Illuminate\\\\Database\\\\Eloquent\\\\Model\\:\\:\\$realm_id\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Access to an undefined property Illuminate\\\\Database\\\\Eloquent\\\\Builder\\|Illuminate\\\\Database\\\\Eloquent\\\\Model\\:\\:\\$uuid\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$company_uuid\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$realm_id\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$uuid\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Call to an undefined method object\\:\\:getConnection\\(\\)\\.$#"
+			count: 2
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Call to an undefined method object\\:\\:getTable\\(\\)\\.$#"
+			count: 2
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Cannot access property \\$uuid on mixed\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory\\:\\:insertCustomerPlace\\(\\) never returns null so it can be removed from the return type\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory\\:\\:placesByUuid\\(\\) should return array\\<string, object\\> but returns array\\<string, mixed\\>\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Negated boolean expression is always false\\.$#"
+			count: 2
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Offset 'columns' on array\\{uuid\\: non\\-empty\\-string, columns\\: array\\<string, mixed\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Offset 'keep' on array\\{link\\: array\\<string, mixed\\>, keep\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Offset 'uuid' on array\\{uuid\\: string, columns\\: array\\<string, mixed\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Parameter \\#1 \\$customers of method Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory\\:\\:customerPlaceIds\\(\\) expects iterable\\<Illuminate\\\\Database\\\\Eloquent\\\\Model\\>, array\\<Illuminate\\\\Database\\\\Eloquent\\\\Builder\\>\\|Illuminate\\\\Database\\\\Eloquent\\\\Collection given\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Property Fleetbase\\\\Quickbooks\\\\Services\\\\SyncLedger\\:\\:\\$connections \\(array\\<string, array\\<string, mixed\\>\\>\\) does not accept array\\<string, array\\<string, mixed\\>\\|null\\>\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Right side of && is always true\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Static method Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory\\:\\:minorAttribute\\(\\) is unused\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between mixed and null will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Argument of an invalid type mixed supplied for foreach, only iterables are supported\\.$#"
+			count: 1
+			path: server/src/Services/QuickBooksClient.php
+
+		-
+			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
+			count: 6
+			path: server/src/Services/QuickBooksClient.php
+
+		-
+			message: "#^Offset 'status' on array\\{ok\\: bool, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 4
+			path: server/src/Services/QuickBooksClient.php
+
+		-
+			message: "#^Parameter \\#2 \\$invoiceIds of method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksClient\\:\\:findPaymentsForInvoiceTargets\\(\\) expects array\\<int, string\\>, array\\<int, int\\|string\\> given\\.$#"
+			count: 1
+			path: server/src/Services/QuickBooksClient.php
+
+		-
+			message: "#^Parameter \\#2 \\$items of method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksClient\\:\\:postBatch\\(\\) expects array\\<int, array\\{bId\\: string, operation\\?\\: string, entity\\?\\: string, payload\\?\\: array\\<string, mixed\\>, query\\?\\: string\\}\\>, array\\<int, array\\{bId\\?\\: string, operation\\?\\: string, entity\\?\\: string, payload\\?\\: array\\<string, mixed\\>, query\\?\\: string\\}\\> given\\.$#"
+			count: 1
+			path: server/src/Services/QuickBooksClient.php
+
+		-
+			message: "#^Right side of && is always true\\.$#"
+			count: 1
+			path: server/src/Services/QuickBooksClient.php
+
+		-
+			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
+			count: 4
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^If condition is always false\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:batch\\(\\) should return array\\<string, array\\{ok\\: bool, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\}\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:createAccount\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:createCustomer\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:createInvoice\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:createPayment\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:customTxnNumbers\\(\\) should return bool but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:ensureServiceItem\\(\\) should return string but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findAccountByAcctNum\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findAccountsByName\\(\\) should return array\\<int, array\\<string, mixed\\>\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findCustomerByDisplayName\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findCustomerByEmail\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findInvoiceByDocNumber\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findPaymentForInvoice\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findPaymentsForCustomers\\(\\) should return array\\<int, array\\<string, mixed\\>\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:getAccount\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:getCustomer\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:getInvoice\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:getPayment\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:homeCurrency\\(\\) should return string\\|null but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:nextInvoiceDocNumber\\(\\) should return string\\|null but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:nextInvoiceDocNumbers\\(\\) should return array\\<int, string\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:updateAccount\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:updateCustomer\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:updateInvoice\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:updatePayment\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:voidInvoice\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:commitFinished\\(\\) has parameter \\$batch with no value type specified in iterable type array\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:commitFinished\\(\\) has parameter \\$connection with no value type specified in iterable type array\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:direction\\(\\) has parameter \\$settings with no value type specified in iterable type array\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:persistSuccessfulInvoiceWrites\\(\\) has parameter \\$connection with no value type specified in iterable type array\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:prefetchCustomers\\(\\) has parameter \\$settings with no value type specified in iterable type array\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:prefetchInvoices\\(\\) has parameter \\$connection with no value type specified in iterable type array\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:prefetchInvoices\\(\\) has parameter \\$rows with no value type specified in iterable type array\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:queryWhereIn\\(\\) has parameter \\$readOne with no value type specified in iterable type array\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:settlePaymentBuffer\\(\\) has parameter \\$connection with no value type specified in iterable type array\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Offset 'bId' on array\\{bId\\: string, operation\\: string, entity\\: string, payload\\: array\\<string, mixed\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Offset 'body' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 3
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Offset 'entity' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Offset 'id' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Offset 'operation' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Offset 'rows' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 2
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Offset 'status' on array\\{ok\\: bool, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 8
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Offset 'status' on array\\{ok\\: bool, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: true\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 6
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Offset string does not exist on array\\<string, array\\<string, mixed\\>\\|null\\>\\|null\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Parameter \\#2 \\$array of function array_key_exists expects array, array\\<string, array\\<string, mixed\\>\\|null\\>\\|null given\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between non\\-empty\\-array\\<int, array\\{bId\\: string, query\\: string, uuid\\: string, email\\: string, name\\: string\\}\\> and array\\{\\} will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php

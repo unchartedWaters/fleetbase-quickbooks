@@ -326,7 +326,7 @@ test('a quickbooks balance of zero with no payment does not set amount paid', fu
         'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 0,
         'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
         'Line'    => [[
-            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
             'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
         ]],
     ];
@@ -354,7 +354,7 @@ test('a partial fleetbase invoice stays partial when quickbooks balance is zero 
         'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 0,
         'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
         'Line'    => [[
-            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
             'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
         ]],
     ];
@@ -906,7 +906,7 @@ test('a shared quickbooks payment is not rewritten from fleetbase', function () 
         'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 4,
         'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
         'Line'    => [[
-            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
             'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
         ]],
     ];
@@ -1231,10 +1231,10 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
     expect($cleared['Description'])->toBe('')
         ->and($omitted)->not->toHaveKey('Description');
 
-    [$engine, $client]        = qbEngine();
-    $ledger                   = engineLedger();
-    $ledger->wallets['wal-1'] = engineWallet('wal-1', ['description' => '']);
-    $ledger->links[]          = engineLink('wallet', 'wal-1', 'acct-9');
+    [$engine, $client]          = qbEngine();
+    $ledger                     = engineLedger();
+    $ledger->wallets['wal-1']   = engineWallet('wal-1', ['description' => '']);
+    $ledger->links[]            = engineLink('wallet', 'wal-1', 'acct-9');
     $client->accounts['acct-9'] = [
         'Id'          => 'acct-9',
         'SyncToken'   => '1',
@@ -1297,10 +1297,10 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
         ->and($referenceSecond['updated'])->toBe(0)
         ->and(array_count_values($referenceClient->calls)['updateAccount'] ?? 0)->toBe(1);
 
-    [$sourceEngine, $sourceClient] = qbEngine();
-    $sourceLedger                  = engineLedger();
-    $sourceLedger->wallets['wal-1'] = engineWallet('wal-1', ['description' => 'Keep']);
-    $sourceLedger->links[]         = engineLink('wallet', 'wal-1', 'acct-9');
+    [$sourceEngine, $sourceClient]    = qbEngine();
+    $sourceLedger                     = engineLedger();
+    $sourceLedger->wallets['wal-1']   = engineWallet('wal-1', ['description' => 'Keep']);
+    $sourceLedger->links[]            = engineLink('wallet', 'wal-1', 'acct-9');
     $sourceClient->accounts['acct-9'] = [
         'Id'          => 'acct-9',
         'SyncToken'   => '1',
@@ -1321,10 +1321,10 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
         ->and($sourceLedger->wallets['wal-1']['description'])->toBe('Keep')
         ->and($sourceClient->calls)->not->toContain('updateAccount');
 
-    [$inboundEngine, $inboundClient] = qbEngine();
-    $inboundLedger                   = engineLedger();
-    $inboundLedger->wallets['wal-1'] = engineWallet('wal-1', ['description' => 'Keep']);
-    $inboundLedger->links[]          = engineLink('wallet', 'wal-1', 'acct-9');
+    [$inboundEngine, $inboundClient]   = qbEngine();
+    $inboundLedger                     = engineLedger();
+    $inboundLedger->wallets['wal-1']   = engineWallet('wal-1', ['description' => 'Keep']);
+    $inboundLedger->links[]            = engineLink('wallet', 'wal-1', 'acct-9');
     $inboundClient->accounts['acct-9'] = [
         'Id'          => 'acct-9',
         'SyncToken'   => '1',
@@ -1454,10 +1454,10 @@ test('a failed payment flush is recorded on the invoice and a 401 leaves the res
         $ledger->invoices[$uuid] = engineInvoice($uuid, ['number' => 'INV-' . strtoupper($key), 'status' => $status]);
         $id                      = 'qb-' . $key;
         $client->invoices[$id]   = [
-            'Id' => $id, 'SyncToken' => '1', 'DocNumber' => 'INV-' . strtoupper($key), 'TotalAmt' => 10, 'Balance' => 10,
+            'Id'      => $id, 'SyncToken' => '1', 'DocNumber' => 'INV-' . strtoupper($key), 'TotalAmt' => 10, 'Balance' => 10,
             'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
             'Line'    => [[
-                'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+                'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
                 'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
             ]],
         ];

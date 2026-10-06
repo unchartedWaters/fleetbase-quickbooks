@@ -544,8 +544,8 @@ class SyncEngine
         $conflict   = (string) ($settings['customer_conflict'] ?? 'fleetbase');
         $pushClears = $conflict === 'fleetbase' && $push;
         $payload    = $this->customers->toQuickBooks($this->customers->fromParty($customer));
-        $email     = trim((string) ($customer['email'] ?? ''));
-        $link      = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $uuid);
+        $email      = trim((string) ($customer['email'] ?? ''));
+        $link       = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $uuid);
         if ($link !== null && $link['realm_id'] !== $connection['realm_id']) {
             $link = null;
         }

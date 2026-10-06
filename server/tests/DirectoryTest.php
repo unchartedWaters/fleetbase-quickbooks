@@ -1016,8 +1016,8 @@ test('customer billing address and notes round-trip through the directory', func
         ];
 
         $directory->save($ledger);
-        $updated = DB::table('contacts')->where('uuid', 'cust-9')->first();
-        $place   = DB::table('places')->where('uuid', 'place-1')->first();
+        $updated  = DB::table('contacts')->where('uuid', 'cust-9')->first();
+        $place    = DB::table('places')->where('uuid', 'place-1')->first();
         $created  = DB::table('contacts')->where('uuid', 'cust-new')->first();
         $imported = DB::table('places')->where('uuid', $created->place_uuid)->first();
 

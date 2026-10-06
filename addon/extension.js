@@ -81,14 +81,7 @@ export default {
     // The organization settings page renders this engine's component from the host app.
     // Nested engine components resolve only after they are registered there.
     onEngineLoaded(engine, universe, app) {
-        const names = [
-            'quickbooks-company-settings',
-            'quickbooks-settings',
-            'quickbooks-settings-fields',
-            'quickbooks-connection',
-            'quickbooks-activity',
-            'widget/quickbooks-sync',
-        ];
+        const names = ['quickbooks-company-settings', 'quickbooks-settings', 'quickbooks-settings-fields', 'quickbooks-connection', 'quickbooks-activity', 'widget/quickbooks-sync'];
 
         names.forEach((name) => {
             const key = `component:${name}`;

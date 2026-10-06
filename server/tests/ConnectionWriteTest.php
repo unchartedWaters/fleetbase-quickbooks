@@ -62,7 +62,7 @@ test('a refused refresh does not write tokens over a newer rotation', function (
     ];
     $columns = FleetbaseDirectory::connectionColumns($refused, 'realm-1', FleetbaseDirectory::CONNECTION_TOKEN_FIELDS);
 
-    $same = FleetbaseDirectory::reauthColumns($refused, $columns, 'old-refresh', 'old-access');
+    $same  = FleetbaseDirectory::reauthColumns($refused, $columns, 'old-refresh', 'old-access');
     $newer = FleetbaseDirectory::reauthColumns($refused, $columns, 'new-refresh', 'new-access');
 
     expect($same)->toBe(['needs_reauth' => true])
@@ -70,8 +70,8 @@ test('a refused refresh does not write tokens over a newer rotation', function (
 });
 
 test('an unchanged invoice field is not written back over a later edit', function () {
-    $loaded = ['number' => 'INV-1', 'notes' => 'Original', 'date' => '2026-09-01'];
-    $same   = FleetbaseDirectory::changedColumns($loaded, $loaded, ['number', 'notes', 'date']);
+    $loaded  = ['number' => 'INV-1', 'notes' => 'Original', 'date' => '2026-09-01'];
+    $same    = FleetbaseDirectory::changedColumns($loaded, $loaded, ['number', 'notes', 'date']);
     $renamed = FleetbaseDirectory::changedColumns(
         ['number' => 'QB-9', 'notes' => 'Original', 'date' => '2026-09-01'],
         $loaded,

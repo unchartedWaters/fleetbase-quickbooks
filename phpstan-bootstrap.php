@@ -36,3 +36,17 @@ if (!function_exists('app')) {
         return Illuminate\Container\Container::getInstance()->make($abstract, $parameters);
     }
 }
+
+if (!function_exists('event')) {
+    function event(object|string|null $event = null, mixed $payload = []): mixed
+    {
+        return null;
+    }
+}
+
+if (!function_exists('now')) {
+    function now(\DateTimeZone|string|null $tz = null): Illuminate\Support\Carbon
+    {
+        return Illuminate\Support\Carbon::now($tz);
+    }
+}

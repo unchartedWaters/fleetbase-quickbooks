@@ -82,7 +82,7 @@ class Amounts
             return ($amount === '' ? '0' : $amount) . '.00';
         }
 
-        [$whole, $fraction] = explode('.', $amount, 2);
+        [$whole, $fraction]  = explode('.', $amount, 2);
         $whole               = $whole === '' ? '0' : $whole;
         $digits              = preg_replace('/\D/', '', $fraction) ?? '';
         if (strlen($digits) <= 2) {
