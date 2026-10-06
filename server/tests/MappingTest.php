@@ -22,7 +22,7 @@ test('customer invoice and payment payloads match the quickbooks shape', functio
         'email'   => 'ada@example.test',
         'phone'   => '555-0100',
         'notes'   => 'Priority',
-        'address' => ['line1' => '1 Analytical Engine', 'city' => 'London', 'postal_code' => 'SW1'],
+        'address' => ['line1' => '1 Analytical Engine', 'line2' => 'Suite 2', 'city' => 'London', 'postal_code' => 'SW1'],
     ]);
     $invoice = $invoices->toQuickBooks([
         'number'   => 'INV-1',
@@ -40,6 +40,7 @@ test('customer invoice and payment payloads match the quickbooks shape', functio
     expect($customer['DisplayName'])->toBe('Ada Lovelace')
         ->and($customer['PrimaryEmailAddr']['Address'])->toBe('ada@example.test')
         ->and($customer['BillAddr']['Line1'])->toBe('1 Analytical Engine')
+        ->and($customer['BillAddr']['Line2'])->toBe('Suite 2')
         ->and($invoice['CustomerRef']['value'])->toBe('cust-9')
         ->and($invoice['DocNumber'])->toBe('INV-1')
         ->and($invoice['Line'][0]['SalesItemLineDetail']['ItemRef']['value'])->toBe('item-1')
@@ -149,6 +150,79 @@ test('a product line described as Tax is not stored as the tax amount', function
     expect($mapped['tax'])->toBe(0)
         ->and($mapped['items'][0]['description'])->toBe('Tax')
         ->and($mapped['items'][0]['amount'])->toBe(1000);
+});
+
+test('a quickbooks billing address maps onto the customer place', function () {
+    $mapper  = new CustomerMapper();
+    $address = $mapper->addressFromBillAddr([
+        'Id'                     => '9',
+        'Line1'                  => '1 Analytical Engine',
+        'Line2'                  => 'Suite 2',
+        'City'                   => 'London',
+        'CountrySubDivisionCode' => 'LN',
+        'PostalCode'             => 'SW1',
+        'Country'                => 'UK',
+    ]);
+    $place = (object) [
+        'street1'     => '1 Analytical Engine',
+        'street2'     => 'Suite 2',
+        'city'        => 'London',
+        'province'    => 'LN',
+        'postal_code' => 'SW1',
+        'country'     => 'UK',
+    ];
+
+    expect($address['state'])->toBe('LN')
+        ->and($address['line2'])->toBe('Suite 2')
+        ->and($mapper->addressFromPlace($place))->toBe($address)
+        ->and($mapper->placeColumns($address)['street1'])->toBe('1 Analytical Engine')
+        ->and($mapper->placeColumns($address)['street2'])->toBe('Suite 2')
+        ->and($mapper->placeColumns($address)['province'])->toBe('LN')
+        ->and($mapper->addressFromBillAddr(['Id' => '1']))->toBeNull();
+});
+
+test('a fleetbase invoice clear sends an empty note and due date', function () {
+    $invoices = new InvoiceMapper();
+    $cleared  = $invoices->toQuickBooks([
+        'number'   => 'INV-1',
+        'date'     => '2026-09-01',
+        'due_date' => '',
+        'notes'    => '',
+        'currency' => 'USD',
+        'items'    => [['description' => 'Delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000]],
+    ], 'cust-9', 'item-1', true);
+    $omitted = $invoices->toQuickBooks([
+        'number'   => 'INV-1',
+        'date'     => '2026-09-01',
+        'due_date' => '',
+        'notes'    => '',
+    ], 'cust-9', 'item-1');
+
+    expect($cleared['PrivateNote'])->toBe('')
+        ->and($cleared['DueDate'])->toBe('')
+        ->and($cleared['TxnDate'])->toBe('2026-09-01')
+        ->and($omitted)->not->toHaveKey('PrivateNote')
+        ->and($omitted)->not->toHaveKey('DueDate');
+});
+
+test('a fleetbase clear sends an empty note and billing address', function () {
+    $mapper  = new CustomerMapper();
+    $cleared = $mapper->toQuickBooks([
+        'name'    => 'Ada',
+        'notes'   => '',
+        'address' => null,
+    ], true);
+    $omitted = $mapper->toQuickBooks([
+        'name'  => 'Ada',
+        'notes' => '',
+    ]);
+
+    expect($cleared['Notes'])->toBe('')
+        ->and($cleared['BillAddr']['Line1'])->toBe('')
+        ->and($cleared['BillAddr']['Line2'])->toBe('')
+        ->and($cleared['BillAddr']['City'])->toBe('')
+        ->and($omitted)->not->toHaveKey('Notes')
+        ->and($omitted)->not->toHaveKey('BillAddr');
 });
 
 test('a storefront customer a fleet ops contact and a company all map to a quickbooks customer', function () {
@@ -450,6 +524,12 @@ test('a retry after a lost link adopts the existing record by doc number', funct
         'TxnDate'     => '2026-09-01',
         'DueDate'     => '2026-09-15',
         'CustomerRef' => ['value' => 'qbo-customer'],
+        'Line'        => [[
+            'Amount'              => '10.00',
+            'DetailType'          => 'SalesItemLineDetail',
+            'Description'         => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
     ];
     $client->invoices['existing-9'] = $client->invoiceByDoc;
     $ledger                         = connectedLedger();

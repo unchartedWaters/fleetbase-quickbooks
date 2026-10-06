@@ -11,6 +11,7 @@ use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
 use Fleetbase\Quickbooks\Observers\FlagCustomerObserver;
 use Fleetbase\Quickbooks\Observers\FlagInvoiceItemObserver;
 use Fleetbase\Quickbooks\Observers\FlagInvoiceObserver;
+use Fleetbase\Quickbooks\Observers\FlagPlaceObserver;
 use Fleetbase\Quickbooks\Observers\FlagWalletObserver;
 use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
@@ -94,6 +95,11 @@ class QuickbooksServiceProvider extends CoreServiceProvider
         $customer = 'Fleetbase\\FleetOps\\Models\\Customer';
         if (class_exists($customer)) {
             $customer::observe(FlagCustomerObserver::class);
+        }
+
+        $place = 'Fleetbase\\FleetOps\\Models\\Place';
+        if (class_exists($place)) {
+            $place::observe(FlagPlaceObserver::class);
         }
 
         $invoice = 'Fleetbase\\Ledger\\Models\\Invoice';

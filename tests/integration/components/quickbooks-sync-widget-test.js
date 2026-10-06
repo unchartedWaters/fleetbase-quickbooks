@@ -1,6 +1,6 @@
 import { module, test } from 'qunit';
 import { setupRenderingTest } from 'dummy/tests/helpers';
-import { render, settled } from '@ember/test-helpers';
+import { click, render, settled } from '@ember/test-helpers';
 import { hbs } from 'ember-cli-htmlbars';
 import Service from '@ember/service';
 
@@ -13,6 +13,7 @@ class NotificationsStubService extends Service {
 class FetchStubService extends Service {
     connection = null;
     credentialsConfigured = false;
+    posts = [];
 
     async get() {
         return {
@@ -23,8 +24,22 @@ class FetchStubService extends Service {
         };
     }
 
-    async post() {
+    async post(path, body) {
+        this.posts.push([path, body]);
+
         return {};
+    }
+}
+
+class OperatorAbilitiesStubService extends Service {
+    can(permission) {
+        return permission === 'quickbooks reconcile sync';
+    }
+}
+
+class DeniedAbilitiesStubService extends Service {
+    can() {
+        return false;
     }
 }
 
@@ -74,6 +89,31 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         await render(hbs`<Widget::QuickbooksSync />`);
         assert.dom('[data-test-widget-sync]').isNotDisabled();
         assert.dom('[data-test-widget-credentials-missing]').doesNotExist();
+    });
+
+    test('an operator can sync now', async function (assert) {
+        this.owner.register('service:abilities', OperatorAbilitiesStubService);
+        this.fetch.connection = { realm_id: '123', environment: 'sandbox' };
+        this.fetch.credentialsConfigured = true;
+
+        await render(hbs`<Widget::QuickbooksSync />`);
+        assert.dom('[data-test-widget-sync]').isNotDisabled();
+
+        await click('[data-test-widget-sync]');
+
+        assert.strictEqual(this.fetch.posts.length, 1);
+        assert.strictEqual(this.fetch.posts[0][0], 'sync');
+        assert.deepEqual(this.fetch.posts[0][1], { company_uuid: 'company-uuid' });
+    });
+
+    test('sync now stays disabled without the operator permission', async function (assert) {
+        this.owner.register('service:abilities', DeniedAbilitiesStubService);
+        this.fetch.connection = { realm_id: '123', environment: 'sandbox' };
+        this.fetch.credentialsConfigured = true;
+
+        await render(hbs`<Widget::QuickbooksSync />`);
+        assert.dom('[data-test-widget-sync]').isDisabled();
+        assert.strictEqual(this.fetch.posts.length, 0);
     });
 
     test('a failed summary shows unavailable and does not say not connected', async function (assert) {

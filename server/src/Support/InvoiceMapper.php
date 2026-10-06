@@ -11,10 +11,11 @@ class InvoiceMapper
 
     /**
      * @param array<string, mixed> $invoice
+     * @param bool                 $pushClears include an empty note and due date so a Fleetbase clear is sent
      *
      * @return array<string, mixed>
      */
-    public function toQuickBooks(array $invoice, string $customerRef, string $itemId): array
+    public function toQuickBooks(array $invoice, string $customerRef, string $itemId, bool $pushClears = false): array
     {
         $lines = [];
         $items = is_array($invoice['items'] ?? null) ? $invoice['items'] : [];
@@ -57,12 +58,18 @@ class InvoiceMapper
         }
         if (!empty($invoice['date'])) {
             $payload['TxnDate'] = $invoice['date'];
+        } elseif ($pushClears) {
+            $payload['TxnDate'] = '';
         }
         if (!empty($invoice['due_date'])) {
             $payload['DueDate'] = $invoice['due_date'];
+        } elseif ($pushClears) {
+            $payload['DueDate'] = '';
         }
         if (!empty($invoice['notes'])) {
             $payload['PrivateNote'] = $invoice['notes'];
+        } elseif ($pushClears) {
+            $payload['PrivateNote'] = '';
         }
         if (!empty($invoice['currency'])) {
             $payload['CurrencyRef'] = ['value' => $invoice['currency']];

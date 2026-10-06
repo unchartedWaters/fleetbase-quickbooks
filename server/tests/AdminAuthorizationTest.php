@@ -1,5 +1,6 @@
 <?php
 
+use Fleetbase\Quickbooks\Auth\Schemas\Quickbooks;
 use Fleetbase\Quickbooks\Http\Controllers\ConnectionController;
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
 use Fleetbase\Quickbooks\Services\ConnectionProbe;
@@ -54,6 +55,31 @@ function installAuthorizer(): Authorizer
     return new Authorizer(static fn () => true);
 }
 
+/** @return array<int, string> */
+function operatorPermissions(): array
+{
+    $schema = new Quickbooks();
+    foreach ($schema->policies as $policy) {
+        if (($policy['name'] ?? '') === 'QuickbooksOperator') {
+            return $policy['permissions'];
+        }
+    }
+
+    return [];
+}
+
+function operatorAuthorizer(): Authorizer
+{
+    $permissions = operatorPermissions();
+
+    return new Authorizer(static fn (string $permission): bool => in_array($permission, $permissions, true));
+}
+
+function deniedAuthorizer(): Authorizer
+{
+    return new Authorizer(static fn (): bool => false);
+}
+
 function installSettingsController(MemorySettingsStore $store, ?Authorizer $authorizer = null): SettingController
 {
     return new SettingController(
@@ -102,7 +128,7 @@ test('an installation administrator is user isAdmin and not an organization role
         ->and(InstallationAdmin::isInstallationAdmin(null))->toBeFalse();
 });
 
-test('install routes require fleetbase admin guard and the callback stays public', function () {
+test('operator routes stay signed in and the connection test stays on the admin guard', function () {
     $routes      = (string) file_get_contents(dirname(__DIR__) . '/src/routes.php');
     $adminAt     = strpos($routes, 'Fleetbase\\Http\\Middleware\\AdminGuard::class');
     $protectedAt = strpos($routes, "'middleware' => ['fleetbase.protected']");
@@ -112,6 +138,9 @@ test('install routes require fleetbase admin guard and the callback stays public
         ->and($protectedAt)->toBeLessThan($adminAt);
 
     foreach ([
+        "get('connection'",
+        "get('batches'",
+        "get('summary'",
         "get('settings'",
         "post('settings'",
         "post('oauth/start'",
@@ -120,48 +149,53 @@ test('install routes require fleetbase admin guard and the callback stays public
         "post('import'",
         "post('reconcile'",
         "post('sync'",
-        "post('connection/test'",
     ] as $route) {
-        expect(strpos($routes, $route))->toBeGreaterThan($adminAt);
+        $at = strpos($routes, $route);
+        expect($at)->toBeGreaterThan($protectedAt)
+            ->and($at)->toBeLessThan($adminAt);
     }
 
+    expect(strpos($routes, "post('connection/test'"))->toBeGreaterThan($adminAt);
+
     foreach ([
-        "get('connection'",
-        "get('batches'",
-        "get('summary'",
         "get('v1/oauth/callback'",
         "post('v1/webhooks'",
     ] as $route) {
-        expect(strpos($routes, $route))->toBeLessThan($adminAt);
+        expect(strpos($routes, $route))->toBeLessThan($protectedAt);
     }
 });
 
-test('a non-admin with a quickbooks permission cannot read or write install settings', function () {
+test('an operator can read install settings and a user without the permission cannot', function () {
     session(['company' => 'company-uuid']);
-    $store      = new MemorySettingsStore();
-    $controller = installSettingsController($store);
+    $store    = new MemorySettingsStore();
+    $operator = installSettingsController($store, operatorAuthorizer());
+    $denied   = installSettingsController($store, deniedAuthorizer());
+    $admin    = installSettingsController($store, deniedAuthorizer());
 
     try {
-        expect(installStatus(fn () => $controller->show(installRequest('/settings', 'GET', false, ['scope' => 'admin']))))->toBe(403)
+        expect(installStatus(fn () => $denied->show(installRequest('/settings', 'GET', false, ['scope' => 'admin']))))->toBe(403)
             ->and($store->asked)->toBe([])
-            ->and(installStatus(fn () => $controller->save(installRequest('/settings', 'POST', false, [
+            ->and(installStatus(fn () => $denied->save(installRequest('/settings', 'POST', false, [
                 'scope' => 'admin',
                 'auth'  => ['client_id' => 'id', 'client_secret' => 'secret'],
                 'sync'  => ['batch_size' => 10],
             ]))))->toBe(403)
             ->and($store->rows)->toBe([]);
 
-        $shown = $controller->show(installRequest('/settings', 'GET', true, ['scope' => 'admin']));
+        $shown = $operator->show(installRequest('/settings', 'GET', false, ['scope' => 'admin']));
         expect($shown->getStatusCode())->toBe(200)
             ->and($store->asked)->not->toBe([]);
+
+        $adminShown = $admin->show(installRequest('/settings', 'GET', true, ['scope' => 'admin']));
+        expect($adminShown->getStatusCode())->toBe(200);
     } finally {
         session(['company' => null]);
     }
 });
 
-test('a non-admin cannot connect disconnect sync import reconcile or test the install connection', function () {
+test('a user without a quickbooks permission cannot connect disconnect sync import reconcile or test', function () {
     session(['company' => 'company-uuid']);
-    $controller = installConnectionController();
+    $controller = installConnectionController(deniedAuthorizer());
     $actions    = [
         ['/quickbooks/int/v1/oauth/start', 'POST', 'start'],
         ['/quickbooks/int/v1/oauth/complete', 'POST', 'complete'],
@@ -177,22 +211,38 @@ test('a non-admin cannot connect disconnect sync import reconcile or test the in
             $status = installStatus(fn () => $controller->{$action}(installRequest($path, $method, false)));
             expect($status)->toBe(403);
         }
+    } finally {
+        session(['company' => null]);
+    }
+});
 
-        $authorizer = installAuthorizer();
-        $view       = static function (string $permission, Request $request) use ($authorizer): int {
+test('an operator can sync now and an installation admin still can', function () {
+    $permissionStatus = static function (Authorizer $authorizer): callable {
+        return static function (string $permission, Request $request) use ($authorizer): int {
             $call = static function (string $permission, Request $request) use ($authorizer): void {
                 $authorizer->check($permission);
             };
 
             return installStatus(static fn () => $call($permission, $request));
         };
+    };
 
-        expect($view('quickbooks view connection', installRequest('/quickbooks/int/v1/connection', 'GET', false)))->toBe(200)
-            ->and($view('quickbooks view sync', installRequest('/quickbooks/int/v1/summary', 'GET', false)))->toBe(200)
-            ->and($view('quickbooks view settings', installRequest('/quickbooks/int/v1/settings', 'GET', false)))->toBe(403);
-    } finally {
-        session(['company' => null]);
-    }
+    $operator = $permissionStatus(operatorAuthorizer());
+    $admin    = $permissionStatus(deniedAuthorizer());
+    $widget   = (string) file_get_contents(dirname(__DIR__, 2) . '/addon/utils/sync-access.js');
+
+    expect(operatorPermissions())->toContain('quickbooks reconcile sync')
+        ->and($widget)->toContain('quickbooks reconcile sync')
+        ->and($operator('quickbooks reconcile sync', installRequest('/quickbooks/int/v1/sync', 'POST', false)))->toBe(200)
+        ->and($operator('quickbooks connect connection', installRequest('/quickbooks/int/v1/oauth/start', 'POST', false)))->toBe(200)
+        ->and($operator('quickbooks import-customers connection', installRequest('/quickbooks/int/v1/import', 'POST', false)))->toBe(200)
+        ->and($operator('quickbooks update settings', installRequest('/quickbooks/int/v1/settings', 'POST', false)))->toBe(200)
+        ->and($operator('quickbooks view connection', installRequest('/quickbooks/int/v1/connection', 'GET', false)))->toBe(200)
+        ->and($operator('quickbooks view connection', installRequest('/quickbooks/int/v1/connection/test', 'POST', false)))->toBe(403)
+        ->and($operator('quickbooks update sync', installRequest('/quickbooks/int/v1/sync', 'POST', false)))->toBe(403)
+        ->and($admin('quickbooks reconcile sync', installRequest('/quickbooks/int/v1/sync', 'POST', true)))->toBe(200)
+        ->and($admin('quickbooks view connection', installRequest('/quickbooks/int/v1/connection/test', 'POST', true)))->toBe(200)
+        ->and($admin('quickbooks reconcile sync', installRequest('/quickbooks/int/v1/sync', 'POST', false)))->toBe(403);
 });
 
 test('the redirect sent to intuit must be public https', function () {

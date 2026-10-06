@@ -11,10 +11,11 @@ class WalletMapper
 
     /**
      * @param array<string, mixed> $wallet
+     * @param bool                 $pushClears include an empty description so a Fleetbase clear is sent
      *
      * @return array<string, mixed>
      */
-    public function toQuickBooks(array $wallet, string $reference = 'fleetbase'): array
+    public function toQuickBooks(array $wallet, string $reference = 'fleetbase', bool $pushClears = false): array
     {
         $name = trim((string) ($wallet['name'] ?? ''));
         if ($name === '') {
@@ -30,6 +31,8 @@ class WalletMapper
         $description = trim((string) ($wallet['description'] ?? ''));
         if ($description !== '') {
             $payload['Description'] = $description;
+        } elseif ($pushClears) {
+            $payload['Description'] = '';
         }
 
         $currency = strtoupper(trim((string) ($wallet['currency'] ?? '')));

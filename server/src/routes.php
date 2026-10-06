@@ -24,17 +24,18 @@ Route::prefix($prefix)->group(function ($router) use ($internalPrefix) {
             $router->get('batches', [ConnectionController::class, 'batches']);
             $router->get('summary', [ConnectionController::class, 'summary']);
 
-            // Settings, connect, disconnect, sync, import, reconcile, and test are install-wide.
-            // Fleetbase's AdminGuard requires User::isAdmin(). A QuickBooks permission is not enough.
+            // QuickBooks Operator and Administrator grant these. Authorizer also allows installation admins.
+            $router->get('settings', [SettingController::class, 'show']);
+            $router->post('settings', [SettingController::class, 'save']);
+            $router->post('oauth/start', [ConnectionController::class, 'start']);
+            $router->post('oauth/complete', [ConnectionController::class, 'complete']);
+            $router->post('disconnect', [ConnectionController::class, 'disconnect']);
+            $router->post('import', [ConnectionController::class, 'import']);
+            $router->post('reconcile', [ConnectionController::class, 'reconcile']);
+            $router->post('sync', [ConnectionController::class, 'sync']);
+
+            // view connection is also on the read-only policy. The connection test stays installation-admin only.
             $router->group(['middleware' => [Fleetbase\Http\Middleware\AdminGuard::class]], function ($router) {
-                $router->get('settings', [SettingController::class, 'show']);
-                $router->post('settings', [SettingController::class, 'save']);
-                $router->post('oauth/start', [ConnectionController::class, 'start']);
-                $router->post('oauth/complete', [ConnectionController::class, 'complete']);
-                $router->post('disconnect', [ConnectionController::class, 'disconnect']);
-                $router->post('import', [ConnectionController::class, 'import']);
-                $router->post('reconcile', [ConnectionController::class, 'reconcile']);
-                $router->post('sync', [ConnectionController::class, 'sync']);
                 $router->post('connection/test', [ConnectionController::class, 'test']);
             });
         });

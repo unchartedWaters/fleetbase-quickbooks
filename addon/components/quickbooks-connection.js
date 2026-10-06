@@ -2,10 +2,12 @@ import Component from '@glimmer/component';
 import { action } from '@ember/object';
 import { inject as service } from '@ember/service';
 import { connectionState } from '../utils/connection-view';
+import { canRunSyncNow } from '../utils/sync-access';
 
 export default class QuickbooksConnectionComponent extends Component {
     @service intl;
     @service modalsManager;
+    @service abilities;
 
     get loadFailed() {
         return this.args.loadFailed === true;
@@ -50,8 +52,12 @@ export default class QuickbooksConnectionComponent extends Component {
         return this.args.configured === true;
     }
 
+    get canSync() {
+        return canRunSyncNow(this.abilities);
+    }
+
     get syncDisabled() {
-        return this.busy || this.isLoading || !this.isConnected;
+        return this.busy || this.isLoading || !this.isConnected || !this.canSync;
     }
 
     // Connect uses the saved Client ID and Client secret. A connection that only needs reauth can connect again.

@@ -1,5 +1,6 @@
 <?php
 
+use Fleetbase\Quickbooks\Auth\Schemas\Quickbooks;
 use Fleetbase\Quickbooks\Http\Controllers\ConnectionController;
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
 use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
@@ -22,10 +23,10 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
-function securitySettingController(MemorySettingsStore $store): SettingController
+function securitySettingController(MemorySettingsStore $store, ?callable $checker = null): SettingController
 {
     return new SettingController(
-        new Authorizer(static fn () => true),
+        new Authorizer($checker ?? static fn () => true),
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
         $store
     );
@@ -72,20 +73,34 @@ function securityStatus(callable $action): int
 
 test('install settings are the admin scope and an organization scope is not a settings screen', function () {
     session(['company' => 'company-uuid']);
-    $store      = new MemorySettingsStore();
-    $controller = securitySettingController($store);
+    $store               = new MemorySettingsStore();
+    $operatorPermissions = [];
+    foreach ((new Quickbooks())->policies as $policy) {
+        if (($policy['name'] ?? '') === 'QuickbooksOperator') {
+            $operatorPermissions = $policy['permissions'];
+        }
+    }
+    $operator = securitySettingController(
+        $store,
+        static fn (string $permission): bool => in_array($permission, $operatorPermissions, true)
+    );
+    $denied = securitySettingController($store, static fn (): bool => false);
+    $companySave = [
+        'scope' => 'company',
+        'auth'  => ['client_id' => 'x'],
+        'sync'  => ['override' => true],
+    ];
 
     try {
-        expect(securityStatus(fn () => $controller->show(securityRequest('GET', ['scope' => 'company'], true))))->toBe(404)
-            ->and(securityStatus(fn () => $controller->save(securityRequest('POST', [
-                'scope' => 'company',
-                'auth'  => ['client_id' => 'x'],
-                'sync'  => ['override' => true],
-            ], false))))->toBe(403)
+        expect($operatorPermissions)->toContain('quickbooks update settings')
+            ->and(securityStatus(fn () => $operator->show(securityRequest('GET', ['scope' => 'company'], true))))->toBe(404)
+            ->and(securityStatus(fn () => $operator->save(securityRequest('POST', $companySave, false))))->toBe(404)
+            ->and(securityStatus(fn () => $denied->save(securityRequest('POST', $companySave, false))))->toBe(403)
             ->and($store->rows)->toBe([])
             ->and($store->adminAuth())->toBe([])
-            ->and(securityStatus(fn () => $controller->show(securityRequest('GET', ['scope' => 'admin'], false))))->toBe(403)
-            ->and(securityStatus(fn () => $controller->show(securityRequest('GET', ['scope' => 'admin'], true))))->toBe(200);
+            ->and(securityStatus(fn () => $denied->show(securityRequest('GET', ['scope' => 'admin'], false))))->toBe(403)
+            ->and(securityStatus(fn () => $operator->show(securityRequest('GET', ['scope' => 'admin'], false))))->toBe(200)
+            ->and(securityStatus(fn () => $denied->show(securityRequest('GET', ['scope' => 'admin'], true))))->toBe(200);
     } finally {
         session(['company' => null]);
     }

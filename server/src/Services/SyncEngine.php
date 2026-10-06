@@ -15,7 +15,7 @@ class SyncEngine
 {
     private const RATE_LIMITED_MESSAGE = 'QuickBooks asked Fleetbase to wait (rate limit). Try again in a few minutes.';
 
-    public const TOKEN_REJECTED_MESSAGE = 'QuickBooks rejected the access token. Connect again from Connection.';
+    public const TOKEN_REJECTED_MESSAGE = 'QuickBooks rejected the access token. Connect again from Quickbooks Setup.';
 
     private const SYNC_FAILED_MESSAGE = 'Sync failed.';
 
@@ -538,11 +538,12 @@ class SyncEngine
             return 'failed';
         }
 
-        $copy      = $this->copiesRemote($direction);
-        $push      = $this->pushesRemote($direction);
-        $reference = (string) ($settings['customer_reference'] ?? 'fleetbase');
-        $conflict  = (string) ($settings['customer_conflict'] ?? 'fleetbase');
-        $payload   = $this->customers->toQuickBooks($this->customers->fromParty($customer));
+        $copy       = $this->copiesRemote($direction);
+        $push       = $this->pushesRemote($direction);
+        $reference  = (string) ($settings['customer_reference'] ?? 'fleetbase');
+        $conflict   = (string) ($settings['customer_conflict'] ?? 'fleetbase');
+        $pushClears = $conflict === 'fleetbase' && $push;
+        $payload    = $this->customers->toQuickBooks($this->customers->fromParty($customer));
         $email     = trim((string) ($customer['email'] ?? ''));
         $link      = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $uuid);
         if ($link !== null && $link['realm_id'] !== $connection['realm_id']) {
@@ -565,11 +566,10 @@ class SyncEngine
             if ($remote !== null) {
                 $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote));
                 if ($reference === 'quickbooks' && $copy) {
-                    $before = (string) ($ledger->customers[$uuid]['name'] ?? '');
+                    $before = $ledger->customers[$uuid];
                     $this->applyCustomerFromRemote($ledger, $uuid, $remote);
-                    $after = (string) ($ledger->customers[$uuid]['name'] ?? '');
 
-                    return $before !== $after ? 'updated' : 'aligned';
+                    return $ledger->customers[$uuid] !== $before ? 'updated' : 'aligned';
                 }
             }
         } elseif (!$cacheHit && $link !== null) {
@@ -603,7 +603,15 @@ class SyncEngine
             return 'created';
         }
 
+        if ($pushClears) {
+            $payload = $this->customers->toQuickBooks($this->customers->fromParty($ledger->customers[$uuid]), true);
+        }
+
         if ($this->customerMatches($payload, $remote)) {
+            if ($copy && !$pushClears && $this->copyCustomerNotesAndAddress($ledger, $uuid, $remote)) {
+                return 'updated';
+            }
+
             return 'aligned';
         }
 
@@ -612,7 +620,7 @@ class SyncEngine
             if ($name !== '') {
                 $ledger->customers[$uuid]['name'] = $name;
             }
-            $payload = $this->customers->toQuickBooks($this->customers->fromParty($ledger->customers[$uuid]));
+            $payload = $this->customers->toQuickBooks($this->customers->fromParty($ledger->customers[$uuid]), $pushClears);
         }
 
         if ($this->customerMatches($payload, $remote)) {
@@ -680,11 +688,23 @@ class SyncEngine
             return 'failed';
         }
 
-        $copy      = $this->copiesRemote($direction);
-        $push      = $this->pushesRemote($direction);
-        $reference = (string) ($settings['wallet_reference'] ?? 'fleetbase');
-        $conflict  = (string) ($settings['wallet_conflict'] ?? 'fleetbase');
-        $payload   = $this->wallets->toQuickBooks($wallet, $reference);
+        $copy       = $this->copiesRemote($direction);
+        $push       = $this->pushesRemote($direction);
+        $reference  = (string) ($settings['wallet_reference'] ?? 'fleetbase');
+        $conflict   = (string) ($settings['wallet_conflict'] ?? 'fleetbase');
+        $pushClears = $conflict === 'fleetbase' && $push;
+        $payload    = $this->wallets->toQuickBooks($wallet, $reference);
+        // Same clear rule as customer notes. A Fleetbase clear is not filled back in
+        // from QuickBooks, and an empty QuickBooks description is not copied.
+        $walletCopy = function (array $remoteAccount) use ($ledger, $uuid, $pushClears): array {
+            $remoteDescription = trim((string) ($remoteAccount['Description'] ?? ''));
+            $localDescription  = trim((string) ($ledger->wallets[$uuid]['description'] ?? ''));
+            if ($remoteDescription === '' || ($pushClears && $localDescription === '')) {
+                unset($remoteAccount['Description']);
+            }
+
+            return $remoteAccount;
+        };
         $link      = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'wallet', $uuid);
         if ($link !== null && $link['realm_id'] !== $connection['realm_id']) {
             $link = null;
@@ -764,7 +784,7 @@ class SyncEngine
             $created = $this->client->createAccount($connection, $payload);
             $ledger->putLink($this->linkFrom($connection, 'wallet', $uuid, 'Account', $created));
             if ($copy) {
-                $this->applyWalletFromRemote($ledger, $uuid, $created, $reference);
+                $this->applyWalletFromRemote($ledger, $uuid, $walletCopy($created), $reference);
                 if ($quickbooksPrimary) {
                     $this->copyWalletCurrency($ledger, $connection, $uuid, $created);
                 }
@@ -775,7 +795,7 @@ class SyncEngine
 
         $before = $wallet;
         if ($quickbooksPrimary && $copy) {
-            $this->applyWalletFromRemote($ledger, $uuid, $remote, $reference);
+            $this->applyWalletFromRemote($ledger, $uuid, $walletCopy($remote), $reference);
             $this->copyWalletCurrency($ledger, $connection, $uuid, $remote);
             $wallet  = $ledger->wallets[$uuid];
             $payload = $this->wallets->toQuickBooks($wallet, $reference);
@@ -787,7 +807,7 @@ class SyncEngine
 
         if ($conflict === 'quickbooks' && $copy) {
             $before = $ledger->wallets[$uuid];
-            $this->applyWalletFromRemote($ledger, $uuid, $remote, $reference);
+            $this->applyWalletFromRemote($ledger, $uuid, $walletCopy($remote), $reference);
             $this->copyWalletCurrency($ledger, $connection, $uuid, $remote);
 
             return $ledger->wallets[$uuid] !== $before ? 'updated' : 'aligned';
@@ -796,7 +816,7 @@ class SyncEngine
         if (!$push) {
             if ($copy) {
                 $before = $ledger->wallets[$uuid];
-                $this->applyWalletFromRemote($ledger, $uuid, $remote, $reference);
+                $this->applyWalletFromRemote($ledger, $uuid, $walletCopy($remote), $reference);
 
                 return $ledger->wallets[$uuid] !== $before ? 'updated' : 'aligned';
             }
@@ -811,6 +831,13 @@ class SyncEngine
                 $payload['AcctNum'] = $acctNum;
             } else {
                 unset($payload['AcctNum']);
+            }
+        }
+
+        if ($pushClears) {
+            $withClears = $this->wallets->toQuickBooks($ledger->wallets[$uuid], $reference, true);
+            if (array_key_exists('Description', $withClears)) {
+                $payload['Description'] = $withClears['Description'];
             }
         }
 
@@ -897,9 +924,10 @@ class SyncEngine
             return 'failed';
         }
 
-        $payload   = $this->invoices->toQuickBooks($invoice, (string) $customerLink['qbo_id'], $itemId);
-        $reference = (string) ($settings['invoice_reference'] ?? 'fleetbase');
-        $conflict  = (string) ($settings['invoice_conflict'] ?? 'fleetbase');
+        $payload    = $this->invoices->toQuickBooks($invoice, (string) $customerLink['qbo_id'], $itemId);
+        $reference  = (string) ($settings['invoice_reference'] ?? 'fleetbase');
+        $conflict   = (string) ($settings['invoice_conflict'] ?? 'fleetbase');
+        $pushClears = $conflict === 'fleetbase' && $push;
         if ($reference === 'quickbooks') {
             unset($payload['DocNumber']);
         }
@@ -1014,7 +1042,7 @@ class SyncEngine
         $invoice       = $ledger->invoices[$uuid];
         $remoteCents   = $this->majorUnits($remote['TotalAmt'] ?? 0);
         $localCents    = (int) ($invoice['total'] ?? 0);
-        if ($this->invoiceHashesMatch($invoice, $remote, $conflict, $remoteCents, $localCents, $reference)) {
+        if ($this->invoiceHashesMatch($invoice, $remote, $conflict, $remoteCents, $localCents, $reference, $pushClears, (string) $customerLink['qbo_id'])) {
             if ($this->writeBuffer !== null) {
                 return $numberChanged ? 'updated' : 'aligned';
             }
@@ -1050,6 +1078,13 @@ class SyncEngine
 
         if (!$push) {
             return $numberChanged ? 'updated' : 'aligned';
+        }
+
+        if ($pushClears) {
+            $payload = $this->invoices->toQuickBooks($ledger->invoices[$uuid], (string) $customerLink['qbo_id'], $itemId, true);
+            if ($reference === 'quickbooks') {
+                unset($payload['DocNumber']);
+            }
         }
 
         $this->keepFleetbaseDocNumber($payload, $ledger->invoices[$uuid], $remote, $reference);
@@ -1372,14 +1407,35 @@ class SyncEngine
             return false;
         }
 
-        $ref = $remote['CustomerRef'] ?? null;
-        if (is_array($ref)) {
-            $remoteCustomer = trim((string) ($ref['value'] ?? ''));
-        } else {
-            $remoteCustomer = trim((string) $ref);
-        }
+        $remoteCustomer = $this->remoteInvoiceCustomerId($remote);
 
         return $remoteCustomer !== '' && $remoteCustomer === $customerId;
+    }
+
+    /**
+     * @param array<string, mixed> $remote
+     */
+    private function remoteInvoiceCustomerId(array $remote): string
+    {
+        $ref = $remote['CustomerRef'] ?? null;
+        if (is_array($ref)) {
+            return trim((string) ($ref['value'] ?? ''));
+        }
+
+        return trim((string) $ref);
+    }
+
+    /**
+     * @param array<string, mixed> $remote
+     */
+    private function remoteInvoiceCurrency(array $remote): string
+    {
+        $ref = $remote['CurrencyRef'] ?? null;
+        if (is_array($ref)) {
+            return strtoupper(trim((string) ($ref['value'] ?? '')));
+        }
+
+        return strtoupper(trim((string) $ref));
     }
 
     /**
@@ -1400,7 +1456,7 @@ class SyncEngine
      * @param array<string, mixed> $invoice
      * @param array<string, mixed> $remote
      */
-    private function invoiceHashesMatch(array $invoice, array $remote, string $conflict, int $remoteCents, int $localCents, string $reference): bool
+    private function invoiceHashesMatch(array $invoice, array $remote, string $conflict, int $remoteCents, int $localCents, string $reference, bool $pushClears, string $customerRef): bool
     {
         if ($this->fleetbaseDocNumberDiffers($invoice, $remote, $reference)) {
             return false;
@@ -1410,23 +1466,34 @@ class SyncEngine
         $other = ['total' => $remoteCents];
         foreach (['date' => 'TxnDate', 'due_date' => 'DueDate'] as $localKey => $remoteKey) {
             $value = (string) ($invoice[$localKey] ?? '');
-            if ($value === '') {
+            if ($value === '' && !$pushClears) {
                 continue;
             }
             $local[$localKey] = $value;
             $other[$localKey] = (string) ($remote[$remoteKey] ?? '');
         }
-        if (array_key_exists('PrivateNote', $remote)) {
+        if ($pushClears || array_key_exists('PrivateNote', $remote)) {
             $local['notes'] = (string) ($invoice['notes'] ?? '');
-            $other['notes'] = (string) $remote['PrivateNote'];
+            $other['notes'] = (string) ($remote['PrivateNote'] ?? '');
         }
-        if ($conflict === 'quickbooks') {
-            $mapped         = $this->invoices->fromQuickBooks($remote);
-            $local['items'] = $invoice['items'] ?? [];
-            $local['tax']   = (int) ($invoice['tax'] ?? 0);
-            $other['items'] = $mapped['items'];
-            $other['tax']   = $mapped['tax'];
+        if ($pushClears) {
+            $remoteCustomer = $this->remoteInvoiceCustomerId($remote);
+            if ($remoteCustomer !== '') {
+                $local['customer'] = trim($customerRef);
+                $other['customer'] = $remoteCustomer;
+            }
+            $localCurrency  = strtoupper(trim((string) ($invoice['currency'] ?? '')));
+            $remoteCurrency = $this->remoteInvoiceCurrency($remote);
+            if ($localCurrency !== '' && $remoteCurrency !== '') {
+                $local['currency'] = $localCurrency;
+                $other['currency'] = $remoteCurrency;
+            }
         }
+        $mapped         = $this->invoices->fromQuickBooks($remote);
+        $local['items'] = $invoice['items'] ?? [];
+        $local['tax']   = (int) ($invoice['tax'] ?? 0);
+        $other['items'] = $mapped['items'];
+        $other['tax']   = $mapped['tax'];
 
         return ContentHash::of($local) === ContentHash::of($other);
     }
@@ -1502,6 +1569,7 @@ class SyncEngine
                 'city'        => (string) ($payload['BillAddr']['City'] ?? ''),
                 'country'     => (string) ($payload['BillAddr']['Country'] ?? ''),
                 'line1'       => (string) ($payload['BillAddr']['Line1'] ?? ''),
+                'line2'       => (string) ($payload['BillAddr']['Line2'] ?? ''),
                 'postal_code' => (string) ($payload['BillAddr']['PostalCode'] ?? ''),
                 'state'       => (string) ($payload['BillAddr']['CountrySubDivisionCode'] ?? ''),
             ];
@@ -1521,6 +1589,7 @@ class SyncEngine
                 'city'        => (string) ($bill['City'] ?? ''),
                 'country'     => (string) ($bill['Country'] ?? ''),
                 'line1'       => (string) ($bill['Line1'] ?? ''),
+                'line2'       => (string) ($bill['Line2'] ?? ''),
                 'postal_code' => (string) ($bill['PostalCode'] ?? ''),
                 'state'       => (string) ($bill['CountrySubDivisionCode'] ?? ''),
             ];
@@ -1615,8 +1684,9 @@ class SyncEngine
                 $changed                         = true;
             }
         }
-        if (array_key_exists('PrivateNote', $remote) && (string) $remote['PrivateNote'] !== (string) ($ledger->invoices[$uuid]['notes'] ?? '')) {
-            $ledger->invoices[$uuid]['notes'] = (string) $remote['PrivateNote'];
+        $note = (string) ($remote['PrivateNote'] ?? '');
+        if ($note !== '' && $note !== (string) ($ledger->invoices[$uuid]['notes'] ?? '')) {
+            $ledger->invoices[$uuid]['notes'] = $note;
             $changed                          = true;
         }
 
@@ -1658,7 +1728,39 @@ class SyncEngine
         if ($phone !== '') {
             $ledger->customers[$uuid]['phone'] = $phone;
         }
+        $this->copyCustomerNotesAndAddress($ledger, $uuid, $remote);
         $ledger->touchCustomer($uuid);
+    }
+
+    /**
+     * Notes and billing address are omitted from the outbound payload when Fleetbase
+     * has none and QuickBooks is the source, so a match on name, email, and phone
+     * still has to copy them. An empty QuickBooks note or address is not copied,
+     * the same as email and phone. A Fleetbase-primary push sends the clear instead.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function copyCustomerNotesAndAddress(SyncLedger $ledger, string $uuid, array $remote): bool
+    {
+        $before = $ledger->customers[$uuid];
+        $notes  = (string) ($remote['Notes'] ?? '');
+        if ($notes !== '') {
+            $ledger->customers[$uuid]['notes'] = $notes;
+        }
+        $bill = $remote['BillAddr'] ?? null;
+        if (is_array($bill)) {
+            $address = $this->customers->addressFromBillAddr($bill);
+            if ($address !== null) {
+                $ledger->customers[$uuid]['address'] = $address;
+            }
+        }
+        if ($ledger->customers[$uuid] === $before) {
+            return false;
+        }
+
+        $ledger->touchCustomer($uuid);
+
+        return true;
     }
 
     /**

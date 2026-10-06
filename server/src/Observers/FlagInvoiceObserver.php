@@ -14,7 +14,7 @@ class FlagInvoiceObserver
             return;
         }
 
-        $watched = ['status', 'tax', 'total_amount', 'date', 'due_date', 'notes', 'number', 'amount_paid', 'paid_at'];
+        $watched = ['status', 'tax', 'total_amount', 'date', 'due_date', 'notes', 'number', 'amount_paid', 'paid_at', 'customer_uuid', 'currency'];
         if (!$invoice->wasChanged($watched)) {
             return;
         }

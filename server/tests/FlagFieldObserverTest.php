@@ -1,8 +1,11 @@
 <?php
 
+use Fleetbase\Quickbooks\Listeners\FlagCustomerListener;
 use Fleetbase\Quickbooks\Listeners\FlagInvoiceListener;
 use Fleetbase\Quickbooks\Listeners\FlagWalletListener;
+use Fleetbase\Quickbooks\Observers\FlagCustomerObserver;
 use Fleetbase\Quickbooks\Observers\FlagInvoiceObserver;
+use Fleetbase\Quickbooks\Observers\FlagPlaceObserver;
 use Fleetbase\Quickbooks\Observers\FlagWalletObserver;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
@@ -17,6 +20,7 @@ beforeEach(function () {
 });
 
 afterEach(function () {
+    Container::getInstance()->forgetInstance(FlagCustomerListener::class);
     Container::getInstance()->forgetInstance(FlagInvoiceListener::class);
     Container::getInstance()->forgetInstance(FlagWalletListener::class);
     while (SyncSuppressor::paused()) {
@@ -25,7 +29,7 @@ afterEach(function () {
 });
 
 test('compared or sent invoice fields flag a sync', function () {
-    $flagged = ['status', 'tax', 'total_amount', 'date', 'due_date', 'notes', 'number', 'amount_paid', 'paid_at'];
+    $flagged = ['status', 'tax', 'total_amount', 'date', 'due_date', 'notes', 'number', 'amount_paid', 'paid_at', 'customer_uuid', 'currency'];
 
     foreach ($flagged as $field) {
         $directory = bindFlagListener(FlagInvoiceListener::class);
@@ -57,6 +61,69 @@ test('compared or sent wallet fields flag a sync', function () {
             ->and($directory->written[0]['local_type'])->toBe('wallet')
             ->and($directory->written[0]['local_uuid'])->toBe('wal-1');
     }
+});
+
+test('compared or sent customer fields flag a sync', function () {
+    $flagged = ['name', 'email', 'phone', 'notes', 'place_uuid'];
+
+    foreach ($flagged as $field) {
+        $directory = bindFlagListener(FlagCustomerListener::class);
+        (new FlagCustomerObserver())->saved(recordChanged($field, 'cust-1'));
+
+        expect($directory->written)->toHaveCount(1)
+            ->and($directory->written[0]['local_type'])->toBe('customer')
+            ->and($directory->written[0]['local_uuid'])->toBe('cust-1');
+    }
+});
+
+test('a customer meta change does not flag a sync', function () {
+    $directory = bindFlagListener(FlagCustomerListener::class);
+    (new FlagCustomerObserver())->saved(recordChanged('meta', 'cust-1'));
+
+    expect($directory->written)->toBe([]);
+});
+
+test('a place street city state or postal edit flags every customer on that place', function () {
+    $flagged = ['street1', 'street2', 'city', 'province', 'postal_code', 'country'];
+
+    foreach ($flagged as $field) {
+        $directory = bindFlagListener(FlagCustomerListener::class);
+        placeObserver([
+            customerRecord('cust-1'),
+            customerRecord('cust-2'),
+        ])->saved(recordChanged($field, 'place-1'));
+
+        expect($directory->written)->toHaveCount(2)
+            ->and($directory->written[0]['local_type'])->toBe('customer')
+            ->and($directory->written[0]['local_uuid'])->toBe('cust-1')
+            ->and($directory->written[1]['local_type'])->toBe('customer')
+            ->and($directory->written[1]['local_uuid'])->toBe('cust-2');
+    }
+});
+
+test('an unrelated place edit does not flag a customer', function () {
+    foreach (['name', 'phone', 'location', 'neighborhood', 'meta'] as $field) {
+        $directory = bindFlagListener(FlagCustomerListener::class);
+        placeObserver([customerRecord('cust-1')])->saved(recordChanged($field, 'place-1'));
+
+        expect($directory->written)->toBe([]);
+    }
+});
+
+test('a place edit without a uuid does not flag a customer', function () {
+    $directory = bindFlagListener(FlagCustomerListener::class);
+    $place     = new class {
+        public string $uuid = '   ';
+
+        public function wasChanged(array $fields): bool
+        {
+            return true;
+        }
+    };
+
+    (new FlagPlaceObserver())->saved($place);
+
+    expect($directory->written)->toBe([]);
 });
 
 test('a wallet meta change does not flag a sync', function () {
@@ -94,6 +161,32 @@ function bindFlagListener(string $listener): FleetbaseDirectory
     Container::getInstance()->instance($listener, new $listener($directory, new SyncFlagger()));
 
     return $directory;
+}
+
+function placeObserver(array $customers): FlagPlaceObserver
+{
+    return new class($customers) extends FlagPlaceObserver {
+        /**
+         * @param array<int, object> $customers
+         */
+        public function __construct(private array $customers)
+        {
+        }
+
+        protected function customers(object $place): iterable
+        {
+            return $this->customers;
+        }
+    };
+}
+
+function customerRecord(string $uuid): object
+{
+    return (object) [
+        'company_uuid' => 'company-uuid',
+        'uuid'         => $uuid,
+        'type'         => 'customer',
+    ];
 }
 
 function recordChanged(string $field, string $uuid): object

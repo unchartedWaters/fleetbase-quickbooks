@@ -8,7 +8,7 @@ class TokenRefresher
 {
     public const REFRESH_WINDOW_SECONDS = 300;
 
-    public const CREDENTIALS_MESSAGE = 'QuickBooks refused the app credentials. Check Client ID and Client secret on Connection.';
+    public const CREDENTIALS_MESSAGE = 'QuickBooks refused the app credentials. Check Client ID and Client secret on Quickbooks Setup.';
 
     public const UNAVAILABLE_MESSAGE = 'QuickBooks could not refresh its access token. Fleetbase will try again.';
 

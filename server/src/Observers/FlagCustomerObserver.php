@@ -8,7 +8,7 @@ use Illuminate\Container\Container;
 
 class FlagCustomerObserver
 {
-    private const WATCHED = ['name', 'email', 'phone', 'notes'];
+    private const WATCHED = ['name', 'email', 'phone', 'notes', 'place_uuid'];
 
     public function saved(object $customer): void
     {

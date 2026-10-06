@@ -52,7 +52,7 @@ class ImportCustomers implements ShouldQueue
 
         return $needsReauth
             ? 'QuickBooks needs to be connected again before import can continue.'
-            : 'QuickBooks is not connected. Connect from Connection.';
+            : 'QuickBooks is not connected. Connect from Quickbooks Setup.';
     }
 
     public static function dispatch(string $companyUuid): void

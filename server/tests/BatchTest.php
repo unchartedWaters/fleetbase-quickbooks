@@ -265,7 +265,13 @@ test('a batch creates updates voids and skips a matching invoice', function () {
     $ledger->invoices['same']     = invoiceFixture('same', 1000, 'sent', 'INV-SAME');
     $client->invoices['drift-id'] = ['Id' => 'drift-id', 'SyncToken' => '1', 'DocNumber' => 'INV-DRIFT', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
     $client->invoices['void-id']  = ['Id' => 'void-id', 'SyncToken' => '1', 'DocNumber' => 'INV-VOID', 'TotalAmt' => 10];
-    $client->invoices['same-id']  = ['Id' => 'same-id', 'SyncToken' => '1', 'DocNumber' => 'INV-SAME', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
+    $client->invoices['same-id']  = [
+        'Id' => 'same-id', 'SyncToken' => '1', 'DocNumber' => 'INV-SAME', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Line' => [[
+            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
+    ];
     $ledger->links[]              = linkRow('invoice', 'drift', 'drift-id');
     $ledger->links[]              = linkRow('invoice', 'voided', 'void-id');
     $ledger->links[]              = linkRow('invoice', 'same', 'same-id');
@@ -504,7 +510,13 @@ test('quickbooks invoice numbers replace the fleetbase number', function () {
     $ledger->links[]                   = linkRow('customer', 'cust-1', 'qbo-customer');
     $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
     $ledger->invoices['inv-1']         = invoiceFixture('inv-1', 1000, 'sent', 'LOCAL-1');
-    $client->invoices['qb-1']          = ['Id' => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'QB-100', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
+    $client->invoices['qb-1']          = [
+        'Id' => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'QB-100', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Line' => [[
+            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
+    ];
     $ledger->links[]                   = linkRow('invoice', 'inv-1', 'qb-1');
     $ledger->pending[]                 = pendingRow('invoice', 'inv-1');
 
@@ -567,7 +579,13 @@ test('a differing payment is compared and a quickbooks reference still creates a
     $client->customers['qbo-customer']    = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
     $ledger->invoices['inv-1']            = invoiceFixture('inv-1', 1000, 'paid', 'INV-PAID');
     $ledger->invoices['inv-1']['paid_at'] = '2026-09-20';
-    $client->invoices['inv-id']           = ['Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
+    $client->invoices['inv-id']           = [
+        'Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Line' => [[
+            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
+    ];
     $ledger->links[]                      = linkRow('invoice', 'inv-1', 'inv-id');
     $client->payments['pay-9']            = ['Id' => 'pay-9', 'SyncToken' => '1', 'TotalAmt' => 5, 'TxnDate' => '2026-09-01'];
     $ledger->links[]                      = linkRow('payment', 'inv-1', 'pay-9');
@@ -639,7 +657,13 @@ test('the first fleetbase payment is created when quickbooks has no payment yet'
     $ledger->links[]                   = linkRow('customer', 'cust-1', 'qbo-customer');
     $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
     $ledger->invoices['inv-1']         = invoiceFixture('inv-1', 1000, 'paid', 'INV-PAID');
-    $client->invoices['inv-id']        = ['Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
+    $client->invoices['inv-id']        = [
+        'Id' => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Line' => [[
+            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
+    ];
     $ledger->links[]                   = linkRow('invoice', 'inv-1', 'inv-id');
     $ledger->pending[]                 = pendingRow('invoice', 'inv-1');
 

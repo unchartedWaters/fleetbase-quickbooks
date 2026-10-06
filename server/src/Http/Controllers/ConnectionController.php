@@ -208,7 +208,7 @@ class ConnectionController extends QuickbooksController
         }
         if ($connection === null) {
             if (!$this->connectionIsStored($companyUuid)) {
-                return response()->json(['message' => 'QuickBooks is not connected. Connect again from Connection.'], 422);
+                return response()->json(['message' => 'QuickBooks is not connected. Connect again from Quickbooks Setup.'], 422);
             }
 
             // The webhook endpoint is set in the Intuit developer portal. This does not call Intuit.
@@ -222,6 +222,11 @@ class ConnectionController extends QuickbooksController
         app(WebhookSubscriptions::class)->apply('admin', $companyUuid);
         $this->queueExistingRecords($companyUuid);
         SyncCompanyBatch::dispatch($companyUuid, 'now');
+        // Customers in Data Resolution is the control for copying QuickBooks customers.
+        // The import job records a skip when a sync already holds the company lock.
+        if ($this->customersEnabled()) {
+            ImportCustomers::dispatch($companyUuid);
+        }
 
         return response()->json(['connected' => true]);
     }
@@ -463,6 +468,17 @@ class ConnectionController extends QuickbooksController
     }
 
     /**
+     * Connect copies QuickBooks customers only when Customers is on in Data Resolution.
+     * A missing value uses the same default as settings: customers stay on.
+     */
+    private function customersEnabled(): bool
+    {
+        $resolved = $this->settings->resolveSync([], $this->store->adminSync(), $this->store->defaultSync());
+
+        return !(array_key_exists('customer_enabled', $resolved) && $resolved['customer_enabled'] === false);
+    }
+
+    /**
      * Manual sync, reconcile, and customer import stay available when the schedule
      * is off, but they cannot run without a connection. A missing connection is
      * rejected without an activity row. Reconnect is still recorded.
@@ -479,7 +495,7 @@ class ConnectionController extends QuickbooksController
         } elseif ($row instanceof Connection && $row->needs_reauth && ConnectionGate::hasRealm($row)) {
             $message = 'QuickBooks needs to be connected again before sync can continue.';
         } else {
-            $message = 'QuickBooks is not connected. Connect from Connection.';
+            $message = 'QuickBooks is not connected. Connect from Quickbooks Setup.';
         }
 
         if (!ConnectionGate::hasRealm($row)) {

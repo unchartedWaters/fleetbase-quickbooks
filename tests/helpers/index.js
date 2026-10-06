@@ -1,5 +1,12 @@
 import { setupApplicationTest as upstreamSetupApplicationTest, setupRenderingTest as upstreamSetupRenderingTest, setupTest as upstreamSetupTest } from 'ember-qunit';
 import { setupIntl } from 'ember-intl/test-support';
+import Service from '@ember/service';
+
+class AllowQuickbooksAbilitiesStub extends Service {
+    can() {
+        return true;
+    }
+}
 
 // This file exists to provide wrappers around ember-qunit's
 // test setup functions. This way, you can easily extend the setup that is
@@ -27,6 +34,10 @@ function setupApplicationTest(hooks, options) {
 function setupRenderingTest(hooks, options) {
     upstreamSetupRenderingTest(hooks, options);
     setupIntl(hooks, 'en-us');
+
+    hooks.beforeEach(function () {
+        this.owner.register('service:abilities', AllowQuickbooksAbilitiesStub);
+    });
 }
 
 function setupTest(hooks, options) {

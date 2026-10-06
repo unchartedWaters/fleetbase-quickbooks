@@ -7,16 +7,6 @@ use Illuminate\Http\Request;
 
 class Authorizer
 {
-    /** @var array<int, string> */
-    private const ADMIN_PERMISSIONS = [
-        'quickbooks view settings',
-        'quickbooks update settings',
-        'quickbooks connect connection',
-        'quickbooks disconnect connection',
-        'quickbooks import-customers connection',
-        'quickbooks reconcile sync',
-    ];
-
     /** @var callable|null */
     private $checker;
 
@@ -27,37 +17,33 @@ class Authorizer
 
     public function check(string $permission): void
     {
-        $allowed = $this->checker !== null
-            ? (bool) ($this->checker)($permission)
-            : Auth::can($permission);
+        // Installation administrators keep working without a QuickBooks role.
+        // Everyone else needs the permission the extension schema grants.
+        if ($this->signedInInstallationAdmin()) {
+            return;
+        }
 
-        if (!$allowed || ($this->requiresInstallationAdmin($permission) && !$this->isInstallationAdmin())) {
+        // show() and test() share view connection, which read-only also has.
+        // The connection test has no schema action, so it stays installation-admin only.
+        if (!$this->granted($permission) || $this->isConnectionTest($permission)) {
             abort(403, 'This action is unauthorized.');
         }
     }
 
-    private function requiresInstallationAdmin(string $permission): bool
+    private function granted(string $permission): bool
     {
-        if (in_array($permission, self::ADMIN_PERMISSIONS, true)) {
-            return true;
+        if ($this->checker !== null) {
+            return (bool) ($this->checker)($permission);
         }
 
-        // show() and test() share this permission. Only the connection test posts here.
-        return $permission === 'quickbooks view connection' && $this->isConnectionTestRequest();
-    }
-
-    private function isConnectionTestRequest(): bool
-    {
-        $request = $this->callerRequest();
-
-        return $request instanceof Request && str_contains('/' . $request->path(), '/connection/test');
+        return Auth::can($permission);
     }
 
     /**
-     * A permission stub with no signed-in user stands in for an authorized caller.
-     * A signed-in user must be an installation administrator (User::isAdmin()).
+     * A permission stub with no signed-in user is not an installation administrator.
+     * That stub only answers granted().
      */
-    private function isInstallationAdmin(): bool
+    private function signedInInstallationAdmin(): bool
     {
         $request = $this->callerRequest();
         $user    = $request instanceof Request ? $request->user() : null;
@@ -66,10 +52,21 @@ class Authorizer
         }
 
         if ($this->checker !== null) {
-            return true;
+            return false;
         }
 
         return InstallationAdmin::allows($request);
+    }
+
+    private function isConnectionTest(string $permission): bool
+    {
+        if ($permission !== 'quickbooks view connection') {
+            return false;
+        }
+
+        $request = $this->callerRequest();
+
+        return $request instanceof Request && str_contains('/' . $request->path(), '/connection/test');
     }
 
     private function callerRequest(): ?Request

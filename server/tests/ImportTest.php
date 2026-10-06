@@ -28,6 +28,32 @@ afterEach(function () {
     }
 });
 
+test('an imported customer keeps notes and the billing address', function () {
+    $batch = importWith([remoteCustomer('1', 'Ada Lovelace', 'ada@example.test', '5550100', [
+        'Notes'    => 'Dock 4',
+        'BillAddr' => [
+            'Id'                     => '9',
+            'Line1'                  => '1 Analytical Engine',
+            'City'                   => 'London',
+            'CountrySubDivisionCode' => 'LN',
+            'PostalCode'             => 'SW1',
+            'Country'                => 'UK',
+        ],
+    ])], []);
+    $created = array_values($batch['ledger']->customers)[0];
+
+    expect($created['notes'])->toBe('Dock 4')
+        ->and($created['address'])->toBe([
+            'line1'       => '1 Analytical Engine',
+            'line2'       => null,
+            'city'        => 'London',
+            'state'       => 'LN',
+            'postal_code' => 'SW1',
+            'country'     => 'UK',
+        ])
+        ->and($created)->not->toHaveKey('meta');
+});
+
 test('a quickbooks customer with no fleetbase match creates a contact', function () {
     $batch = importWith([remoteCustomer('1', 'Ada Lovelace', 'ada@example.test', '5550100')], []);
 

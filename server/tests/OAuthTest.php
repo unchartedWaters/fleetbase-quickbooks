@@ -664,7 +664,8 @@ test('oauth complete exchanges the code with the same computed callback', functi
         });
         $exchanges = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
         parse_str($exchanges[0][0]->body(), $form);
-        $syncs = array_values(array_filter($jobs, fn ($job) => $job instanceof SyncCompanyBatch));
+        $syncs   = array_values(array_filter($jobs, fn ($job) => $job instanceof SyncCompanyBatch));
+        $imports = array_values(array_filter($jobs, fn ($job) => $job instanceof ImportCustomers));
 
         expect($completed->getStatusCode())->toBe(200)
             ->and($completed->getData(true))->toBe(['connected' => true])
@@ -673,7 +674,82 @@ test('oauth complete exchanges the code with the same computed callback', functi
             ->and($syncs)->toHaveCount(1)
             ->and($syncs[0]->companyUuid)->toBe('company-uuid')
             ->and($syncs[0]->trigger)->toBe('now')
-            ->and(array_filter($jobs, fn ($job) => $job instanceof ImportCustomers))->toBe([]);
+            ->and($imports)->toHaveCount(1)
+            ->and($imports[0]->companyUuid)->toBe('company-uuid');
+    } finally {
+        qbRestoreConfig($previous);
+        session(['company' => null, 'user' => null]);
+    }
+});
+
+test('oauth complete skips customer import when customers are turned off', function () {
+    session(['company' => 'company-uuid', 'user' => 'user-uuid']);
+    $previous = qbRememberConfig([
+        'app.url',
+        'fleetbase.url',
+        'fleetbase.console.host',
+        'quickbooks.console_host',
+        'quickbooks.redirect_uri',
+    ]);
+    config()->set('app.url', 'https://example.com');
+    config()->set('fleetbase.url', null);
+    config()->set('fleetbase.console.host', 'https://console.example.test');
+    config()->set('quickbooks.console_host', 'https://console.example.test');
+    config()->set('quickbooks.redirect_uri', '');
+    Http::swap(new Illuminate\Http\Client\Factory());
+    Http::fake([
+        'oauth.platform.intuit.com/*' => Http::response([
+            'access_token'  => 'access',
+            'refresh_token' => 'refresh',
+            'expires_in'    => 3600,
+        ], 200),
+        'sandbox-quickbooks.api.intuit.com/*' => Http::response([
+            'CompanyInfo'   => ['CompanyName' => 'unchartedWaters', 'Country' => 'US'],
+            'Preferences'   => ['CurrencyPrefs' => ['HomeCurrency' => ['value' => 'USD']]],
+            'Item'          => ['Id' => '7'],
+            'QueryResponse' => ['Item' => [], 'Account' => [['Id' => '79', 'AccountType' => 'Income']]],
+        ], 200),
+    ]);
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'     => 'client-id',
+        'client_secret' => (new SecretCipher())->encrypt('secret'),
+        'environment'   => 'sandbox',
+    ];
+    $store->rows[SettingsKeys::adminSync()] = ['customer_enabled' => false];
+    $controller                             = new class(new Authorizer(static fn () => true), new OAuthFlow(new QuickBooksClient()), new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()), $store, new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {
+        protected function persist(array $connection): void
+        {
+        }
+
+        protected function connectionIsStored(string $companyUuid): bool
+        {
+            return false;
+        }
+    };
+
+    try {
+        $started = $controller->start(Request::create('/oauth/start', 'POST', [
+            'company_uuid' => 'company-uuid',
+        ]));
+        $state    = (string) $started->getData(true)['state'];
+        $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
+            'state'   => $state,
+            'code'    => 'code',
+            'realmId' => 'realm-1',
+        ]));
+        parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
+        $jobs = qbCaptureDispatches(function () use ($controller, $query): void {
+            $completed = $controller->complete(Request::create('/oauth/complete', 'POST', [
+                'state' => (string) $query['oauth_state'],
+            ]));
+            expect($completed->getStatusCode())->toBe(200);
+        });
+        $syncs   = array_values(array_filter($jobs, fn ($job) => $job instanceof SyncCompanyBatch));
+        $imports = array_values(array_filter($jobs, fn ($job) => $job instanceof ImportCustomers));
+
+        expect($syncs)->toHaveCount(1)
+            ->and($imports)->toBe([]);
     } finally {
         qbRestoreConfig($previous);
         session(['company' => null, 'user' => null]);
@@ -810,13 +886,15 @@ test('the oauth callback only keeps the code and the user who started the flow c
             $controller->stored = false;
             $disconnected       = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
             expect($disconnected->getStatusCode())->toBe(422)
-                ->and($disconnected->getData(true)['message'])->toBe('QuickBooks is not connected. Connect again from Connection.');
+                ->and($disconnected->getData(true)['message'])->toBe('QuickBooks is not connected. Connect again from Quickbooks Setup.');
         });
-        $syncs = array_values(array_filter($jobs, fn ($job) => $job instanceof SyncCompanyBatch));
+        $syncs   = array_values(array_filter($jobs, fn ($job) => $job instanceof SyncCompanyBatch));
+        $imports = array_values(array_filter($jobs, fn ($job) => $job instanceof ImportCustomers));
 
         expect($syncs)->toHaveCount(1)
             ->and($syncs[0]->trigger)->toBe('now')
-            ->and(array_filter($jobs, fn ($job) => $job instanceof ImportCustomers))->toBe([]);
+            ->and($imports)->toHaveCount(1)
+            ->and($imports[0]->companyUuid)->toBe('company-uuid');
     } finally {
         session(['company' => null, 'user' => null]);
     }
@@ -977,7 +1055,7 @@ test('a failed token exchange and an unreachable probe do not return transport t
         ))->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
 
         expect($response->getStatusCode())->toBe(422)
-            ->and($response->getData(true)['message'])->toBe('QuickBooks could not finish connecting. Connect again from Connection.')
+            ->and($response->getData(true)['message'])->toBe('QuickBooks could not finish connecting. Connect again from Quickbooks Setup.')
             ->and(json_encode($response->getData(true)))->not->toContain('cURL')
             ->and(json_encode($response->getData(true)))->not->toContain('timed out');
     } finally {
@@ -1024,7 +1102,7 @@ test('completing with the original state instead of the handle says the link is 
     $begun = $flow->begin('company-uuid', 'user-uuid', $credentials);
 
     expect(fn () => $flow->complete($begun['state'], 'company-uuid', 'user-uuid', $credentials))
-        ->toThrow(QuickBooksException::class, 'This QuickBooks authorization link is not valid. Connect again from Connection.');
+        ->toThrow(QuickBooksException::class, 'This QuickBooks authorization link is not valid. Connect again from Quickbooks Setup.');
 });
 
 test('a refresh persists the rotated refresh token', function () {

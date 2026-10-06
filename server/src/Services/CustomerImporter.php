@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Models\Connection;
+use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -343,16 +344,7 @@ class CustomerImporter
             SyncSuppressor::pause();
             $created = $this->creator !== null
                 ? ($this->creator)($connection, $remote)
-                : [
-                    'uuid'         => (string) Str::uuid(),
-                    'company_uuid' => $connection['company_uuid'],
-                    'type'         => 'customer',
-                    'name'         => $this->displayName($remote),
-                    'email'        => $remote['PrimaryEmailAddr']['Address'] ?? null,
-                    'phone'        => $remote['PrimaryPhone']['FreeFormNumber'] ?? null,
-                    'notes'        => $remote['Notes'] ?? null,
-                    'meta'         => ['quickbooks_bill_addr' => $remote['BillAddr'] ?? null],
-                ];
+                : $this->customerFromRemote($connection, $remote);
             $ledger->customers[$created['uuid']] = $created;
             $ledger->rememberCustomer((string) $created['uuid'], $created);
             $fleetbaseCustomers[]                = $created;
@@ -380,6 +372,34 @@ class CustomerImporter
         }
 
         return 'created';
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $remote
+     *
+     * @return array<string, mixed>
+     */
+    private function customerFromRemote(array $connection, array $remote): array
+    {
+        $created = [
+            'uuid'         => (string) Str::uuid(),
+            'company_uuid' => $connection['company_uuid'],
+            'type'         => 'customer',
+            'name'         => $this->displayName($remote),
+            'email'        => $remote['PrimaryEmailAddr']['Address'] ?? null,
+            'phone'        => $remote['PrimaryPhone']['FreeFormNumber'] ?? null,
+            'notes'        => $remote['Notes'] ?? null,
+        ];
+        $bill = $remote['BillAddr'] ?? null;
+        if (is_array($bill)) {
+            $address = (new CustomerMapper())->addressFromBillAddr($bill);
+            if ($address !== null) {
+                $created['address'] = $address;
+            }
+        }
+
+        return $created;
     }
 
     /**

@@ -103,7 +103,7 @@ Sync Frequency is minutes (`interval_minutes`, default 5). Full Sync Frequency (
 
 Activity rows show created, updated, aligned, linked, skipped, unmatched, voided, and failed. Aligned is the outbound sync count. Linked is the customer-import count.
 
-The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires a connection and a configured Client ID, Redirect URI, and Client secret.
+The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires `quickbooks reconcile sync` or an installation administrator, plus a connection and a configured Client ID, Redirect URI, and Client secret.
 
 ## Webhooks
 
@@ -130,7 +130,7 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 
 ## Requirements and install
 
-This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`, `fleetbase/fleetops-api` `0.6.70`, and `fleetbase/ledger-api` `0.0.11`. The Ember engine needs Node `>= 18`.
+This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`, `fleetbase/fleetops-api` `0.6.71`, and `fleetbase/ledger-api` `0.0.12`. The Ember engine needs Node `>= 18`.
 
 The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks) (`packages/quickbooks`, branch `develop`). `application`, `queue`, and `scheduler` use the published `fleetbase/fleetbase-api:latest` image. That image does not contain this package. Do not build a custom API image for it.
 

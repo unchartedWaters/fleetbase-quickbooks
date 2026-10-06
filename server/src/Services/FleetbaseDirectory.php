@@ -11,6 +11,7 @@ use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
+use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
@@ -1377,10 +1378,13 @@ class FleetbaseDirectory
             $query->whereIn('uuid', $onlyUuids);
         }
 
-        $rows = [];
+        $models = $query->get();
+        $places = $this->placesByUuid($this->customerPlaceIds($models));
+        $mapper = new CustomerMapper();
+        $rows   = [];
         /** @var Model $customer */
-        foreach ($query->get() as $customer) {
-            $rows[(string) $customer->uuid] = [
+        foreach ($models as $customer) {
+            $row = [
                 'uuid'         => (string) $customer->uuid,
                 'company_uuid' => $companyUuid,
                 'type'         => 'customer',
@@ -1389,6 +1393,14 @@ class FleetbaseDirectory
                 'phone'        => $customer->phone,
                 'notes'        => $customer->notes,
             ];
+            $placeUuid = trim((string) ($customer->getAttributes()['place_uuid'] ?? ''));
+            if ($placeUuid !== '' && isset($places[$placeUuid])) {
+                $address = $mapper->addressFromPlace($places[$placeUuid]);
+                if ($address !== null) {
+                    $row['address'] = $address;
+                }
+            }
+            $rows[(string) $customer->uuid] = $row;
         }
 
         return $rows;
@@ -1534,10 +1546,12 @@ class FleetbaseDirectory
                 continue;
             }
             // Only fields the engine changed are written, so an edit during the batch stays.
-            $loaded = $this->loaded['customers'][$uuid] ?? null;
-            $values = self::changedColumns($customer, $loaded, ['name', 'email', 'phone', 'notes']);
+            $loaded  = $this->loaded['customers'][$uuid] ?? null;
+            $loaded  = is_array($loaded) ? $loaded : null;
+            $values  = self::changedColumns($customer, $loaded, self::CUSTOMER_FIELDS);
+            $address = $this->changedBillingAddress($customer, $loaded);
             if (isset($present[$uuid])) {
-                if ($values === []) {
+                if ($values === [] && $address === null) {
                     continue;
                 }
                 /** @var Model|null $model */
@@ -1549,13 +1563,18 @@ class FleetbaseDirectory
                     $fresh[] = $customer;
                     continue;
                 }
-                $model->fill($values);
-                if ($model->isDirty()) {
-                    $model->save();
+                if ($values !== []) {
+                    $model->fill($values);
+                    if ($model->isDirty()) {
+                        $model->save();
+                    }
+                }
+                if ($address !== null) {
+                    $this->writeBillingAddress($model, $address);
                 }
                 continue;
             }
-            if ($values === [] && is_array($loaded)) {
+            if ($values === [] && $address === null && $loaded !== null) {
                 continue;
             }
             $fresh[] = $customer;
@@ -3470,8 +3489,10 @@ class FleetbaseDirectory
             return;
         }
 
-        $now  = Carbon::now()->toDateTimeString();
-        $rows = [];
+        $now      = Carbon::now()->toDateTimeString();
+        $rows     = [];
+        $store    = $this->placeTable();
+        $canPlace = $store !== null && $this->customerColumnExists($class, 'place_uuid');
         foreach ($customers as $customer) {
             $uuid = (string) ($customer['uuid'] ?? '');
             if ($uuid === '') {
@@ -3485,7 +3506,7 @@ class FleetbaseDirectory
                 $meta    = $encoded === false ? null : $encoded;
             }
             $publicId = 'contact_' . strtolower(Str::random(10));
-            $rows[]   = [
+            $row      = [
                 'uuid'         => $uuid,
                 'public_id'    => $publicId,
                 'internal_id'  => (string) random_int(100000, 999999),
@@ -3500,9 +3521,206 @@ class FleetbaseDirectory
                 'created_at'   => $now,
                 'updated_at'   => $now,
             ];
+            $address = $customer['address'] ?? null;
+            if ($canPlace && $store !== null && is_array($address) && $this->billingAddressHasContent($address)) {
+                $placeUuid = $this->insertCustomerPlace($store, (string) $customer['company_uuid'], $uuid, $address);
+                if ($placeUuid !== null) {
+                    $row['place_uuid'] = $placeUuid;
+                }
+            }
+            $rows[] = $row;
+        }
+        $withPlace = false;
+        foreach ($rows as $row) {
+            if (array_key_exists('place_uuid', $row)) {
+                $withPlace = true;
+                break;
+            }
+        }
+        if ($withPlace) {
+            foreach ($rows as $index => $row) {
+                if (!array_key_exists('place_uuid', $row)) {
+                    $rows[$index]['place_uuid'] = null;
+                }
+            }
         }
         foreach (array_chunk($rows, 200) as $chunk) {
             $class::query()->insert($chunk);
+        }
+    }
+
+    /**
+     * @param iterable<Model> $customers
+     *
+     * @return array<int, string>
+     */
+    private function customerPlaceIds(iterable $customers): array
+    {
+        $ids = [];
+        foreach ($customers as $customer) {
+            $id = trim((string) ($customer->getAttributes()['place_uuid'] ?? ''));
+            if ($id !== '') {
+                $ids[$id] = true;
+            }
+        }
+
+        return array_keys($ids);
+    }
+
+    /**
+     * @param array<int, string> $uuids
+     *
+     * @return array<string, object>
+     */
+    private function placesByUuid(array $uuids): array
+    {
+        if ($uuids === []) {
+            return [];
+        }
+
+        $store = $this->placeTable();
+        if ($store === null) {
+            return [];
+        }
+
+        $places = [];
+        foreach (array_chunk($uuids, 500) as $chunk) {
+            foreach ($store['connection']->table($store['table'])->whereIn('uuid', $chunk)->get() as $place) {
+                $places[(string) $place->uuid] = $place;
+            }
+        }
+
+        return $places;
+    }
+
+    /**
+     * @param array<string, mixed>      $customer
+     * @param array<string, mixed>|null $loaded
+     *
+     * @return array<string, mixed>|null
+     */
+    private function changedBillingAddress(array $customer, ?array $loaded): ?array
+    {
+        if (!isset($customer['address']) || !is_array($customer['address'])) {
+            return null;
+        }
+
+        $previous = $loaded['address'] ?? null;
+        if ($previous === $customer['address']) {
+            return null;
+        }
+        if (!$this->billingAddressHasContent($customer['address'])) {
+            return null;
+        }
+
+        return $customer['address'];
+    }
+
+    /**
+     * @param array<string, mixed> $address
+     */
+    private function billingAddressHasContent(array $address): bool
+    {
+        foreach (['line1', 'line2', 'city', 'state', 'postal_code', 'country'] as $field) {
+            if (($address[$field] ?? null) !== null && $address[$field] !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array<string, mixed> $address
+     */
+    private function writeBillingAddress(Model $customer, array $address): void
+    {
+        $store = $this->placeTable();
+        if ($store === null) {
+            return;
+        }
+
+        $columns               = (new CustomerMapper())->placeColumns($address);
+        $columns['updated_at'] = Carbon::now()->toDateTimeString();
+        $placeUuid             = trim((string) ($customer->getAttributes()['place_uuid'] ?? ''));
+        if ($placeUuid !== '') {
+            $updated = $store['connection']->table($store['table'])->where('uuid', $placeUuid)->update($columns);
+            if ($updated > 0) {
+                return;
+            }
+        }
+
+        $created = $this->insertCustomerPlace($store, (string) $customer->company_uuid, (string) $customer->uuid, $address);
+        if ($created === null || !$this->customerColumnExists($customer::class, 'place_uuid')) {
+            return;
+        }
+
+        $customer->place_uuid = $created;
+        $customer->save();
+    }
+
+    /**
+     * @param array{connection: \Illuminate\Database\Connection, table: string} $store
+     * @param array<string, mixed>                                              $address
+     */
+    private function insertCustomerPlace(array $store, string $companyUuid, string $ownerUuid, array $address): ?string
+    {
+        $now  = Carbon::now()->toDateTimeString();
+        $uuid = (string) Str::uuid();
+        $row  = array_merge((new CustomerMapper())->placeColumns($address), [
+            'uuid'         => $uuid,
+            'public_id'    => 'place_' . strtolower(Str::random(10)),
+            'company_uuid' => $companyUuid,
+            'owner_uuid'   => $ownerUuid,
+            'owner_type'   => 'Fleetbase\\FleetOps\\Models\\Customer',
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ]);
+        $connection = $store['connection'];
+        if ($connection->getDriverName() === 'mysql' && $connection->getSchemaBuilder()->hasColumn($store['table'], 'location')) {
+            $row['location'] = $connection->raw("(ST_PointFromText('POINT(0 0)', 0, 'axis-order=long-lat'))");
+        }
+        $connection->table($store['table'])->insert($row);
+
+        return $uuid;
+    }
+
+    /**
+     * @return array{connection: \Illuminate\Database\Connection, table: string}|null
+     */
+    private function placeTable(): ?array
+    {
+        $class = 'Fleetbase\\FleetOps\\Models\\Place';
+        if (!class_exists($class)) {
+            return null;
+        }
+
+        try {
+            $model      = new $class();
+            $table      = $model->getTable();
+            $connection = $model->getConnection();
+            if (!$connection->getSchemaBuilder()->hasTable($table)) {
+                return null;
+            }
+
+            return ['connection' => $connection, 'table' => $table];
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function customerColumnExists(string $class, string $column): bool
+    {
+        if (!class_exists($class)) {
+            return false;
+        }
+
+        try {
+            $model = new $class();
+
+            return $model->getConnection()->getSchemaBuilder()->hasColumn($model->getTable(), $column);
+        } catch (\Throwable) {
+            return false;
         }
     }
 }

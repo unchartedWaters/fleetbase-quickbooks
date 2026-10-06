@@ -272,7 +272,7 @@ test('sync now reconcile and import are rejected without an activity row when qu
             foreach (['import' => 'import', 'reconcile' => 'reconcile', 'sync' => 'sync'] as $method => $path) {
                 $response = $controller->{$method}(Request::create('/' . $path, 'POST', ['company_uuid' => 'company-uuid']));
                 expect($response->getStatusCode())->toBe(422)
-                    ->and($response->getData(true)['message'])->toBe('QuickBooks is not connected. Connect from Connection.');
+                    ->and($response->getData(true)['message'])->toBe('QuickBooks is not connected. Connect from Quickbooks Setup.');
             }
 
             expect($dispatcher->jobs)->toBe([])

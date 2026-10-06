@@ -55,7 +55,7 @@ class Quickbooks
         ],
         [
             'name'        => 'QuickbooksOperator',
-            'description' => 'Connect QuickBooks, import customers, update settings, and reconcile.',
+            'description' => 'Connect QuickBooks, import customers, update settings, and run Sync now.',
             'permissions' => [
                 'quickbooks see extension',
                 'quickbooks view connection',
@@ -65,6 +65,7 @@ class Quickbooks
                 'quickbooks view settings',
                 'quickbooks update settings',
                 'quickbooks view sync',
+                // Sync now and reconcile both authorize as this permission.
                 'quickbooks reconcile sync',
             ],
         ],
@@ -81,7 +82,7 @@ class Quickbooks
         ],
         [
             'name'        => 'QuickBooks Operator',
-            'description' => 'Runs the QuickBooks connection and reconciliation.',
+            'description' => 'Runs the QuickBooks connection and Sync now.',
             'policies'    => ['QuickbooksOperator'],
         ],
     ];

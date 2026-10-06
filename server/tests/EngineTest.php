@@ -4,6 +4,7 @@ use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
+use Fleetbase\Quickbooks\Support\WalletMapper;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 
 test('a stored report customer conflict does not write the fleetbase customer', function () {
@@ -164,6 +165,157 @@ test('a fleetbase invoice number is sent when quickbooks wins other invoice conf
         ->and($ledger->invoices['inv-1']['number'])->toBe('INV-2');
 });
 
+test('a line edit that keeps the invoice total is sent once', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items' => [['description' => 'Evening delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000]],
+    ], [
+        'Line' => [[
+            'Amount'              => '10.00',
+            'DetailType'          => 'SalesItemLineDetail',
+            'Description'         => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
+    ]);
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($first['aligned'])->toBe(0)
+        ->and($client->invoices['qb-1']['Line'][0]['Description'])->toBe('Evening delivery')
+        ->and($client->invoices['qb-1']['TotalAmt'])->toBe('10.00');
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and($second['updated'])->toBe(0)
+        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
+});
+
+test('a new invoice note is sent once', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(['notes' => 'Leave at dock']);
+    $settings                   = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($client->invoices['qb-1']['PrivateNote'])->toBe('Leave at dock')
+        ->and($ledger->invoices['inv-1']['notes'])->toBe('Leave at dock');
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
+});
+
+test('a cleared invoice note is pushed once and is not restored', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(['notes' => ''], ['PrivateNote' => 'Dock 4']);
+    $settings                   = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($ledger->invoices['inv-1']['notes'])->toBe('')
+        ->and($client->invoices['qb-1']['PrivateNote'])->toBe('');
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and($second['updated'])->toBe(0)
+        ->and($ledger->invoices['inv-1']['notes'])->toBe('')
+        ->and($client->invoices['qb-1']['PrivateNote'])->toBe('')
+        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
+});
+
+test('a cleared invoice due date is pushed once and then stays aligned', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(['due_date' => '']);
+    $settings                   = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($ledger->invoices['inv-1']['due_date'])->toBe('')
+        ->and($client->invoices['qb-1']['DueDate'])->toBe('');
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and($second['updated'])->toBe(0)
+        ->and($ledger->invoices['inv-1']['due_date'])->toBe('')
+        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
+});
+
+test('an empty quickbooks note or due date does not wipe the fleetbase invoice', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(
+        ['notes' => 'Keep', 'due_date' => '2026-10-01'],
+        ['PrivateNote' => '', 'DueDate' => '']
+    );
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+        'interval_minutes'   => 1,
+        'invoice_direction'  => 'inbound',
+        'invoice_conflict'   => 'quickbooks',
+    ]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($batch['updated'])->toBe(0)
+        ->and($ledger->invoices['inv-1']['notes'])->toBe('Keep')
+        ->and($ledger->invoices['inv-1']['due_date'])->toBe('2026-10-01')
+        ->and($client->calls)->not->toContain('updateInvoice');
+});
+
+test('quickbooks primary copies a note the fleetbase invoice does not have', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(['notes' => ''], ['PrivateNote' => 'Dock 4']);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+        'interval_minutes' => 1,
+        'invoice_conflict' => 'quickbooks',
+    ]), time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and($ledger->invoices['inv-1']['notes'])->toBe('Dock 4')
+        ->and($client->calls)->not->toContain('updateInvoice');
+});
+
+test('changing the invoice customer updates the quickbooks customer once', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(['customer_uuid' => 'cust-2'], [
+        'CustomerRef' => ['value' => 'qbo-customer'],
+    ]);
+    $ledger->customers['cust-2'] = engineCustomer('cust-2', ['name' => 'Bea', 'email' => 'bea@example.test']);
+    $ledger->links[]             = engineLink('customer', 'cust-2', 'qbo-bea');
+    $settings                    = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($client->invoices['qb-1']['CustomerRef']['value'])->toBe('qbo-bea')
+        ->and($ledger->invoices['inv-1']['customer_uuid'])->toBe('cust-2');
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
+});
+
+test('a different quickbooks currency is replaced with the fleetbase currency once', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(['currency' => 'USD'], [
+        'CurrencyRef' => ['value' => 'EUR'],
+        'CustomerRef' => ['value' => 'qbo-customer'],
+    ]);
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($first['failed'])->toBe(0)
+        ->and($client->invoices['qb-1']['CurrencyRef']['value'])->toBe('USD');
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
+});
+
 test('a quickbooks balance of zero with no payment does not set amount paid', function () {
     [$engine, $client]           = qbEngine();
     $ledger                      = engineLedger();
@@ -173,6 +325,10 @@ test('a quickbooks balance of zero with no payment does not set amount paid', fu
     $client->invoices['qb-1']    = [
         'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 0,
         'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Line'    => [[
+            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
     ];
     $ledger->links[]   = engineLink('invoice', 'inv-1', 'qb-1');
     $ledger->pending[] = enginePending('invoice', 'inv-1');
@@ -197,6 +353,10 @@ test('a partial fleetbase invoice stays partial when quickbooks balance is zero 
     $client->invoices['qb-1']    = [
         'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 0,
         'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Line'    => [[
+            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
     ];
     $ledger->links[]   = engineLink('invoice', 'inv-1', 'qb-1');
     $ledger->pending[] = enginePending('invoice', 'inv-1');
@@ -297,6 +457,246 @@ test('a paid invoice deleted in quickbooks is not recreated and its payment is n
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(1000)
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-1')['qbo_id'])->toBe('deleted-in-quickbooks')
         ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'inv-1')['qbo_id'])->toBe('deleted-payment');
+});
+
+test('a customer billing address and notes are sent to quickbooks', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', [
+        'notes'   => 'Dock 4',
+        'address' => [
+            'line1'       => '1 Analytical Engine',
+            'line2'       => 'Suite 2',
+            'city'        => 'London',
+            'state'       => 'LN',
+            'postal_code' => 'SW1',
+            'country'     => 'UK',
+        ],
+    ]);
+    $ledger->pending[] = enginePending('customer', 'cust-1');
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+    $created = array_values($client->customers)[0];
+
+    expect($created['Notes'])->toBe('Dock 4')
+        ->and($created['BillAddr']['Line1'])->toBe('1 Analytical Engine')
+        ->and($created['BillAddr']['Line2'])->toBe('Suite 2')
+        ->and($created['BillAddr']['City'])->toBe('London')
+        ->and($created['BillAddr']['CountrySubDivisionCode'])->toBe('LN')
+        ->and($created['BillAddr']['PostalCode'])->toBe('SW1')
+        ->and($created['BillAddr']['Country'])->toBe('UK');
+});
+
+test('inbound sync copies notes and billing address when the name is unchanged', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-1');
+    $client->customers['qbo-1']  = [
+        'Id'               => 'qbo-1',
+        'SyncToken'        => '1',
+        'DisplayName'      => 'Ada',
+        'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+        'Notes'            => 'Dock 4',
+        'BillAddr'         => [
+            'Line1'                  => '1 Analytical Engine',
+            'Line2'                  => 'Suite 2',
+            'City'                   => 'London',
+            'CountrySubDivisionCode' => 'LN',
+            'PostalCode'             => 'SW1',
+            'Country'                => 'UK',
+        ],
+    ];
+    $ledger->pending[] = enginePending('customer', 'cust-1');
+    $settings          = qbSettings([
+        'interval_minutes'   => 1,
+        'customer_direction' => 'inbound',
+        'customer_reference' => 'quickbooks',
+    ]);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and($batch['aligned'])->toBe(0)
+        ->and($ledger->customers['cust-1']['name'])->toBe('Ada')
+        ->and($ledger->customers['cust-1']['notes'])->toBe('Dock 4')
+        ->and($ledger->customers['cust-1']['address'])->toBe([
+            'line1'       => '1 Analytical Engine',
+            'line2'       => 'Suite 2',
+            'city'        => 'London',
+            'state'       => 'LN',
+            'postal_code' => 'SW1',
+            'country'     => 'UK',
+        ])
+        ->and($client->calls)->not->toContain('updateCustomer');
+
+    $ledger->connections['company-uuid']['last_batch_at'] = null;
+    $ledger->pending[0]['status']                         = 'pending';
+    $again                                                = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
+
+    expect($again['aligned'])->toBe(1)
+        ->and($again['updated'])->toBe(0)
+        ->and($ledger->customers['cust-1']['notes'])->toBe('Dock 4');
+});
+
+test('a fleetbase primary clear is pushed and not restored from quickbooks', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['notes' => '']);
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-1');
+    $client->customers['qbo-1']  = [
+        'Id'               => 'qbo-1',
+        'SyncToken'        => '1',
+        'DisplayName'      => 'Ada',
+        'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+        'Notes'            => 'Dock 4',
+        'BillAddr'         => [
+            'Line1'                  => '1 Analytical Engine',
+            'Line2'                  => 'Suite 2',
+            'City'                   => 'London',
+            'CountrySubDivisionCode' => 'LN',
+            'PostalCode'             => 'SW1',
+            'Country'                => 'UK',
+        ],
+    ];
+    $ledger->pending[] = enginePending('customer', 'cust-1');
+
+    $both = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($both['updated'])->toBe(1)
+        ->and($ledger->customers['cust-1']['notes'])->toBe('')
+        ->and($ledger->customers['cust-1'])->not->toHaveKey('address')
+        ->and($client->calls)->toContain('updateCustomer')
+        ->and($client->customers['qbo-1']['Notes'])->toBe('')
+        ->and($client->customers['qbo-1']['BillAddr']['Line1'])->toBe('')
+        ->and($client->customers['qbo-1']['BillAddr']['Line2'])->toBe('')
+        ->and($client->customers['qbo-1']['BillAddr']['City'])->toBe('');
+
+    $outboundLedger                      = engineLedger();
+    $outboundLedger->customers['cust-1'] = engineCustomer('cust-1', ['notes' => '']);
+    $outboundLedger->links[]             = engineLink('customer', 'cust-1', 'qbo-1');
+    $client->customers['qbo-1']          = [
+        'Id'               => 'qbo-1',
+        'SyncToken'        => '2',
+        'DisplayName'      => 'Ada',
+        'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+        'Notes'            => 'Dock 4',
+        'BillAddr'         => [
+            'Line1' => '1 Analytical Engine',
+            'City'  => 'London',
+        ],
+    ];
+    $outboundLedger->pending[] = enginePending('customer', 'cust-1');
+    $client->calls             = [];
+
+    $outbound = $engine->runScheduled($outboundLedger, 'company-uuid', qbSettings([
+        'interval_minutes'   => 1,
+        'customer_direction' => 'outbound',
+    ]), time());
+
+    expect($outbound['updated'])->toBe(1)
+        ->and($outbound['aligned'])->toBe(0)
+        ->and($outboundLedger->customers['cust-1']['notes'])->toBe('')
+        ->and($outboundLedger->customers['cust-1'])->not->toHaveKey('address')
+        ->and($client->calls)->toContain('updateCustomer')
+        ->and($client->customers['qbo-1']['Notes'])->toBe('');
+});
+
+test('quickbooks primary still copies a note and address the fleetbase customer does not have', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['notes' => '']);
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-1');
+    $client->customers['qbo-1']  = [
+        'Id'               => 'qbo-1',
+        'SyncToken'        => '1',
+        'DisplayName'      => 'Ada',
+        'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+        'Notes'            => 'Dock 4',
+        'BillAddr'         => [
+            'Line1'                  => '1 Analytical Engine',
+            'Line2'                  => 'Suite 2',
+            'City'                   => 'London',
+            'CountrySubDivisionCode' => 'LN',
+            'PostalCode'             => 'SW1',
+            'Country'                => 'UK',
+        ],
+    ];
+    $ledger->pending[] = enginePending('customer', 'cust-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+        'interval_minutes'  => 1,
+        'customer_conflict' => 'quickbooks',
+    ]), time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and($ledger->customers['cust-1']['notes'])->toBe('Dock 4')
+        ->and($ledger->customers['cust-1']['address']['line1'])->toBe('1 Analytical Engine')
+        ->and($ledger->customers['cust-1']['address']['line2'])->toBe('Suite 2')
+        ->and($client->calls)->not->toContain('updateCustomer');
+});
+
+test('an empty quickbooks note or address leaves the fleetbase value in place', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', [
+        'notes'   => 'Keep',
+        'address' => [
+            'line1'       => '1 Analytical Engine',
+            'line2'       => 'Suite 2',
+            'city'        => 'London',
+            'state'       => 'LN',
+            'postal_code' => 'SW1',
+            'country'     => 'UK',
+        ],
+    ]);
+    $ledger->links[]            = engineLink('customer', 'cust-1', 'qbo-1');
+    $client->customers['qbo-1'] = [
+        'Id'               => 'qbo-1',
+        'SyncToken'        => '1',
+        'DisplayName'      => 'Ada',
+        'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+        'Notes'            => '',
+    ];
+    $ledger->pending[] = enginePending('customer', 'cust-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+        'interval_minutes'   => 1,
+        'customer_direction' => 'inbound',
+        'customer_reference' => 'quickbooks',
+    ]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($batch['updated'])->toBe(0)
+        ->and($ledger->customers['cust-1']['notes'])->toBe('Keep')
+        ->and($ledger->customers['cust-1']['address']['line1'])->toBe('1 Analytical Engine')
+        ->and($ledger->customers['cust-1']['address']['line2'])->toBe('Suite 2')
+        ->and($client->calls)->not->toContain('updateCustomer');
+});
+
+test('quickbooks primary counts an email change as updated when the name stays the same', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $client->customers['qbo-1']  = [
+        'Id'               => 'qbo-1',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Ada',
+        'PrimaryEmailAddr' => ['Address' => 'new@example.test'],
+    ];
+    $ledger->pending[] = enginePending('customer', 'cust-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+        'interval_minutes'   => 1,
+        'customer_direction' => 'inbound',
+        'customer_reference' => 'quickbooks',
+    ]), time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and($batch['aligned'])->toBe(0)
+        ->and($ledger->customers['cust-1']['name'])->toBe('Ada')
+        ->and($ledger->customers['cust-1']['email'])->toBe('new@example.test')
+        ->and($client->calls)->not->toContain('updateCustomer');
 });
 
 test('a fleetbase primary customer does not link a quickbooks customer that has a different email', function () {
@@ -505,6 +905,10 @@ test('a shared quickbooks payment is not rewritten from fleetbase', function () 
     $client->invoices['qb-1']    = [
         'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 4,
         'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Line'    => [[
+            'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
     ];
     $client->payments['pay-shared'] = [
         'Id'   => 'pay-shared', 'SyncToken' => '1', 'TotalAmt' => 15, 'TxnDate' => '2026-09-10',
@@ -819,6 +1223,130 @@ test('a lost wallet link reattaches the one account with the same name and curre
         ->and($batch['aligned'])->toBe(1);
 });
 
+test('a cleared wallet description is pushed once and an empty quickbooks description is left in place', function () {
+    $mapper  = new WalletMapper();
+    $cleared = $mapper->toQuickBooks(['name' => 'Operating', 'description' => ''], 'fleetbase', true);
+    $omitted = $mapper->toQuickBooks(['name' => 'Operating', 'description' => '']);
+
+    expect($cleared['Description'])->toBe('')
+        ->and($omitted)->not->toHaveKey('Description');
+
+    [$engine, $client]        = qbEngine();
+    $ledger                   = engineLedger();
+    $ledger->wallets['wal-1'] = engineWallet('wal-1', ['description' => '']);
+    $ledger->links[]          = engineLink('wallet', 'wal-1', 'acct-9');
+    $client->accounts['acct-9'] = [
+        'Id'          => 'acct-9',
+        'SyncToken'   => '1',
+        'Name'        => 'Operating',
+        'Description' => 'Float',
+        'Active'      => true,
+        'CurrencyRef' => ['value' => 'USD'],
+    ];
+    $ledger->pending[] = enginePending('wallet', 'wal-1');
+    $settings          = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($first['aligned'])->toBe(0)
+        ->and($ledger->wallets['wal-1']['description'])->toBe('')
+        ->and($client->accounts['acct-9']['Description'])->toBe('')
+        ->and(array_count_values($client->calls)['updateAccount'] ?? 0)->toBe(1);
+
+    $ledger->connections['company-uuid']['last_batch_at'] = null;
+    $ledger->pending[0]['status']                         = 'pending';
+    $second                                               = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and($second['updated'])->toBe(0)
+        ->and($ledger->wallets['wal-1']['description'])->toBe('')
+        ->and($client->accounts['acct-9']['Description'])->toBe('')
+        ->and(array_count_values($client->calls)['updateAccount'] ?? 0)->toBe(1);
+
+    [$referenceEngine, $referenceClient] = qbEngine();
+    $referenceLedger                     = engineLedger();
+    $referenceLedger->wallets['wal-1']   = engineWallet('wal-1', ['description' => '']);
+    $referenceLedger->links[]            = engineLink('wallet', 'wal-1', 'acct-9');
+    $referenceClient->accounts['acct-9'] = [
+        'Id'          => 'acct-9',
+        'SyncToken'   => '1',
+        'Name'        => 'Operating',
+        'Description' => 'Float',
+        'Active'      => true,
+        'CurrencyRef' => ['value' => 'USD'],
+    ];
+    $referenceLedger->pending[] = enginePending('wallet', 'wal-1');
+    $referenceSettings          = qbSettings([
+        'interval_minutes' => 1,
+        'wallet_reference' => 'quickbooks',
+    ]);
+
+    $referenceFirst = $referenceEngine->runScheduled($referenceLedger, 'company-uuid', $referenceSettings, time());
+
+    expect($referenceFirst['updated'])->toBe(1)
+        ->and($referenceLedger->wallets['wal-1']['description'])->toBe('')
+        ->and($referenceClient->accounts['acct-9']['Description'])->toBe('')
+        ->and(array_count_values($referenceClient->calls)['updateAccount'] ?? 0)->toBe(1);
+
+    $referenceLedger->connections['company-uuid']['last_batch_at'] = null;
+    $referenceLedger->pending[0]['status']                         = 'pending';
+    $referenceSecond                                               = $referenceEngine->runScheduled($referenceLedger, 'company-uuid', $referenceSettings, time() + 10);
+
+    expect($referenceSecond['aligned'])->toBe(1)
+        ->and($referenceSecond['updated'])->toBe(0)
+        ->and(array_count_values($referenceClient->calls)['updateAccount'] ?? 0)->toBe(1);
+
+    [$sourceEngine, $sourceClient] = qbEngine();
+    $sourceLedger                  = engineLedger();
+    $sourceLedger->wallets['wal-1'] = engineWallet('wal-1', ['description' => 'Keep']);
+    $sourceLedger->links[]         = engineLink('wallet', 'wal-1', 'acct-9');
+    $sourceClient->accounts['acct-9'] = [
+        'Id'          => 'acct-9',
+        'SyncToken'   => '1',
+        'Name'        => 'Operating',
+        'Description' => '',
+        'Active'      => true,
+        'CurrencyRef' => ['value' => 'USD'],
+    ];
+    $sourceLedger->pending[] = enginePending('wallet', 'wal-1');
+
+    $fromQuickBooks = $sourceEngine->runScheduled($sourceLedger, 'company-uuid', qbSettings([
+        'interval_minutes' => 1,
+        'wallet_conflict'  => 'quickbooks',
+    ]), time());
+
+    expect($fromQuickBooks['aligned'])->toBe(1)
+        ->and($fromQuickBooks['updated'])->toBe(0)
+        ->and($sourceLedger->wallets['wal-1']['description'])->toBe('Keep')
+        ->and($sourceClient->calls)->not->toContain('updateAccount');
+
+    [$inboundEngine, $inboundClient] = qbEngine();
+    $inboundLedger                   = engineLedger();
+    $inboundLedger->wallets['wal-1'] = engineWallet('wal-1', ['description' => 'Keep']);
+    $inboundLedger->links[]          = engineLink('wallet', 'wal-1', 'acct-9');
+    $inboundClient->accounts['acct-9'] = [
+        'Id'          => 'acct-9',
+        'SyncToken'   => '1',
+        'Name'        => 'Operating',
+        'Description' => '',
+        'Active'      => true,
+        'CurrencyRef' => ['value' => 'USD'],
+    ];
+    $inboundLedger->pending[] = enginePending('wallet', 'wal-1');
+
+    $inbound = $inboundEngine->runScheduled($inboundLedger, 'company-uuid', qbSettings([
+        'interval_minutes' => 1,
+        'wallet_direction' => 'inbound',
+        'wallet_reference' => 'quickbooks',
+    ]), time());
+
+    expect($inbound['aligned'])->toBe(1)
+        ->and($inbound['updated'])->toBe(0)
+        ->and($inboundLedger->wallets['wal-1']['description'])->toBe('Keep')
+        ->and($inboundClient->calls)->not->toContain('updateAccount');
+});
+
 test('a failed payment flush is recorded on the invoice and a 401 leaves the rest pending', function () {
     $client = new class extends FakeQuickBooks {
         public int $paymentAttempts = 0;
@@ -925,7 +1453,14 @@ test('a failed payment flush is recorded on the invoice and a 401 leaves the res
         $uuid                    = 'inv-' . $key;
         $ledger->invoices[$uuid] = engineInvoice($uuid, ['number' => 'INV-' . strtoupper($key), 'status' => $status]);
         $id                      = 'qb-' . $key;
-        $client->invoices[$id]   = ['Id' => $id, 'SyncToken' => '1', 'DocNumber' => 'INV-' . strtoupper($key), 'TotalAmt' => 10, 'Balance' => 10, 'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15'];
+        $client->invoices[$id]   = [
+            'Id' => $id, 'SyncToken' => '1', 'DocNumber' => 'INV-' . strtoupper($key), 'TotalAmt' => 10, 'Balance' => 10,
+            'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+            'Line'    => [[
+                'Amount' => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+                'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+            ]],
+        ];
         $ledger->links[]         = engineLink('invoice', $uuid, $id);
         $ledger->pending[]       = enginePending('invoice', $uuid);
     }
@@ -2200,6 +2735,57 @@ function engineWallet(string $uuid, array $overrides = []): array
         'description'  => 'Float',
         'currency'     => 'USD',
         'status'       => 'active',
+    ], $overrides);
+}
+
+/**
+ * @param array<string, mixed> $invoiceOverrides
+ * @param array<string, mixed> $remoteOverrides
+ *
+ * @return array{0: SyncEngine, 1: FakeQuickBooks, 2: SyncLedger}
+ */
+function engineLinkedInvoice(array $invoiceOverrides = [], array $remoteOverrides = []): array
+{
+    [$engine, $client]           = \qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', $invoiceOverrides);
+    $client->invoices['qb-1']    = engineRemoteInvoice('qb-1', $remoteOverrides);
+    $ledger->links[]             = engineLink('invoice', 'inv-1', 'qb-1');
+    $ledger->pending[]           = enginePending('invoice', 'inv-1');
+
+    return [$engine, $client, $ledger];
+}
+
+function engineRunAgain(SyncEngine $engine, SyncLedger $ledger, array $settings, int $when): array
+{
+    $ledger->connections['company-uuid']['last_batch_at'] = null;
+    $ledger->pending[0]['status']                         = 'pending';
+
+    return $engine->runScheduled($ledger, 'company-uuid', $settings, $when);
+}
+
+/**
+ * @param array<string, mixed> $overrides
+ *
+ * @return array<string, mixed>
+ */
+function engineRemoteInvoice(string $id = 'qb-1', array $overrides = []): array
+{
+    return array_merge([
+        'Id'        => $id,
+        'SyncToken' => '1',
+        'DocNumber' => 'INV-1',
+        'TotalAmt'  => 10,
+        'TxnDate'   => '2026-09-01',
+        'DueDate'   => '2026-09-15',
+        'Line'      => [[
+            'Amount'              => '10.00',
+            'DetailType'          => 'SalesItemLineDetail',
+            'Description'         => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
     ], $overrides);
 }
 

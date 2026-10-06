@@ -30,6 +30,41 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         this.owner.register('service:modals-manager', ModalsManagerStub);
     });
 
+    test('sync now runs for an operator', async function (assert) {
+        class OperatorAbilitiesStubService extends Service {
+            can(permission) {
+                return permission === 'quickbooks reconcile sync';
+            }
+        }
+
+        this.owner.register('service:abilities', OperatorAbilitiesStubService);
+        this.set('connection', { realm_id: '123', environment: 'sandbox' });
+        this.set('synced', false);
+        this.set('onSync', () => this.set('synced', true));
+
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @onSync={{this.onSync}} />`);
+        assert.dom('[data-test-sync-now]').isNotDisabled();
+        await click('[data-test-sync-now]');
+        assert.true(this.synced);
+    });
+
+    test('sync now stays off without the operator permission', async function (assert) {
+        class DeniedAbilitiesStubService extends Service {
+            can() {
+                return false;
+            }
+        }
+
+        this.owner.register('service:abilities', DeniedAbilitiesStubService);
+        this.set('connection', { realm_id: '123', environment: 'sandbox' });
+        this.set('synced', false);
+        this.set('onSync', () => this.set('synced', true));
+
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @onSync={{this.onSync}} />`);
+        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.false(this.synced);
+    });
+
     test('the actions section is not rendered', async function (assert) {
         this.set('connection', { realm_id: '123', environment: 'sandbox' });
         await render(hbs`<QuickbooksConnection @variant="embedded" @connection={{this.connection}} @configured={{true}} />`);

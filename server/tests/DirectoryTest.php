@@ -931,6 +931,113 @@ test('queueInScope pages the catalog and inserts each page', function () {
     }
 })->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
 
+test('customer billing address and notes round-trip through the directory', function () {
+    [$restore] = directorySqlite();
+    try {
+        $schema = DB::connection('sqlite')->getSchemaBuilder();
+        directoryWebhookSchema($schema);
+        $schema->table('contacts', function (Blueprint $table): void {
+            $table->string('public_id')->nullable();
+            $table->string('internal_id')->nullable();
+            $table->char('place_uuid', 36)->nullable();
+            $table->text('meta')->nullable();
+            $table->string('slug')->nullable();
+        });
+        $schema->create('places', function (Blueprint $table): void {
+            $table->char('uuid', 36)->primary();
+            $table->string('public_id')->nullable();
+            $table->char('company_uuid', 36)->nullable();
+            $table->char('owner_uuid', 36)->nullable();
+            $table->string('owner_type')->nullable();
+            $table->string('street1')->nullable();
+            $table->string('street2')->nullable();
+            $table->string('city')->nullable();
+            $table->string('province')->nullable();
+            $table->string('postal_code')->nullable();
+            $table->string('country')->nullable();
+            $table->timestamps();
+        });
+        directoryWebhookRows();
+        $now = now();
+        DB::table('places')->insert([
+            'uuid'         => 'place-1',
+            'company_uuid' => 'company-uuid',
+            'owner_uuid'   => 'cust-9',
+            'street1'      => '1 Analytical Engine',
+            'city'         => 'London',
+            'province'     => 'LN',
+            'postal_code'  => 'SW1',
+            'country'      => 'UK',
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ]);
+        DB::table('contacts')->where('uuid', 'cust-9')->update([
+            'place_uuid' => 'place-1',
+            'notes'      => 'Local note',
+        ]);
+
+        $directory = new FleetbaseDirectory();
+        $loaded    = $directory->load('company-uuid');
+        $ledger    = $loaded['ledger'];
+
+        expect($ledger->customers['cust-9']['notes'])->toBe('Local note')
+            ->and($ledger->customers['cust-9']['address'])->toBe([
+                'line1'       => '1 Analytical Engine',
+                'line2'       => null,
+                'city'        => 'London',
+                'state'       => 'LN',
+                'postal_code' => 'SW1',
+                'country'     => 'UK',
+            ]);
+
+        $ledger->customers['cust-9']['notes']   = 'Dock 4';
+        $ledger->customers['cust-9']['address'] = [
+            'line1'       => '2 Compiler Way',
+            'city'        => 'Arlington',
+            'state'       => 'VA',
+            'postal_code' => '22201',
+            'country'     => 'US',
+        ];
+        $ledger->customers['cust-new'] = [
+            'uuid'         => 'cust-new',
+            'company_uuid' => 'company-uuid',
+            'type'         => 'customer',
+            'name'         => 'Grace Hopper',
+            'email'        => 'grace@example.test',
+            'phone'        => '555',
+            'notes'        => 'Imported',
+            'address'      => [
+                'line1'       => '9 Cobol Lane',
+                'city'        => 'Arlington',
+                'state'       => 'VA',
+                'postal_code' => '22202',
+                'country'     => 'US',
+            ],
+        ];
+
+        $directory->save($ledger);
+        $updated = DB::table('contacts')->where('uuid', 'cust-9')->first();
+        $place   = DB::table('places')->where('uuid', 'place-1')->first();
+        $created  = DB::table('contacts')->where('uuid', 'cust-new')->first();
+        $imported = DB::table('places')->where('uuid', $created->place_uuid)->first();
+
+        expect($updated->notes)->toBe('Dock 4')
+            ->and($updated->place_uuid)->toBe('place-1')
+            ->and($place->street1)->toBe('2 Compiler Way')
+            ->and($place->city)->toBe('Arlington')
+            ->and($place->province)->toBe('VA')
+            ->and($place->postal_code)->toBe('22201')
+            ->and($place->country)->toBe('US')
+            ->and($created->notes)->toBe('Imported')
+            ->and($created->name)->toBe('Grace Hopper')
+            ->and($imported->street1)->toBe('9 Cobol Lane')
+            ->and($imported->city)->toBe('Arlington')
+            ->and($imported->owner_uuid)->toBe('cust-new');
+    } finally {
+        $restore();
+    }
+})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+
 function directorySqlite(): array
 {
     $defaultConnection   = config('database.default');
