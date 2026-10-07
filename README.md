@@ -134,7 +134,7 @@ This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`, `fleetbase/fleetops-
 
 The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks) (`packages/quickbooks`, branch `develop`). `application`, `queue`, and `scheduler` use the published `fleetbase/fleetbase-api:latest` image. That image does not contain this package. Do not build a custom API image for it.
 
-`flb install <name> --path <fleetbase>` is how Fleetbase registers a published extension. It looks the name up on `https://api.fleetbase.io/~registry/v1/lookup`. This package is not in that registry, so the command cannot install it. The running stack uses the mounted checkout.
+`flb install <name> --path <fleetbase>` looks the name up on `https://api.fleetbase.io/~registry/v1/lookup`. `.github/workflows/registry.yml` publishes that listing and the Composer package when a `v*` tag is pushed. The tag has to contain this workflow, and the GitHub secrets named in that file have to exist. Until that publish has succeeded, `flb install` cannot see this package. This checkout installs from the mounted path.
 
 1. Place this package at `packages/quickbooks`.
 2. Put the existing Fleetbase `APP_KEY` in `api/.env`. Use the key that already decrypts this install.

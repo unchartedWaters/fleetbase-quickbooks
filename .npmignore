@@ -1,3 +1,7 @@
+# composer.json, extension.json, and server/ stay in the published tarball.
+# `flb publish` packs this directory, and registry.fleetbase.io reads
+# composer.json from that tarball for unchartedwaters/quickbooks-api.
+
 # compiled output
 /dist/
 /tmp/

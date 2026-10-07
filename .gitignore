@@ -43,6 +43,9 @@ yarn-debug.log*
 # local review exports
 ui-copy-review.csv
 
+# `flb bundle` writes this next to the extension. The registry upload sends it.
+*-v*-bundle.tar.gz
+
 # server
 .idea/*
 .idea/codeStyleSettings.xml

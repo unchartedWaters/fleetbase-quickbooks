@@ -1,0 +1,99 @@
+name: Registry Publish
+
+# On a v* tag this publishes the extension the way Fleetbase already does.
+#
+# registry.fleetbase.io is the Verdaccio registry. `flb publish` is
+# `npm publish` of this package. The registry stores composer.json from
+# that tarball, and Composer then resolves unchartedwaters/quickbooks-api
+# from https://registry.fleetbase.io. Customer Portal's ember.yml job
+# `fleetbase_publish` is the same login and `flb publish`.
+#
+# `flb bundle --upload` posts the gzip bundle to
+# https://api.fleetbase.io/~registry/v1/bundle-upload. Lookup for
+# `flb install` needs a published extension whose current bundle meta
+# contains package.json and composer.json. The upload API only attaches
+# a bundle to an extension it can already find by that package name, so
+# the first listing is still created in the Fleetbase console. Later tags
+# upload the new bundle with the token npm-cli-login wrote to ~/.npmrc.
+#
+# Packagist is the repository Composer uses when registry.fleetbase.io
+# returns no package. Unauthenticated requests get an empty package list,
+# and this app's composer.json then falls through to Packagist.
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check package versions match
+        run: python3 .github/workflows/check-versions.py
+
+      - name: Check tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} must be v${version}."
+            exit 1
+          fi
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Check the registry tarball includes the Composer package
+        run: python3 .github/workflows/check-registry-manifest.py
+
+  registry_publish:
+    needs: manifest
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Install Fleetbase CLI
+        run: npm i -g @fleetbase/cli npm-cli-login
+
+      - name: Login to Fleetbase Registry
+        env:
+          FLEETBASE_REGISTRY_USERNAME: ${{ secrets.FLEETBASE_REGISTRY_USERNAME }}
+          FLEETBASE_REGISTRY_PASSWORD: ${{ secrets.FLEETBASE_REGISTRY_PASSWORD }}
+          FLEETBASE_REGISTRY_EMAIL: ${{ secrets.FLEETBASE_REGISTRY_EMAIL }}
+        run: npm-cli-login -u "$FLEETBASE_REGISTRY_USERNAME" -p "$FLEETBASE_REGISTRY_PASSWORD" -e "$FLEETBASE_REGISTRY_EMAIL" -r https://registry.fleetbase.io
+
+      - name: Confirm registry login
+        run: npm whoami --registry https://registry.fleetbase.io
+
+      - name: Publish to Fleetbase registry
+        run: flb publish
+
+      - name: Upload extension bundle
+        run: flb bundle --upload
+
+  packagist_publish:
+    needs: manifest
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish Composer package to Packagist
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+        run: python3 .github/workflows/publish-packagist.py
