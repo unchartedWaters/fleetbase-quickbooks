@@ -1,6 +1,6 @@
 import Route from '@ember/routing/route';
 import { inject as service } from '@ember/service';
-import { scheduleOnce } from '@ember/runloop';
+import { dropTask, waitForQueue } from 'ember-concurrency';
 
 const ERROR_KEYS = new Map([
     ['cancelled', 'quickbooks.connection.oauth-cancelled'],
@@ -46,7 +46,17 @@ export default class SettingsRoute extends Route {
 
     setupController(controller, model) {
         super.setupController(controller, model);
-        scheduleOnce('actions', this, this.showOauthResult, controller);
+        this.showOauthResultTask.perform(controller);
+    }
+
+    /**
+     * One run in the actions queue, after this transition finalizes and before outlets render.
+     * A second setup in that same turn is dropped. Destroying the route cancels the pending run.
+     */
+    @dropTask
+    *showOauthResultTask(controller) {
+        yield waitForQueue('actions');
+        this.showOauthResult(controller);
     }
 
     showOauthResult(controller) {
