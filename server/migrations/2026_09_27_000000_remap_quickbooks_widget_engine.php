@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        if (Schema::hasTable('dashboard_widgets') === FALSE) {
+        if (Schema::hasTable('dashboard_widgets') === false) {
             return;
         }
 
@@ -28,7 +28,7 @@ return new class extends Migration {
 
     public function down(): void
     {
-        if (Schema::hasTable('dashboard_widgets') === FALSE) {
+        if (Schema::hasTable('dashboard_widgets') === false) {
             return;
         }
 

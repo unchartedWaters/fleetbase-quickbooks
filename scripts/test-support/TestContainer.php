@@ -14,7 +14,7 @@ class TestContainer extends Container
     {
         return $environments === []
             ? 'testing'
-            : in_array('testing', is_array($environments[0] ?? null) === TRUE ? $environments[0] : $environments, true);
+            : in_array('testing', is_array($environments[0] ?? null) === true ? $environments[0] : $environments, true);
     }
 
     public function runningUnitTests(): bool

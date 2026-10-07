@@ -8,27 +8,27 @@ $autoloadCandidates = [
 ];
 
 foreach ($autoloadCandidates as $candidate) {
-    if (is_file($candidate) === TRUE) {
+    if (is_file($candidate) === true) {
         require_once $candidate;
         break;
     }
 }
 
-if (class_exists('Illuminate\Support\Str') === TRUE && Illuminate\Support\Str::hasMacro('humanize') === FALSE) {
+if (class_exists('Illuminate\Support\Str') === true && Illuminate\Support\Str::hasMacro('humanize') === false) {
     Illuminate\Support\Str::macro('humanize', function (string $value, bool $title = true): string {
         $humanized = str_replace(['-', '_'], ' ', Illuminate\Support\Str::snake($value));
 
-        return $title === TRUE ? Illuminate\Support\Str::title($humanized) : $humanized;
+        return $title === true ? Illuminate\Support\Str::title($humanized) : $humanized;
     });
 }
 
-if (function_exists('config') === FALSE) {
+if (function_exists('config') === false) {
     function config(?string $key = null, mixed $default = null): mixed
     {
-        if (class_exists('Illuminate\Container\Container') === TRUE) {
+        if (class_exists('Illuminate\Container\Container') === true) {
             $container = Illuminate\Container\Container::getInstance();
 
-            if ($container->bound('config') === TRUE) {
+            if ($container->bound('config') === true) {
                 $repository = $container->make('config');
 
                 return $key === null ? $repository : $repository->get($key, $default);
@@ -39,11 +39,11 @@ if (function_exists('config') === FALSE) {
     }
 }
 
-if (class_exists('Illuminate\Container\Container') === TRUE && class_exists('Illuminate\Support\Facades\Facade') === TRUE) {
+if (class_exists('Illuminate\Container\Container') === true && class_exists('Illuminate\Support\Facades\Facade') === true) {
     $app = Illuminate\Container\Container::getInstance();
 
-    if (method_exists($app, 'environment') === FALSE) {
-        if (class_exists('Fleetbase\TestSupport\TestContainer') === FALSE) {
+    if (method_exists($app, 'environment') === false) {
+        if (class_exists('Fleetbase\TestSupport\TestContainer') === false) {
             require_once __DIR__ . '/test-support/TestContainer.php';
         }
 
@@ -53,16 +53,16 @@ if (class_exists('Illuminate\Container\Container') === TRUE && class_exists('Ill
 
     Illuminate\Support\Facades\Facade::setFacadeApplication($app);
 
-    if ($app->bound('http') === FALSE && class_exists('Illuminate\Http\Client\Factory') === TRUE) {
+    if ($app->bound('http') === false && class_exists('Illuminate\Http\Client\Factory') === true) {
         $app->singleton('http', fn () => new Illuminate\Http\Client\Factory());
     }
 
-    if ($app->bound('cache') === FALSE && class_exists('Illuminate\Cache\Repository') === TRUE && class_exists('Illuminate\Cache\ArrayStore') === TRUE) {
+    if ($app->bound('cache') === false && class_exists('Illuminate\Cache\Repository') === true && class_exists('Illuminate\Cache\ArrayStore') === true) {
         $app->singleton('cache', fn () => new Illuminate\Cache\Repository(new Illuminate\Cache\ArrayStore()));
     }
 
-    if ($app->bound('responsecache') === FALSE) {
-        if (class_exists('Fleetbase\TestSupport\ResponseCacheManager') === FALSE) {
+    if ($app->bound('responsecache') === false) {
+        if (class_exists('Fleetbase\TestSupport\ResponseCacheManager') === false) {
             require_once __DIR__ . '/test-support/ResponseCacheManager.php';
         }
 
@@ -71,15 +71,15 @@ if (class_exists('Illuminate\Container\Container') === TRUE && class_exists('Ill
 
     // Crypt (used by SecretCipher) needs an app key and the encrypter binding.
     $testAppKey = random_bytes(32);
-    if ($app->bound('encrypter') === FALSE && class_exists('Illuminate\Encryption\Encrypter') === TRUE) {
+    if ($app->bound('encrypter') === false && class_exists('Illuminate\Encryption\Encrypter') === true) {
         $app->singleton('encrypter', fn () => new Illuminate\Encryption\Encrypter($testAppKey, 'AES-256-CBC'));
     }
 
-    if ($app->bound('events') === FALSE && class_exists('Illuminate\Events\Dispatcher') === TRUE) {
+    if ($app->bound('events') === false && class_exists('Illuminate\Events\Dispatcher') === true) {
         $app->singleton('events', fn () => new Illuminate\Events\Dispatcher($app));
     }
 
-    if ($app->bound('config') === FALSE && class_exists('Illuminate\Config\Repository') === TRUE) {
+    if ($app->bound('config') === false && class_exists('Illuminate\Config\Repository') === true) {
         $app->singleton('config', fn () => new Illuminate\Config\Repository([
             'app'       => ['url' => 'https://api.example.test', 'key' => 'base64:' . base64_encode($testAppKey)],
             'api'       => ['cache' => ['enabled' => false]],
@@ -87,16 +87,16 @@ if (class_exists('Illuminate\Container\Container') === TRUE && class_exists('Ill
         ]));
     }
 
-    if ($app->bound('log') === FALSE && class_exists('Psr\Log\NullLogger') === TRUE) {
-        if (class_exists('Fleetbase\TestSupport\LoggerManager') === FALSE) {
+    if ($app->bound('log') === false && class_exists('Psr\Log\NullLogger') === true) {
+        if (class_exists('Fleetbase\TestSupport\LoggerManager') === false) {
             require_once __DIR__ . '/test-support/LoggerManager.php';
         }
 
         $app->singleton('log', fn () => new Fleetbase\TestSupport\LoggerManager());
     }
 
-    if ($app->bound('router') === FALSE) {
-        if (class_exists('Fleetbase\TestSupport\RouteRegistrar') === FALSE) {
+    if ($app->bound('router') === false) {
+        if (class_exists('Fleetbase\TestSupport\RouteRegistrar') === false) {
             require_once __DIR__ . '/test-support/RouteRegistrar.php';
         }
 
@@ -104,10 +104,10 @@ if (class_exists('Illuminate\Container\Container') === TRUE && class_exists('Ill
     }
 
     if (
-        $app->bound('db') === FALSE
-        && class_exists('Illuminate\Database\Capsule\Manager') === TRUE
-        && class_exists('Illuminate\Database\Eloquent\Model') === TRUE
-        && in_array('sqlite', PDO::getAvailableDrivers(), true) === TRUE
+        $app->bound('db') === false
+        && class_exists('Illuminate\Database\Capsule\Manager') === true
+        && class_exists('Illuminate\Database\Eloquent\Model') === true
+        && in_array('sqlite', PDO::getAvailableDrivers(), true) === true
     ) {
         $database = new Illuminate\Database\Capsule\Manager();
         $database->addConnection([
@@ -124,7 +124,7 @@ if (class_exists('Illuminate\Container\Container') === TRUE && class_exists('Ill
     }
 }
 
-if (function_exists('url') === FALSE) {
+if (function_exists('url') === false) {
     function url(?string $path = null, mixed $parameters = [], ?bool $secure = null): string
     {
         $base = $secure === false ? 'http://api.example.test' : 'https://api.example.test';
@@ -133,7 +133,7 @@ if (function_exists('url') === FALSE) {
     }
 }
 
-if (function_exists('response') === FALSE) {
+if (function_exists('response') === false) {
     function response(): object
     {
         return new class {
@@ -145,22 +145,22 @@ if (function_exists('response') === FALSE) {
     }
 }
 
-if (function_exists('abort') === FALSE) {
+if (function_exists('abort') === false) {
     function abort(int $code, string $message = '', array $headers = []): never
     {
         throw new Symfony\Component\HttpKernel\Exception\HttpException($code, $message, null, $headers);
     }
 }
 
-if (function_exists('event') === FALSE) {
+if (function_exists('event') === false) {
     function event(object|string $event, mixed $payload = [], bool $halt = false): mixed
     {
-        $container = function_exists('app') === TRUE ? app() : null;
-        if (is_object($container) === TRUE && method_exists($container, 'bound') === TRUE && $container->bound('events') === TRUE) {
+        $container = function_exists('app') === true ? app() : null;
+        if (is_object($container) === true && method_exists($container, 'bound') === true && $container->bound('events') === true) {
             return $container->make('events')->dispatch($event, $payload, $halt);
         }
 
-        if (is_object($event) === TRUE && class_exists('Fleetbase\TestSupport\EventRecorder') === TRUE) {
+        if (is_object($event) === true && class_exists('Fleetbase\TestSupport\EventRecorder') === true) {
             Fleetbase\TestSupport\EventRecorder::record($event);
         }
 
@@ -168,10 +168,10 @@ if (function_exists('event') === FALSE) {
     }
 }
 
-if (function_exists('app') === FALSE) {
+if (function_exists('app') === false) {
     function app(?string $abstract = null, array $parameters = []): mixed
     {
-        if (class_exists('Illuminate\Container\Container') === TRUE) {
+        if (class_exists('Illuminate\Container\Container') === true) {
             $container = Illuminate\Container\Container::getInstance();
 
             return $abstract === null ? $container : $container->make($abstract, $parameters);
@@ -181,21 +181,21 @@ if (function_exists('app') === FALSE) {
     }
 }
 
-if (function_exists('request') === FALSE) {
+if (function_exists('request') === false) {
     function request(?string $key = null, mixed $default = null): mixed
     {
-        $request = class_exists('Illuminate\Http\Request') === TRUE ? Illuminate\Http\Request::create('/') : new stdClass();
+        $request = class_exists('Illuminate\Http\Request') === true ? Illuminate\Http\Request::create('/') : new stdClass();
 
         return $key === null ? $request : $default;
     }
 }
 
-if (function_exists('session') === FALSE) {
+if (function_exists('session') === false) {
     function session(array|string|null $key = null, mixed $default = null): mixed
     {
         static $values = [];
 
-        if (is_array($key) === TRUE) {
+        if (is_array($key) === true) {
             $values = array_merge($values, $key);
 
             return null;
@@ -212,7 +212,7 @@ if (function_exists('session') === FALSE) {
 
             public function missing(string $key): bool
             {
-                return array_key_exists($key, $this->values) === FALSE;
+                return array_key_exists($key, $this->values) === false;
             }
 
             public function has(string $key): bool
@@ -228,83 +228,83 @@ if (function_exists('session') === FALSE) {
     }
 }
 
-if (function_exists('now') === FALSE && class_exists('Illuminate\Support\Carbon') === TRUE) {
+if (function_exists('now') === false && class_exists('Illuminate\Support\Carbon') === true) {
     function now($tz = null): Illuminate\Support\Carbon
     {
         return Illuminate\Support\Carbon::now($tz);
     }
 }
 
-if (trait_exists('Illuminate\Foundation\Auth\Access\AuthorizesRequests') === FALSE) {
+if (trait_exists('Illuminate\Foundation\Auth\Access\AuthorizesRequests') === false) {
     require_once __DIR__ . '/test-support/AuthorizesRequests.php';
 }
 
-if (class_exists('Illuminate\Foundation\Auth\User') === FALSE) {
+if (class_exists('Illuminate\Foundation\Auth\User') === false) {
     require_once __DIR__ . '/test-support/AuthUser.php';
 }
 
-if (class_exists('Fleetbase\Models\Customer') === FALSE && class_exists('Illuminate\Database\Eloquent\Model') === TRUE) {
+if (class_exists('Fleetbase\Models\Customer') === false && class_exists('Illuminate\Database\Eloquent\Model') === true) {
     require_once __DIR__ . '/test-support/Customer.php';
 }
 
-if (class_exists('Illuminate\Pagination\Paginator') === FALSE) {
+if (class_exists('Illuminate\Pagination\Paginator') === false) {
     require_once __DIR__ . '/test-support/Paginator.php';
 }
 
-if (trait_exists('Illuminate\Foundation\Bus\Dispatchable') === FALSE) {
+if (trait_exists('Illuminate\Foundation\Bus\Dispatchable') === false) {
     require_once __DIR__ . '/test-support/BusDispatchable.php';
 }
 
-if (trait_exists('Illuminate\Foundation\Bus\DispatchesJobs') === FALSE) {
+if (trait_exists('Illuminate\Foundation\Bus\DispatchesJobs') === false) {
     require_once __DIR__ . '/test-support/DispatchesJobs.php';
 }
 
-if (trait_exists('Illuminate\Foundation\Events\Dispatchable') === FALSE) {
-    if (class_exists('Fleetbase\TestSupport\EventRecorder') === FALSE) {
+if (trait_exists('Illuminate\Foundation\Events\Dispatchable') === false) {
+    if (class_exists('Fleetbase\TestSupport\EventRecorder') === false) {
         require_once __DIR__ . '/test-support/EventRecorder.php';
     }
 
     require_once __DIR__ . '/test-support/EventsDispatchable.php';
 }
 
-if (trait_exists('Illuminate\Foundation\Validation\ValidatesRequests') === FALSE) {
+if (trait_exists('Illuminate\Foundation\Validation\ValidatesRequests') === false) {
     require_once __DIR__ . '/test-support/ValidatesRequests.php';
 }
 
-if (class_exists('Illuminate\Foundation\Http\FormRequest') === FALSE && class_exists('Illuminate\Http\Request') === TRUE) {
+if (class_exists('Illuminate\Foundation\Http\FormRequest') === false && class_exists('Illuminate\Http\Request') === true) {
     require_once __DIR__ . '/test-support/FormRequest.php';
 }
 
-if (interface_exists('Fleetbase\Ai\Contracts\AIContextCapabilityInterface') === FALSE) {
+if (interface_exists('Fleetbase\Ai\Contracts\AIContextCapabilityInterface') === false) {
     require_once __DIR__ . '/test-support/AIContextCapabilityInterface.php';
 }
 
-if (interface_exists('Fleetbase\Ai\Contracts\AIActionCapabilityInterface') === FALSE) {
+if (interface_exists('Fleetbase\Ai\Contracts\AIActionCapabilityInterface') === false) {
     require_once __DIR__ . '/test-support/AIActionCapabilityInterface.php';
 }
 
-if (class_exists('Fleetbase\Ai\Models\AiTask') === FALSE) {
+if (class_exists('Fleetbase\Ai\Models\AiTask') === false) {
     require_once __DIR__ . '/test-support/AiTask.php';
 }
 
-if (class_exists('Fleetbase\Ai\Support\Capabilities\AbstractAICapability') === FALSE) {
+if (class_exists('Fleetbase\Ai\Support\Capabilities\AbstractAICapability') === false) {
     require_once __DIR__ . '/test-support/AbstractAICapability.php';
 }
 
-if (class_exists('Fleetbase\Ai\Support\AiQueryableResource') === FALSE) {
+if (class_exists('Fleetbase\Ai\Support\AiQueryableResource') === false) {
     require_once __DIR__ . '/test-support/AiQueryableResource.php';
 }
 
-if (class_exists('Fleetbase\Ai\Support\AiQueryRegistry') === FALSE) {
+if (class_exists('Fleetbase\Ai\Support\AiQueryRegistry') === false) {
     require_once __DIR__ . '/test-support/AiQueryRegistry.php';
 }
 
-if (class_exists('Fleetbase\Ai\Support\AiRelativeDateResolver') === FALSE && class_exists('Illuminate\Support\Carbon') === TRUE) {
+if (class_exists('Fleetbase\Ai\Support\AiRelativeDateResolver') === false && class_exists('Illuminate\Support\Carbon') === true) {
     require_once __DIR__ . '/test-support/AiRelativeDateResolver.php';
 }
 
 set_error_handler(function (int $severity, string $message): bool {
-    if (str_contains($message, '/pestphp/pest/vendor/autoload.php') === TRUE) {
+    if (str_contains($message, '/pestphp/pest/vendor/autoload.php') === true) {
         return true;
     }
 

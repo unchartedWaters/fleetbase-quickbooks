@@ -26,7 +26,7 @@ class AiRelativeDateResolver
         $timezone = ($timezone !== null && $timezone !== '' && $timezone !== '0') ? $timezone : date_default_timezone_get();
         $now = Carbon::now($timezone);
 
-        if (str_contains(strtolower($prompt), 'last week') === TRUE) {
+        if (str_contains(strtolower($prompt), 'last week') === true) {
             $start = $now->copy()->subWeek()->startOfWeek();
             $end = $now->copy()->subWeek()->endOfWeek();
 
@@ -38,7 +38,7 @@ class AiRelativeDateResolver
             ];
         }
 
-        if (str_contains(strtolower($prompt), 'yesterday') === TRUE) {
+        if (str_contains(strtolower($prompt), 'yesterday') === true) {
             $start = $now->copy()->subDay()->startOfDay();
             $end = $now->copy()->subDay()->endOfDay();
 

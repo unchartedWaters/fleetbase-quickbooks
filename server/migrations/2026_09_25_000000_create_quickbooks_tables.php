@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        if (Schema::hasTable('quickbooks_connections') === FALSE) {
+        if (Schema::hasTable('quickbooks_connections') === false) {
             Schema::create('quickbooks_connections', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
                 $table->char('company_uuid', 36)->index();
@@ -26,7 +26,7 @@ return new class extends Migration {
             });
         }
 
-        if (Schema::hasTable('quickbooks_links') === FALSE) {
+        if (Schema::hasTable('quickbooks_links') === false) {
             Schema::create('quickbooks_links', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
                 $table->char('company_uuid', 36)->index();
@@ -41,7 +41,7 @@ return new class extends Migration {
             });
         }
 
-        if (Schema::hasTable('quickbooks_pending_syncs') === FALSE) {
+        if (Schema::hasTable('quickbooks_pending_syncs') === false) {
             Schema::create('quickbooks_pending_syncs', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
                 $table->char('company_uuid', 36)->index();
@@ -56,7 +56,7 @@ return new class extends Migration {
             });
         }
 
-        if (Schema::hasTable('quickbooks_sync_batches') === FALSE) {
+        if (Schema::hasTable('quickbooks_sync_batches') === false) {
             Schema::create('quickbooks_sync_batches', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
                 $table->char('company_uuid', 36)->index();
@@ -77,7 +77,7 @@ return new class extends Migration {
             });
         }
 
-        if (Schema::hasTable('quickbooks_sync_attempts') === FALSE) {
+        if (Schema::hasTable('quickbooks_sync_attempts') === false) {
             Schema::create('quickbooks_sync_attempts', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
                 $table->char('batch_uuid', 36)->nullable()->index();

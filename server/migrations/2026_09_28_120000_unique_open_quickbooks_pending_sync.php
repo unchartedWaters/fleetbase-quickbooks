@@ -12,11 +12,11 @@ return new class extends Migration {
 
     public function up(): void
     {
-        if (Schema::hasTable($this->table) === FALSE) {
+        if (Schema::hasTable($this->table) === false) {
             return;
         }
 
-        if (Schema::hasColumn($this->table, $this->column) === TRUE && Schema::hasIndex($this->table, $this->index) === TRUE) {
+        if (Schema::hasColumn($this->table, $this->column) === true && Schema::hasIndex($this->table, $this->index) === true) {
             return;
         }
 
@@ -50,7 +50,7 @@ return new class extends Migration {
                 ->delete();
         }
 
-        if (Schema::hasColumn($this->table, $this->column) === FALSE) {
+        if (Schema::hasColumn($this->table, $this->column) === false) {
             Schema::table($this->table, function (Blueprint $table) {
                 // char(36) + ':' + varchar(255) + ':' + char(36)
                 $table->string($this->column, 329)->nullable()->storedAs(
@@ -59,7 +59,7 @@ return new class extends Migration {
             });
         }
 
-        if (Schema::hasIndex($this->table, $this->index) === FALSE) {
+        if (Schema::hasIndex($this->table, $this->index) === false) {
             Schema::table($this->table, function (Blueprint $table) {
                 $table->unique($this->column, $this->index);
             });
@@ -68,17 +68,17 @@ return new class extends Migration {
 
     public function down(): void
     {
-        if (Schema::hasTable($this->table) === FALSE) {
+        if (Schema::hasTable($this->table) === false) {
             return;
         }
 
-        if (Schema::hasIndex($this->table, $this->index) === TRUE) {
+        if (Schema::hasIndex($this->table, $this->index) === true) {
             Schema::table($this->table, function (Blueprint $table) {
                 $table->dropUnique($this->index);
             });
         }
 
-        if (Schema::hasColumn($this->table, $this->column) === TRUE) {
+        if (Schema::hasColumn($this->table, $this->column) === true) {
             Schema::table($this->table, function (Blueprint $table) {
                 $table->dropColumn($this->column);
             });
