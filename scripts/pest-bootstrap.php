@@ -44,7 +44,7 @@ if (class_exists('Illuminate\Container\Container') && class_exists('Illuminate\S
 
     if (!method_exists($app, 'environment')) {
         if (!class_exists('Fleetbase\TestSupport\TestContainer')) {
-            eval('namespace Fleetbase\TestSupport; class TestContainer extends \Illuminate\Container\Container { public array $registeredProviders = []; public function environment(array|string ...$environments): bool|string { return $environments === [] ? "testing" : in_array("testing", is_array($environments[0] ?? null) ? $environments[0] : $environments, true); } public function runningUnitTests(): bool { return true; } public function runningInConsole(): bool { return true; } public function register($provider, $force = false) { $this->registeredProviders[] = $provider; return $provider; } }');
+            require_once __DIR__ . '/test-support/TestContainer.php';
         }
 
         $app = new Fleetbase\TestSupport\TestContainer();
@@ -63,7 +63,7 @@ if (class_exists('Illuminate\Container\Container') && class_exists('Illuminate\S
 
     if (!$app->bound('responsecache')) {
         if (!class_exists('Fleetbase\TestSupport\ResponseCacheManager')) {
-            eval('namespace Fleetbase\TestSupport; class ResponseCacheManager { public function clear(): bool { return true; } }');
+            require_once __DIR__ . '/test-support/ResponseCacheManager.php';
         }
 
         $app->singleton('responsecache', fn () => new Fleetbase\TestSupport\ResponseCacheManager());
@@ -89,7 +89,7 @@ if (class_exists('Illuminate\Container\Container') && class_exists('Illuminate\S
 
     if (!$app->bound('log') && class_exists('Psr\Log\NullLogger')) {
         if (!class_exists('Fleetbase\TestSupport\LoggerManager')) {
-            eval('namespace Fleetbase\TestSupport; class LoggerManager extends \Psr\Log\NullLogger { public static array $records = []; public function channel(?string $name = null): self { return $this; } public function log($level, string|\Stringable $message, array $context = []): void { self::$records[] = compact("level", "message", "context"); } }');
+            require_once __DIR__ . '/test-support/LoggerManager.php';
         }
 
         $app->singleton('log', fn () => new Fleetbase\TestSupport\LoggerManager());
@@ -97,7 +97,7 @@ if (class_exists('Illuminate\Container\Container') && class_exists('Illuminate\S
 
     if (!$app->bound('router')) {
         if (!class_exists('Fleetbase\TestSupport\RouteRegistrar')) {
-            eval('namespace Fleetbase\TestSupport; class RouteRegistrar { public static array $routes = []; public static function reset(): void { self::$routes = []; } public function prefix(string $prefix): self { return $this; } public function namespace(string $namespace): self { return $this; } public function group(array|\Closure $attributes, ?\Closure $callback = null): self { ($callback ?? $attributes)($this); return $this; } public function get(string $uri, mixed $action): self { self::$routes[] = ["GET", $uri, $action]; return $this; } public function post(string $uri, mixed $action): self { self::$routes[] = ["POST", $uri, $action]; return $this; } public function fleetbaseRoutes(string $resource, ?\Closure $callback = null): self { self::$routes[] = ["RESOURCE", $resource, null]; if ($callback) { $callback($this, fn (string $method): string => $resource . "Controller@" . $method); } return $this; } }');
+            require_once __DIR__ . '/test-support/RouteRegistrar.php';
         }
 
         $app->singleton('router', fn () => new Fleetbase\TestSupport\RouteRegistrar());
@@ -236,71 +236,71 @@ if (!function_exists('now') && class_exists('Illuminate\Support\Carbon')) {
 }
 
 if (!trait_exists('Illuminate\Foundation\Auth\Access\AuthorizesRequests')) {
-    eval('namespace Illuminate\Foundation\Auth\Access; trait AuthorizesRequests {}');
+    require_once __DIR__ . '/test-support/AuthorizesRequests.php';
 }
 
 if (!class_exists('Illuminate\Foundation\Auth\User')) {
-    eval('namespace Illuminate\Foundation\Auth; class User extends \Illuminate\Database\Eloquent\Model {}');
+    require_once __DIR__ . '/test-support/AuthUser.php';
 }
 
 if (!class_exists('Fleetbase\Models\Customer') && class_exists('Illuminate\Database\Eloquent\Model')) {
-    eval('namespace Fleetbase\Models; class Customer extends \Illuminate\Database\Eloquent\Model { protected $table = "customers"; protected $primaryKey = "uuid"; public $incrementing = false; protected $keyType = "string"; }');
+    require_once __DIR__ . '/test-support/Customer.php';
 }
 
 if (!class_exists('Illuminate\Pagination\Paginator')) {
-    eval('namespace Illuminate\Pagination; class Paginator implements \JsonSerializable { protected $items; public function __construct($items, protected int $perPage, protected ?int $currentPage = null, protected array $options = []) { $this->items = $items instanceof \Illuminate\Support\Collection ? $items : collect($items); } public static function resolveCurrentPage($pageName = "page", $default = 1): int { return $default; } public static function resolveCurrentPath($default = "/"): string { return $default; } public function first() { return $this->items->first(); } public function mapInto(string $class) { return $this->items->mapInto($class); } public function toBase() { return $this->items->toBase(); } public function jsonSerialize(): mixed { return $this->toArray(); } public function toArray(): array { return ["data" => $this->items->values()->all(), "per_page" => $this->perPage, "current_page" => $this->currentPage ?? 1]; } } class LengthAwarePaginator extends Paginator { public function __construct($items, protected int $total, int $perPage, ?int $currentPage = null, array $options = []) { parent::__construct($items, $perPage, $currentPage, $options); } public function toArray(): array { return array_merge(parent::toArray(), ["total" => $this->total, "last_page" => max(1, (int) ceil($this->total / $this->perPage))]); } }');
+    require_once __DIR__ . '/test-support/Paginator.php';
 }
 
 if (!trait_exists('Illuminate\Foundation\Bus\Dispatchable')) {
-    eval('namespace Illuminate\Foundation\Bus; trait Dispatchable {}');
+    require_once __DIR__ . '/test-support/BusDispatchable.php';
 }
 
 if (!trait_exists('Illuminate\Foundation\Bus\DispatchesJobs')) {
-    eval('namespace Illuminate\Foundation\Bus; trait DispatchesJobs {}');
+    require_once __DIR__ . '/test-support/DispatchesJobs.php';
 }
 
 if (!trait_exists('Illuminate\Foundation\Events\Dispatchable')) {
     if (!class_exists('Fleetbase\TestSupport\EventRecorder')) {
-        eval('namespace Fleetbase\TestSupport; class EventRecorder { public static array $events = []; public static function record(object $event): object { self::$events[] = $event; return $event; } public static function reset(): void { self::$events = []; } }');
+        require_once __DIR__ . '/test-support/EventRecorder.php';
     }
 
-    eval('namespace Illuminate\Foundation\Events; trait Dispatchable { public static function dispatch(...$arguments): object { return \Fleetbase\TestSupport\EventRecorder::record(new static(...$arguments)); } }');
+    require_once __DIR__ . '/test-support/EventsDispatchable.php';
 }
 
 if (!trait_exists('Illuminate\Foundation\Validation\ValidatesRequests')) {
-    eval('namespace Illuminate\Foundation\Validation; trait ValidatesRequests {}');
+    require_once __DIR__ . '/test-support/ValidatesRequests.php';
 }
 
 if (!class_exists('Illuminate\Foundation\Http\FormRequest') && class_exists('Illuminate\Http\Request')) {
-    eval('namespace Illuminate\Foundation\Http; class FormRequest extends \Illuminate\Http\Request { public function authorize(): bool { return true; } public function rules(): array { return []; } public function responseWithErrors(\Illuminate\Contracts\Validation\Validator $validator) { return $validator; } }');
+    require_once __DIR__ . '/test-support/FormRequest.php';
 }
 
 if (!interface_exists('Fleetbase\Ai\Contracts\AIContextCapabilityInterface')) {
-    eval('namespace Fleetbase\Ai\Contracts; interface AIContextCapabilityInterface {}');
+    require_once __DIR__ . '/test-support/AIContextCapabilityInterface.php';
 }
 
 if (!interface_exists('Fleetbase\Ai\Contracts\AIActionCapabilityInterface')) {
-    eval('namespace Fleetbase\Ai\Contracts; interface AIActionCapabilityInterface {}');
+    require_once __DIR__ . '/test-support/AIActionCapabilityInterface.php';
 }
 
 if (!class_exists('Fleetbase\Ai\Models\AiTask')) {
-    eval('namespace Fleetbase\Ai\Models; class AiTask { public function __construct(array $attributes = []) { foreach ($attributes as $key => $value) { $this->{$key} = $value; } } }');
+    require_once __DIR__ . '/test-support/AiTask.php';
 }
 
 if (!class_exists('Fleetbase\Ai\Support\Capabilities\AbstractAICapability')) {
-    eval('namespace Fleetbase\Ai\Support\Capabilities; abstract class AbstractAICapability {}');
+    require_once __DIR__ . '/test-support/AbstractAICapability.php';
 }
 
 if (!class_exists('Fleetbase\Ai\Support\AiQueryableResource')) {
-    eval('namespace Fleetbase\Ai\Support; class AiQueryableResource { public string $key; public array $fields; public array $aliases; public function __construct(string $key, string $label = "", string $module = "", string $modelClass = "", string $permission = "", array $aliases = [], array $fields = [], array $sampleFields = [], ?string $locationField = null, ?string $directivePermission = null, int $maxLimit = 100) { $this->key = $key; $this->fields = $fields; $this->aliases = $aliases; } public function hasField(string $field): bool { return array_key_exists($field, $this->fields); } }');
+    require_once __DIR__ . '/test-support/AiQueryableResource.php';
 }
 
 if (!class_exists('Fleetbase\Ai\Support\AiQueryRegistry')) {
-    eval('namespace Fleetbase\Ai\Support; class AiQueryRegistry { private array $resources = []; public function register(AiQueryableResource $resource): void { $this->resources[$resource->key] = $resource; foreach ($resource->aliases as $alias) { $this->resources[$alias] = $resource; } } public function find(string $key): ?AiQueryableResource { return $this->resources[$key] ?? null; } }');
+    require_once __DIR__ . '/test-support/AiQueryRegistry.php';
 }
 
 if (!class_exists('Fleetbase\Ai\Support\AiRelativeDateResolver') && class_exists('Illuminate\Support\Carbon')) {
-    eval('namespace Fleetbase\Ai\Support; class AiRelativeDateResolver { public function __construct($parser = null) {} public function resolveDateTime(string $prompt, ?string $timezone = null): ?\Illuminate\Support\Carbon { if (preg_match("/(\d+)\s+days?\s+from\s+now/i", $prompt, $matches)) { return \Illuminate\Support\Carbon::now($timezone)->addDays((int) $matches[1]); } return null; } public function resolveWindow(string $prompt, ?string $timezone = null): ?array { $timezone = $timezone ?: date_default_timezone_get(); $now = \Illuminate\Support\Carbon::now($timezone); if (str_contains(strtolower($prompt), "last week")) { $start = $now->copy()->subWeek()->startOfWeek(); $end = $now->copy()->subWeek()->endOfWeek(); return ["label" => "last week", "timezone" => $timezone, "start" => $start, "end" => $end]; } if (str_contains(strtolower($prompt), "yesterday")) { $start = $now->copy()->subDay()->startOfDay(); $end = $now->copy()->subDay()->endOfDay(); return ["label" => "yesterday", "timezone" => $timezone, "start" => $start, "end" => $end]; } return null; } }');
+    require_once __DIR__ . '/test-support/AiRelativeDateResolver.php';
 }
 
 set_error_handler(function (int $severity, string $message): bool {

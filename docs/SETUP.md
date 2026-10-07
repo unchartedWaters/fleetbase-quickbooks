@@ -2,7 +2,7 @@
 
 Fleetbase extension that syncs customers, invoices, payments, and wallets (QuickBooks accounts) with QuickBooks Online.
 
-The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks) and must be present at `packages/quickbooks`.
+The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks), checked out on its own, not inside the Fleetbase repository.
 
 Package names:
 
@@ -132,17 +132,18 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 
 This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`, `fleetbase/fleetops-api` `0.6.71`, and `fleetbase/ledger-api` `0.0.12`. The Ember engine needs Node `>= 18`.
 
-The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks) (`packages/quickbooks`, branch `develop`). `application`, `queue`, and `scheduler` use the published `fleetbase/fleetbase-api:latest` image. That image does not contain this package. Do not build a custom API image for it.
+The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks), branch `develop`, as its own checkout. On this machine that checkout is `/opt/fleetbase-quickbooks`. `application`, `queue`, and `scheduler` use the published `fleetbase/fleetbase-api:latest` image. That image does not contain this package. Do not build a custom API image for it.
 
-`flb install <name> --path <fleetbase>` looks the name up on `https://api.fleetbase.io/~registry/v1/lookup`. `.github/workflows/registry.yml` publishes that listing and the Composer package when a `v*` tag is pushed. The tag has to contain this workflow, and the GitHub secrets named in that file have to exist. Until that publish has succeeded, `flb install` cannot see this package. This checkout installs from the mounted path.
+`flb install <name> --path <fleetbase>` looks the name up on `https://api.fleetbase.io/~registry/v1/lookup`. `.github/workflows/registry.yml` publishes that listing and the Composer package when a `v*` tag is pushed. The tag has to contain this workflow, and the GitHub secrets named in that file have to exist. Until that publish has succeeded, `flb install` cannot see this package. This checkout installs from the external path.
 
-1. Place this package at `packages/quickbooks`.
-2. Put the existing Fleetbase `APP_KEY` in `api/.env`. Use the key that already decrypts this install.
-3. Start the stack with Docker Compose. `docker-compose.yml` mounts `./api/.env` into `application`, `queue`, and `scheduler`, so all three read the same `APP_KEY`. It mounts `./packages/quickbooks` read-only at `/fleetbase/packages/quickbooks`. The entrypoint for those three services is `packages/quickbooks/docker/ensure-quickbooks-extension.sh`.
-4. On start, that script exits with an error if `/fleetbase/packages/quickbooks` is missing. It Composer-requires `unchartedwaters/quickbooks-api:0.0.2` when the provider is not installed, or when the mounted `composer.json` version or `require` entries differ from the installed package. Only `application` runs `php artisan migrate --force`. `queue` and `scheduler` do not migrate on startup. A later application start skips the require when the installed package still matches, and migrate applies only pending migrations.
-5. Install console dependencies from `console/`. `console/package.json` links `@unchartedwaters/quickbooks-engine` to `../packages/quickbooks`. The console mounts that engine at `/quickbooks`. `console/fleetbase.config.json` lists `@unchartedwaters/quickbooks-engine` in `EXTENSIONS`.
+1. Check out this repository to `/opt/fleetbase-quickbooks` on `develop`.
+2. Point the Fleetbase app at that directory. Composer path repository `../../fleetbase-quickbooks`, console dependency `link:../../fleetbase-quickbooks`, and a read-only mount of `/opt/fleetbase-quickbooks` at `/fleetbase/packages/quickbooks`. A symlink at `packages/quickbooks` can point at the same checkout. These Fleetbase edits stay local and are not committed to `fleetbase/fleetbase`.
+3. Put the existing Fleetbase `APP_KEY` in `api/.env`. Use the key that already decrypts this install.
+4. Start the stack with Docker Compose. `docker-compose.yml` mounts `./api/.env` into `application`, `queue`, and `scheduler`, so all three read the same `APP_KEY`. It mounts `/opt/fleetbase-quickbooks` read-only at `/fleetbase/packages/quickbooks`. The entrypoint for those three services is `/fleetbase/packages/quickbooks/docker/ensure-quickbooks-extension.sh`. Console and API image builds take the package from a BuildKit context named `quickbooks`, not from a copy inside the Fleetbase tree.
+5. On start, that script exits with an error if `/fleetbase/packages/quickbooks` is missing. It Composer-requires `unchartedwaters/quickbooks-api:0.0.2` when the provider is not installed, or when the mounted `composer.json` version or `require` entries differ from the installed package. Only `application` runs `php artisan migrate --force`. `queue` and `scheduler` do not migrate on startup. A later application start skips the require when the installed package still matches, and migrate applies only pending migrations.
+6. Install console dependencies from `console/`. `console/package.json` links `@unchartedwaters/quickbooks-engine` to `../../fleetbase-quickbooks`. The console mounts that engine at `/quickbooks`. `console/fleetbase.config.json` lists `@unchartedwaters/quickbooks-engine` in `EXTENSIONS`.
 
-`api/composer.json` has a path repository at `../packages/quickbooks` and requires `unchartedwaters/quickbooks-api`. The running containers get the package from the ensure script, not from a rebuilt image.
+`api/composer.json` requires `unchartedwaters/quickbooks-api` and has a path repository at `../../fleetbase-quickbooks`. The running containers get the package from the ensure script, not from a rebuilt image.
 
 `QuickbooksServiceProvider` loads `server/src/routes.php`, `server/migrations`, and registers `quickbooks:sync` on the Laravel scheduler. The system cron invokes that scheduler every minute, but the command does not start on a minute when no organization is due before its Sync Frequency.
 

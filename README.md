@@ -11,7 +11,7 @@ QuickBooks is a [Fleetbase](https://www.fleetbase.io) extension that syncs custo
 
 ## Quick start
 
-Place this package at `packages/quickbooks` and start Fleetbase so the extension is installed and enabled. Open Organization settings → Quickbooks Setup, save the Intuit Client ID and Client secret, and connect.
+Check out [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks) `develop` next to Fleetbase, then start Fleetbase so the extension is installed and enabled. Open Organization settings → Quickbooks Setup, save the Intuit Client ID and Client secret, and connect.
 
 ## Documentation
 

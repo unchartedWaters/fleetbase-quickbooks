@@ -28,6 +28,20 @@ if (!file_exists($vendor) && is_dir($serverVendor) && function_exists('symlink')
     @symlink($serverVendor, $vendor);
 }
 
+$autoloadLoaded = false;
+foreach ([$serverVendor . '/autoload.php', $vendor . '/autoload.php'] as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+        $autoloadLoaded = true;
+        break;
+    }
+}
+
+if (!$autoloadLoaded) {
+    fwrite(STDERR, "Unable to load Composer autoload.\n");
+    exit(1);
+}
+
 $bootstrap = getcwd() . '/scripts/pest-bootstrap.php';
 if (!is_file($bootstrap)) {
     fwrite(STDERR, "Unable to find Pest bootstrap at scripts/pest-bootstrap.php.\n");
@@ -59,6 +73,9 @@ $command = array_merge([
     $pest,
 ], $args);
 
-passthru(implode(' ', array_map('escapeshellarg', $command)), $exitCode);
-
-exit($exitCode);
+$process = new Symfony\Component\Process\Process($command);
+$process->setTimeout(null);
+$process->run(static function (string $type, string $buffer): void {
+    fwrite($type === Symfony\Component\Process\Process::ERR ? STDERR : STDOUT, $buffer);
+});
+exit($process->getExitCode() ?? 1);
