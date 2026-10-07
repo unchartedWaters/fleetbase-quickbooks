@@ -200,12 +200,12 @@ export default class QuickbooksSettingsComponent extends Component {
 
     get secret() {
         const presentation = secretPresentation(this.args.settings);
-        if (this.draft.client_secret != null) {
+        if (this.draft.client_secret !== null && this.draft.client_secret !== undefined) {
             presentation.value = this.draft.client_secret;
         }
         // The fields template already receives this object, so the verifier rides along with the same blank-keeps-saved shape.
         presentation.verifier = webhookVerifierPresentation(this.args.settings);
-        if (this.draft.webhook_verifier != null) {
+        if (this.draft.webhook_verifier !== null && this.draft.webhook_verifier !== undefined) {
             presentation.verifier.value = this.draft.webhook_verifier;
         }
 
@@ -237,16 +237,16 @@ export default class QuickbooksSettingsComponent extends Component {
     present(key) {
         const source = AUTH_FIELDS.includes(key) ? this.args.settings : this.args.sync;
         const state = fieldState({ ...source, sources: source?.sources, scope: 'company' }, key);
-        if (key === 'interval_minutes' && (state.value === '' || state.value == null)) {
+        if (key === 'interval_minutes' && (state.value === '' || state.value === null || state.value === undefined)) {
             state.value = 5;
         }
-        if (key === 'periodic_interval_hours' && (state.value === '' || state.value == null)) {
+        if (key === 'periodic_interval_hours' && (state.value === '' || state.value === null || state.value === undefined)) {
             state.value = 24;
         }
-        if (key === 'environment' && (state.value === '' || state.value == null)) {
+        if (key === 'environment' && (state.value === '' || state.value === null || state.value === undefined)) {
             state.value = DEFAULT_ENVIRONMENT;
         }
-        if (CHOICE_DEFAULTS[key] && (state.value === '' || state.value == null)) {
+        if (CHOICE_DEFAULTS[key] && (state.value === '' || state.value === null || state.value === undefined)) {
             state.value = CHOICE_DEFAULTS[key];
         }
         const entity = primaryEntity(key);

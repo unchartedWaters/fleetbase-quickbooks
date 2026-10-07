@@ -18,11 +18,11 @@ function withPageBounds(meta, fallbackPage) {
     let from = total === 0 ? 0 : (current - 1) * perPage + 1;
     let to = total === 0 ? 0 : Math.min(current * perPage, total);
 
-    if (meta.from != null) {
+    if (meta.from !== null && meta.from !== undefined) {
         from = Number(meta.from);
     }
 
-    if (meta.to != null) {
+    if (meta.to !== null && meta.to !== undefined) {
         to = Number(meta.to);
     }
 
