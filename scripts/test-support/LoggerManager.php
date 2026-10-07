@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Fleetbase\TestSupport;
 
 use Psr\Log\NullLogger;
-use Stringable;
 
 class LoggerManager extends NullLogger
 {
@@ -16,7 +15,7 @@ class LoggerManager extends NullLogger
         return $this;
     }
 
-    public function log($level, string|Stringable $message, array $context = []): void
+    public function log($level, string|\Stringable $message, array $context = []): void
     {
         self::$records[] = compact('level', 'message', 'context');
     }

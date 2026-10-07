@@ -5,9 +5,8 @@ declare(strict_types=1);
 namespace Illuminate\Pagination;
 
 use Illuminate\Support\Collection;
-use JsonSerializable;
 
-class Paginator implements JsonSerializable
+class Paginator implements \JsonSerializable
 {
     protected $items;
 

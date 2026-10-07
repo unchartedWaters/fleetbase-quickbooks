@@ -1,0 +1,110 @@
+name: Release deployment
+
+# On a v* tag this publishes both packages under the `release` environment,
+# so the jobs show as one deployment. It does not run on branch pushes.
+#
+# npmjs publishes @unchartedwaters/quickbooks-engine to registry.npmjs.org
+# with the organization secret NPM_AUTH_TOKEN. ember.yml job github_publish
+# still publishes that engine to GitHub Packages and does not publish to npmjs.
+#
+# registry_publish is the Fleetbase registry path: npm-cli-login, `flb publish`,
+# then `flb bundle --upload`. `flb publish` runs `npm publish` against
+# https://registry.fleetbase.io. That registry stores composer.json from the
+# tarball, and Composer resolves unchartedwaters/quickbooks-api from it.
+# The upload API only attaches a bundle to an extension it can already find
+# by package name, so the first listing is still created in the Fleetbase
+# console. Later tags upload the new bundle.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  NODE_VERSION: 22.x
+  PNPM_VERSION: 12.4.2
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check package versions match
+        run: python3 .github/workflows/check-versions.py
+
+      - name: Check tag matches package version
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} must be v${version}."
+            exit 1
+          fi
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Check the registry tarball includes the Composer package
+        run: python3 .github/workflows/check-registry-manifest.py
+
+  npmjs:
+    needs: check
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install Dependencies
+        run: pnpm install
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Set up npm
+        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_AUTH_TOKEN }}" > ~/.npmrc
+
+      - name: Publish to npmjs
+        run: npm publish --access public --registry https://registry.npmjs.org/
+
+  registry_publish:
+    needs: check
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Fleetbase CLI
+        run: npm i -g @fleetbase/cli npm-cli-login
+
+      - name: Login to Fleetbase Registry
+        env:
+          FLEETBASE_REGISTRY_USERNAME: ${{ secrets.FLEETBASE_REGISTRY_USERNAME }}
+          FLEETBASE_REGISTRY_PASSWORD: ${{ secrets.FLEETBASE_REGISTRY_PASSWORD }}
+          FLEETBASE_REGISTRY_EMAIL: ${{ secrets.FLEETBASE_REGISTRY_EMAIL }}
+        run: npm-cli-login -u "$FLEETBASE_REGISTRY_USERNAME" -p "$FLEETBASE_REGISTRY_PASSWORD" -e "$FLEETBASE_REGISTRY_EMAIL" -r https://registry.fleetbase.io
+
+      - name: Confirm registry login
+        run: npm whoami --registry https://registry.fleetbase.io
+
+      - name: Publish to Fleetbase registry
+        run: flb publish
+
+      - name: Upload extension bundle
+        run: flb bundle --upload

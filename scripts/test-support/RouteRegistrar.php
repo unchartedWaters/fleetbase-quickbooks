@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Fleetbase\TestSupport;
 
-use Closure;
-
 class RouteRegistrar
 {
     public static array $routes = [];
@@ -25,7 +23,7 @@ class RouteRegistrar
         return $this;
     }
 
-    public function group(array|Closure $attributes, ?Closure $callback = null): self
+    public function group(array|\Closure $attributes, ?\Closure $callback = null): self
     {
         ($callback ?? $attributes)($this);
 
@@ -46,7 +44,7 @@ class RouteRegistrar
         return $this;
     }
 
-    public function fleetbaseRoutes(string $resource, ?Closure $callback = null): self
+    public function fleetbaseRoutes(string $resource, ?\Closure $callback = null): self
     {
         self::$routes[] = ['RESOURCE', $resource, null];
 

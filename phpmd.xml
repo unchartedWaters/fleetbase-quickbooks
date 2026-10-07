@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="PHPMD"
+    xmlns="http://pmd.sf.net/ruleset/1.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://pmd.sf.net/ruleset/1.0.0 http://pmd.sf.net/ruleset_xml_schema.xsd"
+    xsi:noNamespaceSchemaLocation="http://pmd.sf.net/ruleset_xml_schema.xsd">
+  <description>
+    PHP Mess Detector rules. Codacy reads this file for PHP Mess Detector
+    (codesize.xml, phpmd.xml, or phpmd.xml.dist).
+
+    ExcessiveMethodLength has one threshold property, minimum. Codacy pattern
+    rulesets-codesize.xml-ExcessiveMethodLength uses that property and a single
+    predefined level, Warning (shown as Medium). Codacy does not let a pattern
+    have a second severity, and a custom rule with a class attribute is dropped
+    when Codacy loads this file. A medium warning at 70 lines is therefore not
+    applied: setting minimum to 70 would replace the default of 100.
+    Applied threshold: minimum 100. Requested medium threshold, not applied: 70.
+  </description>
+
+  <rule ref="rulesets/cleancode.xml"/>
+  <rule ref="rulesets/controversial.xml"/>
+  <rule ref="rulesets/design.xml"/>
+  <rule ref="rulesets/naming.xml"/>
+  <rule ref="rulesets/unusedcode.xml"/>
+  <rule ref="rulesets/codesize.xml">
+    <exclude name="ExcessiveMethodLength"/>
+  </rule>
+  <!--
+    minimum is the only ExcessiveMethodLength threshold. 100 is the PHPMD and
+    Codacy default. Do not set it to 70: that is the requested medium line
+    count, and this single property would replace the default 100.
+  -->
+  <rule ref="rulesets/codesize.xml/ExcessiveMethodLength">
+    <properties>
+      <property name="minimum" value="100"/>
+    </properties>
+  </rule>
+</ruleset>

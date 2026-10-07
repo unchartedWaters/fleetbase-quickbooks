@@ -1,6 +1,6 @@
 name: PHP CI
 
-# Registry listing and Composer publish run from registry.yml on a v* tag.
+# Registry listing and Composer publish run from deploy.yml on a v* tag.
 # This workflow stays on PHP tests. It does not run `flb install`.
 
 on:
