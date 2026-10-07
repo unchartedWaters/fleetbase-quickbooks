@@ -18,6 +18,9 @@ on:
   schedule:
     - cron: '32 16 * * 0'
 
+env:
+  NODE_VERSION: 22.x
+
 jobs:
   eslint:
     name: Run eslint scanning
@@ -29,6 +32,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Install ESLint
         run: |
