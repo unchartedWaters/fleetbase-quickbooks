@@ -44,7 +44,7 @@ class FlagInvoiceItemObserver
 
     public function updated(object $item): void
     {
-        if (!method_exists($item, 'wasChanged') || !$item->wasChanged(self::WATCHED)) {
+        if (method_exists($item, 'wasChanged') === false || $item->wasChanged(self::WATCHED) === false) {
             return;
         }
 
@@ -58,26 +58,26 @@ class FlagInvoiceItemObserver
 
     private function flagParent(object $item): void
     {
-        if (SyncSuppressor::paused()) {
+        if (SyncSuppressor::paused() === true) {
             return;
         }
 
         self::listenForEndOfScope();
 
         $invoiceUuid = (string) ($item->invoice_uuid ?? '');
-        if ($invoiceUuid === '' || isset(self::$flaggedInvoices[$invoiceUuid])) {
+        if ($invoiceUuid === '' || isset(self::$flaggedInvoices[$invoiceUuid]) === true) {
             return;
         }
 
         $invoice = $this->loadParent($invoiceUuid);
-        if (!is_object($invoice)) {
+        if (is_object($invoice) === false) {
             return;
         }
 
         self::$flaggedInvoices[$invoiceUuid] = true;
 
         $listener = Container::getInstance()->make(FlagInvoiceListener::class);
-        if ($listener instanceof FlagInvoiceListener) {
+        if ($listener instanceof FlagInvoiceListener === true) {
             $listener->handle((object) ['invoice' => $invoice]);
         }
     }
@@ -88,13 +88,13 @@ class FlagInvoiceItemObserver
      */
     private static function listenForEndOfScope(): void
     {
-        if (self::$requestHooked && self::$jobHooked) {
+        if (self::$requestHooked === true && self::$jobHooked === true) {
             return;
         }
 
         $container = Container::getInstance();
 
-        if (!self::$requestHooked && method_exists($container, 'terminating')) {
+        if (self::$requestHooked === false && method_exists($container, 'terminating') === true) {
             $terminating = 'terminating';
             $container->{$terminating}(static function (): void {
                 self::forget();
@@ -102,12 +102,12 @@ class FlagInvoiceItemObserver
             self::$requestHooked = true;
         }
 
-        if (self::$jobHooked || !$container->bound('events')) {
+        if (self::$jobHooked === true || $container->bound('events') === false) {
             return;
         }
 
         $events = $container->make('events');
-        if (!$events instanceof Dispatcher) {
+        if ($events instanceof Dispatcher === false) {
             return;
         }
 
@@ -124,12 +124,12 @@ class FlagInvoiceItemObserver
     protected function loadParent(string $invoiceUuid): ?object
     {
         $class = 'Fleetbase\\Ledger\\Models\\Invoice';
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return null;
         }
 
         $invoice = $class::query()->where('uuid', $invoiceUuid)->first();
 
-        return is_object($invoice) ? $invoice : null;
+        return is_object($invoice) === true ? $invoice : null;
     }
 }

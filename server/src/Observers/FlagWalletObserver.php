@@ -12,12 +12,12 @@ class FlagWalletObserver
 
     public function saved(object $wallet): void
     {
-        if (SyncSuppressor::paused() || !method_exists($wallet, 'wasChanged') || !$wallet->wasChanged(self::WATCHED)) {
+        if (SyncSuppressor::paused() === true || method_exists($wallet, 'wasChanged') === false || $wallet->wasChanged(self::WATCHED) === false) {
             return;
         }
 
         $listener = Container::getInstance()->make(FlagWalletListener::class);
-        if ($listener instanceof FlagWalletListener) {
+        if ($listener instanceof FlagWalletListener === true) {
             $listener->handle((object) ['wallet' => $wallet]);
         }
     }

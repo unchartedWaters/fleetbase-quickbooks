@@ -385,19 +385,19 @@ test('a failed webhook check does not decrypt every company client secret', func
     });
 });
 
-if (!function_exists('qbEnsureCustomerTable')) {
+if (function_exists('qbEnsureCustomerTable') === false) {
     function qbEnsureCustomerTable(): void
     {
         $config = config();
-        if (is_object($config) && method_exists($config, 'set')) {
+        if (is_object($config) === true && method_exists($config, 'set') === true) {
             $config->set('fleetbase.connection.db', 'sqlite');
         }
         $database = app('db');
-        if (!is_object($database) || !method_exists($database, 'connection')) {
+        if (is_object($database) === false || method_exists($database, 'connection') === false) {
             return;
         }
         $schema = $database->connection('sqlite')->getSchemaBuilder();
-        if ($schema->hasTable('contacts')) {
+        if ($schema->hasTable('contacts') === true) {
             return;
         }
         $schema->create('contacts', function ($table): void {
@@ -432,7 +432,7 @@ test('imported contacts get a fresh uuid rather than one built from the quickboo
 
     expect(Str::isUuid($uuid))->toBeTrue();
     $config = config();
-    if (is_object($config) && method_exists($config, 'set')) {
+    if (is_object($config) === true && method_exists($config, 'set') === true) {
         $config->set('fleetbase.connection.db', $previous);
     }
 });

@@ -46,7 +46,7 @@ class ApplyRemoteChange implements ShouldQueue
     public static function dispatch(string $companyUuid, array $entities): void
     {
         $dispatcher = Container::getInstance()->make(Dispatcher::class);
-        if ($dispatcher instanceof Dispatcher) {
+        if ($dispatcher instanceof Dispatcher === true) {
             $dispatcher->dispatch(new self($companyUuid, $entities));
         }
     }
@@ -58,7 +58,7 @@ class ApplyRemoteChange implements ShouldQueue
         SettingsStore $store,
     ): void {
         $entities = $this->knownEntities();
-        if ($entities === [] || !ConnectionGate::hasRealm($directory->connection($this->companyUuid))) {
+        if ($entities === [] || ConnectionGate::hasRealm($directory->connection($this->companyUuid)) === false) {
             return;
         }
 
@@ -68,7 +68,7 @@ class ApplyRemoteChange implements ShouldQueue
 
             return;
         }
-        if (!$lock->get()) {
+        if ($lock->get() === false) {
             $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', 'Another QuickBooks sync is already running.');
 
             return;
@@ -78,7 +78,7 @@ class ApplyRemoteChange implements ShouldQueue
         // local save. QuickBooks queries, including payments on an invoice, run
         // after this releases it. The lock is not held for the job timeout.
         $engine->setHttpBoundary(function (callable $call) use ($lock) {
-            if (BatchRunner::holds($this->companyUuid)) {
+            if (BatchRunner::holds($this->companyUuid) === true) {
                 $lock->release();
             }
 
@@ -90,7 +90,7 @@ class ApplyRemoteChange implements ShouldQueue
             // Links for these QuickBooks ids, and the local rows those links need.
             // Direction filtering happens inside acceptRemoteChanges. This does not reconcile the catalog.
             $loaded = $directory->loadLinked($this->companyUuid, $entities);
-            if (!is_array($loaded)) {
+            if (is_array($loaded) === false) {
                 return;
             }
 
@@ -100,7 +100,7 @@ class ApplyRemoteChange implements ShouldQueue
                 $store->defaultSync()
             );
             $ledger = $loaded['ledger'];
-            if (!$ledger instanceof SyncLedger) {
+            if ($ledger instanceof SyncLedger === false) {
                 return;
             }
             $engine->acceptRemoteChanges($ledger, $this->companyUuid, $entities, $syncSettings, time());
@@ -108,12 +108,12 @@ class ApplyRemoteChange implements ShouldQueue
         } finally {
             $engine->setHttpBoundary(null);
             try {
-                if ($save && $ledger instanceof SyncLedger) {
+                if ($save === true && $ledger instanceof SyncLedger === true) {
                     $this->reacquireCompanyLock($lock);
                     $directory->save($ledger);
                 }
             } finally {
-                if (BatchRunner::holds($this->companyUuid)) {
+                if (BatchRunner::holds($this->companyUuid) === true) {
                     $lock->release();
                 }
             }
@@ -127,10 +127,10 @@ class ApplyRemoteChange implements ShouldQueue
      */
     private function reacquireCompanyLock(Lock $lock): void
     {
-        if (BatchRunner::holds($this->companyUuid)) {
+        if (BatchRunner::holds($this->companyUuid) === true) {
             return;
         }
-        if ($lock->get()) {
+        if ($lock->get() === true) {
             return;
         }
 
@@ -148,22 +148,22 @@ class ApplyRemoteChange implements ShouldQueue
     {
         $entities = [];
         foreach ($this->entities as $entity) {
-            if (!is_array($entity)) {
+            if (is_array($entity) === false) {
                 continue;
             }
             $name = $entity['entity'] ?? null;
-            if (!is_string($name) || !in_array($name, self::ENTITIES, true)) {
+            if (is_string($name) === false || in_array($name, self::ENTITIES, true) === false) {
                 continue;
             }
             $id = $entity['id'] ?? null;
-            if (is_int($id)) {
+            if (is_int($id) === true) {
                 $id = (string) $id;
             }
-            if (!is_string($id) || $id === '') {
+            if (is_string($id) === false || $id === '') {
                 continue;
             }
             $operation = $entity['operation'] ?? '';
-            if (!is_string($operation)) {
+            if (is_string($operation) === false) {
                 continue;
             }
             $entities[] = [

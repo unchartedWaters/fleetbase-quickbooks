@@ -58,7 +58,7 @@ class BackoffPolicy
 
     private function parseRetryAfter(string $retryAfter): int
     {
-        if (is_numeric($retryAfter)) {
+        if (is_numeric($retryAfter) === true) {
             return max(1, (int) $retryAfter);
         }
 

@@ -46,9 +46,9 @@ class TokenRefresher
             $connection['token_expires_at'] = time() + $tokens['expires_in'];
             $connection['needs_reauth']     = false;
         } catch (QuickBooksException $exception) {
-            if (str_contains($exception->getMessage(), 'invalid_grant')) {
+            if (str_contains($exception->getMessage(), 'invalid_grant') === true) {
                 $connection['needs_reauth'] = true;
-            } elseif (in_array($exception->status, [400, 401], true)) {
+            } elseif (in_array($exception->status, [400, 401], true) === true) {
                 $connection['refresh_error'] = self::CREDENTIALS_MESSAGE;
             } else {
                 $connection['refresh_error'] = self::UNAVAILABLE_MESSAGE;

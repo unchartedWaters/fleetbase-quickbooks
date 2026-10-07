@@ -21,7 +21,7 @@ abstract class QuickbooksModel extends Model
     protected static function booted(): void
     {
         static::creating(function (self $model): void {
-            if (empty($model->uuid)) {
+            if (empty($model->uuid) === true) {
                 $model->uuid = (string) Str::uuid();
             }
         });

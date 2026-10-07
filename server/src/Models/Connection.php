@@ -94,7 +94,7 @@ class Connection extends QuickbooksModel
     private function upgradeLegacyAttribute(string $attribute): void
     {
         $value = $this->attributes[$attribute] ?? null;
-        if (!is_string($value) || $value === '') {
+        if (is_string($value) === false || $value === '') {
             return;
         }
 

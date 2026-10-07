@@ -3,13 +3,13 @@
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 
 beforeEach(function () {
-    while (SyncSuppressor::paused()) {
+    while (SyncSuppressor::paused() === true) {
         SyncSuppressor::resume();
     }
 });
 
 afterEach(function () {
-    while (SyncSuppressor::paused()) {
+    while (SyncSuppressor::paused() === true) {
         SyncSuppressor::resume();
     }
 });

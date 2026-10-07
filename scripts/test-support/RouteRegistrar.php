@@ -50,7 +50,7 @@ class RouteRegistrar
     {
         self::$routes[] = ['RESOURCE', $resource, null];
 
-        if ($callback) {
+        if ($callback !== null) {
             $callback($this, fn (string $method): string => $resource . 'Controller@' . $method);
         }
 

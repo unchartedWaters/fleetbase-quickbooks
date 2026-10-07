@@ -14,57 +14,57 @@ class PublicHttps
     public static function isPublicHttpsUrl(string $url): bool
     {
         $url = trim($url);
-        if ($url === '' || !str_starts_with(strtolower($url), 'https://')) {
+        if ($url === '' || str_starts_with(strtolower($url), 'https://') === false) {
             return false;
         }
         if (filter_var($url, FILTER_VALIDATE_URL) === false) {
             return false;
         }
         $parts = parse_url($url);
-        if (!is_array($parts) || isset($parts['user']) || isset($parts['pass'])) {
+        if (is_array($parts) === false || isset($parts['user']) === true || isset($parts['pass']) === true) {
             return false;
         }
         $host = $parts['host'] ?? null;
-        if (!is_string($host) || $host === '') {
+        if (is_string($host) === false || $host === '') {
             return false;
         }
 
-        return !self::hostIsInternal($host);
+        return self::hostIsInternal($host) === false;
     }
 
     private static function hostIsInternal(string $host): bool
     {
         $host = trim($host, '[]');
-        if (str_ends_with($host, '.')) {
+        if (str_ends_with($host, '.') === true) {
             $host = substr($host, 0, -1);
         }
         if (preg_match('/[^\x00-\x7F]/', $host) === 1) {
-            if (!function_exists('idn_to_ascii')) {
+            if (function_exists('idn_to_ascii') === false) {
                 return true;
             }
             $ascii = idn_to_ascii($host, IDNA_DEFAULT);
-            if (!is_string($ascii) || $ascii === '') {
+            if (is_string($ascii) === false || $ascii === '') {
                 return true;
             }
             $host = $ascii;
         }
         $host = strtolower($host);
-        if ($host === '' || self::hostnameIsLoopback($host)) {
+        if ($host === '' || self::hostnameIsLoopback($host) === true) {
             return true;
         }
-        if (self::looksLikeIpv4Literal($host)) {
+        if (self::looksLikeIpv4Literal($host) === true) {
             $ipv4 = self::ipv4FromLiteral($host);
 
-            return $ipv4 === null || self::ipv4IsInternal($ipv4);
+            return $ipv4 === null || self::ipv4IsInternal($ipv4) === true;
         }
-        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
             return self::ipv6IsInternal($host);
         }
-        if (str_contains($host, ':')) {
+        if (str_contains($host, ':') === true) {
             return true;
         }
 
-        return !self::hostnameResolvesToPublic($host);
+        return self::hostnameResolvesToPublic($host) === false;
     }
 
     private static function hostnameIsLoopback(string $hostname): bool
@@ -109,7 +109,7 @@ class PublicHttps
 
         $formatted = long2ip($value & 0xFFFFFFFF);
 
-        return is_string($formatted) ? $formatted : null;
+        return is_string($formatted) === true ? $formatted : null;
     }
 
     private static function parseIpv4Component(string $part): ?int
@@ -122,7 +122,7 @@ class PublicHttps
                 return null;
             }
             $value = hexdec($matches[1]);
-            if (!is_int($value) || $value < 0) {
+            if (is_int($value) === false || $value < 0) {
                 return null;
             }
 
@@ -170,7 +170,7 @@ class PublicHttps
             ['240.0.0.0', 4],
         ];
         foreach ($cidrs as [$network, $bits]) {
-            if (self::ipv4InCidr($value, $network, $bits)) {
+            if (self::ipv4InCidr($value, $network, $bits) === true) {
                 return true;
             }
         }
@@ -197,28 +197,28 @@ class PublicHttps
             return true;
         }
         $mapped = str_repeat("\x00", 10) . "\xff\xff";
-        if (str_starts_with($packed, $mapped)) {
+        if (str_starts_with($packed, $mapped) === true) {
             $ipv4 = inet_ntop(substr($packed, 12));
 
-            return !is_string($ipv4) || self::ipv4IsInternal($ipv4);
+            return is_string($ipv4) === false || self::ipv4IsInternal($ipv4) === true;
         }
-        if (str_starts_with($packed, str_repeat("\x00", 12))) {
+        if (str_starts_with($packed, str_repeat("\x00", 12)) === true) {
             $ipv4 = inet_ntop(substr($packed, 12));
 
-            return !is_string($ipv4) || self::ipv4IsInternal($ipv4);
+            return is_string($ipv4) === false || self::ipv4IsInternal($ipv4) === true;
         }
         // 6to4 (2002::/16) stores the IPv4 address in bits 16-47.
         if ($packed[0] === "\x20" && $packed[1] === "\x02") {
             $ipv4 = inet_ntop(substr($packed, 2, 4));
 
-            return !is_string($ipv4) || self::ipv4IsInternal($ipv4);
+            return is_string($ipv4) === false || self::ipv4IsInternal($ipv4) === true;
         }
         // NAT64 well-known prefix (64:ff9b::/96) stores the IPv4 address in the last 32 bits.
         $nat64 = "\x00\x64\xff\x9b" . str_repeat("\x00", 8);
-        if (str_starts_with($packed, $nat64)) {
+        if (str_starts_with($packed, $nat64) === true) {
             $ipv4 = inet_ntop(substr($packed, 12));
 
-            return !is_string($ipv4) || self::ipv4IsInternal($ipv4);
+            return is_string($ipv4) === false || self::ipv4IsInternal($ipv4) === true;
         }
         $first  = ord($packed[0]);
         $second = ord($packed[1]);
@@ -240,10 +240,10 @@ class PublicHttps
 
     private static function addressIsInternal(string $ip): bool
     {
-        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
             return self::ipv4IsInternal($ip);
         }
-        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
             return self::ipv6IsInternal($ip);
         }
 
@@ -256,25 +256,25 @@ class PublicHttps
             return false;
         }
         $records = @dns_get_record($host, DNS_A | DNS_AAAA);
-        if (!is_array($records) || $records === []) {
+        if (is_array($records) === false || $records === []) {
             return false;
         }
         $sawAddress = false;
         foreach ($records as $record) {
-            if (!is_array($record)) {
+            if (is_array($record) === false) {
                 continue;
             }
             $ip = null;
-            if (isset($record['ip']) && is_string($record['ip'])) {
+            if (isset($record['ip']) === true && is_string($record['ip']) === true) {
                 $ip = $record['ip'];
-            } elseif (isset($record['ipv6']) && is_string($record['ipv6'])) {
+            } elseif (isset($record['ipv6']) === true && is_string($record['ipv6']) === true) {
                 $ip = $record['ipv6'];
             }
             if ($ip === null || $ip === '') {
                 continue;
             }
             $sawAddress = true;
-            if (self::addressIsInternal($ip)) {
+            if (self::addressIsInternal($ip) === true) {
                 return false;
             }
         }

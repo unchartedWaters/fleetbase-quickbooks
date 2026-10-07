@@ -47,7 +47,7 @@ class OAuthFlow
     public function receive(string $state, string $code, string $realmId): string
     {
         $stored = $this->validState(Cache::pull($this->key($state)));
-        if (isset($stored['code'])) {
+        if (isset($stored['code']) === true) {
             throw new QuickBooksException(400, 'QuickBooks authorization state is invalid or expired.');
         }
 
@@ -74,8 +74,8 @@ class OAuthFlow
         $key    = $this->key($handle);
         $stored = Cache::get($key);
 
-        if (is_array($stored) && !empty($stored['done'])) {
-            if (!$this->startedBy($stored, $companyUuid, $userUuid)) {
+        if (is_array($stored) === true && empty($stored['done']) === false) {
+            if ($this->startedBy($stored, $companyUuid, $userUuid) === false) {
                 throw new QuickBooksException(403, self::OTHER_USER_MESSAGE);
             }
 
@@ -84,12 +84,12 @@ class OAuthFlow
 
         // Check the initiator before pull. A wrong user must not burn the handle.
         $stored = $this->validState($stored);
-        if (!$this->startedBy($stored, $companyUuid, $userUuid)) {
+        if ($this->startedBy($stored, $companyUuid, $userUuid) === false) {
             throw new QuickBooksException(403, self::OTHER_USER_MESSAGE);
         }
 
         $stored = $this->validState(Cache::pull($key));
-        if (!isset($stored['code'])) {
+        if (isset($stored['code']) === false) {
             throw new QuickBooksException(400, 'This QuickBooks authorization link is not valid. Connect again from Quickbooks Setup.');
         }
 
@@ -117,7 +117,8 @@ class OAuthFlow
 
         try {
             $connection['home_currency']   = $this->client->homeCurrency($connection);
-            $connection['default_item_id'] = $this->client->ensureServiceItem($connection) ?: null;
+            $defaultItemId                 = $this->client->ensureServiceItem($connection);
+            $connection['default_item_id'] = ($defaultItemId !== '' && $defaultItemId !== '0') ? $defaultItemId : null;
         } catch (QuickBooksException $exception) {
             $connection['home_currency']   = null;
             $connection['default_item_id'] = null;
@@ -146,7 +147,7 @@ class OAuthFlow
     {
         $verifier = $stored['code_verifier'] ?? null;
 
-        return is_string($verifier) && $verifier !== '' ? $verifier : null;
+        return is_string($verifier) === true && $verifier !== '' ? $verifier : null;
     }
 
     /**
@@ -154,7 +155,7 @@ class OAuthFlow
      */
     private function validState(mixed $stored): array
     {
-        if (!is_array($stored) || (int) ($stored['expires_at'] ?? 0) < time()) {
+        if (is_array($stored) === false || (int) ($stored['expires_at'] ?? 0) < time()) {
             throw new QuickBooksException(400, 'QuickBooks authorization state is invalid or expired.');
         }
 

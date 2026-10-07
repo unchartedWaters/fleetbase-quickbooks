@@ -37,14 +37,14 @@ class SyncWebhookBatch implements ShouldQueue
     public static function dispatch(string $companyUuid, array $records): void
     {
         $dispatcher = Container::getInstance()->make(Dispatcher::class);
-        if ($dispatcher instanceof Dispatcher) {
+        if ($dispatcher instanceof Dispatcher === true) {
             $dispatcher->dispatch(new self($companyUuid, $records));
         }
     }
 
     public function handle(): void
     {
-        if (!$this->organizationIsConnected()) {
+        if ($this->organizationIsConnected() === false) {
             return;
         }
 
@@ -60,7 +60,7 @@ class SyncWebhookBatch implements ShouldQueue
     private function organizationIsConnected(): bool
     {
         $own = Connection::query()->where('company_uuid', $this->companyUuid)->first();
-        if ($own instanceof Connection) {
+        if ($own instanceof Connection === true) {
             return $this->connectionIsUsable($own);
         }
 
@@ -70,14 +70,14 @@ class SyncWebhookBatch implements ShouldQueue
         }
         $shared = $rows->first();
 
-        return $shared instanceof Connection && $this->connectionIsUsable($shared);
+        return $shared instanceof Connection === true && $this->connectionIsUsable($shared) === true;
     }
 
     private function connectionIsUsable(Connection $connection): bool
     {
         $realm = $connection->realm_id;
 
-        return $connection->needs_reauth !== true && is_string($realm) && $realm !== '';
+        return $connection->needs_reauth !== true && is_string($realm) === true && $realm !== '';
     }
 
     private function insertPending(): void
@@ -86,7 +86,7 @@ class SyncWebhookBatch implements ShouldQueue
         foreach ($this->records as $record) {
             $type = $record['local_type'] ?? '';
             $uuid = $record['local_uuid'] ?? '';
-            if (!is_string($type) || $type === '' || !is_string($uuid) || $uuid === '') {
+            if (is_string($type) === false || $type === '' || is_string($uuid) === false || $uuid === '') {
                 continue;
             }
             $wanted[$type . '|' . $uuid] = ['local_type' => $type, 'local_uuid' => $uuid];
@@ -128,7 +128,7 @@ class SyncWebhookBatch implements ShouldQueue
         try {
             PendingSync::query()->insert($rows);
         } catch (QueryException $exception) {
-            if (!$this->isDuplicateKey($exception)) {
+            if ($this->isDuplicateKey($exception) === false) {
                 throw $exception;
             }
             // One duplicate rolls the whole statement back. Save the other rows,
@@ -145,7 +145,7 @@ class SyncWebhookBatch implements ShouldQueue
 
     private function ignoreDuplicateOrThrow(QueryException $exception): void
     {
-        if (!$this->isDuplicateKey($exception)) {
+        if ($this->isDuplicateKey($exception) === false) {
             throw $exception;
         }
     }
@@ -174,7 +174,7 @@ class SyncWebhookBatch implements ShouldQueue
 
         // SQLite uses 19 for generic constraints and 1555/2067 for the
         // primary-key/unique extended codes exposed by some PDO versions.
-        return in_array($driverCode, [19, 1555, 2067], true)
+        return in_array($driverCode, [19, 1555, 2067], true) === true
             && preg_match('/(?:UNIQUE|PRIMARY KEY) constraint failed/i', $message) === 1;
     }
 }

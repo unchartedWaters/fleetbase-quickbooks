@@ -90,7 +90,7 @@ class QuickBooksClient
         $response = $this->accounting($connection, 'get', 'companyinfo/' . $connection['realm_id']);
         $body     = $this->decodeBody($response);
 
-        return is_array($body['CompanyInfo'] ?? null) ? $body['CompanyInfo'] : [];
+        return is_array($body['CompanyInfo'] ?? null) === true ? $body['CompanyInfo'] : [];
     }
 
     /**
@@ -102,7 +102,7 @@ class QuickBooksClient
     {
         $value = $this->preferences($connection)['CurrencyPrefs']['HomeCurrency']['value'] ?? null;
 
-        return is_string($value) && $value !== '' ? strtoupper($value) : null;
+        return is_string($value) === true && $value !== '' ? strtoupper($value) : null;
     }
 
     /**
@@ -250,7 +250,7 @@ class QuickBooksClient
             $taken = $this->takenInvoiceDocNumbers($connection, $window);
             $checksLeft -= count($window);
             foreach ($window as $value) {
-                if (!isset($taken[$value])) {
+                if (isset($taken[$value]) === false) {
                     $numbers[] = $value;
                 }
                 if (count($numbers) === $count) {
@@ -309,13 +309,13 @@ class QuickBooksClient
 
         $taken = [];
         foreach ($this->batch($connection, $items) as $result) {
-            if (!is_array($result) || empty($result['ok'])) {
-                $status  = is_array($result) ? (int) ($result['status'] ?? 400) : 400;
-                $message = is_array($result) ? (string) ($result['error'] ?? 'QuickBooks query failed.') : 'QuickBooks query failed.';
+            if (is_array($result) === false || empty($result['ok']) === true) {
+                $status  = is_array($result) === true ? (int) ($result['status'] ?? 400) : 400;
+                $message = is_array($result) === true ? (string) ($result['error'] ?? 'QuickBooks query failed.') : 'QuickBooks query failed.';
                 throw new QuickBooksException($status, $message);
             }
             foreach ($result['rows'] as $row) {
-                if (!is_array($row)) {
+                if (is_array($row) === false) {
                     continue;
                 }
                 $doc = trim((string) ($row['DocNumber'] ?? ''));
@@ -364,7 +364,7 @@ class QuickBooksClient
         ]);
         $body = $this->decodeBody($response);
 
-        return is_array($body['Invoice'] ?? null) ? $body['Invoice'] : [];
+        return is_array($body['Invoice'] ?? null) === true ? $body['Invoice'] : [];
     }
 
     /**
@@ -435,7 +435,7 @@ class QuickBooksClient
      */
     public function findPaymentsForCustomers(array $connection, array $customerIds, bool $asBatch = false): array
     {
-        if (!array_is_list($customerIds)) {
+        if (array_is_list($customerIds) === false) {
             return $this->findPaymentsForInvoiceTargets($connection, array_keys($customerIds));
         }
 
@@ -453,7 +453,7 @@ class QuickBooksClient
             $where = 'CustomerRef IN (' . self::quotedList($customerIds) . ')';
         }
 
-        return $this->queryPages($connection, 'select * from Payment where ' . $where, 'Payment', $asBatch || count($customerIds) > 1);
+        return $this->queryPages($connection, 'select * from Payment where ' . $where, 'Payment', $asBatch === true || count($customerIds) > 1);
     }
 
     /**
@@ -475,7 +475,7 @@ class QuickBooksClient
         $invoices = [];
         if (count($invoiceIds) === 1) {
             $invoice = $this->getInvoice($connection, $invoiceIds[0]);
-            if (is_array($invoice)) {
+            if (is_array($invoice) === true) {
                 $invoices[] = $invoice;
             }
         } else {
@@ -487,13 +487,13 @@ class QuickBooksClient
                 ];
             }
             foreach ($this->batch($connection, $items) as $result) {
-                if (!is_array($result) || empty($result['ok'])) {
-                    $status  = is_array($result) ? (int) ($result['status'] ?? 400) : 400;
-                    $message = is_array($result) ? (string) ($result['error'] ?? 'QuickBooks invoice lookup failed.') : 'QuickBooks invoice lookup failed.';
+                if (is_array($result) === false || empty($result['ok']) === true) {
+                    $status  = is_array($result) === true ? (int) ($result['status'] ?? 400) : 400;
+                    $message = is_array($result) === true ? (string) ($result['error'] ?? 'QuickBooks invoice lookup failed.') : 'QuickBooks invoice lookup failed.';
                     throw new QuickBooksException($status, $message);
                 }
                 foreach ($result['rows'] as $invoice) {
-                    if (is_array($invoice)) {
+                    if (is_array($invoice) === true) {
                         $invoices[] = $invoice;
                     }
                 }
@@ -513,7 +513,7 @@ class QuickBooksClient
         if (count($ids) === 1) {
             $payment = $this->getPayment($connection, $ids[0]);
 
-            return is_array($payment) ? [$payment] : [];
+            return is_array($payment) === true ? [$payment] : [];
         }
 
         $items = [];
@@ -525,13 +525,13 @@ class QuickBooksClient
         }
         $payments = [];
         foreach ($this->batch($connection, $items) as $result) {
-            if (!is_array($result) || empty($result['ok'])) {
-                $status  = is_array($result) ? (int) ($result['status'] ?? 400) : 400;
-                $message = is_array($result) ? (string) ($result['error'] ?? 'QuickBooks payment lookup failed.') : 'QuickBooks payment lookup failed.';
+            if (is_array($result) === false || empty($result['ok']) === true) {
+                $status  = is_array($result) === true ? (int) ($result['status'] ?? 400) : 400;
+                $message = is_array($result) === true ? (string) ($result['error'] ?? 'QuickBooks payment lookup failed.') : 'QuickBooks payment lookup failed.';
                 throw new QuickBooksException($status, $message);
             }
             foreach ($result['rows'] as $payment) {
-                if (is_array($payment)) {
+                if (is_array($payment) === true) {
                     $payments[] = $payment;
                 }
             }
@@ -549,7 +549,7 @@ class QuickBooksClient
     {
         $ids = [];
         foreach ($invoice['LinkedTxn'] ?? [] as $txn) {
-            if (!is_array($txn) || (string) ($txn['TxnType'] ?? '') !== 'Payment') {
+            if (is_array($txn) === false || (string) ($txn['TxnType'] ?? '') !== 'Payment') {
                 continue;
             }
             $id = trim((string) ($txn['TxnId'] ?? ''));
@@ -785,12 +785,12 @@ class QuickBooksClient
         $found    = [];
         do {
             $query = $baseQuery . ' startposition ' . $start . ' maxresults ' . $pageSize;
-            if ($batched) {
+            if ($batched === true) {
                 $page = $this->postBatch($connection, [['bId' => 'page-' . $start, 'query' => $query]]);
                 $one  = $page['page-' . $start] ?? null;
-                if (!is_array($one) || empty($one['ok'])) {
-                    $message = is_array($one) ? (string) ($one['error'] ?? 'QuickBooks query failed.') : 'QuickBooks query failed.';
-                    $status  = is_array($one) ? (int) ($one['status'] ?? 400) : 400;
+                if (is_array($one) === false || empty($one['ok']) === true) {
+                    $message = is_array($one) === true ? (string) ($one['error'] ?? 'QuickBooks query failed.') : 'QuickBooks query failed.';
+                    $status  = is_array($one) === true ? (int) ($one['status'] ?? 400) : 400;
                     throw new QuickBooksException($status, $message);
                 }
                 $found = $one['rows'];
@@ -812,12 +812,12 @@ class QuickBooksClient
     public function ensureServiceItem(array $connection): string
     {
         $existing = $this->query($connection, "select * from Item where Name = 'Fleetbase service'", 'Item');
-        if (isset($existing[0]['Id'])) {
+        if (isset($existing[0]['Id']) === true) {
             return (string) $existing[0]['Id'];
         }
 
         $income = $this->query($connection, "select * from Account where AccountType = 'Income' maxresults 1", 'Account');
-        if (!isset($income[0]['Id'])) {
+        if (isset($income[0]['Id']) === false) {
             return '';
         }
 
@@ -867,7 +867,7 @@ class QuickBooksClient
         $response = $this->accounting($connection, $method, $path, $payload);
         $body     = $this->decodeBody($response);
 
-        return is_array($body[$key] ?? null) ? $body[$key] : [];
+        return is_array($body[$key] ?? null) === true ? $body[$key] : [];
     }
 
     /**
@@ -880,7 +880,7 @@ class QuickBooksClient
         try {
             $response = $this->accounting($connection, 'get', $path);
         } catch (QuickBooksException $exception) {
-            if ($exception->isNotFound()) {
+            if ($exception->isNotFound() === true) {
                 return null;
             }
 
@@ -889,7 +889,7 @@ class QuickBooksClient
 
         $body = $this->decodeBody($response);
 
-        return is_array($body[$key] ?? null) ? $body[$key] : null;
+        return is_array($body[$key] ?? null) === true ? $body[$key] : null;
     }
 
     /**
@@ -903,7 +903,7 @@ class QuickBooksClient
         $body     = $this->decodeBody($response);
         $rows     = $body['QueryResponse'][$key] ?? [];
 
-        return is_array($rows) ? array_values(array_filter($rows, 'is_array')) : [];
+        return is_array($rows) === true ? array_values(array_filter($rows, 'is_array')) : [];
     }
 
     /**
@@ -917,12 +917,12 @@ class QuickBooksClient
         $requests = [];
         foreach ($items as $item) {
             $entry = ['bId' => (string) $item['bId']];
-            if (isset($item['query']) && is_string($item['query']) && $item['query'] !== '') {
+            if (isset($item['query']) === true && is_string($item['query']) === true && $item['query'] !== '') {
                 $entry['Query'] = $item['query'];
             } else {
                 $entity             = (string) ($item['entity'] ?? 'Customer');
                 $entry['operation'] = (string) ($item['operation'] ?? 'create');
-                $entry[$entity]     = is_array($item['payload'] ?? null) ? $item['payload'] : [];
+                $entry[$entity]     = is_array($item['payload'] ?? null) === true ? $item['payload'] : [];
             }
             $requests[] = $entry;
         }
@@ -930,7 +930,7 @@ class QuickBooksClient
         $response = $this->accounting($connection, 'post', 'batch', ['BatchItemRequest' => $requests]);
         $body     = $this->decodeBody($response);
         $rows     = $body['BatchItemResponse'] ?? [];
-        if (!is_array($rows)) {
+        if (is_array($rows) === false) {
             $rows = [];
         }
 
@@ -946,11 +946,11 @@ class QuickBooksClient
             ];
         }
         foreach ($rows as $row) {
-            if (!is_array($row)) {
+            if (is_array($row) === false) {
                 continue;
             }
             $bId = (string) ($row['bId'] ?? '');
-            if ($bId === '' || !isset($results[$bId])) {
+            if ($bId === '' || isset($results[$bId]) === false) {
                 continue;
             }
             $results[$bId] = $this->batchItemResult($row);
@@ -967,7 +967,7 @@ class QuickBooksClient
     private function batchItemResult(array $row): array
     {
         $fault = $row['Fault']['Error'][0] ?? null;
-        if (is_array($fault)) {
+        if (is_array($fault) === true) {
             $detail = trim((string) ($fault['Detail'] ?? $fault['Message'] ?? ''));
             $status = 400;
 
@@ -981,19 +981,19 @@ class QuickBooksClient
             ];
         }
 
-        if (isset($row['QueryResponse']) && is_array($row['QueryResponse'])) {
+        if (isset($row['QueryResponse']) === true && is_array($row['QueryResponse']) === true) {
             $rows = [];
             foreach ($row['QueryResponse'] as $value) {
-                if (!is_array($value)) {
+                if (is_array($value) === false) {
                     continue;
                 }
-                if (isset($value['Id'])) {
+                if (isset($value['Id']) === true) {
                     $rows[] = $value;
                     continue;
                 }
-                if (array_is_list($value)) {
+                if (array_is_list($value) === true) {
                     foreach ($value as $entity) {
-                        if (is_array($entity)) {
+                        if (is_array($entity) === true) {
                             $rows[] = $entity;
                         }
                     }
@@ -1011,7 +1011,7 @@ class QuickBooksClient
         }
 
         foreach ($row as $key => $value) {
-            if ($key === 'bId' || $key === 'Fault' || !is_array($value) || array_is_list($value)) {
+            if ($key === 'bId' || $key === 'Fault' || is_array($value) === false || array_is_list($value) === true) {
                 continue;
             }
 
@@ -1045,7 +1045,7 @@ class QuickBooksClient
             ? 'https://quickbooks.api.intuit.com'
             : 'https://sandbox-quickbooks.api.intuit.com';
         $url       = $base . '/v3/company/' . $connection['realm_id'] . '/' . $path;
-        $separator = str_contains($url, '?') ? '&' : '?';
+        $separator = str_contains($url, '?') === true ? '&' : '?';
         $url .= $separator . 'minorversion=75';
 
         try {
@@ -1062,19 +1062,19 @@ class QuickBooksClient
 
     private function throwIfFailed(Response $response): void
     {
-        if ($response->successful()) {
+        if ($response->successful() === true) {
             return;
         }
 
         $message   = 'QuickBooks request failed with status ' . $response->status();
         $fault     = $response->json('Fault.Error.0');
         $faultCode = null;
-        if (is_array($fault)) {
+        if (is_array($fault) === true) {
             $detail = trim((string) ($fault['Detail'] ?? $fault['Message'] ?? ''));
             if ($detail !== '') {
                 $message .= ': ' . $detail;
             }
-            $faultCode = isset($fault['code']) ? (string) $fault['code'] : null;
+            $faultCode = isset($fault['code']) === true ? (string) $fault['code'] : null;
         }
 
         throw new QuickBooksException($response->status(), $message, $response->header('Retry-After'), $faultCode);
@@ -1092,9 +1092,9 @@ class QuickBooksClient
             '"$1":"$2"',
             $response->body()
         );
-        $decoded = json_decode(is_string($json) ? $json : $response->body(), true);
+        $decoded = json_decode(is_string($json) === true ? $json : $response->body(), true);
 
-        return is_array($decoded) ? $decoded : [];
+        return is_array($decoded) === true ? $decoded : [];
     }
 
     /**
@@ -1105,11 +1105,11 @@ class QuickBooksClient
     private function preferences(array $connection): array
     {
         $realm = (string) ($connection['realm_id'] ?? '');
-        if (!array_key_exists($realm, $this->preferencesByRealm)) {
+        if (array_key_exists($realm, $this->preferencesByRealm) === false) {
             $response                         = $this->accounting($connection, 'get', 'preferences');
             $body                             = $this->decodeBody($response);
             $prefs                            = $body['Preferences'] ?? [];
-            $this->preferencesByRealm[$realm] = is_array($prefs) ? $prefs : [];
+            $this->preferencesByRealm[$realm] = is_array($prefs) === true ? $prefs : [];
         }
 
         return $this->preferencesByRealm[$realm];

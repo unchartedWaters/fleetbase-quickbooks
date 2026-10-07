@@ -343,7 +343,7 @@ test('a webhook load reads linked rows from the database and leaves the rest of 
         config()->set('database.connections.sqlite', $sqliteConnection);
         config()->set('fleetbase.connection.db', $fleetbaseConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('rekeying a payment link from the invoice uuid persists the quickbooks payment id', function () {
     [$restore] = directorySqlite();
@@ -385,7 +385,7 @@ test('rekeying a payment link from the invoice uuid persists the quickbooks paym
         $ledger        = $loaded['ledger'];
         $ledger->links = array_values(array_filter(
             $ledger->links,
-            static fn (array $link): bool => !(($link['local_type'] ?? '') === 'payment' && ($link['local_uuid'] ?? '') === 'inv-9' && ($link['qbo_id'] ?? '') === '4')
+            static fn (array $link): bool => (($link['local_type'] ?? '') === 'payment' && ($link['local_uuid'] ?? '') === 'inv-9' && ($link['qbo_id'] ?? '') === '4') === false
         ));
         $directory->save($ledger);
 
@@ -423,7 +423,7 @@ test('rekeying a payment link from the invoice uuid persists the quickbooks paym
     } finally {
         $restore();
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('changed links and pending rows update in bulk and attempts insert in one chunk', function () {
     [$restore] = directorySqlite();
@@ -456,9 +456,9 @@ test('changed links and pending rows update in bulk and attempts insert in one c
 
         $directory->save($ledger);
         $queries = array_column($connection->getQueryLog(), 'query');
-        $updates = array_values(array_filter($queries, static fn (string $sql): bool => str_starts_with(strtolower($sql), 'update "quickbooks_links"') || str_starts_with(strtolower($sql), 'update `quickbooks_links`')));
-        $pending = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'quickbooks_pending_syncs') && str_starts_with(strtolower(ltrim($sql)), 'update')));
-        $inserts = array_values(array_filter($queries, static fn (string $sql): bool => str_contains(strtolower($sql), 'insert into') && str_contains($sql, 'quickbooks_sync_attempts')));
+        $updates = array_values(array_filter($queries, static fn (string $sql): bool => str_starts_with(strtolower($sql), 'update "quickbooks_links"') === true || str_starts_with(strtolower($sql), 'update `quickbooks_links`') === true));
+        $pending = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'quickbooks_pending_syncs') === true && str_starts_with(strtolower(ltrim($sql)), 'update') === true));
+        $inserts = array_values(array_filter($queries, static fn (string $sql): bool => str_contains(strtolower($sql), 'insert into') === true && str_contains($sql, 'quickbooks_sync_attempts') === true));
 
         expect($updates)->toHaveCount(1)
             ->and($pending)->toHaveCount(1)
@@ -470,7 +470,7 @@ test('changed links and pending rows update in bulk and attempts insert in one c
     } finally {
         $restore();
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('inbound invoice lines are replaced with one delete and one insert', function () {
     [$restore] = directorySqlite();
@@ -517,15 +517,15 @@ test('inbound invoice lines are replaced with one delete and one insert', functi
         ));
         $stored = DB::table('ledger_invoice_items')->where('invoice_uuid', 'inv-9')->whereNull('deleted_at')->orderBy('description')->get();
 
-        $deletes = array_values(array_filter($itemSql, static fn (string $sql): bool => str_contains(strtolower($sql), 'deleted_at') && str_starts_with(strtolower(ltrim($sql)), 'update')));
+        $deletes = array_values(array_filter($itemSql, static fn (string $sql): bool => str_contains(strtolower($sql), 'deleted_at') === true && str_starts_with(strtolower(ltrim($sql)), 'update') === true));
         $inserts = array_values(array_filter($itemSql, static fn (string $sql): bool => str_contains(strtolower($sql), 'insert')));
         $eager   = array_values(array_filter(
             $queries,
-            static fn (string $sql): bool => str_contains($sql, 'templates')
-                || str_contains($sql, 'tracking_numbers')
-                || str_contains($sql, '"orders"')
-                || (str_contains($sql, 'ledger_invoice_items') && str_starts_with(strtolower(ltrim($sql)), 'select'))
-                || (str_contains($sql, 'contacts') && !str_contains($sql, 'select "uuid"'))
+            static fn (string $sql): bool => str_contains($sql, 'templates') === true
+                || str_contains($sql, 'tracking_numbers') === true
+                || str_contains($sql, '"orders"') === true
+                || (str_contains($sql, 'ledger_invoice_items') === true && str_starts_with(strtolower(ltrim($sql)), 'select') === true)
+                || (str_contains($sql, 'contacts') === true && str_contains($sql, 'select "uuid"') === false)
         ));
         $invoice = DB::table('ledger_invoices')->where('uuid', 'inv-9')->first();
 
@@ -544,7 +544,7 @@ test('inbound invoice lines are replaced with one delete and one insert', functi
     } finally {
         $restore();
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('stale invoice payment links for a chunk are deleted in one statement', function () {
     [$restore] = directorySqlite();
@@ -571,7 +571,7 @@ test('stale invoice payment links for a chunk are deleted in one statement', fun
         $ledger        = $loaded['ledger'];
         $ledger->links = array_values(array_filter(
             $ledger->links,
-            static fn (array $link): bool => !((string) ($link['local_type'] ?? '') === 'payment' && in_array((string) ($link['local_uuid'] ?? ''), ['inv-9', 'inv-other'], true))
+            static fn (array $link): bool => ((string) ($link['local_type'] ?? '') === 'payment' && in_array((string) ($link['local_uuid'] ?? ''), ['inv-9', 'inv-other'], true) === true) === false
         ));
         $connection = DB::connection('sqlite');
         $connection->flushQueryLog();
@@ -580,7 +580,7 @@ test('stale invoice payment links for a chunk are deleted in one statement', fun
         $directory->save($ledger);
         $deletes = array_values(array_filter(
             array_column($connection->getQueryLog(), 'query'),
-            static fn (string $sql): bool => str_contains($sql, 'quickbooks_links') && str_starts_with(strtolower(ltrim($sql)), 'delete')
+            static fn (string $sql): bool => str_contains($sql, 'quickbooks_links') === true && str_starts_with(strtolower(ltrim($sql)), 'delete') === true
         ));
 
         expect($deletes)->toHaveCount(1)
@@ -591,7 +591,7 @@ test('stale invoice payment links for a chunk are deleted in one statement', fun
     } finally {
         $restore();
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a first payment link stored under the quickbooks id remembers that invoice', function () {
     [$restore] = directorySqlite();
@@ -637,7 +637,7 @@ test('a first payment link stored under the quickbooks id remembers that invoice
     } finally {
         $restore();
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a pending invoice load includes a payment stored under its quickbooks id and the line items', function () {
     [$restore] = directorySqlite();
@@ -683,17 +683,17 @@ test('a pending invoice load includes a payment stored under its quickbooks id a
         }
         $eager = array_values(array_filter(
             $queries,
-            static fn (string $sql): bool => str_contains($sql, 'templates')
-                || str_contains($sql, 'tracking_numbers')
-                || str_contains($sql, 'orders')
+            static fn (string $sql): bool => str_contains($sql, 'templates') === true
+                || str_contains($sql, 'tracking_numbers') === true
+                || str_contains($sql, 'orders') === true
         ));
         $customerEager = array_values(array_filter(
             $queries,
-            static fn (string $sql): bool => str_contains($sql, 'contacts') && !str_contains($sql, 'type')
+            static fn (string $sql): bool => str_contains($sql, 'contacts') === true && str_contains($sql, 'type') === false
         ));
         $items = array_values(array_filter(
             $queries,
-            static fn (string $sql): bool => str_contains($sql, 'ledger_invoice_items') && str_starts_with(strtolower(ltrim($sql)), 'select')
+            static fn (string $sql): bool => str_contains($sql, 'ledger_invoice_items') === true && str_starts_with(strtolower(ltrim($sql)), 'select') === true
         ));
 
         expect($identities)->toContain('payment:4')
@@ -709,7 +709,7 @@ test('a pending invoice load includes a payment stored under its quickbooks id a
     } finally {
         $restore();
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a payment link stored under the quickbooks id unmarks the paid invoice', function () {
     $ledger                       = new SyncLedger();
@@ -775,11 +775,11 @@ test('a delete batch uses one link select and bulk status, link, and pending wri
         ]);
 
         $queries        = array_column($connection->getQueryLog(), 'query');
-        $linkSelects    = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'quickbooks_links') && str_starts_with(strtolower(ltrim($sql)), 'select')));
-        $invoiceUpdates = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'ledger_invoices') && str_starts_with(strtolower(ltrim($sql)), 'update')));
-        $invoiceSelects = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'ledger_invoices') && str_starts_with(strtolower(ltrim($sql)), 'select')));
-        $linkDeletes    = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'quickbooks_links') && str_starts_with(strtolower(ltrim($sql)), 'delete')));
-        $pendingUpdates = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'quickbooks_pending_syncs') && str_starts_with(strtolower(ltrim($sql)), 'update')));
+        $linkSelects    = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'quickbooks_links') === true && str_starts_with(strtolower(ltrim($sql)), 'select') === true));
+        $invoiceUpdates = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'ledger_invoices') === true && str_starts_with(strtolower(ltrim($sql)), 'update') === true));
+        $invoiceSelects = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'ledger_invoices') === true && str_starts_with(strtolower(ltrim($sql)), 'select') === true));
+        $linkDeletes    = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'quickbooks_links') === true && str_starts_with(strtolower(ltrim($sql)), 'delete') === true));
+        $pendingUpdates = array_values(array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'quickbooks_pending_syncs') === true && str_starts_with(strtolower(ltrim($sql)), 'update') === true));
         $voided         = DB::table('ledger_invoices')->where('uuid', 'inv-void-me')->first();
         $paid           = DB::table('ledger_invoices')->where('uuid', 'inv-paid')->first();
         $same           = DB::table('ledger_invoices')->where('uuid', 'inv-same-id')->first();
@@ -806,7 +806,7 @@ test('a delete batch uses one link select and bulk status, link, and pending wri
     } finally {
         $restore();
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('reconcile pending inserts use one bulk insert', function () {
     [$restore] = directorySqlite();
@@ -843,7 +843,7 @@ test('reconcile pending inserts use one bulk insert', function () {
     } finally {
         $restore();
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('queueInScope pages the catalog and inserts each page', function () {
     [$restore] = directorySqlite();
@@ -912,7 +912,7 @@ test('queueInScope pages the catalog and inserts each page', function () {
         $queries  = array_column($connection->getQueryLog(), 'query');
         $customer = array_values(array_filter(
             $queries,
-            static fn (string $sql): bool => str_contains($sql, 'contacts') && str_contains(strtolower($sql), 'limit')
+            static fn (string $sql): bool => str_contains($sql, 'contacts') === true && str_contains(strtolower($sql), 'limit') === true
         ));
         $queued = PendingSync::query()->orderBy('local_type')->orderBy('local_uuid')->get();
         $ids    = $queued->map(static fn ($row): string => $row->local_type . ':' . $row->local_uuid)->all();
@@ -929,7 +929,7 @@ test('queueInScope pages the catalog and inserts each page', function () {
     } finally {
         $restore();
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('customer billing address and notes round-trip through the directory', function () {
     [$restore] = directorySqlite();
@@ -1036,7 +1036,7 @@ test('customer billing address and notes round-trip through the directory', func
     } finally {
         $restore();
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 function directorySqlite(): array
 {

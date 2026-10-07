@@ -1500,7 +1500,7 @@ test('a failed customer lookup does not create a customer and a real miss checks
         {
             $results = parent::batch($connection, $items);
             foreach ($results as $bId => $result) {
-                if (str_starts_with((string) $bId, 'customer:')) {
+                if (str_starts_with((string) $bId, 'customer:') === true) {
                     $results[$bId] = [
                         'ok'     => false,
                         'body'   => [],
@@ -1548,7 +1548,7 @@ test('a failed or short invoice or wallet read is not treated as missing', funct
         {
             foreach ($items as $item) {
                 $query = (string) ($item['query'] ?? '');
-                if (str_contains($query, 'from Invoice where Id') || str_contains($query, 'from Account where Id')) {
+                if (str_contains($query, 'from Invoice where Id') === true || str_contains($query, 'from Account where Id') === true) {
                     return [
                         (string) $item['bId'] => [
                             'ok'     => false,
@@ -1656,7 +1656,7 @@ test('a failed or short invoice or wallet read is not treated as missing', funct
         public function batch(array $connection, array $items): array
         {
             foreach ($items as $item) {
-                if (str_contains((string) ($item['query'] ?? ''), 'from Account where Id')) {
+                if (str_contains((string) ($item['query'] ?? ''), 'from Account where Id') === true) {
                     return [
                         (string) $item['bId'] => [
                             'ok'     => false,
@@ -1700,11 +1700,11 @@ test('an invoice id query keeps paging until a short page', function () {
             foreach ($items as $item) {
                 $query = (string) ($item['query'] ?? '');
                 $bId   = (string) ($item['bId'] ?? '');
-                if (!isset($results[$bId]) || !str_contains($query, 'from Invoice where Id')) {
+                if (isset($results[$bId]) === false || str_contains($query, 'from Invoice where Id') === false) {
                     continue;
                 }
                 $this->idQueries[] = $query;
-                $rows              = is_array($results[$bId]['rows'] ?? null) ? array_values($results[$bId]['rows']) : [];
+                $rows              = is_array($results[$bId]['rows'] ?? null) === true ? array_values($results[$bId]['rows']) : [];
                 $start             = 1;
                 $max               = 100;
                 if (preg_match('/startposition\s+(\d+)/i', $query, $match) === 1) {
@@ -1713,7 +1713,7 @@ test('an invoice id query keeps paging until a short page', function () {
                 if (preg_match('/maxresults\s+(\d+)/i', $query, $match) === 1) {
                     $max = (int) $match[1];
                 }
-                if (!str_contains($query, 'startposition')) {
+                if (str_contains($query, 'startposition') === false) {
                     $max = min($max, 100);
                 }
                 $results[$bId]['rows'] = array_slice($rows, max(0, $start - 1), $max);
@@ -1841,7 +1841,7 @@ test('failed linked payment reads fail their invoices without creating replaceme
     $client = new class extends FakeQuickBooks {
         public function batch(array $connection, array $items): array
         {
-            if (str_contains((string) ($items[0]['query'] ?? ''), 'from Payment where Id IN')) {
+            if (str_contains((string) ($items[0]['query'] ?? ''), 'from Payment where Id IN') === true) {
                 return ['read-0-1' => [
                     'ok'     => false, 'body' => [], 'rows' => [],
                     'error'  => 'QuickBooks request failed with status 500',
@@ -1909,7 +1909,7 @@ test('a failed multi-id remote read is not applied as a miss', function () {
         public function batch(array $connection, array $items): array
         {
             foreach ($items as $item) {
-                if (str_contains((string) ($item['query'] ?? ''), 'from Customer where Id IN')) {
+                if (str_contains((string) ($item['query'] ?? ''), 'from Customer where Id IN') === true) {
                     return [
                         (string) $item['bId'] => [
                             'ok'     => false,
@@ -2081,7 +2081,7 @@ test('a failed display name lookup does not query quickbooks again per customer'
         {
             $results = parent::batch($connection, $items);
             foreach ($results as $bId => $result) {
-                if (str_starts_with((string) $bId, 'customer-name:')) {
+                if (str_starts_with((string) $bId, 'customer-name:') === true) {
                     $results[$bId] = [
                         'ok'     => false,
                         'body'   => [],
@@ -2128,10 +2128,10 @@ test('block payments are taken from invoices already in memory and each payment 
         {
             foreach ($items as $item) {
                 $query = (string) ($item['query'] ?? '');
-                if (str_contains($query, 'from Invoice where Id')) {
+                if (str_contains($query, 'from Invoice where Id') === true) {
                     $this->invoiceIdQueries[] = $query;
                 }
-                if (str_contains($query, 'from Payment where Id')) {
+                if (str_contains($query, 'from Payment where Id') === true) {
                     $this->paymentIdQueries[] = $query;
                 }
             }
@@ -2229,7 +2229,7 @@ test('a block prefetch sums every payment linked on the invoice', function () {
         {
             foreach ($items as $item) {
                 $query = (string) ($item['query'] ?? '');
-                if (str_contains($query, 'from Payment where Id')) {
+                if (str_contains($query, 'from Payment where Id') === true) {
                     $this->paymentIdQueries[] = $query;
                 }
             }
@@ -2489,7 +2489,7 @@ test('a payment stored under its quickbooks id is not replaced when the invoice 
         {
             foreach ($items as $item) {
                 $query = (string) ($item['query'] ?? '');
-                if (str_contains($query, 'from Payment where Id')) {
+                if (str_contains($query, 'from Payment where Id') === true) {
                     $this->paymentIdQueries[] = $query;
                 }
             }
@@ -2527,8 +2527,8 @@ test('a payment stored under its quickbooks id is not replaced when the invoice 
 
     $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    $sawKept = in_array('getPayment:pay-kept', $client->calls, true)
-        || str_contains(implode("\n", $client->paymentIdQueries), 'pay-kept');
+    $sawKept = in_array('getPayment:pay-kept', $client->calls, true) === true
+        || str_contains(implode("\n", $client->paymentIdQueries), 'pay-kept') === true;
 
     expect($client->calls)->not->toContain('createPayment')
         ->and($sawKept)->toBeTrue()
@@ -2593,11 +2593,11 @@ test('remote id reads stay within the batch cap and keep paging', function () {
             foreach ($items as $item) {
                 $query = (string) ($item['query'] ?? '');
                 $bId   = (string) ($item['bId'] ?? '');
-                if (!isset($results[$bId]) || !str_contains($query, 'where Id IN')) {
+                if (isset($results[$bId]) === false || str_contains($query, 'where Id IN') === false) {
                     continue;
                 }
                 $this->idQueries[] = $query;
-                $rows              = is_array($results[$bId]['rows'] ?? null) ? array_values($results[$bId]['rows']) : [];
+                $rows              = is_array($results[$bId]['rows'] ?? null) === true ? array_values($results[$bId]['rows']) : [];
                 $start             = 1;
                 $max               = 100;
                 if (preg_match('/startposition\s+(\d+)/i', $query, $match) === 1) {
@@ -2606,7 +2606,7 @@ test('remote id reads stay within the batch cap and keep paging', function () {
                 if (preg_match('/maxresults\s+(\d+)/i', $query, $match) === 1) {
                     $max = (int) $match[1];
                 }
-                if (!str_contains($query, 'startposition')) {
+                if (str_contains($query, 'startposition') === false) {
                     $max = min($max, 100);
                 }
                 $results[$bId]['rows'] = array_slice($rows, max(0, $start - 1), $max);
@@ -2664,7 +2664,7 @@ test('payments touching an invoice are not read in one unbounded query', functio
         {
             foreach ($items as $item) {
                 $query = (string) ($item['query'] ?? '');
-                if (str_contains($query, 'from Payment where Id IN')) {
+                if (str_contains($query, 'from Payment where Id IN') === true) {
                     $this->paymentQueries[] = $query;
                 }
             }

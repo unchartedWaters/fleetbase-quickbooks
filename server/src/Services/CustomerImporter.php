@@ -53,7 +53,7 @@ class CustomerImporter
             'finished_at'  => time(),
         ];
 
-        if (!$enabled) {
+        if ($enabled === false) {
             $ledger->batches[] = $batch;
 
             return $batch;
@@ -63,7 +63,7 @@ class CustomerImporter
         $this->companyCandidates = null;
         $ledger->ensureIndex();
         foreach ($fleetbaseCustomers as $customer) {
-            if (is_array($customer) && (string) ($customer['uuid'] ?? '') !== '') {
+            if (is_array($customer) === true && (string) ($customer['uuid'] ?? '') !== '') {
                 $ledger->rememberCustomer((string) $customer['uuid'], $customer);
             }
         }
@@ -71,14 +71,14 @@ class CustomerImporter
         $start = $this->cursor($connection);
         while (true) {
             $page = $this->client->queryCustomers($connection, $start, $pageSize);
-            if (!$this->rememberCandidates($ledger, $connection, $page)) {
+            if ($this->rememberCandidates($ledger, $connection, $page) === false) {
                 $this->failPage($ledger, $connection, $page, $batch);
                 break;
             }
             $failedAt = null;
             $position = 0;
             foreach ($page as $remote) {
-                if (!is_array($remote)) {
+                if (is_array($remote) === false) {
                     $position++;
                     continue;
                 }
@@ -132,7 +132,7 @@ class CustomerImporter
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
         if ($start <= 1) {
             unset($connection[self::CURSOR_COLUMN]);
-            if ($companyUuid !== '' && isset($ledger->connections[$companyUuid])) {
+            if ($companyUuid !== '' && isset($ledger->connections[$companyUuid]) === true) {
                 unset($ledger->connections[$companyUuid][self::CURSOR_COLUMN]);
             }
             $stored = null;
@@ -149,7 +149,7 @@ class CustomerImporter
 
     private function storeCursor(string $companyUuid, ?int $start): void
     {
-        if ($companyUuid === '' || !class_exists(Connection::class)) {
+        if ($companyUuid === '' || class_exists(Connection::class) === false) {
             return;
         }
 
@@ -183,10 +183,10 @@ class CustomerImporter
     private function failPage(SyncLedger $ledger, array $connection, array $page, array &$batch): void
     {
         foreach ($page as $remote) {
-            if (!is_array($remote)) {
+            if (is_array($remote) === false) {
                 continue;
             }
-            if ($this->skippedRemote($remote)) {
+            if ($this->skippedRemote($remote) === true) {
                 $batch['skipped'] = ($batch['skipped'] ?? 0) + 1;
                 continue;
             }
@@ -206,14 +206,14 @@ class CustomerImporter
      */
     private function skippedRemote(array $remote): bool
     {
-        if (array_key_exists('Active', $remote) && $remote['Active'] === false) {
+        if (array_key_exists('Active', $remote) === true && $remote['Active'] === false) {
             return true;
         }
-        if (!empty($remote['ParentRef'])) {
+        if (empty($remote['ParentRef']) === false) {
             return true;
         }
 
-        return !empty($remote['Job']);
+        return empty($remote['Job']) === false;
     }
 
     /**
@@ -228,7 +228,7 @@ class CustomerImporter
         $phones = [];
         $names  = [];
         foreach ($page as $remote) {
-            if (!is_array($remote)) {
+            if (is_array($remote) === false) {
                 continue;
             }
             $email    = strtolower(trim((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')));
@@ -253,7 +253,7 @@ class CustomerImporter
         }
 
         $class = 'Fleetbase\\FleetOps\\Models\\Customer';
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return true;
         }
 
@@ -275,10 +275,10 @@ class CustomerImporter
             $email = strtolower(trim((string) ($customer->email ?? '')));
             $phone = $this->digits(trim((string) ($customer->phone ?? '')));
             $name  = (string) ($customer->name ?? '');
-            $hit   = ($email !== '' && isset($emailSet[$email]))
-                || ($phone !== '' && isset($phoneSet[$phone]))
-                || ($name !== '' && isset($nameSet[$name]));
-            if (!$hit) {
+            $hit   = ($email !== '' && isset($emailSet[$email]) === true)
+                || ($phone !== '' && isset($phoneSet[$phone]) === true)
+                || ($name !== '' && isset($nameSet[$name]) === true);
+            if ($hit === false) {
                 continue;
             }
             $row = [
@@ -303,7 +303,7 @@ class CustomerImporter
      */
     private function importOne(SyncLedger $ledger, array $connection, array &$fleetbaseCustomers, array $remote): string
     {
-        if ($this->skippedRemote($remote)) {
+        if ($this->skippedRemote($remote) === true) {
             return 'skipped';
         }
 
@@ -322,7 +322,7 @@ class CustomerImporter
         if ($match !== null) {
             $matchCompany = (string) ($match['company_uuid'] ?? $company);
             $link         = $ledger->link($matchCompany, $realm, 'customer', (string) $match['uuid']);
-            $storedId     = is_array($link) ? (string) ($link['qbo_id'] ?? '') : '';
+            $storedId     = is_array($link) === true ? (string) ($link['qbo_id'] ?? '') : '';
             if ($link === null || $storedId === '' || $storedId === $remoteId) {
                 if ($remoteId !== '') {
                     $ledger->putLink([
@@ -392,7 +392,7 @@ class CustomerImporter
             'notes'        => $remote['Notes'] ?? null,
         ];
         $bill = $remote['BillAddr'] ?? null;
-        if (is_array($bill)) {
+        if (is_array($bill) === true) {
             $address = (new CustomerMapper())->addressFromBillAddr($bill);
             if ($address !== null) {
                 $created['address'] = $address;
@@ -407,7 +407,7 @@ class CustomerImporter
      */
     private function displayName(array $remote): string
     {
-        if (!empty($remote['DisplayName'])) {
+        if (empty($remote['DisplayName']) === false) {
             return (string) $remote['DisplayName'];
         }
 
@@ -449,7 +449,7 @@ class CustomerImporter
                 $query->where('uuid', '>', $after);
             }
             $page = $query->get(['uuid', 'name', 'email', 'phone']);
-            if ($page->isEmpty()) {
+            if ($page->isEmpty() === true) {
                 break;
             }
             $last = $after;

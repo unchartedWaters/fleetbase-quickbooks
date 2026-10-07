@@ -348,7 +348,7 @@ test('a webhook batch does not queue a sync when the organization has no connect
 
         public function select($query, $bindings = [], $useReadPdo = true)
         {
-            if (str_contains(strtolower($query), 'exists')) {
+            if (str_contains(strtolower($query), 'exists') === true) {
                 return [['exists' => 0]];
             }
 
@@ -506,7 +506,7 @@ function gateDispatch(callable $callback): void
         }
     };
     $container          = Container::getInstance();
-    $previousDispatcher = $container->bound(Dispatcher::class) ? $container->make(Dispatcher::class) : null;
+    $previousDispatcher = $container->bound(Dispatcher::class) === true ? $container->make(Dispatcher::class) : null;
     $previousCache      = Cache::getFacadeRoot();
     Cache::swap(new Repository(new ArrayStore()));
     $container->instance(Dispatcher::class, $dispatcher);

@@ -12,12 +12,12 @@ class FlagCustomerObserver
 
     public function saved(object $customer): void
     {
-        if (SyncSuppressor::paused() || !method_exists($customer, 'wasChanged') || !$customer->wasChanged(self::WATCHED)) {
+        if (SyncSuppressor::paused() === true || method_exists($customer, 'wasChanged') === false || $customer->wasChanged(self::WATCHED) === false) {
             return;
         }
 
         $listener = Container::getInstance()->make(FlagCustomerListener::class);
-        if ($listener instanceof FlagCustomerListener) {
+        if ($listener instanceof FlagCustomerListener === true) {
             $listener->handle((object) ['customer' => $customer]);
         }
     }

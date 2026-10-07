@@ -268,7 +268,7 @@ test('the company lock is held while the refresh token is sent to intuit', funct
     $client->duringRefresh = function () use (&$secondCouldStart): void {
         $probe            = Cache::getFacadeRoot()->getStore()->lock('quickbooks.batch.company-uuid', BatchRunner::LOCK_SECONDS);
         $secondCouldStart = $probe->get() === true;
-        if ($secondCouldStart) {
+        if ($secondCouldStart === true) {
             $probe->release();
         }
     };
@@ -449,7 +449,7 @@ function withBatchDispatcher(callable $callback): mixed
     };
 
     $container = Container::getInstance();
-    $previous  = $container->bound(Dispatcher::class) ? $container->make(Dispatcher::class) : null;
+    $previous  = $container->bound(Dispatcher::class) === true ? $container->make(Dispatcher::class) : null;
     $container->instance(Dispatcher::class, $dispatcher);
     try {
         return $callback($dispatcher);

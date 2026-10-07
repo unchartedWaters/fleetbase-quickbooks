@@ -83,10 +83,10 @@ class SettingController extends QuickbooksController
         $existingSync = $this->store->get($syncKey);
         $incomingAuth = $request->input('auth', []);
         $incomingSync = $request->input('sync', []);
-        if (!is_array($incomingAuth)) {
+        if (is_array($incomingAuth) === false) {
             $incomingAuth = [];
         }
-        if (!is_array($incomingSync)) {
+        if (is_array($incomingSync) === false) {
             $incomingSync = [];
         }
         $incomingSync = $this->onlySyncKeys($incomingSync);
@@ -98,11 +98,11 @@ class SettingController extends QuickbooksController
         $incomingAuth = $this->store->normalizeAuth($incomingAuth);
 
         $mergedAuth = $this->withComputedRedirect(array_merge($existingAuth, $incomingAuth));
-        if (isset($mergedAuth['redirect_uri'])) {
+        if (isset($mergedAuth['redirect_uri']) === true) {
             $incomingAuth['redirect_uri'] = $mergedAuth['redirect_uri'];
         }
         $secret     = $incomingAuth['client_secret'] ?? '';
-        if (!is_string($secret) || $secret === '') {
+        if (is_string($secret) === false || $secret === '') {
             $mergedAuth['client_secret'] = $existingAuth['client_secret'] ?? '';
         } else {
             $mergedAuth['client_secret'] = $secret;
@@ -170,7 +170,7 @@ class SettingController extends QuickbooksController
         );
         $browser                                  = $this->settings->forBrowser($resolved);
         $browser['client_secret_set']             = $this->secretIsSet($resolved);
-        $browser['sources']                       = is_array($resolved['sources'] ?? null) ? $resolved['sources'] : [];
+        $browser['sources']                       = is_array($resolved['sources'] ?? null) === true ? $resolved['sources'] : [];
         $webhook                                  = self::internalWebhookReceiverUrl();
         $oauth                                    = self::internalOAuthRedirectUrl();
         $publicWebhook                            = self::publicOrInternal($companyAuth['public_webhook_receiver_url'] ?? null, $webhook);
@@ -235,13 +235,13 @@ class SettingController extends QuickbooksController
     {
         $prefix   = 'quickbooks';
         $internal = 'int';
-        if (function_exists('config')) {
+        if (function_exists('config') === true) {
             $configuredPrefix   = config('quickbooks.api.routing.prefix', 'quickbooks');
             $configuredInternal = config('quickbooks.api.routing.internal_prefix', 'int');
-            if (is_string($configuredPrefix) && trim($configuredPrefix, '/') !== '') {
+            if (is_string($configuredPrefix) === true && trim($configuredPrefix, '/') !== '') {
                 $prefix = trim($configuredPrefix, '/');
             }
-            if (is_string($configuredInternal) && trim($configuredInternal, '/') !== '') {
+            if (is_string($configuredInternal) === true && trim($configuredInternal, '/') !== '') {
                 $internal = trim($configuredInternal, '/');
             }
         }
@@ -261,14 +261,14 @@ class SettingController extends QuickbooksController
      */
     private static function configuredOrigin(): string
     {
-        if (!function_exists('config')) {
+        if (function_exists('config') === false) {
             return '';
         }
 
         $apiOrigins     = self::configuredOrigins(['app.url', 'fleetbase.url']);
         $consoleOrigins = [];
         foreach (self::configuredOrigins(['quickbooks.console_host', 'fleetbase.console.host']) as $origin) {
-            if (!self::isFleetbaseIoDefault($origin['host'])) {
+            if (self::isFleetbaseIoDefault($origin['host']) === false) {
                 $consoleOrigins[] = $origin;
             }
         }
@@ -276,7 +276,7 @@ class SettingController extends QuickbooksController
         $selected = null;
         $fromApi  = false;
         foreach ($apiOrigins as $origin) {
-            if (!self::hostnameIsLoopback($origin['host'])) {
+            if (self::hostnameIsLoopback($origin['host']) === false) {
                 $selected = $origin;
                 $fromApi  = true;
                 break;
@@ -284,7 +284,7 @@ class SettingController extends QuickbooksController
         }
         if ($selected === null) {
             foreach ($consoleOrigins as $origin) {
-                if (!self::hostnameIsLoopback($origin['host'])) {
+                if (self::hostnameIsLoopback($origin['host']) === false) {
                     $selected = $origin;
                     break;
                 }
@@ -302,9 +302,9 @@ class SettingController extends QuickbooksController
             return '';
         }
 
-        $port   = $fromApi ? $selected['port'] : self::configuredApiPort($apiOrigins);
+        $port   = $fromApi === true ? $selected['port'] : self::configuredApiPort($apiOrigins);
         $scheme = $selected['scheme'];
-        if (!$fromApi && $apiOrigins !== []) {
+        if ($fromApi === false && $apiOrigins !== []) {
             $scheme = $apiOrigins[0]['scheme'];
         }
 
@@ -335,18 +335,18 @@ class SettingController extends QuickbooksController
     private static function parseOrigin(string $url): ?array
     {
         $parts = parse_url(self::withScheme($url));
-        if (!is_array($parts)) {
+        if (is_array($parts) === false) {
             return null;
         }
         $host = $parts['host'] ?? null;
-        if (!is_string($host) || $host === '') {
+        if (is_string($host) === false || $host === '') {
             return null;
         }
 
         return [
             'scheme' => strtolower((string) ($parts['scheme'] ?? 'https')),
             'host'   => $host,
-            'port'   => isset($parts['port']) ? (int) $parts['port'] : null,
+            'port'   => isset($parts['port']) === true ? (int) $parts['port'] : null,
         ];
     }
 
@@ -367,11 +367,11 @@ class SettingController extends QuickbooksController
     private static function formatOrigin(string $scheme, string $host, ?int $port): string
     {
         $host = trim($host, '[]');
-        if (str_contains($host, ':')) {
+        if (str_contains($host, ':') === true) {
             $host = '[' . $host . ']';
         }
         $origin = $scheme . '://' . $host;
-        if ($port !== null && !self::portIsDefault($scheme, $port)) {
+        if ($port !== null && self::portIsDefault($scheme, $port) === false) {
             $origin .= ':' . $port;
         }
 
@@ -400,7 +400,7 @@ class SettingController extends QuickbooksController
         $hosts = [];
         foreach ($keys as $key) {
             $host = config($key);
-            if (!is_string($host)) {
+            if (is_string($host) === false) {
                 continue;
             }
             $host = trim($host);
@@ -416,7 +416,7 @@ class SettingController extends QuickbooksController
     private static function isFleetbaseIoDefault(string $url): bool
     {
         $hostname = parse_url(self::withScheme($url), PHP_URL_HOST);
-        if (!is_string($hostname) || $hostname === '') {
+        if (is_string($hostname) === false || $hostname === '') {
             $hostname = $url;
         }
 
@@ -425,7 +425,7 @@ class SettingController extends QuickbooksController
 
     private static function withScheme(string $url): string
     {
-        if (str_contains($url, '://')) {
+        if (str_contains($url, '://') === true) {
             return $url;
         }
 
@@ -439,12 +439,12 @@ class SettingController extends QuickbooksController
     private function applyWebhookSubscriptions(string $companyUuid): void
     {
         $class = 'Fleetbase\\Quickbooks\\Services\\WebhookSubscriptions';
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return;
         }
 
         $subscriptions = app($class);
-        if (!is_object($subscriptions) || !method_exists($subscriptions, 'apply')) {
+        if (is_object($subscriptions) === false || method_exists($subscriptions, 'apply') === false) {
             return;
         }
 
@@ -458,7 +458,7 @@ class SettingController extends QuickbooksController
     {
         $secret = $auth['client_secret'] ?? null;
 
-        return is_string($secret) && trim($secret) !== '';
+        return is_string($secret) === true && trim($secret) !== '';
     }
 
     /**
@@ -493,7 +493,7 @@ class SettingController extends QuickbooksController
     {
         $public = [];
         foreach (self::PUBLIC_URL_KEYS as $key) {
-            if (!array_key_exists($key, $auth)) {
+            if (array_key_exists($key, $auth) === false) {
                 continue;
             }
             $public[$key] = trim((string) $auth[$key]);
@@ -515,9 +515,9 @@ class SettingController extends QuickbooksController
     private function applyPublicUrls(array $auth, array $public): array
     {
         foreach (self::PUBLIC_URL_KEYS as $key) {
-            if (!array_key_exists($key, $public)) {
+            if (array_key_exists($key, $public) === false) {
                 $current = $auth[$key] ?? null;
-                if (is_string($current) && self::isPublicHttpsUrl($current)) {
+                if (is_string($current) === true && self::isPublicHttpsUrl($current) === true) {
                     $auth[$key] = trim($current);
                     continue;
                 }
@@ -525,7 +525,7 @@ class SettingController extends QuickbooksController
                 continue;
             }
             $value = trim($public[$key]);
-            if ($value !== '' && self::isPublicHttpsUrl($value)) {
+            if ($value !== '' && self::isPublicHttpsUrl($value) === true) {
                 $auth[$key] = $value;
                 continue;
             }
@@ -537,8 +537,8 @@ class SettingController extends QuickbooksController
 
     private static function publicOrInternal(mixed $saved, string $internal): string
     {
-        $saved = is_string($saved) ? trim($saved) : '';
-        if ($saved !== '' && self::isPublicHttpsUrl($saved)) {
+        $saved = is_string($saved) === true ? trim($saved) : '';
+        if ($saved !== '' && self::isPublicHttpsUrl($saved) === true) {
             return $saved;
         }
 
@@ -556,7 +556,7 @@ class SettingController extends QuickbooksController
     private function withComputedRedirect(array $auth): array
     {
         $current = trim((string) ($auth['redirect_uri'] ?? ''));
-        if ($this->usableRedirect($current)) {
+        if ($this->usableRedirect($current) === true) {
             return $auth;
         }
 
@@ -567,12 +567,12 @@ class SettingController extends QuickbooksController
 
     private function usableRedirect(string $redirect): bool
     {
-        if (!self::isPublicHttpsUrl($redirect)) {
+        if (self::isPublicHttpsUrl($redirect) === false) {
             return false;
         }
         $parts = parse_url($redirect);
 
-        return is_array($parts) && (int) ($parts['port'] ?? 0) !== 4200;
+        return is_array($parts) === true && (int) ($parts['port'] ?? 0) !== 4200;
     }
 
     /**
@@ -590,7 +590,7 @@ class SettingController extends QuickbooksController
     {
         foreach (self::DIRECTION_FIELDS as $field) {
             $value = $sync[$field] ?? null;
-            if (!is_string($value) || $value === '' || $value === 'off') {
+            if (is_string($value) === false || $value === '' || $value === 'off') {
                 $sync[$field] = 'both';
             }
         }
@@ -607,11 +607,11 @@ class SettingController extends QuickbooksController
         $this->stripReadOnly($sync);
         $this->stripPublicUrls($sync);
         foreach (self::DIRECTION_FIELDS as $field) {
-            if (!array_key_exists($field, $sync)) {
+            if (array_key_exists($field, $sync) === false) {
                 continue;
             }
             $value = $sync[$field];
-            if (!is_string($value) || $value === '' || $value === 'off') {
+            if (is_string($value) === false || $value === '' || $value === 'off') {
                 $sync[$field] = 'both';
             }
         }
@@ -644,7 +644,7 @@ class SettingController extends QuickbooksController
             'invoice_enabled'  => 'invoice',
             'wallet_enabled'   => 'wallet',
         ] as $key => $entity) {
-            if (!$this->entitySwitchOn($existing, $key) && $this->entitySwitchOn($merged, $key)) {
+            if ($this->entitySwitchOn($existing, $key) === false && $this->entitySwitchOn($merged, $key) === true) {
                 $enabled[$entity] = true;
             }
         }
@@ -660,7 +660,7 @@ class SettingController extends QuickbooksController
      */
     private function entitySwitchOn(array $sync, string $key): bool
     {
-        return !array_key_exists($key, $sync) || $sync[$key] !== false;
+        return array_key_exists($key, $sync) === false || $sync[$key] !== false;
     }
 
     private function directory(): FleetbaseDirectory

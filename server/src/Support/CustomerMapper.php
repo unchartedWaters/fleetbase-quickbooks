@@ -19,20 +19,20 @@ class CustomerMapper
             'DisplayName' => (string) ($customer['name'] ?? 'Customer'),
         ];
 
-        if (!empty($customer['email'])) {
+        if (empty($customer['email']) === false) {
             $payload['PrimaryEmailAddr'] = ['Address' => $customer['email']];
         }
-        if (!empty($customer['phone'])) {
+        if (empty($customer['phone']) === false) {
             $payload['PrimaryPhone'] = ['FreeFormNumber' => $customer['phone']];
         }
-        if (!empty($customer['notes'])) {
+        if (empty($customer['notes']) === false) {
             $payload['Notes'] = $customer['notes'];
-        } elseif ($pushClears) {
+        } elseif ($pushClears === true) {
             $payload['Notes'] = '';
         }
 
         $address = $customer['address'] ?? null;
-        if (is_array($address) && $this->addressHasContent($address)) {
+        if (is_array($address) === true && $this->addressHasContent($address) === true) {
             $payload['BillAddr'] = array_filter([
                 'Line1'                  => $address['line1'] ?? null,
                 'Line2'                  => $address['line2'] ?? null,
@@ -41,7 +41,7 @@ class CustomerMapper
                 'PostalCode'             => $address['postal_code'] ?? null,
                 'Country'                => $address['country'] ?? null,
             ], static fn ($value) => $value !== null && $value !== '');
-        } elseif ($pushClears) {
+        } elseif ($pushClears === true) {
             $payload['BillAddr'] = [
                 'Line1'                  => '',
                 'Line2'                  => '',
@@ -88,7 +88,7 @@ class CustomerMapper
             'country'     => $this->textOrNull($bill['Country'] ?? null),
         ];
 
-        return $this->addressHasContent($address) ? $address : null;
+        return $this->addressHasContent($address) === true ? $address : null;
     }
 
     /**
@@ -118,7 +118,7 @@ class CustomerMapper
     public function fromParty(array $party): array
     {
         $name = $party['name'] ?? null;
-        if (!is_string($name) || $name === '') {
+        if (is_string($name) === false || $name === '') {
             $given  = trim((string) ($party['given_name'] ?? $party['first_name'] ?? ''));
             $family = trim((string) ($party['family_name'] ?? $party['last_name'] ?? ''));
             $name   = trim($given . ' ' . $family);
@@ -152,7 +152,7 @@ class CustomerMapper
 
     private function textOrNull(mixed $value): ?string
     {
-        if (!is_scalar($value)) {
+        if (is_scalar($value) === false) {
             return null;
         }
 

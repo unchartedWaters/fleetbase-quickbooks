@@ -14,12 +14,12 @@ class FlagInvoiceListener
 
     public function handle(object $event): void
     {
-        if (SyncSuppressor::paused()) {
+        if (SyncSuppressor::paused() === true) {
             return;
         }
 
         $invoice = $event->invoice ?? null;
-        if (!is_object($invoice)) {
+        if (is_object($invoice) === false) {
             return;
         }
 

@@ -42,10 +42,10 @@ class ConnectionGate
      */
     public static function usable(mixed $connection): bool
     {
-        if (!self::hasRealm($connection)) {
+        if (self::hasRealm($connection) === false) {
             return false;
         }
-        if ($connection instanceof Connection) {
+        if ($connection instanceof Connection === true) {
             return $connection->needs_reauth !== true;
         }
 
@@ -57,16 +57,16 @@ class ConnectionGate
      */
     private static function realm(mixed $connection): string
     {
-        if ($connection instanceof Connection) {
+        if ($connection instanceof Connection === true) {
             $realm = $connection->realm_id;
 
-            return is_string($realm) ? trim($realm) : '';
+            return is_string($realm) === true ? trim($realm) : '';
         }
-        if (!is_array($connection)) {
+        if (is_array($connection) === false) {
             return '';
         }
         $realm = $connection['realm_id'] ?? null;
 
-        return is_string($realm) ? trim($realm) : '';
+        return is_string($realm) === true ? trim($realm) : '';
     }
 }

@@ -94,7 +94,7 @@ class SyncLedger
 
         $link = $this->links[$index] ?? null;
 
-        return is_array($link) && (string) ($link['realm_id'] ?? '') === $realmId ? $link : null;
+        return is_array($link) === true && (string) ($link['realm_id'] ?? '') === $realmId ? $link : null;
     }
 
     public function hasRemoteLink(string $realmId, string $entity, string $qboId): bool
@@ -117,7 +117,7 @@ class SyncLedger
 
         $link = $this->links[$index] ?? null;
 
-        return is_array($link) ? $link : null;
+        return is_array($link) === true ? $link : null;
     }
 
     /**
@@ -150,7 +150,7 @@ class SyncLedger
 
     public function ensureIndex(): void
     {
-        if (!$this->indexed) {
+        if ($this->indexed === false) {
             $this->rebuildIndex();
         }
     }
@@ -171,13 +171,13 @@ class SyncLedger
         $email = strtolower(trim((string) ($customer['email'] ?? '')));
         $phone = preg_replace('/\D+/', '', (string) ($customer['phone'] ?? '')) ?? '';
         $name  = (string) ($customer['name'] ?? '');
-        if ($email !== '' && !isset($this->customersByEmail[$email])) {
+        if ($email !== '' && isset($this->customersByEmail[$email]) === false) {
             $this->customersByEmail[$email] = $uuid;
         }
-        if ($phone !== '' && !isset($this->customersByPhone[$phone])) {
+        if ($phone !== '' && isset($this->customersByPhone[$phone]) === false) {
             $this->customersByPhone[$phone] = $uuid;
         }
-        if ($name !== '' && !isset($this->customersByName[$name])) {
+        if ($name !== '' && isset($this->customersByName[$name]) === false) {
             $this->customersByName[$name] = $uuid;
         }
         $this->customerKeys[$uuid] = ['email' => $email, 'phone' => $phone, 'name' => $name];
@@ -187,7 +187,7 @@ class SyncLedger
     public function touchCustomer(string $uuid): void
     {
         $customer = $this->customers[$uuid] ?? null;
-        if (is_array($customer)) {
+        if (is_array($customer) === true) {
             $this->rememberCustomer($uuid, $customer);
         }
     }
@@ -218,13 +218,13 @@ class SyncLedger
     {
         $this->ensureIndex();
         $email = strtolower(trim($email));
-        if ($email !== '' && isset($this->customersByEmail[$email])) {
+        if ($email !== '' && isset($this->customersByEmail[$email]) === true) {
             return $this->customerRow($this->customersByEmail[$email]);
         }
-        if ($phone !== '' && isset($this->customersByPhone[$phone])) {
+        if ($phone !== '' && isset($this->customersByPhone[$phone]) === true) {
             return $this->customerRow($this->customersByPhone[$phone]);
         }
-        if ($name !== '' && isset($this->customersByName[$name])) {
+        if ($name !== '' && isset($this->customersByName[$name]) === true) {
             return $this->customerRow($this->customersByName[$name]);
         }
 
@@ -243,7 +243,7 @@ class SyncLedger
             (string) ($attributes['local_uuid'] ?? '')
         );
         $index = $this->linksByIdentity[$key] ?? null;
-        if ($index !== null && isset($this->links[$index])) {
+        if ($index !== null && isset($this->links[$index]) === true) {
             $this->links[$index] = array_merge($this->links[$index], $attributes);
             $this->rememberLink($index, $this->links[$index]);
 
@@ -262,7 +262,7 @@ class SyncLedger
     {
         $row = $this->customerRows[$uuid] ?? $this->customers[$uuid] ?? null;
 
-        return is_array($row) ? $row : null;
+        return is_array($row) === true ? $row : null;
     }
 
     /**

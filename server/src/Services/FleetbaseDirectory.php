@@ -174,7 +174,7 @@ class FleetbaseDirectory
         }
 
         $class = 'Fleetbase\\FleetOps\\Models\\Customer';
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return [];
         }
 
@@ -238,7 +238,7 @@ class FleetbaseDirectory
 
         $cached = Cache::get('quickbooks.customer-catalog-at.' . $companyUuid);
 
-        return is_numeric($cached) ? (int) $cached : null;
+        return is_numeric($cached) === true ? (int) $cached : null;
     }
 
     public function rememberCustomerCatalogStamp(string $companyUuid, int $now): void
@@ -264,14 +264,14 @@ class FleetbaseDirectory
             return;
         }
 
-        if (!empty($enabled['customer'])) {
+        if (empty($enabled['customer']) === false) {
             $this->queueCatalog('Fleetbase\\FleetOps\\Models\\Customer', $companyUuid, true, 'customer');
         }
-        if (!empty($enabled['invoice'])) {
+        if (empty($enabled['invoice']) === false) {
             $this->queueCatalog('Fleetbase\\Ledger\\Models\\Invoice', $companyUuid, false, 'invoice');
             $this->queueInvoiceLinks($companyUuid);
         }
-        if (!empty($enabled['wallet'])) {
+        if (empty($enabled['wallet']) === false) {
             $this->queueCatalog('Fleetbase\\Ledger\\Models\\Wallet', $companyUuid, false, 'wallet');
         }
     }
@@ -294,7 +294,7 @@ class FleetbaseDirectory
         try {
             $this->write($ledger);
         } finally {
-            if (!$wasPaused) {
+            if ($wasPaused === false) {
                 SyncSuppressor::resume();
             }
         }
@@ -315,7 +315,7 @@ class FleetbaseDirectory
 
         $loadedByUuid = [];
         foreach ($this->loaded['links'] as $loadedLink) {
-            if (!is_array($loadedLink)) {
+            if (is_array($loadedLink) === false) {
                 continue;
             }
             $loadedUuid = (string) ($loadedLink['uuid'] ?? '');
@@ -328,18 +328,18 @@ class FleetbaseDirectory
         $changedLinks     = [];
         $identityReleases = [];
         foreach ($ledger->links as $link) {
-            if (!is_array($link) || isset($skipped[(string) ($link['company_uuid'] ?? '')])) {
+            if (is_array($link) === false || isset($skipped[(string) ($link['company_uuid'] ?? '')]) === true) {
                 continue;
             }
             $key     = (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '') . '|' . (string) ($link['local_uuid'] ?? '');
             $loaded  = $this->loadedLink($key, $link, $loadedByUuid);
-            $changed = self::changedColumns($link, is_array($loaded) ? $loaded : null, $linkFields);
-            if ($changed === [] && is_array($loaded)) {
+            $changed = self::changedColumns($link, is_array($loaded) === true ? $loaded : null, $linkFields);
+            if ($changed === [] && is_array($loaded) === true) {
                 continue;
             }
-            if (is_array($loaded)) {
+            if (is_array($loaded) === true) {
                 $uuid = (string) ($loaded['uuid'] ?? '');
-                if (isset($changed['local_uuid']) || isset($changed['local_type'])) {
+                if (isset($changed['local_uuid']) === true || isset($changed['local_type']) === true) {
                     // The new local key may already be stored. Free it before this row moves,
                     // or the unique local identity rejects the update and insertOrIgnore keeps the old key.
                     $identityReleases[] = ['link' => $link, 'keep' => $uuid];
@@ -371,10 +371,10 @@ class FleetbaseDirectory
         $freshPending   = [];
         $changedPending = [];
         foreach ($ledger->pending as $row) {
-            if (isset($skipped[(string) ($row['company_uuid'] ?? '')])) {
+            if (isset($skipped[(string) ($row['company_uuid'] ?? '')]) === true) {
                 continue;
             }
-            if (empty($row['uuid'])) {
+            if (empty($row['uuid']) === true) {
                 $freshPending[] = $row;
                 continue;
             }
@@ -388,7 +388,7 @@ class FleetbaseDirectory
         $this->writePendingMany($freshPending);
         $batchUuid = null;
         foreach ($ledger->batches as $batch) {
-            if (!empty($batch['uuid'])) {
+            if (empty($batch['uuid']) === false) {
                 $batchUuid = (string) $batch['uuid'];
                 continue;
             }
@@ -399,7 +399,7 @@ class FleetbaseDirectory
         }
         if ($batchUuid !== null) {
             foreach ($ledger->attempts as $index => $attempt) {
-                if (!empty($attempt['uuid']) || !empty($attempt['batch_uuid'])) {
+                if (empty($attempt['uuid']) === false || empty($attempt['batch_uuid']) === false) {
                     continue;
                 }
                 $ledger->attempts[$index]['batch_uuid'] = $batchUuid;
@@ -436,10 +436,10 @@ class FleetbaseDirectory
         $skipped = [];
         foreach (array_keys($companyUuids) as $companyUuid) {
             $ledgerConnection = $ledger->connections[$companyUuid] ?? null;
-            if (!self::connectionStillCurrent(
+            if (self::connectionStillCurrent(
                 $this->connection($companyUuid),
-                is_array($ledgerConnection) ? $ledgerConnection : null
-            )) {
+                is_array($ledgerConnection) === true ? $ledgerConnection : null
+            ) === false) {
                 $skipped[$companyUuid] = true;
             }
         }
@@ -460,7 +460,7 @@ class FleetbaseDirectory
         }
 
         $connection = $this->connection($companyUuid);
-        if (!ConnectionGate::hasRealm($connection)) {
+        if (ConnectionGate::hasRealm($connection) === false) {
             return;
         }
 
@@ -500,10 +500,10 @@ class FleetbaseDirectory
     private function connectionForLedger(SyncLedger $ledger, string $companyUuid): ?array
     {
         $connection = $ledger->connection($companyUuid);
-        if (!is_array($connection)) {
+        if (is_array($connection) === false) {
             $connection = $this->soleConnection($ledger);
         }
-        if (!is_array($connection)) {
+        if (is_array($connection) === false) {
             return null;
         }
 
@@ -553,7 +553,7 @@ class FleetbaseDirectory
         if ($ledger !== null) {
             $connections = [];
             foreach ($ledger->connections as $connection) {
-                if (is_array($connection)) {
+                if (is_array($connection) === true) {
                     $connections[] = $connection;
                 }
             }
@@ -597,7 +597,7 @@ class FleetbaseDirectory
     public static function toTimestamps(array $row, array $fields): array
     {
         foreach ($fields as $field) {
-            if (array_key_exists($field, $row)) {
+            if (array_key_exists($field, $row) === true) {
                 $row[$field] = self::timestamp($row[$field]);
             }
         }
@@ -614,7 +614,7 @@ class FleetbaseDirectory
     public static function toDates(array $row, array $fields): array
     {
         foreach ($fields as $field) {
-            if (array_key_exists($field, $row) && $row[$field] !== null) {
+            if (array_key_exists($field, $row) === true && $row[$field] !== null) {
                 $row[$field] = Carbon::createFromTimestamp((int) self::timestamp($row[$field]));
             }
         }
@@ -630,7 +630,7 @@ class FleetbaseDirectory
         if ($value instanceof \DateTimeInterface) {
             return $value->getTimestamp();
         }
-        if (is_numeric($value)) {
+        if (is_numeric($value) === true) {
             return (int) $value;
         }
         $time = strtotime((string) $value);
@@ -657,7 +657,7 @@ class FleetbaseDirectory
 
         $columns = [];
         foreach (self::PENDING_FIELDS as $field) {
-            if (!array_key_exists($field, $row)) {
+            if (array_key_exists($field, $row) === false) {
                 continue;
             }
             if ($loaded !== null && ($loaded[$field] ?? null) === $row[$field]) {
@@ -726,7 +726,7 @@ class FleetbaseDirectory
                 self::toDates($row, self::PENDING_TIMES)
             );
         } catch (\Illuminate\Database\QueryException $exception) {
-            if (!self::isDuplicatePendingWrite($exception)) {
+            if (self::isDuplicatePendingWrite($exception) === false) {
                 throw $exception;
             }
         }
@@ -754,7 +754,7 @@ class FleetbaseDirectory
             return true;
         }
 
-        return in_array($driverCode, [19, 1555, 2067], true)
+        return in_array($driverCode, [19, 1555, 2067], true) === true
             && preg_match('/(?:UNIQUE|PRIMARY KEY) constraint failed/i', $message) === 1;
     }
 
@@ -777,7 +777,7 @@ class FleetbaseDirectory
         $walletIds       = [];
         $flaggedInvoices = [];
         foreach ($pendingQuery->get() as $row) {
-            if (!$row instanceof PendingSync) {
+            if ($row instanceof PendingSync === false) {
                 continue;
             }
             $pending                                      = self::toTimestamps($row->toArray(), self::PENDING_TIMES);
@@ -869,18 +869,18 @@ class FleetbaseDirectory
         ];
         $ids = [];
         foreach ($entities as $entity) {
-            if (!is_array($entity)) {
+            if (is_array($entity) === false) {
                 continue;
             }
             $name = $entity['entity'] ?? null;
-            if (!is_string($name) || !isset($known[$name])) {
+            if (is_string($name) === false || isset($known[$name]) === false) {
                 continue;
             }
             $id = $entity['id'] ?? null;
-            if (is_int($id)) {
+            if (is_int($id) === true) {
                 $id = (string) $id;
             }
-            if (!is_string($id) || $id === '') {
+            if (is_string($id) === false || $id === '') {
                 continue;
             }
             $ids[$name][$id] = true;
@@ -908,7 +908,7 @@ class FleetbaseDirectory
             $started = false;
             foreach ($idsByEntity as $entity => $ids) {
                 $idList = array_keys($ids);
-                $method = $started ? 'orWhere' : 'where';
+                $method = $started === true ? 'orWhere' : 'where';
                 $scope->{$method}(function ($inner) use ($entity, $idList): void {
                     $inner->where('qbo_entity', $entity)->whereIn('qbo_id', $idList);
                 });
@@ -939,7 +939,7 @@ class FleetbaseDirectory
 
         $rows = [];
         foreach ($this->memory->links as $link) {
-            if (!is_array($link) || (string) ($link['company_uuid'] ?? '') !== $companyUuid) {
+            if (is_array($link) === false || (string) ($link['company_uuid'] ?? '') !== $companyUuid) {
                 continue;
             }
             if ($realm !== '' && (string) ($link['realm_id'] ?? '') !== $realm) {
@@ -947,7 +947,7 @@ class FleetbaseDirectory
             }
             $entity = (string) ($link['qbo_entity'] ?? '');
             $id     = (string) ($link['qbo_id'] ?? '');
-            if (!isset($idsByEntity[$entity][$id])) {
+            if (isset($idsByEntity[$entity][$id]) === false) {
                 continue;
             }
             $rows[] = $link;
@@ -999,26 +999,26 @@ class FleetbaseDirectory
         if ($this->memory !== null) {
             foreach ($invoiceIds as $uuid) {
                 $invoice = $this->memory->invoices[$uuid] ?? null;
-                if (is_array($invoice)) {
+                if (is_array($invoice) === true) {
                     $ledger->invoices[$uuid] = $invoice;
                 }
             }
             $customerIds = $this->withInvoiceCustomers($ledger->invoices, $customerIds);
             foreach ($customerIds as $uuid) {
                 $customer = $this->memory->customers[$uuid] ?? null;
-                if (is_array($customer)) {
+                if (is_array($customer) === true) {
                     $ledger->customers[$uuid] = $customer;
                 }
             }
             foreach ($walletIds as $uuid) {
                 $wallet = $this->memory->wallets[$uuid] ?? null;
-                if (is_array($wallet)) {
+                if (is_array($wallet) === true) {
                     $ledger->wallets[$uuid] = $wallet;
                 }
             }
             $paymentIds = $this->paymentIdsRememberedFor($this->memory->links, $companyUuid, $invoiceIds);
             foreach ($this->memory->links as $link) {
-                if (!is_array($link) || !$this->linkMatchesLocalIds($link, $companyUuid, $customerIds, $invoiceIds, $walletIds, $paymentIds)) {
+                if (is_array($link) === false || $this->linkMatchesLocalIds($link, $companyUuid, $customerIds, $invoiceIds, $walletIds, $paymentIds) === false) {
                     continue;
                 }
                 $this->rememberLoadedLink($ledger, $link);
@@ -1067,20 +1067,20 @@ class FleetbaseDirectory
 
         $type = (string) ($link['local_type'] ?? '');
         $uuid = (string) ($link['local_uuid'] ?? '');
-        if ($type === 'customer' && in_array($uuid, $customerIds, true)) {
+        if ($type === 'customer' && in_array($uuid, $customerIds, true) === true) {
             return true;
         }
-        if ($type === 'wallet' && in_array($uuid, $walletIds, true)) {
+        if ($type === 'wallet' && in_array($uuid, $walletIds, true) === true) {
             return true;
         }
-        if ($type === 'payment-invoice' && in_array(trim((string) ($link['qbo_id'] ?? '')), $invoiceIds, true)) {
+        if ($type === 'payment-invoice' && in_array(trim((string) ($link['qbo_id'] ?? '')), $invoiceIds, true) === true) {
             return true;
         }
-        if ($type === 'payment' && $paymentIds !== [] && in_array($uuid, $paymentIds, true)) {
+        if ($type === 'payment' && $paymentIds !== [] && in_array($uuid, $paymentIds, true) === true) {
             return true;
         }
 
-        return ($type === 'invoice' || $type === 'payment') && in_array($uuid, $invoiceIds, true);
+        return ($type === 'invoice' || $type === 'payment') && in_array($uuid, $invoiceIds, true) === true;
     }
 
     /**
@@ -1100,7 +1100,7 @@ class FleetbaseDirectory
         $wanted = array_fill_keys($invoiceIds, true);
         $ids    = [];
         foreach ($links as $link) {
-            if (!is_array($link) || (string) ($link['company_uuid'] ?? '') !== $companyUuid) {
+            if (is_array($link) === false || (string) ($link['company_uuid'] ?? '') !== $companyUuid) {
                 continue;
             }
             if ((string) ($link['local_type'] ?? '') !== 'payment-invoice') {
@@ -1108,7 +1108,7 @@ class FleetbaseDirectory
             }
             $invoiceUuid = trim((string) ($link['qbo_id'] ?? ''));
             $paymentId   = trim((string) ($link['local_uuid'] ?? ''));
-            if ($paymentId === '' || $invoiceUuid === '' || !isset($wanted[$invoiceUuid])) {
+            if ($paymentId === '' || $invoiceUuid === '' || isset($wanted[$invoiceUuid]) === false) {
                 continue;
             }
             $ids[] = $paymentId;
@@ -1175,7 +1175,7 @@ class FleetbaseDirectory
 
         $columns = [];
         foreach ($fields as $field) {
-            if (array_key_exists($field, $connection)) {
+            if (array_key_exists($field, $connection) === true) {
                 $columns[$field] = $connection[$field];
             }
         }
@@ -1194,14 +1194,14 @@ class FleetbaseDirectory
      */
     public static function reauthColumns(array $connection, array $columns, ?string $storedRefresh, ?string $storedAccess): array
     {
-        if (empty($connection['needs_reauth'])) {
+        if (empty($connection['needs_reauth']) === true) {
             return $columns;
         }
 
         unset($columns['access_token'], $columns['refresh_token'], $columns['token_expires_at']);
         $sameRefresh = (string) $storedRefresh === (string) ($connection['refresh_token'] ?? '');
         $sameAccess  = (string) $storedAccess === (string) ($connection['access_token'] ?? '');
-        if (!$sameRefresh || !$sameAccess) {
+        if ($sameRefresh === false || $sameAccess === false) {
             unset($columns['needs_reauth']);
         }
 
@@ -1221,10 +1221,10 @@ class FleetbaseDirectory
     {
         $columns = [];
         foreach ($fields as $field) {
-            if (!array_key_exists($field, $current)) {
+            if (array_key_exists($field, $current) === false) {
                 continue;
             }
-            if (is_array($loaded) && ($loaded[$field] ?? null) === $current[$field]) {
+            if (is_array($loaded) === true && ($loaded[$field] ?? null) === $current[$field]) {
                 continue;
             }
             $columns[$field] = $current[$field];
@@ -1265,7 +1265,7 @@ class FleetbaseDirectory
         }
 
         $existing = (new Connection())->newQuery()->where('company_uuid', $companyUuid)->first();
-        if (!$existing instanceof Connection) {
+        if ($existing instanceof Connection === false) {
             $realm = trim((string) ($connection['realm_id'] ?? ''));
             if ($realm !== '') {
                 $existing = $this->soleStoredConnection($realm);
@@ -1273,7 +1273,7 @@ class FleetbaseDirectory
         }
         $storedRealm = $existing instanceof Connection ? (string) ($existing->realm_id ?? '') : null;
         $columns     = self::connectionColumns($connection, $storedRealm, $fields);
-        if ($columns === null || !$existing instanceof Connection) {
+        if ($columns === null || $existing instanceof Connection === false) {
             return;
         }
 
@@ -1288,7 +1288,7 @@ class FleetbaseDirectory
             $existing->save();
         }
 
-        if (!empty($columns['needs_reauth'])) {
+        if (empty($columns['needs_reauth']) === false) {
             $this->notifyReauth($connection);
         }
     }
@@ -1302,7 +1302,7 @@ class FleetbaseDirectory
     {
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
         $cacheKey    = 'quickbooks.reauth-notified.' . $companyUuid;
-        if (Cache::has($cacheKey)) {
+        if (Cache::has($cacheKey) === true) {
             return;
         }
 
@@ -1322,12 +1322,12 @@ class FleetbaseDirectory
      */
     protected function reauthRecipients(string $companyUuid): array
     {
-        if (!class_exists(Company::class)) {
+        if (class_exists(Company::class) === false) {
             return [];
         }
 
         $company = Company::query()->where('uuid', $companyUuid)->first();
-        if (!$company instanceof Company) {
+        if ($company instanceof Company === false) {
             return [];
         }
 
@@ -1356,8 +1356,8 @@ class FleetbaseDirectory
             'failed_count'   => $batch['failed'] ?? 0,
             'linked_count'   => $batch['linked'] ?? 0,
             'skipped_count'  => $batch['skipped'] ?? 0,
-            'started_at'     => isset($batch['started_at']) ? date('Y-m-d H:i:s', (int) $batch['started_at']) : null,
-            'finished_at'    => isset($batch['finished_at']) ? date('Y-m-d H:i:s', (int) $batch['finished_at']) : null,
+            'started_at'     => isset($batch['started_at']) === true ? date('Y-m-d H:i:s', (int) $batch['started_at']) : null,
+            'finished_at'    => isset($batch['finished_at']) === true ? date('Y-m-d H:i:s', (int) $batch['finished_at']) : null,
         ];
     }
 
@@ -1369,7 +1369,7 @@ class FleetbaseDirectory
     private function readCustomers(string $companyUuid, ?array $onlyUuids = null): array
     {
         $class = 'Fleetbase\\FleetOps\\Models\\Customer';
-        if (!class_exists($class) || $onlyUuids === []) {
+        if (class_exists($class) === false || $onlyUuids === []) {
             return [];
         }
 
@@ -1394,7 +1394,7 @@ class FleetbaseDirectory
                 'notes'        => $customer->notes,
             ];
             $placeUuid = trim((string) ($customer->getAttributes()['place_uuid'] ?? ''));
-            if ($placeUuid !== '' && isset($places[$placeUuid])) {
+            if ($placeUuid !== '' && isset($places[$placeUuid]) === true) {
                 $address = $mapper->addressFromPlace($places[$placeUuid]);
                 if ($address !== null) {
                     $row['address'] = $address;
@@ -1417,7 +1417,7 @@ class FleetbaseDirectory
     private function readInvoices(string $companyUuid, ?array $onlyUuids, array $flaggedUuids): array
     {
         $class = 'Fleetbase\\Ledger\\Models\\Invoice';
-        if (!class_exists($class) || $onlyUuids === []) {
+        if (class_exists($class) === false || $onlyUuids === []) {
             return [];
         }
 
@@ -1477,7 +1477,7 @@ class FleetbaseDirectory
     private function readWallets(string $companyUuid, ?array $onlyUuids = null): array
     {
         $class = 'Fleetbase\\Ledger\\Models\\Wallet';
-        if (!class_exists($class) || $onlyUuids === []) {
+        if (class_exists($class) === false || $onlyUuids === []) {
             return [];
         }
 
@@ -1506,7 +1506,7 @@ class FleetbaseDirectory
 
     private function dateString(mixed $value): string
     {
-        if (is_object($value) && method_exists($value, 'toDateString')) {
+        if (is_object($value) === true && method_exists($value, 'toDateString') === true) {
             return (string) $value->toDateString();
         }
 
@@ -1519,18 +1519,18 @@ class FleetbaseDirectory
     private function persistCustomers(SyncLedger $ledger, array $skipped = []): void
     {
         $class = 'Fleetbase\\FleetOps\\Models\\Customer';
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return;
         }
 
         $fresh = [];
         $uuids = [];
         foreach ($ledger->customers as $customer) {
-            if (isset($skipped[(string) ($customer['company_uuid'] ?? '')])) {
+            if (isset($skipped[(string) ($customer['company_uuid'] ?? '')]) === true) {
                 continue;
             }
             $uuid = (string) ($customer['uuid'] ?? '');
-            if ($uuid === '' || empty($customer['company_uuid'])) {
+            if ($uuid === '' || empty($customer['company_uuid']) === true) {
                 continue;
             }
             $uuids[] = $uuid;
@@ -1538,19 +1538,19 @@ class FleetbaseDirectory
         $present = $this->existingCustomerUuids($class, $uuids);
 
         foreach ($ledger->customers as $customer) {
-            if (isset($skipped[(string) ($customer['company_uuid'] ?? '')])) {
+            if (isset($skipped[(string) ($customer['company_uuid'] ?? '')]) === true) {
                 continue;
             }
             $uuid = (string) ($customer['uuid'] ?? '');
-            if ($uuid === '' || empty($customer['company_uuid'])) {
+            if ($uuid === '' || empty($customer['company_uuid']) === true) {
                 continue;
             }
             // Only fields the engine changed are written, so an edit during the batch stays.
             $loaded  = $this->loaded['customers'][$uuid] ?? null;
-            $loaded  = is_array($loaded) ? $loaded : null;
+            $loaded  = is_array($loaded) === true ? $loaded : null;
             $values  = self::changedColumns($customer, $loaded, self::CUSTOMER_FIELDS);
             $address = $this->changedBillingAddress($customer, $loaded);
-            if (isset($present[$uuid])) {
+            if (isset($present[$uuid]) === true) {
                 if ($values === [] && $address === null) {
                     continue;
                 }
@@ -1565,7 +1565,7 @@ class FleetbaseDirectory
                 }
                 if ($values !== []) {
                     $model->fill($values);
-                    if ($model->isDirty()) {
+                    if ($model->isDirty() === true) {
                         $model->save();
                     }
                 }
@@ -1589,64 +1589,64 @@ class FleetbaseDirectory
     private function persistInvoices(SyncLedger $ledger, array $skipped = []): void
     {
         $class = 'Fleetbase\\Ledger\\Models\\Invoice';
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return;
         }
 
         foreach ($ledger->invoices as $invoice) {
-            if (isset($skipped[(string) ($invoice['company_uuid'] ?? '')])) {
+            if (isset($skipped[(string) ($invoice['company_uuid'] ?? '')]) === true) {
                 continue;
             }
-            if (empty($invoice['uuid'])) {
+            if (empty($invoice['uuid']) === true) {
                 continue;
             }
             $loaded = $this->loaded['invoices'][(string) $invoice['uuid']] ?? null;
-            if (!$this->invoiceNeedsWrite($invoice, is_array($loaded) ? $loaded : null)) {
+            if ($this->invoiceNeedsWrite($invoice, is_array($loaded) === true ? $loaded : null) === false) {
                 continue;
             }
             $companyUuid = (string) ($invoice['company_uuid'] ?? '');
             $uuid        = (string) $invoice['uuid'];
             $updates     = [];
-            foreach (self::changedColumns($invoice, is_array($loaded) ? $loaded : null, ['number', 'notes', 'date', 'due_date']) as $field => $value) {
+            foreach (self::changedColumns($invoice, is_array($loaded) === true ? $loaded : null, ['number', 'notes', 'date', 'due_date']) as $field => $value) {
                 if ($value === '' || $value === null) {
                     continue;
                 }
                 $updates[$field] = $value;
             }
-            if (!empty($invoice['replace_from_quickbooks'])) {
-                $paid = array_key_exists('amount_paid', $invoice)
+            if (empty($invoice['replace_from_quickbooks']) === false) {
+                $paid = array_key_exists('amount_paid', $invoice) === true
                     ? (int) $invoice['amount_paid']
-                    : (int) (is_array($loaded) ? ($loaded['amount_paid'] ?? 0) : 0);
+                    : (int) (is_array($loaded) === true ? ($loaded['amount_paid'] ?? 0) : 0);
                 $amounts = self::invoiceAmounts((int) ($invoice['total'] ?? 0), (int) ($invoice['tax'] ?? 0), $paid);
                 foreach (['tax' => 'tax', 'total_amount' => 'total_amount', 'subtotal' => 'subtotal', 'balance' => 'balance'] as $column => $key) {
                     $updates[$column] = $amounts[$key];
                 }
-                if (!empty($invoice['status'])) {
+                if (empty($invoice['status']) === false) {
                     $updates['status'] = (string) $invoice['status'];
                 }
-                if (!empty($invoice['items_from_quickbooks']) && is_array($invoice['items'] ?? null)) {
+                if (empty($invoice['items_from_quickbooks']) === false && is_array($invoice['items'] ?? null) === true) {
                     $this->replaceInvoiceLines($uuid, $invoice['items']);
                 }
             }
-            if (!empty($invoice['payment_from_quickbooks'])) {
-                if (array_key_exists('amount_paid', $invoice)) {
+            if (empty($invoice['payment_from_quickbooks']) === false) {
+                if (array_key_exists('amount_paid', $invoice) === true) {
                     $updates['amount_paid'] = (int) $invoice['amount_paid'];
                 }
-                if (!empty($invoice['paid_at'])) {
+                if (empty($invoice['paid_at']) === false) {
                     $updates['paid_at'] = $invoice['paid_at'];
                 }
-                if (!empty($invoice['status'])) {
+                if (empty($invoice['status']) === false) {
                     $updates['status'] = (string) $invoice['status'];
                 }
-                $total = array_key_exists('total_amount', $updates)
+                $total = array_key_exists('total_amount', $updates) === true
                     ? (int) $updates['total_amount']
-                    : (int) ($invoice['total'] ?? (is_array($loaded) ? ($loaded['total'] ?? 0) : 0));
-                $tax = array_key_exists('tax', $updates)
+                    : (int) ($invoice['total'] ?? (is_array($loaded) === true ? ($loaded['total'] ?? 0) : 0));
+                $tax = array_key_exists('tax', $updates) === true
                     ? (int) $updates['tax']
-                    : (int) ($invoice['tax'] ?? (is_array($loaded) ? ($loaded['tax'] ?? 0) : 0));
-                $amountPaid = array_key_exists('amount_paid', $updates)
+                    : (int) ($invoice['tax'] ?? (is_array($loaded) === true ? ($loaded['tax'] ?? 0) : 0));
+                $amountPaid = array_key_exists('amount_paid', $updates) === true
                     ? (int) $updates['amount_paid']
-                    : (int) (is_array($loaded) ? ($loaded['amount_paid'] ?? 0) : 0);
+                    : (int) (is_array($loaded) === true ? ($loaded['amount_paid'] ?? 0) : 0);
                 $updates['balance'] = self::invoiceAmounts($total, $tax, $amountPaid)['balance'];
             }
             if ($updates === []) {
@@ -1664,19 +1664,19 @@ class FleetbaseDirectory
     private function persistWallets(SyncLedger $ledger, array $skipped = []): void
     {
         $class = 'Fleetbase\\Ledger\\Models\\Wallet';
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return;
         }
 
         foreach ($ledger->wallets as $wallet) {
-            if (isset($skipped[(string) ($wallet['company_uuid'] ?? '')])) {
+            if (isset($skipped[(string) ($wallet['company_uuid'] ?? '')]) === true) {
                 continue;
             }
-            if (empty($wallet['uuid'])) {
+            if (empty($wallet['uuid']) === true) {
                 continue;
             }
             $loaded = $this->loaded['wallets'][(string) $wallet['uuid']] ?? null;
-            if (self::changedColumns($wallet, $loaded, ['name', 'description', 'currency', 'status', 'meta']) === [] && is_array($loaded)) {
+            if (self::changedColumns($wallet, $loaded, ['name', 'description', 'currency', 'status', 'meta']) === [] && is_array($loaded) === true) {
                 continue;
             }
             /** @var Model|null $model */
@@ -1686,12 +1686,12 @@ class FleetbaseDirectory
             }
             $loaded = $this->loaded['wallets'][(string) $wallet['uuid']] ?? null;
             foreach (self::changedColumns($wallet, $loaded, ['name', 'description', 'currency', 'status', 'meta']) as $field => $value) {
-                if (in_array($field, ['currency', 'status'], true) && ($value === '' || $value === null)) {
+                if (in_array($field, ['currency', 'status'], true) === true && ($value === '' || $value === null)) {
                     continue;
                 }
                 $model->{$field} = $value;
             }
-            if ($model->isDirty()) {
+            if ($model->isDirty() === true) {
                 $model->save();
             }
         }
@@ -1703,12 +1703,12 @@ class FleetbaseDirectory
      */
     private function invoiceNeedsWrite(array $invoice, ?array $loaded): bool
     {
-        if (!empty($invoice['replace_from_quickbooks']) || !empty($invoice['payment_from_quickbooks'])) {
+        if (empty($invoice['replace_from_quickbooks']) === false || empty($invoice['payment_from_quickbooks']) === false) {
             return true;
         }
 
         return self::changedColumns($invoice, $loaded, ['number', 'notes', 'date', 'due_date', 'status', 'amount_paid', 'paid_at', 'tax', 'total']) !== []
-            || !is_array($loaded);
+            || is_array($loaded) === false;
     }
 
     /**
@@ -1737,7 +1737,7 @@ class FleetbaseDirectory
     {
         $ids          = [];
         $invoiceClass = 'Fleetbase\\Ledger\\Models\\Invoice';
-        if (class_exists($invoiceClass)) {
+        if (class_exists($invoiceClass) === true) {
             $query = $invoiceClass::query()->where('company_uuid', $companyUuid)->where('status', '!=', 'draft')->orderBy('uuid');
             if ($afterUuid !== '') {
                 $query->where('uuid', '>', $afterUuid);
@@ -1770,12 +1770,12 @@ class FleetbaseDirectory
      */
     private function catalogIdPage(string $class, string $companyUuid, bool $customersOnly, string $afterUuid): array
     {
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return [];
         }
 
         $query = $class::query()->where('company_uuid', $companyUuid);
-        if ($customersOnly) {
+        if ($customersOnly === true) {
             $query->where('type', 'customer');
         } elseif ($class === 'Fleetbase\\Ledger\\Models\\Invoice') {
             $query->where('status', '!=', 'draft');
@@ -1876,14 +1876,14 @@ class FleetbaseDirectory
                 $started = true;
             }
             if ($walletIds !== []) {
-                $method = $started ? 'orWhere' : 'where';
+                $method = $started === true ? 'orWhere' : 'where';
                 $scope->{$method}(function ($inner) use ($walletIds): void {
                     $inner->where('local_type', 'wallet')->whereIn('local_uuid', $walletIds);
                 });
                 $started = true;
             }
             if ($invoiceIds !== []) {
-                $method = $started ? 'orWhere' : 'where';
+                $method = $started === true ? 'orWhere' : 'where';
                 $scope->{$method}(function ($inner) use ($invoiceIds, $companyUuid): void {
                     $inner->where(function ($typed) use ($invoiceIds): void {
                         $typed->whereIn('local_type', ['invoice', 'payment'])->whereIn('local_uuid', $invoiceIds);
@@ -1933,7 +1933,7 @@ class FleetbaseDirectory
     {
         $attributes = $model->getAttributes();
         $current    = $attributes[$field] ?? null;
-        if ($current === $minor || (is_string($current) && $current === (string) $minor)) {
+        if ($current === $minor || (is_string($current) === true && $current === (string) $minor)) {
             return;
         }
 
@@ -1944,13 +1944,13 @@ class FleetbaseDirectory
     private static function minorAttribute(Model $model, string $field): int
     {
         $value = $model->getAttributes()[$field] ?? 0;
-        if ($value === null || $value === '' || is_bool($value)) {
+        if ($value === null || $value === '' || is_bool($value) === true) {
             return 0;
         }
-        if (is_int($value)) {
+        if (is_int($value) === true) {
             return $value;
         }
-        if (is_string($value) && preg_match('/^-?\d+$/', $value) === 1) {
+        if (is_string($value) === true && preg_match('/^-?\d+$/', $value) === 1) {
             return (int) $value;
         }
 
@@ -1974,7 +1974,7 @@ class FleetbaseDirectory
     private function stampOwnedCompanies(SyncLedger $ledger): void
     {
         foreach ($ledger->links as $index => $link) {
-            if (!is_array($link)) {
+            if (is_array($link) === false) {
                 continue;
             }
             $link['company_uuid']   = $this->entityCompanyFor(
@@ -1986,7 +1986,7 @@ class FleetbaseDirectory
             $ledger->links[$index] = $link;
         }
         foreach ($ledger->pending as $index => $row) {
-            if (!is_array($row)) {
+            if (is_array($row) === false) {
                 continue;
             }
             $row['company_uuid']      = $this->entityCompanyFor(
@@ -2009,7 +2009,7 @@ class FleetbaseDirectory
         } elseif ($localType === 'invoice' || $localType === 'payment') {
             $row = $ledger->invoices[$localUuid] ?? null;
         }
-        if (!is_array($row)) {
+        if (is_array($row) === false) {
             return $fallback;
         }
         $companyUuid = trim((string) ($row['company_uuid'] ?? ''));
@@ -2030,11 +2030,11 @@ class FleetbaseDirectory
     private function loadedLink(string $key, array $link, array $loadedByUuid): ?array
     {
         $loaded = $this->loaded['links'][$key] ?? null;
-        if (is_array($loaded)) {
+        if (is_array($loaded) === true) {
             return $loaded;
         }
         $uuid = (string) ($link['uuid'] ?? '');
-        if ($uuid === '' || !isset($loadedByUuid[$uuid]) || !is_array($loadedByUuid[$uuid])) {
+        if ($uuid === '' || isset($loadedByUuid[$uuid]) === false || is_array($loadedByUuid[$uuid]) === false) {
             return null;
         }
 
@@ -2096,7 +2096,7 @@ class FleetbaseDirectory
     {
         $groups = [];
         foreach ($ledger->links as $link) {
-            if (!is_array($link) || isset($skipped[(string) ($link['company_uuid'] ?? '')])) {
+            if (is_array($link) === false || isset($skipped[(string) ($link['company_uuid'] ?? '')]) === true) {
                 continue;
             }
             if ((string) ($link['local_type'] ?? '') !== 'payment') {
@@ -2149,14 +2149,14 @@ class FleetbaseDirectory
     {
         $invoiceByPayment = [];
         foreach ($this->loaded['links'] as $loaded) {
-            if (!is_array($loaded) || (string) ($loaded['local_type'] ?? '') !== 'payment') {
+            if (is_array($loaded) === false || (string) ($loaded['local_type'] ?? '') !== 'payment') {
                 continue;
             }
             $local   = (string) ($loaded['local_uuid'] ?? '');
             $qboId   = (string) ($loaded['qbo_id'] ?? '');
             $company = (string) ($loaded['company_uuid'] ?? '');
             $realm   = (string) ($loaded['realm_id'] ?? '');
-            if ($local === '' || $qboId === '' || $local === $qboId || $company === '' || $realm === '' || isset($skipped[$company])) {
+            if ($local === '' || $qboId === '' || $local === $qboId || $company === '' || $realm === '' || isset($skipped[$company]) === true) {
                 continue;
             }
             $invoiceByPayment[$company . '|' . $realm . '|' . $qboId] = $local;
@@ -2164,14 +2164,14 @@ class FleetbaseDirectory
 
         $rows = [];
         foreach ($ledger->links as $link) {
-            if (!is_array($link) || (string) ($link['local_type'] ?? '') !== 'payment') {
+            if (is_array($link) === false || (string) ($link['local_type'] ?? '') !== 'payment') {
                 continue;
             }
             $local   = (string) ($link['local_uuid'] ?? '');
             $qboId   = (string) ($link['qbo_id'] ?? '');
             $company = (string) ($link['company_uuid'] ?? '');
             $realm   = (string) ($link['realm_id'] ?? '');
-            if ($local === '' || $qboId === '' || $local !== $qboId || $company === '' || $realm === '' || isset($skipped[$company])) {
+            if ($local === '' || $qboId === '' || $local !== $qboId || $company === '' || $realm === '' || isset($skipped[$company]) === true) {
                 continue;
             }
             $invoice = trim((string) ($link['invoice_uuid'] ?? ''));
@@ -2196,7 +2196,7 @@ class FleetbaseDirectory
         $existing = [];
         foreach (array_chunk(array_column($rows, 'local_uuid'), 200) as $chunk) {
             foreach (Link::query()->where('local_type', 'payment-invoice')->whereIn('local_uuid', $chunk)->get(['uuid', 'company_uuid', 'realm_id', 'local_uuid', 'qbo_id']) as $link) {
-                if (!is_object($link)) {
+                if (is_object($link) === false) {
                     continue;
                 }
                 $existing[(string) $link->company_uuid . '|' . (string) $link->realm_id . '|' . (string) $link->local_uuid] = [
@@ -2209,7 +2209,7 @@ class FleetbaseDirectory
         $updates = [];
         foreach ($rows as $key => $row) {
             $stored = $existing[$key] ?? null;
-            if (is_array($stored)) {
+            if (is_array($stored) === true) {
                 if ($stored['qbo_id'] !== $row['qbo_id']) {
                     $updates[] = ['uuid' => $stored['uuid'], 'columns' => ['qbo_id' => $row['qbo_id']]];
                 }
@@ -2257,7 +2257,7 @@ class FleetbaseDirectory
         SyncSuppressor::pause();
         try {
             $uuids = $this->linkedLocalUuids($companyUuid, $realmId, $localType, $quickbooksId, $localUuid);
-            if (is_string($localUuid) && $localUuid !== '' && !in_array($localUuid, $uuids, true)) {
+            if (is_string($localUuid) === true && $localUuid !== '' && in_array($localUuid, $uuids, true) === false) {
                 $uuids[] = $localUuid;
             }
             foreach ($uuids as $uuid) {
@@ -2271,7 +2271,7 @@ class FleetbaseDirectory
                 $this->dropPaymentInvoiceMap($companyUuid, $realmId, $quickbooksId);
             }
         } finally {
-            if (!$wasPaused) {
+            if ($wasPaused === false) {
                 SyncSuppressor::resume();
             }
         }
@@ -2291,7 +2291,7 @@ class FleetbaseDirectory
         }
         if ($this->memory !== null) {
             foreach ($deletions as $deletion) {
-                if (!is_array($deletion)) {
+                if (is_array($deletion) === false) {
                     continue;
                 }
                 $this->releaseRemoteDelete(
@@ -2299,8 +2299,8 @@ class FleetbaseDirectory
                     (string) ($deletion['realm_id'] ?? ''),
                     (string) ($deletion['local_type'] ?? ''),
                     (string) ($deletion['qbo_id'] ?? ''),
-                    isset($deletion['local_uuid']) ? (string) $deletion['local_uuid'] : null,
-                    is_array($deletion['invoice_uuids'] ?? null) ? $deletion['invoice_uuids'] : []
+                    isset($deletion['local_uuid']) === true ? (string) $deletion['local_uuid'] : null,
+                    is_array($deletion['invoice_uuids'] ?? null) === true ? $deletion['invoice_uuids'] : []
                 );
             }
 
@@ -2312,7 +2312,7 @@ class FleetbaseDirectory
         try {
             $this->retireDeleteBatch($companyUuid, $deletions);
         } finally {
-            if (!$wasPaused) {
+            if ($wasPaused === false) {
                 SyncSuppressor::resume();
             }
         }
@@ -2338,8 +2338,8 @@ class FleetbaseDirectory
                     $inner->where('qbo_id', $quickbooksId);
                     $started = true;
                 }
-                if (is_string($localUuid) && $localUuid !== '') {
-                    $method = $started ? 'orWhere' : 'where';
+                if (is_string($localUuid) === true && $localUuid !== '') {
+                    $method = $started === true ? 'orWhere' : 'where';
                     $inner->{$method}('local_uuid', $localUuid);
                 }
             });
@@ -2353,7 +2353,7 @@ class FleetbaseDirectory
 
             return array_values(array_unique($ids));
         } catch (\Illuminate\Database\QueryException $exception) {
-            if ($this->isMissingTable($exception)) {
+            if ($this->isMissingTable($exception) === true) {
                 return [];
             }
 
@@ -2454,7 +2454,7 @@ class FleetbaseDirectory
 
             return array_values(array_unique($ids));
         } catch (\Illuminate\Database\QueryException $exception) {
-            if ($this->isMissingTable($exception)) {
+            if ($this->isMissingTable($exception) === true) {
                 return [];
             }
 
@@ -2468,7 +2468,7 @@ class FleetbaseDirectory
         if ($status === null) {
             return;
         }
-        if (in_array(strtolower($status), ['paid', 'partial'], true)) {
+        if (in_array(strtolower($status), ['paid', 'partial'], true) === true) {
             $this->setInvoiceStatus($companyUuid, $invoiceUuid, 'sent');
         }
         $this->finishPending($companyUuid, 'invoice', $invoiceUuid);
@@ -2490,7 +2490,7 @@ class FleetbaseDirectory
             }
             $query->delete();
         } catch (\Illuminate\Database\QueryException $exception) {
-            if ($this->isMissingTable($exception)) {
+            if ($this->isMissingTable($exception) === true) {
                 return;
             }
 
@@ -2513,7 +2513,7 @@ class FleetbaseDirectory
         $namedPayments = [];
 
         foreach ($deletions as $deletion) {
-            if (!is_array($deletion)) {
+            if (is_array($deletion) === false) {
                 continue;
             }
             $type  = (string) ($deletion['local_type'] ?? '');
@@ -2531,7 +2531,7 @@ class FleetbaseDirectory
                 $wallets[] = $local;
             }
             if ($type === 'payment') {
-                if (!empty($deletion['invoices_from_payment']) && $qbo !== '') {
+                if (empty($deletion['invoices_from_payment']) === false && $qbo !== '') {
                     // The payment was read. Its lines name every invoice to unmark.
                     // A stored fallback for a different invoice must not be applied.
                     $namedPayments[$realm . '|' . $qbo] = true;
@@ -2539,7 +2539,7 @@ class FleetbaseDirectory
                 if ($local !== '' && $local !== $qbo) {
                     $sentInvoices[] = $local;
                 } else {
-                    $named = is_array($deletion['invoice_uuids'] ?? null) ? $deletion['invoice_uuids'] : [];
+                    $named = is_array($deletion['invoice_uuids'] ?? null) === true ? $deletion['invoice_uuids'] : [];
                     foreach ($named as $invoiceUuid) {
                         $invoiceUuid = (string) $invoiceUuid;
                         if ($invoiceUuid !== '' && $invoiceUuid !== $qbo) {
@@ -2560,12 +2560,12 @@ class FleetbaseDirectory
                 if ($uuid !== '') {
                     $linkUuids[] = $uuid;
                 }
-                if (!isset($namedPayments[$realm . '|' . $local]) && $qbo !== '' && $qbo !== $local) {
+                if (isset($namedPayments[$realm . '|' . $local]) === false && $qbo !== '' && $qbo !== $local) {
                     $sentInvoices[] = $qbo;
                 }
                 continue;
             }
-            if (!$this->deletionMatchesLink($deletions, $type, $realm, $qbo, $local)) {
+            if ($this->deletionMatchesLink($deletions, $type, $realm, $qbo, $local) === false) {
                 continue;
             }
             if ($uuid !== '') {
@@ -2589,7 +2589,7 @@ class FleetbaseDirectory
         $voidInvoices = array_values(array_unique($voidInvoices));
         $sentInvoices = array_values(array_unique(array_filter(
             $sentInvoices,
-            static fn (string $uuid): bool => $uuid !== '' && !in_array($uuid, $voidInvoices, true)
+            static fn (string $uuid): bool => $uuid !== '' && in_array($uuid, $voidInvoices, true) === false
         )));
         $customers = array_values(array_unique($customers));
         $wallets   = array_values(array_unique($wallets));
@@ -2612,7 +2612,7 @@ class FleetbaseDirectory
     private function deletionMatchesLink(array $deletions, string $type, string $realm, string $qbo, string $local): bool
     {
         foreach ($deletions as $deletion) {
-            if (!is_array($deletion) || (string) ($deletion['local_type'] ?? '') !== $type) {
+            if (is_array($deletion) === false || (string) ($deletion['local_type'] ?? '') !== $type) {
                 continue;
             }
             $deletionRealm = (string) ($deletion['realm_id'] ?? '');
@@ -2642,7 +2642,7 @@ class FleetbaseDirectory
         $paymentIds = [];
         $clauses    = [];
         foreach ($deletions as $deletion) {
-            if (!is_array($deletion)) {
+            if (is_array($deletion) === false) {
                 continue;
             }
             $type  = (string) ($deletion['local_type'] ?? '');
@@ -2668,7 +2668,7 @@ class FleetbaseDirectory
                 ->where(function ($scope) use ($clauses, $paymentIds): void {
                     $started = false;
                     foreach ($clauses as $clause) {
-                        $method = $started ? 'orWhere' : 'where';
+                        $method = $started === true ? 'orWhere' : 'where';
                         $scope->{$method}(function ($inner) use ($clause): void {
                             $inner->where('local_type', $clause['type']);
                             if ($clause['realm'] !== '') {
@@ -2681,7 +2681,7 @@ class FleetbaseDirectory
                                     $open = true;
                                 }
                                 if ($clause['local'] !== '') {
-                                    $way = $open ? 'orWhere' : 'where';
+                                    $way = $open === true ? 'orWhere' : 'where';
                                     $match->{$way}('local_uuid', $clause['local']);
                                 }
                             });
@@ -2689,7 +2689,7 @@ class FleetbaseDirectory
                         $started = true;
                     }
                     if ($paymentIds !== []) {
-                        $method = $started ? 'orWhere' : 'where';
+                        $method = $started === true ? 'orWhere' : 'where';
                         $scope->{$method}(function ($inner) use ($paymentIds): void {
                             $inner->where('local_type', 'payment-invoice')->whereIn('local_uuid', $paymentIds);
                         });
@@ -2697,7 +2697,7 @@ class FleetbaseDirectory
                 })
                 ->get(['uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_id']);
         } catch (\Illuminate\Database\QueryException $exception) {
-            if ($this->isMissingTable($exception)) {
+            if ($this->isMissingTable($exception) === true) {
                 return [];
             }
 
@@ -2706,7 +2706,7 @@ class FleetbaseDirectory
 
         $rows = [];
         foreach ($links as $link) {
-            if (is_object($link)) {
+            if (is_object($link) === true) {
                 $rows[] = [
                     'uuid'       => (string) $link->uuid,
                     'realm_id'   => (string) $link->realm_id,
@@ -2730,7 +2730,7 @@ class FleetbaseDirectory
             return;
         }
         $class = 'Fleetbase\\Ledger\\Models\\Invoice';
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return;
         }
 
@@ -2738,7 +2738,7 @@ class FleetbaseDirectory
             $model      = new $class();
             $connection = $model->getConnection();
         } catch (\Throwable $exception) {
-            if ($this->isUnavailableStorage($exception)) {
+            if ($this->isUnavailableStorage($exception) === true) {
                 return;
             }
 
@@ -2787,7 +2787,7 @@ class FleetbaseDirectory
         try {
             $connection->update($sql, $bindings);
         } catch (\Throwable $exception) {
-            if ($this->isUnavailableStorage($exception)) {
+            if ($this->isUnavailableStorage($exception) === true) {
                 return;
             }
 
@@ -2802,7 +2802,7 @@ class FleetbaseDirectory
      */
     private function retireMany(string $class, string $companyUuid, array $uuids, array $extra): void
     {
-        if ($uuids === [] || $companyUuid === '' || !class_exists($class)) {
+        if ($uuids === [] || $companyUuid === '' || class_exists($class) === false) {
             return;
         }
 
@@ -2812,7 +2812,7 @@ class FleetbaseDirectory
                 'updated_at' => Carbon::now(),
             ]));
         } catch (\Throwable $exception) {
-            if ($this->isUnavailableStorage($exception)) {
+            if ($this->isUnavailableStorage($exception) === true) {
                 return;
             }
 
@@ -2842,7 +2842,7 @@ class FleetbaseDirectory
                     if ($invoiceUuids === []) {
                         continue;
                     }
-                    $method = $started ? 'orWhere' : 'where';
+                    $method = $started === true ? 'orWhere' : 'where';
                     $query->{$method}(function ($inner) use ($realm, $invoiceUuids): void {
                         $inner->where('local_type', 'payment')->whereIn('local_uuid', $invoiceUuids);
                         if ($realm !== '') {
@@ -2853,7 +2853,7 @@ class FleetbaseDirectory
                 }
             })->delete();
         } catch (\Illuminate\Database\QueryException $exception) {
-            if ($this->isMissingTable($exception)) {
+            if ($this->isMissingTable($exception) === true) {
                 return;
             }
 
@@ -2895,7 +2895,7 @@ class FleetbaseDirectory
                     'updated_at' => Carbon::now(),
                 ]);
         } catch (\Illuminate\Database\QueryException $exception) {
-            if ($this->isMissingTable($exception)) {
+            if ($this->isMissingTable($exception) === true) {
                 return;
             }
 
@@ -2906,16 +2906,16 @@ class FleetbaseDirectory
     private function setInvoiceStatus(string $companyUuid, string $uuid, string $status): void
     {
         $class = 'Fleetbase\\Ledger\\Models\\Invoice';
-        if (!class_exists($class) || $companyUuid === '' || $uuid === '') {
+        if (class_exists($class) === false || $companyUuid === '' || $uuid === '') {
             return;
         }
 
         try {
             $current = $this->invoiceTable($class, $companyUuid, $uuid)->value('status');
-            if (!is_string($current)) {
+            if (is_string($current) === false) {
                 return;
             }
-            if ($status === 'void' && in_array(strtolower($current), ['void', 'voided', 'cancelled', 'canceled'], true)) {
+            if ($status === 'void' && in_array(strtolower($current), ['void', 'voided', 'cancelled', 'canceled'], true) === true) {
                 return;
             }
             if ($current === $status) {
@@ -2927,7 +2927,7 @@ class FleetbaseDirectory
                 'updated_at' => Carbon::now()->toDateTimeString(),
             ]);
         } catch (\Throwable $exception) {
-            if ($this->isUnavailableStorage($exception)) {
+            if ($this->isUnavailableStorage($exception) === true) {
                 return;
             }
 
@@ -2938,21 +2938,21 @@ class FleetbaseDirectory
     private function invoiceStatus(string $companyUuid, string $uuid): ?string
     {
         $class = 'Fleetbase\\Ledger\\Models\\Invoice';
-        if (!class_exists($class) || $companyUuid === '' || $uuid === '') {
+        if (class_exists($class) === false || $companyUuid === '' || $uuid === '') {
             return null;
         }
 
         try {
             $status = $this->invoiceTable($class, $companyUuid, $uuid)->value('status');
         } catch (\Throwable $exception) {
-            if ($this->isUnavailableStorage($exception)) {
+            if ($this->isUnavailableStorage($exception) === true) {
                 return null;
             }
 
             throw $exception;
         }
 
-        return is_string($status) ? $status : null;
+        return is_string($status) === true ? $status : null;
     }
 
     /**
@@ -2974,7 +2974,7 @@ class FleetbaseDirectory
      */
     private function retireLocal(string $class, string $companyUuid, string $uuid, array $extra): void
     {
-        if (!class_exists($class) || $companyUuid === '' || $uuid === '') {
+        if (class_exists($class) === false || $companyUuid === '' || $uuid === '') {
             return;
         }
 
@@ -2984,7 +2984,7 @@ class FleetbaseDirectory
                 'updated_at' => Carbon::now(),
             ]));
         } catch (\Throwable $exception) {
-            if ($this->isUnavailableStorage($exception)) {
+            if ($this->isUnavailableStorage($exception) === true) {
                 return;
             }
 
@@ -3008,7 +3008,7 @@ class FleetbaseDirectory
             }
             $query->delete();
         } catch (\Illuminate\Database\QueryException $exception) {
-            if ($this->isMissingTable($exception)) {
+            if ($this->isMissingTable($exception) === true) {
                 return;
             }
 
@@ -3032,7 +3032,7 @@ class FleetbaseDirectory
             }
             $query->delete();
         } catch (\Illuminate\Database\QueryException $exception) {
-            if ($this->isMissingTable($exception)) {
+            if ($this->isMissingTable($exception) === true) {
                 return;
             }
 
@@ -3057,7 +3057,7 @@ class FleetbaseDirectory
                     'updated_at' => Carbon::now(),
                 ]);
         } catch (\Illuminate\Database\QueryException $exception) {
-            if ($this->isMissingTable($exception)) {
+            if ($this->isMissingTable($exception) === true) {
                 return;
             }
 
@@ -3074,10 +3074,10 @@ class FleetbaseDirectory
     {
         $message = strtolower($exception->getMessage());
 
-        return str_contains($message, 'no such table')
-            || str_contains($message, "doesn't exist")
-            || str_contains($message, 'base table or view not found')
-            || str_contains($message, 'not configured');
+        return str_contains($message, 'no such table') === true
+            || str_contains($message, "doesn't exist") === true
+            || str_contains($message, 'base table or view not found') === true
+            || str_contains($message, 'not configured') === true;
     }
 
     /**
@@ -3092,14 +3092,14 @@ class FleetbaseDirectory
         $mappedInvoices = [];
         if ($localType === 'payment' && $quickbooksId !== '') {
             foreach ($this->memory->links as $link) {
-                if (!is_array($link)) {
+                if (is_array($link) === false) {
                     continue;
                 }
                 $mapped = (string) ($link['local_type'] ?? '') === 'payment-invoice'
                     && (string) ($link['company_uuid'] ?? '') === $companyUuid
                     && ($realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId)
                     && (string) ($link['local_uuid'] ?? '') === $quickbooksId;
-                if ($mapped) {
+                if ($mapped === true) {
                     $invoiceUuid = (string) ($link['qbo_id'] ?? '');
                     if ($invoiceUuid !== '' && $invoiceUuid !== $quickbooksId) {
                         $mappedInvoices[] = $invoiceUuid;
@@ -3111,42 +3111,42 @@ class FleetbaseDirectory
         $uuids = [];
         $kept  = [];
         foreach ($this->memory->links as $link) {
-            if (!is_array($link)) {
+            if (is_array($link) === false) {
                 continue;
             }
             $sameCompany = (string) ($link['company_uuid'] ?? '') === $companyUuid;
             $sameRealm   = $realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId;
             $sameType    = (string) ($link['local_type'] ?? '') === $localType;
             $sameRemote  = $quickbooksId !== '' && (string) ($link['qbo_id'] ?? '') === $quickbooksId;
-            $sameLocal   = is_string($localUuid) && $localUuid !== '' && (string) ($link['local_uuid'] ?? '') === $localUuid;
+            $sameLocal   = is_string($localUuid) === true && $localUuid !== '' && (string) ($link['local_uuid'] ?? '') === $localUuid;
             $paymentMap  = $localType === 'payment'
                 && (string) ($link['local_type'] ?? '') === 'payment-invoice'
-                && $sameCompany
-                && $sameRealm
+                && $sameCompany === true
+                && $sameRealm === true
                 && (string) ($link['local_uuid'] ?? '') === $quickbooksId;
-            if ($paymentMap || ($sameCompany && $sameRealm && $sameType && ($sameRemote || $sameLocal))) {
+            if ($paymentMap === true || ($sameCompany === true && $sameRealm === true && $sameType === true && ($sameRemote === true || $sameLocal === true))) {
                 $id = (string) ($link['local_uuid'] ?? '');
-                if ($id !== '' && !$paymentMap) {
+                if ($id !== '' && $paymentMap === false) {
                     $uuids[] = $id;
                 }
                 continue;
             }
             $kept[] = $link;
         }
-        if (is_string($localUuid) && $localUuid !== '') {
+        if (is_string($localUuid) === true && $localUuid !== '') {
             $uuids[] = $localUuid;
         }
         $this->memory->links = $kept;
         foreach (array_values(array_unique($uuids)) as $uuid) {
             $pendingUuids = [$uuid];
             if ($localType === 'invoice') {
-                if (isset($this->memory->invoices[$uuid]) && is_array($this->memory->invoices[$uuid])) {
+                if (isset($this->memory->invoices[$uuid]) === true && is_array($this->memory->invoices[$uuid]) === true) {
                     $this->memory->invoices[$uuid]['status'] = 'void';
                 }
                 $this->memory->links = array_values(array_filter(
                     $this->memory->links,
                     static function ($link) use ($companyUuid, $realmId, $uuid): bool {
-                        if (!is_array($link)) {
+                        if (is_array($link) === false) {
                             return false;
                         }
                         $payment = (string) ($link['local_type'] ?? '') === 'payment'
@@ -3154,17 +3154,17 @@ class FleetbaseDirectory
                             && ($realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId)
                             && (string) ($link['local_uuid'] ?? '') === $uuid;
 
-                        return !$payment;
+                        return $payment === false;
                     }
                 ));
             } elseif ($localType === 'payment') {
                 $pendingUuids = $this->paymentInvoiceTargets($companyUuid, $realmId, $quickbooksId, $uuid, array_merge($relatedInvoiceUuids, $mappedInvoices));
                 foreach ($pendingUuids as $invoiceUuid) {
-                    if (!isset($this->memory->invoices[$invoiceUuid]) || !is_array($this->memory->invoices[$invoiceUuid])) {
+                    if (isset($this->memory->invoices[$invoiceUuid]) === false || is_array($this->memory->invoices[$invoiceUuid]) === false) {
                         continue;
                     }
                     $status = strtolower((string) ($this->memory->invoices[$invoiceUuid]['status'] ?? ''));
-                    if (in_array($status, ['paid', 'partial'], true)) {
+                    if (in_array($status, ['paid', 'partial'], true) === true) {
                         $this->memory->invoices[$invoiceUuid]['status'] = 'sent';
                     }
                 }
@@ -3179,7 +3179,7 @@ class FleetbaseDirectory
                     continue;
                 }
                 foreach ($this->memory->pending as $index => $row) {
-                    if (!is_array($row)) {
+                    if (is_array($row) === false) {
                         continue;
                     }
                     if ((string) ($row['company_uuid'] ?? '') === $companyUuid && (string) ($row['local_type'] ?? '') === $pendingType && (string) ($row['local_uuid'] ?? '') === $pendingUuid && (string) ($row['status'] ?? '') === 'pending') {
@@ -3231,7 +3231,7 @@ class FleetbaseDirectory
         $updates  = [];
         $releases = [];
         foreach ($rows as $row) {
-            if (!isset($existing[$row['uuid']])) {
+            if (isset($existing[$row['uuid']]) === false) {
                 $inserts[] = $row;
                 continue;
             }
@@ -3291,7 +3291,7 @@ class FleetbaseDirectory
             try {
                 PendingSync::query()->insertOrIgnore($chunk);
             } catch (\Illuminate\Database\QueryException $exception) {
-                if (!self::isDuplicatePendingWrite($exception)) {
+                if (self::isDuplicatePendingWrite($exception) === false) {
                     throw $exception;
                 }
                 foreach ($chunk as $row) {
@@ -3326,7 +3326,7 @@ class FleetbaseDirectory
             $names = [];
             foreach ($chunk as $row) {
                 foreach ($row['columns'] as $column => $value) {
-                    if (in_array($column, $allowed, true)) {
+                    if (in_array($column, $allowed, true) === true) {
                         $names[$column] = true;
                     }
                 }
@@ -3340,7 +3340,7 @@ class FleetbaseDirectory
             foreach (array_keys($names) as $column) {
                 $cases = [];
                 foreach ($chunk as $row) {
-                    if (!array_key_exists($column, $row['columns']) || !in_array($column, $allowed, true)) {
+                    if (array_key_exists($column, $row['columns']) === false || in_array($column, $allowed, true) === false) {
                         continue;
                     }
                     $cases[]    = 'WHEN ? THEN ?';
@@ -3383,11 +3383,11 @@ class FleetbaseDirectory
         $now  = Carbon::now()->toDateTimeString();
         $rows = [];
         foreach ($attempts as $attempt) {
-            if (!is_array($attempt) || !empty($attempt['uuid'])) {
+            if (is_array($attempt) === false || empty($attempt['uuid']) === false) {
                 continue;
             }
             $diff = $attempt['diff'] ?? null;
-            if (is_array($diff)) {
+            if (is_array($diff) === true) {
                 $encoded = json_encode($diff);
                 $diff    = $encoded === false ? null : $encoded;
             }
@@ -3419,7 +3419,7 @@ class FleetbaseDirectory
     private function replaceInvoiceLines(string $invoiceUuid, array $items): void
     {
         $class = 'Fleetbase\\Ledger\\Models\\InvoiceItem';
-        if (!class_exists($class) || $invoiceUuid === '') {
+        if (class_exists($class) === false || $invoiceUuid === '') {
             return;
         }
 
@@ -3434,7 +3434,7 @@ class FleetbaseDirectory
             ]);
         $rows = [];
         foreach ($items as $item) {
-            if (!is_array($item)) {
+            if (is_array($item) === false) {
                 continue;
             }
             $rows[] = [
@@ -3492,7 +3492,7 @@ class FleetbaseDirectory
         $now      = Carbon::now()->toDateTimeString();
         $rows     = [];
         $store    = $this->placeTable();
-        $canPlace = $store !== null && $this->customerColumnExists($class, 'place_uuid');
+        $canPlace = $store !== null && $this->customerColumnExists($class, 'place_uuid') === true;
         foreach ($customers as $customer) {
             $uuid = (string) ($customer['uuid'] ?? '');
             if ($uuid === '') {
@@ -3501,7 +3501,7 @@ class FleetbaseDirectory
             $name = (string) ($customer['name'] ?? '');
             $slug = $name === '' ? null : Str::slug($name);
             $meta = $customer['meta'] ?? null;
-            if (is_array($meta)) {
+            if (is_array($meta) === true) {
                 $encoded = json_encode($meta);
                 $meta    = $encoded === false ? null : $encoded;
             }
@@ -3522,7 +3522,7 @@ class FleetbaseDirectory
                 'updated_at'   => $now,
             ];
             $address = $customer['address'] ?? null;
-            if ($canPlace && $store !== null && is_array($address) && $this->billingAddressHasContent($address)) {
+            if ($canPlace === true && $store !== null && is_array($address) === true && $this->billingAddressHasContent($address) === true) {
                 $placeUuid = $this->insertCustomerPlace($store, (string) $customer['company_uuid'], $uuid, $address);
                 if ($placeUuid !== null) {
                     $row['place_uuid'] = $placeUuid;
@@ -3532,14 +3532,14 @@ class FleetbaseDirectory
         }
         $withPlace = false;
         foreach ($rows as $row) {
-            if (array_key_exists('place_uuid', $row)) {
+            if (array_key_exists('place_uuid', $row) === true) {
                 $withPlace = true;
                 break;
             }
         }
-        if ($withPlace) {
+        if ($withPlace === true) {
             foreach ($rows as $index => $row) {
-                if (!array_key_exists('place_uuid', $row)) {
+                if (array_key_exists('place_uuid', $row) === false) {
                     $rows[$index]['place_uuid'] = null;
                 }
             }
@@ -3601,7 +3601,7 @@ class FleetbaseDirectory
      */
     private function changedBillingAddress(array $customer, ?array $loaded): ?array
     {
-        if (!isset($customer['address']) || !is_array($customer['address'])) {
+        if (isset($customer['address']) === false || is_array($customer['address']) === false) {
             return null;
         }
 
@@ -3609,7 +3609,7 @@ class FleetbaseDirectory
         if ($previous === $customer['address']) {
             return null;
         }
-        if (!$this->billingAddressHasContent($customer['address'])) {
+        if ($this->billingAddressHasContent($customer['address']) === false) {
             return null;
         }
 
@@ -3651,7 +3651,7 @@ class FleetbaseDirectory
         }
 
         $created = $this->insertCustomerPlace($store, (string) $customer->company_uuid, (string) $customer->uuid, $address);
-        if ($created === null || !$this->customerColumnExists($customer::class, 'place_uuid')) {
+        if ($created === null || $this->customerColumnExists($customer::class, 'place_uuid') === false) {
             return;
         }
 
@@ -3677,7 +3677,7 @@ class FleetbaseDirectory
             'updated_at'   => $now,
         ]);
         $connection = $store['connection'];
-        if ($connection->getDriverName() === 'mysql' && $connection->getSchemaBuilder()->hasColumn($store['table'], 'location')) {
+        if ($connection->getDriverName() === 'mysql' && $connection->getSchemaBuilder()->hasColumn($store['table'], 'location') === true) {
             $row['location'] = $connection->raw("(ST_PointFromText('POINT(0 0)', 0, 'axis-order=long-lat'))");
         }
         $connection->table($store['table'])->insert($row);
@@ -3691,7 +3691,7 @@ class FleetbaseDirectory
     private function placeTable(): ?array
     {
         $class = 'Fleetbase\\FleetOps\\Models\\Place';
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return null;
         }
 
@@ -3699,7 +3699,7 @@ class FleetbaseDirectory
             $model      = new $class();
             $table      = $model->getTable();
             $connection = $model->getConnection();
-            if (!$connection->getSchemaBuilder()->hasTable($table)) {
+            if ($connection->getSchemaBuilder()->hasTable($table) === false) {
                 return null;
             }
 
@@ -3711,7 +3711,7 @@ class FleetbaseDirectory
 
     private function customerColumnExists(string $class, string $column): bool
     {
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return false;
         }
 

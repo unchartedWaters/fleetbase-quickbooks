@@ -11,7 +11,7 @@ return new class extends Migration {
 
     public function up(): void
     {
-        if (!Schema::hasTable($this->table) || Schema::hasIndex($this->table, $this->index)) {
+        if (Schema::hasTable($this->table) === FALSE || Schema::hasIndex($this->table, $this->index) === TRUE) {
             return;
         }
 
@@ -22,7 +22,7 @@ return new class extends Migration {
 
     public function down(): void
     {
-        if (!Schema::hasTable($this->table) || !Schema::hasIndex($this->table, $this->index)) {
+        if (Schema::hasTable($this->table) === FALSE || Schema::hasIndex($this->table, $this->index) === FALSE) {
             return;
         }
 

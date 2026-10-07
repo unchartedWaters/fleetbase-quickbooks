@@ -18,16 +18,16 @@ class WebhookSignature
      */
     public function accepts(string $rawBody, ?string $signature, array $verifiers): bool
     {
-        if (!is_string($signature) || $signature === '') {
+        if (is_string($signature) === false || $signature === '') {
             return false;
         }
 
         foreach ($verifiers as $verifier) {
-            if (!is_string($verifier) || $verifier === '') {
+            if (is_string($verifier) === false || $verifier === '') {
                 continue;
             }
             $computed = base64_encode(hash_hmac('sha256', $rawBody, $verifier, true));
-            if (hash_equals($computed, $signature)) {
+            if (hash_equals($computed, $signature) === true) {
                 return true;
             }
         }

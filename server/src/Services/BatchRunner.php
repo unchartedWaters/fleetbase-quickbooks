@@ -59,12 +59,12 @@ class BatchRunner
     public function run(string $companyUuid, string $trigger = 'scheduled'): array
     {
         $skipped = ['trigger' => $trigger, 'status' => 'skipped'];
-        if (!ConnectionGate::hasRealm($this->directory->connection($companyUuid))) {
+        if (ConnectionGate::hasRealm($this->directory->connection($companyUuid)) === false) {
             return $skipped;
         }
         $resolved   = $this->settingsFor($companyUuid);
         $catalogDue = $this->catalogDue($companyUuid, $resolved, time());
-        if ($trigger === 'scheduled' && !$this->scheduledIsDue($companyUuid, $resolved, time()) && !$catalogDue) {
+        if ($trigger === 'scheduled' && $this->scheduledIsDue($companyUuid, $resolved, time()) === false && $catalogDue === false) {
             return $skipped;
         }
 
@@ -74,7 +74,7 @@ class BatchRunner
 
             return $skipped;
         }
-        if (!$lock->get()) {
+        if ($lock->get() === false) {
             if ($trigger !== 'scheduled') {
                 $this->directory->saveSkipped($companyUuid, $trigger, 'outbound', 'Another QuickBooks sync is already running.');
             }
@@ -90,7 +90,7 @@ class BatchRunner
         $dispatchDrain   = false;
         $dispatchCatalog = false;
         $this->engine->setHttpBoundary(function (callable $call) use ($lock, $companyUuid) {
-            if (self::holds($companyUuid)) {
+            if (self::holds($companyUuid) === true) {
                 $lock->release();
             }
 
@@ -100,8 +100,8 @@ class BatchRunner
             if ($trigger === 'manual') {
                 $this->claimReconcilePage($companyUuid, (int) $resolved['batch_size']);
             }
-            if ($trigger === 'catalog' || ($trigger === 'scheduled' && !$this->scheduledIsDue($companyUuid, $resolved, time()) && $catalogDue)) {
-                if (array_key_exists('customer_enabled', $resolved) && $resolved['customer_enabled'] === false) {
+            if ($trigger === 'catalog' || ($trigger === 'scheduled' && $this->scheduledIsDue($companyUuid, $resolved, time()) === false && $catalogDue === true)) {
+                if (array_key_exists('customer_enabled', $resolved) === true && $resolved['customer_enabled'] === false) {
                     Cache::forget($this->catalogCursorKey($companyUuid));
 
                     return $skipped;
@@ -132,42 +132,42 @@ class BatchRunner
             $save = true;
             // The size trigger already decided this scheduled run may start early.
             // Skip only the interval wait. Queries and batch writes release the company lock.
-            $ignoreInterval = $trigger === 'scheduled' && !$this->intervalElapsed($connection, $resolved, $now);
+            $ignoreInterval = $trigger === 'scheduled' && $this->intervalElapsed($connection, $resolved, $now) === false;
             $batch          = match ($trigger) {
                 'manual'       => $this->engine->reconcile($ledger, $companyUuid, $resolved, $now),
                 'now', 'drain' => $this->engine->runScheduled($ledger, $companyUuid, $resolved, $now, true),
                 default        => $this->engine->runScheduled($ledger, $companyUuid, $resolved, $now, false, $ignoreInterval),
             };
             $nothingRecorded = count($ledger->batches) === $batchesBefore;
-            $save            = !(($batch['status'] ?? null) === 'skipped' && $nothingRecorded);
-            $followUp        = in_array($trigger, ['manual', 'drain'], true) && ($batch['status'] ?? '') === 'finished';
+            $save            = (($batch['status'] ?? null) === 'skipped' && $nothingRecorded === true) === false;
+            $followUp        = in_array($trigger, ['manual', 'drain'], true) === true && ($batch['status'] ?? '') === 'finished';
 
             return $batch;
         } finally {
             $this->engine->setHttpBoundary(null);
             try {
                 // Saved even when the engine throws, so links for records already created in QuickBooks are kept.
-                if ($save && $ledger !== null) {
+                if ($save === true && $ledger !== null) {
                     $this->ensureLock($lock, $companyUuid);
                     $this->directory->save($ledger);
                 }
-                if ($followUp && Cache::get($this->reconcileOpenKey($companyUuid))) {
+                if ($followUp === true && Cache::get($this->reconcileOpenKey($companyUuid)) === true) {
                     $this->ensureLock($lock, $companyUuid);
                     $this->claimReconcilePage($companyUuid, (int) ($resolved['batch_size'] ?? 100));
                 }
                 // Decide while the claim is visible, then release before dispatch.
                 // The follow-up has to take quickbooks.batch.{company} as soon as it starts.
-                $dispatchDrain   = $followUp && $this->directory->hasDuePending($companyUuid, time());
-                $dispatchCatalog = $continueCatalog || ($trigger === 'scheduled' && !$ranCatalog && $catalogDue);
+                $dispatchDrain   = $followUp === true && $this->directory->hasDuePending($companyUuid, time()) === true;
+                $dispatchCatalog = $continueCatalog === true || ($trigger === 'scheduled' && $ranCatalog === false && $catalogDue === true);
             } finally {
-                if (self::holds($companyUuid)) {
+                if (self::holds($companyUuid) === true) {
                     $lock->release();
                 }
             }
-            if ($dispatchDrain) {
+            if ($dispatchDrain === true) {
                 SyncCompanyBatch::dispatch($companyUuid, 'drain');
             }
-            if ($dispatchCatalog) {
+            if ($dispatchCatalog === true) {
                 SyncCompanyBatch::dispatch($companyUuid, 'catalog');
             }
         }
@@ -178,12 +178,12 @@ class BatchRunner
      */
     public function isScheduledDue(string $companyUuid, int $now): bool
     {
-        if (!$this->hasConnection($companyUuid)) {
+        if ($this->hasConnection($companyUuid) === false) {
             return false;
         }
         $settings = $this->settingsFor($companyUuid);
 
-        return $this->scheduledIsDue($companyUuid, $settings, $now) || $this->catalogDue($companyUuid, $settings, $now);
+        return $this->scheduledIsDue($companyUuid, $settings, $now) === true || $this->catalogDue($companyUuid, $settings, $now) === true;
     }
 
     /**
@@ -203,17 +203,17 @@ class BatchRunner
      */
     private function catalogDue(string $companyUuid, array $settings, int $now): bool
     {
-        if (array_key_exists('customer_enabled', $settings) && $settings['customer_enabled'] === false) {
+        if (array_key_exists('customer_enabled', $settings) === true && $settings['customer_enabled'] === false) {
             return false;
         }
 
         $hasInterval = array_key_exists('periodic_interval_hours', $settings);
         $stamp       = $this->directory->customerCatalogStamp($companyUuid);
-        if (!$hasInterval && $stamp === null) {
+        if ($hasInterval === false && $stamp === null) {
             return false;
         }
 
-        $hours = $hasInterval ? max(1, (int) $settings['periodic_interval_hours']) : 24;
+        $hours = $hasInterval === true ? max(1, (int) $settings['periodic_interval_hours']) : 24;
         if ($stamp === null) {
             return $hasInterval;
         }
@@ -290,10 +290,10 @@ class BatchRunner
             $this->directory->save($ledger);
             $save = false;
         }
-        if (!$this->catalogPageSucceeded($batch, $ledger, $companyUuid, count($ids), $now)) {
+        if ($this->catalogPageSucceeded($batch, $ledger, $companyUuid, count($ids), $now) === false) {
             return $batch;
         }
-        if ($more) {
+        if ($more === true) {
             Cache::put($this->catalogCursorKey($companyUuid), (string) $ids[array_key_last($ids)], 3600);
             // run() dispatches this after it releases the company lock.
             $continueCatalog = true;
@@ -379,7 +379,7 @@ class BatchRunner
     private function scheduledIsDue(string $companyUuid, array $settings, int $now): bool
     {
         $connection = $this->directory->connection($companyUuid);
-        if ($connection === null || !empty($connection['needs_reauth'])) {
+        if ($connection === null || empty($connection['needs_reauth']) === false) {
             return false;
         }
 
@@ -392,7 +392,7 @@ class BatchRunner
         if ($due < 1) {
             return false;
         }
-        if ($this->intervalElapsed($connection, $settings, $now)) {
+        if ($this->intervalElapsed($connection, $settings, $now) === true) {
             return true;
         }
 
@@ -432,10 +432,10 @@ class BatchRunner
      */
     private function ensureLock(Lock $lock, string $companyUuid): void
     {
-        if (self::holds($companyUuid)) {
+        if (self::holds($companyUuid) === true) {
             return;
         }
-        if ($lock->get()) {
+        if ($lock->get() === true) {
             return;
         }
 
@@ -449,15 +449,15 @@ class BatchRunner
     public static function lock(string $companyUuid): ?Lock
     {
         $cache = Cache::getFacadeRoot();
-        if (!is_object($cache)) {
+        if (is_object($cache) === false) {
             return null;
         }
 
-        $store = method_exists($cache, 'getStore') ? $cache->getStore() : null;
+        $store = method_exists($cache, 'getStore') === true ? $cache->getStore() : null;
         if ($store instanceof \Illuminate\Contracts\Cache\LockProvider) {
             return new TrackingLock($store->lock('quickbooks.batch.' . $companyUuid, self::LOCK_SECONDS), $companyUuid);
         }
-        if (method_exists($cache, 'lock')) {
+        if (method_exists($cache, 'lock') === true) {
             return new TrackingLock(Cache::lock('quickbooks.batch.' . $companyUuid, self::LOCK_SECONDS), $companyUuid);
         }
 
@@ -512,7 +512,7 @@ class TrackingLock implements Lock
         }
 
         $acquired = $this->inner->get();
-        if ($acquired) {
+        if ($acquired === true) {
             $this->noteAcquired();
         }
 
@@ -533,7 +533,7 @@ class TrackingLock implements Lock
         }
 
         $acquired = $this->inner->block($seconds);
-        if ($acquired) {
+        if ($acquired === true) {
             $this->noteAcquired();
         }
 
@@ -560,7 +560,7 @@ class TrackingLock implements Lock
 
     private function noteAcquired(): void
     {
-        if ($this->holding) {
+        if ($this->holding === true) {
             return;
         }
 
@@ -570,7 +570,7 @@ class TrackingLock implements Lock
 
     private function noteReleased(): void
     {
-        if (!$this->holding) {
+        if ($this->holding === false) {
             return;
         }
 

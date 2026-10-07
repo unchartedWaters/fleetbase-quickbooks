@@ -11,7 +11,7 @@ $pestCandidates = [
 
 $pest = null;
 foreach ($pestCandidates as $candidate) {
-    if (is_file($candidate)) {
+    if (is_file($candidate) === TRUE) {
         $pest = $candidate;
         break;
     }
@@ -24,26 +24,26 @@ if ($pest === null) {
 
 $serverVendor = getcwd() . '/server_vendor';
 $vendor       = getcwd() . '/vendor';
-if (!file_exists($vendor) && is_dir($serverVendor) && function_exists('symlink')) {
+if (file_exists($vendor) === FALSE && is_dir($serverVendor) === TRUE && function_exists('symlink') === TRUE) {
     @symlink($serverVendor, $vendor);
 }
 
 $autoloadLoaded = false;
 foreach ([$serverVendor . '/autoload.php', $vendor . '/autoload.php'] as $autoload) {
-    if (is_file($autoload)) {
+    if (is_file($autoload) === TRUE) {
         require $autoload;
         $autoloadLoaded = true;
         break;
     }
 }
 
-if (!$autoloadLoaded) {
+if ($autoloadLoaded === FALSE) {
     fwrite(STDERR, "Unable to load Composer autoload.\n");
     exit(1);
 }
 
 $bootstrap = getcwd() . '/scripts/pest-bootstrap.php';
-if (!is_file($bootstrap)) {
+if (is_file($bootstrap) === FALSE) {
     fwrite(STDERR, "Unable to find Pest bootstrap at scripts/pest-bootstrap.php.\n");
     exit(1);
 }
@@ -51,14 +51,14 @@ if (!is_file($bootstrap)) {
 $args = array_slice($argv, 1);
 $hasConfiguration = false;
 foreach ($args as $arg) {
-    if (str_starts_with($arg, '--configuration')) {
+    if (str_starts_with($arg, '--configuration') === TRUE) {
         $hasConfiguration = true;
         break;
     }
 }
 $configuration = getcwd() . '/phpunit.xml.dist';
 
-if (!$hasConfiguration && is_file($configuration)) {
+if ($hasConfiguration === FALSE && is_file($configuration) === TRUE) {
     array_unshift($args, '--configuration=' . $configuration);
 }
 

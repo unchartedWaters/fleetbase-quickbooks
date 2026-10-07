@@ -16,12 +16,12 @@ class FlagPlaceObserver
 
     public function saved(object $place): void
     {
-        if (SyncSuppressor::paused() || !method_exists($place, 'wasChanged') || !$place->wasChanged(self::WATCHED)) {
+        if (SyncSuppressor::paused() === true || method_exists($place, 'wasChanged') === false || $place->wasChanged(self::WATCHED) === false) {
             return;
         }
 
         $listener = Container::getInstance()->make(FlagCustomerListener::class);
-        if (!$listener instanceof FlagCustomerListener) {
+        if ($listener instanceof FlagCustomerListener === false) {
             return;
         }
 
@@ -43,18 +43,18 @@ class FlagPlaceObserver
         }
 
         $class = 'Fleetbase\\FleetOps\\Models\\Customer';
-        if (!class_exists($class)) {
+        if (class_exists($class) === false) {
             return [];
         }
 
         $customers = $class::query()->where('place_uuid', $placeUuid)->get();
-        if (!is_iterable($customers)) {
+        if (is_iterable($customers) === false) {
             return [];
         }
 
         $matches = [];
         foreach ($customers as $customer) {
-            if (is_object($customer)) {
+            if (is_object($customer) === true) {
                 $matches[] = $customer;
             }
         }

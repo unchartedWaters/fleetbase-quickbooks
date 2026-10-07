@@ -18,7 +18,7 @@ class InvoiceMapper
     public function toQuickBooks(array $invoice, string $customerRef, string $itemId, bool $pushClears = false): array
     {
         $lines = [];
-        $items = is_array($invoice['items'] ?? null) ? $invoice['items'] : [];
+        $items = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
         foreach ($items as $item) {
             $amountCents = (int) ($item['amount'] ?? 0);
             $qty         = (int) ($item['quantity'] ?? 1);
@@ -53,25 +53,25 @@ class InvoiceMapper
             'Line'        => $lines,
         ];
 
-        if (!empty($invoice['number'])) {
+        if (empty($invoice['number']) === false) {
             $payload['DocNumber'] = $invoice['number'];
         }
-        if (!empty($invoice['date'])) {
+        if (empty($invoice['date']) === false) {
             $payload['TxnDate'] = $invoice['date'];
-        } elseif ($pushClears) {
+        } elseif ($pushClears === true) {
             $payload['TxnDate'] = '';
         }
-        if (!empty($invoice['due_date'])) {
+        if (empty($invoice['due_date']) === false) {
             $payload['DueDate'] = $invoice['due_date'];
-        } elseif ($pushClears) {
+        } elseif ($pushClears === true) {
             $payload['DueDate'] = '';
         }
-        if (!empty($invoice['notes'])) {
+        if (empty($invoice['notes']) === false) {
             $payload['PrivateNote'] = $invoice['notes'];
-        } elseif ($pushClears) {
+        } elseif ($pushClears === true) {
             $payload['PrivateNote'] = '';
         }
-        if (!empty($invoice['currency'])) {
+        if (empty($invoice['currency']) === false) {
             $payload['CurrencyRef'] = ['value' => $invoice['currency']];
         }
 
@@ -92,9 +92,9 @@ class InvoiceMapper
     {
         $items = [];
         $tax   = 0;
-        $lines = is_array($remote['Line'] ?? null) ? $remote['Line'] : [];
+        $lines = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
         foreach ($lines as $line) {
-            if (!is_array($line) || (string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
+            if (is_array($line) === false || (string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
                 continue;
             }
 
@@ -105,9 +105,9 @@ class InvoiceMapper
                 continue;
             }
 
-            $detail    = is_array($line['SalesItemLineDetail'] ?? null) ? $line['SalesItemLineDetail'] : [];
+            $detail    = is_array($line['SalesItemLineDetail'] ?? null) === true ? $line['SalesItemLineDetail'] : [];
             $quantity  = (int) ($detail['Qty'] ?? 1);
-            $unitCents = array_key_exists('UnitPrice', $detail)
+            $unitCents = array_key_exists('UnitPrice', $detail) === true
                 ? self::lineAmount($detail['UnitPrice'])
                 : ($quantity > 0 ? intdiv($amountCents, max($quantity, 1)) : $amountCents);
             $items[] = [
@@ -127,10 +127,10 @@ class InvoiceMapper
 
     private static function lineAmount(mixed $amount): int
     {
-        if (is_float($amount)) {
+        if (is_float($amount) === true) {
             throw new \InvalidArgumentException('Money must not be a float.');
         }
-        if (!is_int($amount) && !is_string($amount)) {
+        if (is_int($amount) === false && is_string($amount) === false) {
             return 0;
         }
 

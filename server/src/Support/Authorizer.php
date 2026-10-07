@@ -19,13 +19,13 @@ class Authorizer
     {
         // Installation administrators keep working without a QuickBooks role.
         // Everyone else needs the permission the extension schema grants.
-        if ($this->signedInInstallationAdmin()) {
+        if ($this->signedInInstallationAdmin() === true) {
             return;
         }
 
         // show() and test() share view connection, which read-only also has.
         // The connection test has no schema action, so it stays installation-admin only.
-        if (!$this->granted($permission) || $this->isConnectionTest($permission)) {
+        if ($this->granted($permission) === false || $this->isConnectionTest($permission) === true) {
             abort(403, 'This action is unauthorized.');
         }
     }
@@ -46,8 +46,8 @@ class Authorizer
     private function signedInInstallationAdmin(): bool
     {
         $request = $this->callerRequest();
-        $user    = $request instanceof Request ? $request->user() : null;
-        if (is_object($user)) {
+        $user    = $request instanceof Request === true ? $request->user() : null;
+        if (is_object($user) === true) {
             return InstallationAdmin::isInstallationAdmin($user);
         }
 
@@ -66,21 +66,21 @@ class Authorizer
 
         $request = $this->callerRequest();
 
-        return $request instanceof Request && str_contains('/' . $request->path(), '/connection/test');
+        return $request instanceof Request === true && str_contains('/' . $request->path(), '/connection/test') === true;
     }
 
     private function callerRequest(): ?Request
     {
         foreach (debug_backtrace(0, 15) as $frame) {
-            if (!is_array($frame)) {
+            if (is_array($frame) === false) {
                 continue;
             }
             $arguments = $frame['args'] ?? null;
-            if (!is_array($arguments)) {
+            if (is_array($arguments) === false) {
                 continue;
             }
             foreach ($arguments as $argument) {
-                if ($argument instanceof Request) {
+                if ($argument instanceof Request === true) {
                     return $argument;
                 }
             }

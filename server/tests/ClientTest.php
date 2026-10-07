@@ -62,10 +62,10 @@ test('custom transaction numbers are read from sales form preferences once per c
 test('the fleetbase service item is created against an income account', function () {
     Http::fake(function (Request $request) {
         $url = urldecode($request->url());
-        if (str_contains($url, 'from Item')) {
+        if (str_contains($url, 'from Item') === true) {
             return Http::response(['QueryResponse' => []], 200);
         }
-        if (str_contains($url, 'from Account')) {
+        if (str_contains($url, 'from Account') === true) {
             return Http::response(['QueryResponse' => ['Account' => [['Id' => '79', 'AccountType' => 'Income']]]], 200);
         }
 
@@ -106,8 +106,8 @@ test('a query value with a backslash or quote does not close the string', functi
     Http::assertSent(function (Request $request) use ($escaped) {
         $url = urldecode($request->url());
 
-        return str_contains($url, "DisplayName = '" . $escaped . "'")
-            && !str_contains($url, "DisplayName = 'O'Brien");
+        return str_contains($url, "DisplayName = '" . $escaped . "'") === true
+            && str_contains($url, "DisplayName = 'O'Brien") === false;
     });
 });
 
@@ -131,21 +131,21 @@ test('two writes use one batch request and a failed item does not replay the suc
         ->and($results['b']['ok'])->toBeFalse()
         ->and($results['b']['error'])->toBe('The name supplied already exists.');
     Http::assertSentCount(1);
-    Http::assertSent(fn (Request $request) => str_contains($request->url(), '/v3/company/realm-1/batch')
-        && !str_contains($request->url(), '/customer'));
+    Http::assertSent(fn (Request $request) => str_contains($request->url(), '/v3/company/realm-1/batch') === true
+        && str_contains($request->url(), '/customer') === false);
 });
 
 test('a payment lookup follows the target invoice link without scanning customer history', function () {
     $match = ['Id' => 'pay-9', 'Line' => [['Amount' => '4.00', 'LinkedTxn' => [['TxnId' => 'inv-9', 'TxnType' => 'Invoice']]]]];
     Http::fake(function (Request $request) use ($match) {
         $url = urldecode($request->url());
-        if (str_contains($url, '/invoice/inv-9')) {
+        if (str_contains($url, '/invoice/inv-9') === true) {
             return Http::response(['Invoice' => [
                 'Id'        => 'inv-9',
                 'LinkedTxn' => [['TxnId' => 'pay-9', 'TxnType' => 'Payment']],
             ]], 200);
         }
-        if (str_contains($url, '/payment/pay-9')) {
+        if (str_contains($url, '/payment/pay-9') === true) {
             return Http::response(['Payment' => $match], 200);
         }
 
@@ -167,11 +167,11 @@ test('targeted payment lookups batch invoice and payment ids in chunks of 30', f
             preg_match_all("/'([^']+)'/", $query, $matches);
             $rows = [];
             foreach ($matches[1] as $id) {
-                $rows[] = str_contains($query, 'from Invoice')
+                $rows[] = str_contains($query, 'from Invoice') === true
                     ? ['Id' => $id, 'LinkedTxn' => [['TxnId' => 'pay-' . $id, 'TxnType' => 'Payment']]]
                     : ['Id' => $id, 'Line' => []];
             }
-            $entity      = str_contains($query, 'from Invoice') ? 'Invoice' : 'Payment';
+            $entity      = str_contains($query, 'from Invoice') === true ? 'Invoice' : 'Payment';
             $responses[] = [
                 'bId'           => $item['bId'],
                 'QueryResponse' => [$entity => $rows],
@@ -208,10 +208,10 @@ test('listing invoices pages past the 1000 row query cap', function () {
     }
     Http::fake(function (Request $request) use ($full) {
         $url = urldecode($request->url());
-        if (str_contains($url, 'startposition 1 ')) {
+        if (str_contains($url, 'startposition 1 ') === true) {
             return Http::response(['QueryResponse' => ['Invoice' => $full]], 200);
         }
-        if (str_contains($url, 'startposition 1001 ')) {
+        if (str_contains($url, 'startposition 1001 ') === true) {
             return Http::response(['QueryResponse' => ['Invoice' => [['Id' => '1001']]]], 200);
         }
 
@@ -270,7 +270,7 @@ test('any other 400 on a read still throws', function () {
 test('one new invoice number is a latest query and one existence query', function () {
     Http::fake(function (Request $request) {
         $url = urldecode($request->url());
-        if (str_contains($url, 'orderby MetaData.CreateTime desc')) {
+        if (str_contains($url, 'orderby MetaData.CreateTime desc') === true) {
             return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => 'INV-009']]]], 200);
         }
 
@@ -286,10 +286,10 @@ test('one new invoice number is a latest query and one existence query', functio
 test('a block of invoice numbers uses one latest query and one batched existence check', function () {
     Http::fake(function (Request $request) {
         $url = urldecode($request->url());
-        if ($request->method() === 'GET' && str_contains($url, 'orderby MetaData.CreateTime desc maxresults 1')) {
+        if ($request->method() === 'GET' && str_contains($url, 'orderby MetaData.CreateTime desc maxresults 1') === true) {
             return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => 'INV-009']]]], 200);
         }
-        if ($request->method() === 'POST' && str_contains($url, '/batch')) {
+        if ($request->method() === 'POST' && str_contains($url, '/batch') === true) {
             return Http::response([
                 'BatchItemResponse' => [[
                     'bId'           => 'doc-0',
@@ -307,24 +307,24 @@ test('a block of invoice numbers uses one latest query and one batched existence
     Http::assertSentCount(2);
     Http::assertNotSent(fn (Request $request) => str_contains(urldecode($request->url()), "DocNumber = '"));
     Http::assertSent(function (Request $request) {
-        if (!str_contains($request->url(), '/batch')) {
+        if (str_contains($request->url(), '/batch') === false) {
             return false;
         }
         $items = $request->data()['BatchItemRequest'] ?? [];
         $query = (string) ($items[0]['Query'] ?? '');
 
         return count($items) === 1
-            && str_contains($query, 'DocNumber IN (')
-            && str_contains($query, "'INV-010'")
-            && str_contains($query, "'INV-011'")
-            && str_contains($query, "'INV-016'");
+            && str_contains($query, 'DocNumber IN (') === true
+            && str_contains($query, "'INV-010'") === true
+            && str_contains($query, "'INV-011'") === true
+            && str_contains($query, "'INV-016'") === true;
     });
 });
 
 test('more than 30 invoice number candidates are checked in batch chunks of 30', function () {
     Http::fake(function (Request $request) {
         $url = urldecode($request->url());
-        if ($request->method() === 'GET' && str_contains($url, 'orderby MetaData.CreateTime')) {
+        if ($request->method() === 'GET' && str_contains($url, 'orderby MetaData.CreateTime') === true) {
             return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1000']]]], 200);
         }
 
@@ -341,7 +341,7 @@ test('more than 30 invoice number candidates are checked in batch chunks of 30',
         ->and($numbers[29])->toBe('1030');
     Http::assertSentCount(2);
     Http::assertSent(function (Request $request) {
-        if (!str_contains($request->url(), '/batch')) {
+        if (str_contains($request->url(), '/batch') === false) {
             return false;
         }
         $items = $request->data()['BatchItemRequest'] ?? [];
@@ -359,7 +359,7 @@ test('an invoice number is not returned until it is confirmed free', function ()
     $checked = [];
     Http::fake(function (Request $request) use (&$checked) {
         $url = urldecode($request->url());
-        if (str_contains($url, 'orderby MetaData.CreateTime')) {
+        if (str_contains($url, 'orderby MetaData.CreateTime') === true) {
             return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1000']]]], 200);
         }
         if (preg_match("/DocNumber = '([^']+)'/", $url, $match) === 1) {
@@ -379,7 +379,7 @@ test('an invoice number is not returned until it is confirmed free', function ()
 test('a block does not issue invoice numbers after the check budget is exhausted', function () {
     Http::fake(function (Request $request) {
         $url = urldecode($request->url());
-        if ($request->method() === 'GET' && str_contains($url, 'orderby MetaData.CreateTime')) {
+        if ($request->method() === 'GET' && str_contains($url, 'orderby MetaData.CreateTime') === true) {
             return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1000']]]], 200);
         }
 

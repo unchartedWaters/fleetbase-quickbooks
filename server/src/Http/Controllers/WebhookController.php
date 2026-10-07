@@ -48,17 +48,17 @@ class WebhookController extends Controller
     public function handle(Request $request): JsonResponse
     {
         $rawBody = $request->getContent();
-        if (!is_string($rawBody)) {
+        if (is_string($rawBody) === false) {
             $rawBody = '';
         }
 
         // The signature is checked with the install-wide verifier. Realm ids
         // choose which connection to apply. Entities are not trusted until it matches.
         $signature = $request->headers->get('intuit-signature');
-        if (is_string($signature)) {
+        if (is_string($signature) === true) {
             $signature = trim($signature);
         }
-        if (!is_string($signature) || $signature === '') {
+        if (is_string($signature) === false || $signature === '') {
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
 
@@ -74,7 +74,7 @@ class WebhookController extends Controller
 
         // HMAC already matched. Remember this exact body for a short time and
         // reject a second delivery of it. The check does not replace the signature test.
-        if (!$this->rememberSignedBody($rawBody)) {
+        if ($this->rememberSignedBody($rawBody) === false) {
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
 
@@ -92,21 +92,21 @@ class WebhookController extends Controller
     private function realmIds(string $rawBody): array
     {
         $decoded = json_decode($rawBody, true);
-        if (!is_array($decoded)) {
+        if (is_array($decoded) === false) {
             return [];
         }
         $notifications = $decoded['eventNotifications'] ?? null;
-        if (!is_array($notifications)) {
+        if (is_array($notifications) === false) {
             return [];
         }
 
         $ids = [];
         foreach ($notifications as $notification) {
-            if (!is_array($notification)) {
+            if (is_array($notification) === false) {
                 continue;
             }
             $realmId = $this->stringId($notification['realmId'] ?? null);
-            if ($realmId === null || in_array($realmId, $ids, true)) {
+            if ($realmId === null || in_array($realmId, $ids, true) === true) {
                 continue;
             }
             $ids[] = $realmId;
@@ -127,7 +127,7 @@ class WebhookController extends Controller
     private function matchingConnections(string $rawBody, string $signature, array $realmIds): array
     {
         $verifiers = $this->settings->webhookVerifiersFor($this->store, '');
-        if (!$this->signatures->accepts($rawBody, $signature, $verifiers)) {
+        if ($this->signatures->accepts($rawBody, $signature, $verifiers) === false) {
             return [];
         }
 
@@ -162,17 +162,17 @@ class WebhookController extends Controller
     private function entitiesByRealm(string $rawBody): array
     {
         $decoded = json_decode($rawBody, true);
-        if (!is_array($decoded)) {
+        if (is_array($decoded) === false) {
             return [];
         }
         $notifications = $decoded['eventNotifications'] ?? null;
-        if (!is_array($notifications)) {
+        if (is_array($notifications) === false) {
             return [];
         }
 
         $groups = [];
         foreach ($notifications as $notification) {
-            if (!is_array($notification)) {
+            if (is_array($notification) === false) {
                 continue;
             }
             $realmId = $this->stringId($notification['realmId'] ?? null);
@@ -180,12 +180,12 @@ class WebhookController extends Controller
                 continue;
             }
             $change   = $notification['dataChangeEvent'] ?? null;
-            $entities = is_array($change) ? ($change['entities'] ?? null) : null;
-            if (!is_array($entities)) {
+            $entities = is_array($change) === true ? ($change['entities'] ?? null) : null;
+            if (is_array($entities) === false) {
                 continue;
             }
             foreach ($entities as $entity) {
-                if (!is_array($entity)) {
+                if (is_array($entity) === false) {
                     continue;
                 }
                 $mapped = $this->mapEntity($entity);
@@ -207,7 +207,7 @@ class WebhookController extends Controller
     private function mapEntity(array $entity): ?array
     {
         $name = $entity['name'] ?? null;
-        if (!is_string($name)) {
+        if (is_string($name) === false) {
             return null;
         }
         $type = self::TYPES[strtolower($name)] ?? null;
@@ -219,7 +219,7 @@ class WebhookController extends Controller
             return null;
         }
         $operation = $entity['operation'] ?? '';
-        if (!is_string($operation)) {
+        if (is_string($operation) === false) {
             return null;
         }
         $mapped = self::OPERATIONS[strtolower($operation)] ?? null;
@@ -237,10 +237,10 @@ class WebhookController extends Controller
 
     private function stringId(mixed $value): ?string
     {
-        if (is_int($value)) {
+        if (is_int($value) === true) {
             $value = (string) $value;
         }
-        if (!is_string($value) || $value === '') {
+        if (is_string($value) === false || $value === '') {
             return null;
         }
 
@@ -335,7 +335,7 @@ class WebhookController extends Controller
             ->where('realm_id', $realmId)
             ->whereIn('qbo_id', array_values(array_unique($quickbooksIds)))
             ->get() as $link) {
-            if ($link instanceof Link) {
+            if ($link instanceof Link === true) {
                 $links[] = $link;
             }
         }
@@ -364,7 +364,7 @@ class WebhookController extends Controller
 
         $map = [];
         foreach ($links as $link) {
-            if (!$link instanceof Link) {
+            if ($link instanceof Link === false) {
                 continue;
             }
             $qbo = self::TYPES[strtolower((string) $link->qbo_entity)]['qbo'] ?? null;
@@ -387,7 +387,7 @@ class WebhookController extends Controller
     {
         $connections = [];
         foreach (Connection::query()->where('realm_id', $realmId)->get() as $connection) {
-            if ($connection instanceof Connection) {
+            if ($connection instanceof Connection === true) {
                 $connections[] = $connection;
             }
         }

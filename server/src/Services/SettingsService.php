@@ -70,10 +70,10 @@ class SettingsService
     public function storeAuth(array $incoming, array $existing): array
     {
         $secret = $incoming['client_secret'] ?? '';
-        if (!is_string($secret) || $secret === '') {
+        if (is_string($secret) === false || $secret === '') {
             $kept = $existing['client_secret'] ?? '';
             // A blank form field keeps the stored secret. Plaintext and legacy AES are re-encrypted.
-            $incoming['client_secret'] = is_string($kept) ? $this->cipher->seal($kept) : $kept;
+            $incoming['client_secret'] = is_string($kept) === true ? $this->cipher->seal($kept) : $kept;
         } else {
             $incoming['client_secret'] = $this->cipher->encrypt($secret);
         }
@@ -113,14 +113,14 @@ class SettingsService
     private function storeWebhookVerifier(array $incoming, array $existing): array
     {
         $secret = $incoming['webhook_verifier'] ?? null;
-        if (is_string($secret) && $secret !== '') {
+        if (is_string($secret) === true && $secret !== '') {
             $incoming['webhook_verifier'] = $this->cipher->encrypt($secret);
 
             return $incoming;
         }
 
         $kept = $existing['webhook_verifier'] ?? null;
-        if (!is_string($kept) || $kept === '') {
+        if (is_string($kept) === false || $kept === '') {
             unset($incoming['webhook_verifier']);
 
             return $incoming;
@@ -155,7 +155,7 @@ class SettingsService
     private function plainWebhookVerifier(array $stored): ?string
     {
         $secret = $stored['webhook_verifier'] ?? null;
-        if (!is_string($secret) || $secret === '') {
+        if (is_string($secret) === false || $secret === '') {
             return null;
         }
 
@@ -171,7 +171,7 @@ class SettingsService
     {
         foreach (['client_secret', 'webhook_verifier'] as $field) {
             $secret = $stored[$field] ?? null;
-            if (!is_string($secret) || $secret === '') {
+            if (is_string($secret) === false || $secret === '') {
                 continue;
             }
             $opened = $this->openSecret($secret);
@@ -192,7 +192,7 @@ class SettingsService
     private function openSecret(string $secret): ?string
     {
         $opened = $this->cipher->reveal($secret);
-        if (!is_string($opened) || $opened === '') {
+        if (is_string($opened) === false || $opened === '') {
             return null;
         }
 

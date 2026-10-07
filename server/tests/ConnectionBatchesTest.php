@@ -171,4 +171,4 @@ test('page 1 of sync activity returns meta and omits later batches', function ()
         config()->set('database.connections.sqlite', $sqliteConnection);
         session(['company' => null]);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');

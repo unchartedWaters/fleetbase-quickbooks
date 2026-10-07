@@ -12,10 +12,10 @@ class InstallationAdmin
 {
     public static function isInstallationAdmin(mixed $user): bool
     {
-        if (!is_object($user)) {
+        if (is_object($user) === false) {
             return false;
         }
-        if (method_exists($user, 'isAdmin')) {
+        if (method_exists($user, 'isAdmin') === true) {
             return $user->isAdmin() === true;
         }
 
@@ -26,7 +26,7 @@ class InstallationAdmin
 
     public static function allows(?Request $request = null): bool
     {
-        if (!class_exists(Auth::class)) {
+        if (class_exists(Auth::class) === false) {
             return false;
         }
 

@@ -52,8 +52,8 @@ class CredentialResolver
     public function forBrowser(array $stored): array
     {
         $copy                         = $stored;
-        $copy['client_secret_set']    = isset($stored['client_secret']) && $stored['client_secret'] !== '';
-        $copy['webhook_verifier_set'] = isset($stored['webhook_verifier']) && $stored['webhook_verifier'] !== '';
+        $copy['client_secret_set']    = isset($stored['client_secret']) === true && $stored['client_secret'] !== '';
+        $copy['webhook_verifier_set'] = isset($stored['webhook_verifier']) === true && $stored['webhook_verifier'] !== '';
         unset(
             $copy['client_secret'],
             $copy['webhook_verifier'],
@@ -78,7 +78,7 @@ class CredentialResolver
     private function storedValue(array $admin, string $field): array
     {
         $value = $admin[$field] ?? null;
-        if (is_string($value) && $value !== '') {
+        if (is_string($value) === true && $value !== '') {
             return ['value' => $value, 'source' => 'admin'];
         }
 
@@ -95,7 +95,7 @@ class CredentialResolver
     {
         foreach (['admin' => $admin, 'env' => $env] as $source => $bag) {
             $value = $bag[$field] ?? null;
-            if (is_string($value) && $value !== '') {
+            if (is_string($value) === true && $value !== '') {
                 return ['value' => $value, 'source' => $source];
             }
         }

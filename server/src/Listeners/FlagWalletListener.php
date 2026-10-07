@@ -14,12 +14,12 @@ class FlagWalletListener
 
     public function handle(object $event): void
     {
-        if (SyncSuppressor::paused()) {
+        if (SyncSuppressor::paused() === true) {
             return;
         }
 
         $wallet = $event->wallet ?? $event;
-        if (!is_object($wallet)) {
+        if (is_object($wallet) === false) {
             return;
         }
 

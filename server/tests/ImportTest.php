@@ -23,7 +23,7 @@ beforeEach(function () {
 
 afterEach(function () {
     $config = config();
-    if (is_object($config) && method_exists($config, 'set')) {
+    if (is_object($config) === true && method_exists($config, 'set') === true) {
         $config->set('fleetbase.connection.db', $this->previousFleetbaseDb);
     }
 });
@@ -271,7 +271,7 @@ test('a deadline continuation dispatches after lock release and resumes the stor
         }
     };
     $container          = Container::getInstance();
-    $previousDispatcher = $container->bound(Dispatcher::class) ? $container->make(Dispatcher::class) : null;
+    $previousDispatcher = $container->bound(Dispatcher::class) === true ? $container->make(Dispatcher::class) : null;
     $previousCache      = Cache::getFacadeRoot();
     Cache::swap(new Repository(new ArrayStore()));
     $container->instance(Dispatcher::class, $dispatcher);
@@ -735,19 +735,19 @@ function remoteCustomer(string $id, string $name, ?string $email, ?string $phone
     ], $extra);
 }
 
-if (!function_exists('qbEnsureCustomerTable')) {
+if (function_exists('qbEnsureCustomerTable') === false) {
     function qbEnsureCustomerTable(): void
     {
         $config = config();
-        if (is_object($config) && method_exists($config, 'set')) {
+        if (is_object($config) === true && method_exists($config, 'set') === true) {
             $config->set('fleetbase.connection.db', 'sqlite');
         }
         $database = app('db');
-        if (!is_object($database) || !method_exists($database, 'connection')) {
+        if (is_object($database) === false || method_exists($database, 'connection') === false) {
             return;
         }
         $schema = $database->connection('sqlite')->getSchemaBuilder();
-        if ($schema->hasTable('contacts')) {
+        if ($schema->hasTable('contacts') === true) {
             return;
         }
         $schema->create('contacts', function ($table): void {
@@ -813,7 +813,7 @@ function withImportDispatcher(callable $callback): void
         }
     };
     $container          = Container::getInstance();
-    $previousDispatcher = $container->bound(Dispatcher::class) ? $container->make(Dispatcher::class) : null;
+    $previousDispatcher = $container->bound(Dispatcher::class) === true ? $container->make(Dispatcher::class) : null;
     $previousCache      = Cache::getFacadeRoot();
     Cache::swap(new Repository(new ArrayStore()));
     $container->instance(Dispatcher::class, $dispatcher);

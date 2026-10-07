@@ -14,7 +14,7 @@ class AiRelativeDateResolver
 
     public function resolveDateTime(string $prompt, ?string $timezone = null): ?Carbon
     {
-        if (preg_match('/(\d+)\s+days?\s+from\s+now/i', $prompt, $matches)) {
+        if (preg_match('/(\d+)\s+days?\s+from\s+now/i', $prompt, $matches) === 1) {
             return Carbon::now($timezone)->addDays((int) $matches[1]);
         }
 
@@ -23,10 +23,10 @@ class AiRelativeDateResolver
 
     public function resolveWindow(string $prompt, ?string $timezone = null): ?array
     {
-        $timezone = $timezone ?: date_default_timezone_get();
+        $timezone = ($timezone !== null && $timezone !== '' && $timezone !== '0') ? $timezone : date_default_timezone_get();
         $now = Carbon::now($timezone);
 
-        if (str_contains(strtolower($prompt), 'last week')) {
+        if (str_contains(strtolower($prompt), 'last week') === TRUE) {
             $start = $now->copy()->subWeek()->startOfWeek();
             $end = $now->copy()->subWeek()->endOfWeek();
 
@@ -38,7 +38,7 @@ class AiRelativeDateResolver
             ];
         }
 
-        if (str_contains(strtolower($prompt), 'yesterday')) {
+        if (str_contains(strtolower($prompt), 'yesterday') === TRUE) {
             $start = $now->copy()->subDay()->startOfDay();
             $end = $now->copy()->subDay()->endOfDay();
 

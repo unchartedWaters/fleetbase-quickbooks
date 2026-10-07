@@ -11,7 +11,7 @@ use Illuminate\Queue\Events\JobProcessed;
 
 beforeEach(function () {
     resetFlaggedInvoices();
-    while (SyncSuppressor::paused()) {
+    while (SyncSuppressor::paused() === true) {
         SyncSuppressor::resume();
     }
 });
@@ -19,7 +19,7 @@ beforeEach(function () {
 afterEach(function () {
     resetFlaggedInvoices();
     Container::getInstance()->forgetInstance(FlagInvoiceListener::class);
-    while (SyncSuppressor::paused()) {
+    while (SyncSuppressor::paused() === true) {
         SyncSuppressor::resume();
     }
 });
@@ -164,7 +164,7 @@ function invoiceLine(string $invoiceUuid, array $changed = []): object
         public function wasChanged(array|string|null $attributes = null): bool
         {
             foreach ((array) $attributes as $field) {
-                if (in_array($field, $this->changed, true)) {
+                if (in_array($field, $this->changed, true) === true) {
                     return true;
                 }
             }

@@ -42,7 +42,7 @@ class ConnectionController extends QuickbooksController
         $connection = $this->latestConnection($this->companyUuid($request));
 
         return response()->json([
-            'connection' => $connection instanceof Connection ? $this->forBrowser($connection) : null,
+            'connection' => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
         ]);
     }
 
@@ -75,7 +75,7 @@ class ConnectionController extends QuickbooksController
 
         $batchUuids = [];
         foreach ($batches as $batch) {
-            if ($batch instanceof SyncBatch) {
+            if ($batch instanceof SyncBatch === true) {
                 $batchUuids[] = (string) $batch->uuid;
             }
         }
@@ -87,7 +87,7 @@ class ConnectionController extends QuickbooksController
             ->orderBy('created_at')
             ->get(['batch_uuid', 'error']);
         foreach ($attempts as $attempt) {
-            if (!$attempt instanceof SyncAttempt) {
+            if ($attempt instanceof SyncAttempt === false) {
                 continue;
             }
             $batchUuid = (string) $attempt->batch_uuid;
@@ -100,7 +100,7 @@ class ConnectionController extends QuickbooksController
 
         $payload = [];
         foreach ($batches as $batch) {
-            if (!$batch instanceof SyncBatch) {
+            if ($batch instanceof SyncBatch === false) {
                 continue;
             }
             $messages = array_values(array_unique($errors[(string) $batch->uuid] ?? []));
@@ -148,7 +148,7 @@ class ConnectionController extends QuickbooksController
         $this->authorizeQuickbooks('quickbooks connect connection');
         $companyUuid = $this->companyUuid($request);
         $credentials = $this->credentials($companyUuid);
-        if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '' || !$this->isAbsoluteHttpUrl($credentials['redirect_uri'])) {
+        if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '' || $this->isAbsoluteHttpUrl($credentials['redirect_uri']) === false) {
             return response()->json([
                 'message' => 'Configure QuickBooks Client ID, Client secret, and Redirect URI before connecting.',
             ], 422);
@@ -172,7 +172,7 @@ class ConnectionController extends QuickbooksController
         $state = (string) $request->input('state');
 
         // Only fixed codes go back to the console; the console maps them to its own messages.
-        if ($request->filled('error')) {
+        if ($request->filled('error') === true) {
             $this->oauth->forget($state);
 
             return $this->redirectToConsole(['error' => $request->input('error') === 'access_denied' ? 'cancelled' : 'failed']);
@@ -207,7 +207,7 @@ class ConnectionController extends QuickbooksController
             return response()->json(['message' => $exception->getMessage()], 422);
         }
         if ($connection === null) {
-            if (!$this->connectionIsStored($companyUuid)) {
+            if ($this->connectionIsStored($companyUuid) === false) {
                 return response()->json(['message' => 'QuickBooks is not connected. Connect again from Quickbooks Setup.'], 422);
             }
 
@@ -224,7 +224,7 @@ class ConnectionController extends QuickbooksController
         SyncCompanyBatch::dispatch($companyUuid, 'now');
         // Customers in Data Resolution is the control for copying QuickBooks customers.
         // The import job records a skip when a sync already holds the company lock.
-        if ($this->customersEnabled()) {
+        if ($this->customersEnabled() === true) {
             ImportCustomers::dispatch($companyUuid);
         }
 
@@ -286,7 +286,7 @@ class ConnectionController extends QuickbooksController
         $row = $this->latestConnection($this->companyUuid($request));
 
         return response()->json($this->probe->probe(
-            $row instanceof Connection ? FleetbaseDirectory::connectionToArray($row) : null
+            $row instanceof Connection === true ? FleetbaseDirectory::connectionToArray($row) : null
         ));
     }
 
@@ -305,13 +305,13 @@ class ConnectionController extends QuickbooksController
         $credentials = $this->credentials($companyUuid);
         $configured  = trim($credentials['client_id']) !== ''
             && trim($credentials['client_secret']) !== ''
-            && $this->isAbsoluteHttpUrl($credentials['redirect_uri']);
+            && $this->isAbsoluteHttpUrl($credentials['redirect_uri']) === true;
 
         return response()->json([
-            'connection'             => $connection instanceof Connection ? $this->forBrowser($connection) : null,
+            'connection'             => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
             'credentials_configured' => $configured,
             'queue'                  => PendingSync::query()->where('company_uuid', $companyUuid)->where('status', 'pending')->count(),
-            'last_sync'              => $last instanceof SyncBatch ? [
+            'last_sync'              => $last instanceof SyncBatch === true ? [
                 'finished_at'   => $last->finished_at?->toIso8601String(),
                 'status'        => $last->status,
                 'trigger'       => $last->trigger,
@@ -352,7 +352,7 @@ class ConnectionController extends QuickbooksController
             Connection::query()->where('company_uuid', '!=', $companyUuid)->delete();
         }
         $existing = $this->latestConnection($companyUuid);
-        $model    = $existing instanceof Connection ? $existing : new Connection();
+        $model    = $existing instanceof Connection === true ? $existing : new Connection();
         $model->fill($connection);
         $model->save();
     }
@@ -386,16 +386,16 @@ class ConnectionController extends QuickbooksController
      */
     private function batchPage(object $paginator): array
     {
-        if (method_exists($paginator, 'items')
-            && method_exists($paginator, 'currentPage')
-            && method_exists($paginator, 'lastPage')
-            && method_exists($paginator, 'perPage')
-            && method_exists($paginator, 'total')
+        if (method_exists($paginator, 'items') === true
+            && method_exists($paginator, 'currentPage') === true
+            && method_exists($paginator, 'lastPage') === true
+            && method_exists($paginator, 'perPage') === true
+            && method_exists($paginator, 'total') === true
         ) {
             $rows = $paginator->items();
 
             return [
-                is_array($rows) ? $rows : [],
+                is_array($rows) === true ? $rows : [],
                 [
                     'current_page' => (int) $paginator->currentPage(),
                     'last_page'    => (int) $paginator->lastPage(),
@@ -405,14 +405,14 @@ class ConnectionController extends QuickbooksController
             ];
         }
 
-        $summary = method_exists($paginator, 'toArray') ? $paginator->toArray() : [];
-        if (!is_array($summary)) {
+        $summary = method_exists($paginator, 'toArray') === true ? $paginator->toArray() : [];
+        if (is_array($summary) === false) {
             $summary = [];
         }
         $rows = $summary['data'] ?? [];
 
         return [
-            is_array($rows) ? $rows : [],
+            is_array($rows) === true ? $rows : [],
             [
                 'current_page' => (int) ($summary['current_page'] ?? 1),
                 'last_page'    => (int) ($summary['last_page'] ?? 1),
@@ -427,7 +427,7 @@ class ConnectionController extends QuickbooksController
      */
     private function pageArgument(mixed $value, int $default, int $maximum): int
     {
-        $number = is_numeric($value) ? (int) $value : $default;
+        $number = is_numeric($value) === true ? (int) $value : $default;
 
         return min($maximum, max(1, $number));
     }
@@ -438,7 +438,7 @@ class ConnectionController extends QuickbooksController
             ->where('company_uuid', $companyUuid)
             ->latest('updated_at')
             ->first();
-        if ($connection instanceof Connection) {
+        if ($connection instanceof Connection === true) {
             return $connection;
         }
 
@@ -448,7 +448,7 @@ class ConnectionController extends QuickbooksController
         }
         $only = $rows->first();
 
-        return $only instanceof Connection ? $only : null;
+        return $only instanceof Connection === true ? $only : null;
     }
 
     /**
@@ -475,7 +475,7 @@ class ConnectionController extends QuickbooksController
     {
         $resolved = $this->settings->resolveSync([], $this->store->adminSync(), $this->store->defaultSync());
 
-        return !(array_key_exists('customer_enabled', $resolved) && $resolved['customer_enabled'] === false);
+        return (array_key_exists('customer_enabled', $resolved) === true && $resolved['customer_enabled'] === false) === false;
     }
 
     /**
@@ -486,19 +486,19 @@ class ConnectionController extends QuickbooksController
     private function blockedConnection(string $companyUuid, string $trigger, string $direction = 'outbound'): ?JsonResponse
     {
         $row = $this->latestConnection($companyUuid);
-        if (ConnectionGate::usable($row)) {
+        if (ConnectionGate::usable($row) === true) {
             return null;
         }
 
         if ($trigger === 'import') {
-            $message = ImportCustomers::blockedMessage(ConnectionGate::hasRealm($row) ? $row : null);
-        } elseif ($row instanceof Connection && $row->needs_reauth && ConnectionGate::hasRealm($row)) {
+            $message = ImportCustomers::blockedMessage(ConnectionGate::hasRealm($row) === true ? $row : null);
+        } elseif ($row instanceof Connection === true && $row->needs_reauth === true && ConnectionGate::hasRealm($row) === true) {
             $message = 'QuickBooks needs to be connected again before sync can continue.';
         } else {
             $message = 'QuickBooks is not connected. Connect from Quickbooks Setup.';
         }
 
-        if (!ConnectionGate::hasRealm($row)) {
+        if (ConnectionGate::hasRealm($row) === false) {
             return response()->json(['message' => $message], 422);
         }
 
@@ -538,9 +538,9 @@ class ConnectionController extends QuickbooksController
         $credentials = $this->settings->credentialsFor($this->store, $companyUuid);
         $public      = trim((string) ($this->store->adminAuth()['public_oauth_redirect_url'] ?? ''));
         $internal    = SettingController::internalOAuthRedirectUrl();
-        if ($this->isAbsoluteHttpUrl($public)) {
+        if ($this->isAbsoluteHttpUrl($public) === true) {
             $credentials['redirect_uri'] = $public;
-        } elseif ($this->isAbsoluteHttpUrl($internal)) {
+        } elseif ($this->isAbsoluteHttpUrl($internal) === true) {
             $credentials['redirect_uri'] = $internal;
         } else {
             $credentials['redirect_uri'] = '';

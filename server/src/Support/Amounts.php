@@ -14,10 +14,10 @@ class Amounts
     public static function centsToDecimal(int $cents): string
     {
         $negative = $cents < 0;
-        $cents    = $negative ? -$cents : $cents;
+        $cents    = $negative === true ? -$cents : $cents;
         $decimal  = intdiv($cents, 100) . '.' . str_pad((string) ($cents % 100), 2, '0', STR_PAD_LEFT);
 
-        return $negative ? '-' . $decimal : $decimal;
+        return $negative === true ? '-' . $decimal : $decimal;
     }
 
     /**
@@ -32,7 +32,7 @@ class Amounts
         }
 
         $negative    = $amountMinor < 0;
-        $amountCents = $negative ? -$amountMinor : $amountMinor;
+        $amountCents = $negative === true ? -$amountMinor : $amountMinor;
         $decimal     = '0.00';
 
         for ($places = 2; $places <= 7; $places++) {
@@ -46,13 +46,13 @@ class Amounts
             }
         }
 
-        return $negative ? '-' . $decimal : $decimal;
+        return $negative === true ? '-' . $decimal : $decimal;
     }
 
     public static function toMinorUnits(int|string $amount): int
     {
         $negative = false;
-        if (is_int($amount)) {
+        if (is_int($amount) === true) {
             if ($amount < 0) {
                 $negative = true;
                 $amount   = -$amount;
@@ -63,7 +63,7 @@ class Amounts
             if ($amount === '' || $amount === '-') {
                 return 0;
             }
-            if (str_starts_with($amount, '-')) {
+            if (str_starts_with($amount, '-') === true) {
                 $negative = true;
                 $amount   = substr($amount, 1);
             }
@@ -72,13 +72,13 @@ class Amounts
 
         $minor = Money::apply($normalized);
 
-        return $negative ? -$minor : $minor;
+        return $negative === true ? -$minor : $minor;
     }
 
     private static function twoDecimals(string $amount): string
     {
         $amount = str_replace(',', '', $amount);
-        if (!str_contains($amount, '.')) {
+        if (str_contains($amount, '.') === false) {
             return ($amount === '' ? '0' : $amount) . '.00';
         }
 

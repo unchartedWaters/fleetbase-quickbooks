@@ -10,12 +10,12 @@ class FlagInvoiceObserver
 {
     public function updated(object $invoice): void
     {
-        if (!method_exists($invoice, 'wasChanged')) {
+        if (method_exists($invoice, 'wasChanged') === false) {
             return;
         }
 
         $watched = ['status', 'tax', 'total_amount', 'date', 'due_date', 'notes', 'number', 'amount_paid', 'paid_at', 'customer_uuid', 'currency'];
-        if (!$invoice->wasChanged($watched)) {
+        if ($invoice->wasChanged($watched) === false) {
             return;
         }
 
@@ -32,12 +32,12 @@ class FlagInvoiceObserver
 
     private function flag(object $invoice): void
     {
-        if (SyncSuppressor::paused()) {
+        if (SyncSuppressor::paused() === true) {
             return;
         }
 
         $listener = Container::getInstance()->make(FlagInvoiceListener::class);
-        if ($listener instanceof FlagInvoiceListener) {
+        if ($listener instanceof FlagInvoiceListener === true) {
             $listener->handle((object) ['invoice' => $invoice]);
         }
     }

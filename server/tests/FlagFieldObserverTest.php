@@ -14,7 +14,7 @@ use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Container\Container;
 
 beforeEach(function () {
-    while (SyncSuppressor::paused()) {
+    while (SyncSuppressor::paused() === true) {
         SyncSuppressor::resume();
     }
 });
@@ -23,7 +23,7 @@ afterEach(function () {
     Container::getInstance()->forgetInstance(FlagCustomerListener::class);
     Container::getInstance()->forgetInstance(FlagInvoiceListener::class);
     Container::getInstance()->forgetInstance(FlagWalletListener::class);
-    while (SyncSuppressor::paused()) {
+    while (SyncSuppressor::paused() === true) {
         SyncSuppressor::resume();
     }
 });

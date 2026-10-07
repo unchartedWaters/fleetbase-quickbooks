@@ -46,11 +46,11 @@ class ImportCustomers implements ShouldQueue
      */
     public static function blockedMessage(Connection|array|null $connection): string
     {
-        $needsReauth = $connection instanceof Connection
+        $needsReauth = $connection instanceof Connection === true
             ? (bool) $connection->needs_reauth
-            : (is_array($connection) && !empty($connection['needs_reauth']));
+            : (is_array($connection) === true && empty($connection['needs_reauth']) === false);
 
-        return $needsReauth
+        return $needsReauth === true
             ? 'QuickBooks needs to be connected again before import can continue.'
             : 'QuickBooks is not connected. Connect from Quickbooks Setup.';
     }
@@ -67,7 +67,7 @@ class ImportCustomers implements ShouldQueue
         ?SettingsService $settings = null,
         ?SettingsStore $store = null,
     ): void {
-        if (!ConnectionGate::hasRealm($directory->connection($this->companyUuid))) {
+        if (ConnectionGate::hasRealm($directory->connection($this->companyUuid)) === false) {
             return;
         }
 
@@ -77,7 +77,7 @@ class ImportCustomers implements ShouldQueue
 
             return;
         }
-        if (!$lock->get()) {
+        if ($lock->get() === false) {
             $directory->saveSkipped($this->companyUuid, 'import', 'inbound', 'Another QuickBooks sync is already running.');
             $this->retryBusyContinuation();
 
@@ -88,10 +88,10 @@ class ImportCustomers implements ShouldQueue
         try {
             $continue = $this->import($importer, $directory, $tokens, $settings, $store, $lock);
         } finally {
-            if (BatchRunner::holds($this->companyUuid)) {
+            if (BatchRunner::holds($this->companyUuid) === true) {
                 $lock->release();
             }
-            if ($continue) {
+            if ($continue === true) {
                 // Mark only deadline-created jobs as continuations, and dispatch after releasing the company lock.
                 self::dispatchJob(new self($this->companyUuid, 0));
             }
@@ -113,7 +113,7 @@ class ImportCustomers implements ShouldQueue
     private static function dispatchJob(self $job): void
     {
         $dispatcher = Container::getInstance()->make(Dispatcher::class);
-        if ($dispatcher instanceof Dispatcher) {
+        if ($dispatcher instanceof Dispatcher === true) {
             $dispatcher->dispatch($job);
         }
     }
@@ -127,11 +127,11 @@ class ImportCustomers implements ShouldQueue
         Lock $lock,
     ): bool {
         $connection = $directory->connection($this->companyUuid);
-        if (!is_array($connection) || !ConnectionGate::hasRealm($connection)) {
+        if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false) {
             return false;
         }
 
-        if (!empty($connection['needs_reauth'])) {
+        if (empty($connection['needs_reauth']) === false) {
             $directory->saveSkipped($this->companyUuid, 'import', 'inbound', self::blockedMessage($connection));
 
             return false;
@@ -143,7 +143,7 @@ class ImportCustomers implements ShouldQueue
                 $store->adminSync(),
                 $store->defaultSync()
             );
-            if (array_key_exists('customer_enabled', $resolved) && $resolved['customer_enabled'] === false) {
+            if (array_key_exists('customer_enabled', $resolved) === true && $resolved['customer_enabled'] === false) {
                 $directory->saveSkipped($this->companyUuid, 'import', 'inbound', 'Customers are turned off in Data Resolution, so they are not imported.');
 
                 return false;
@@ -179,7 +179,7 @@ class ImportCustomers implements ShouldQueue
                 $started + BatchRunner::LOCK_SECONDS - self::DEADLINE_MARGIN_SECONDS
             );
 
-            return !empty($batch['continue']);
+            return empty($batch['continue']) === false;
         } finally {
             // Saved even when a page query throws, so customers already created keep their links.
             $this->ensureCompanyLock($lock);
@@ -189,7 +189,7 @@ class ImportCustomers implements ShouldQueue
 
     private function releaseCompanyLock(Lock $lock): void
     {
-        if (BatchRunner::holds($this->companyUuid)) {
+        if (BatchRunner::holds($this->companyUuid) === true) {
             $lock->release();
         }
     }
@@ -201,10 +201,10 @@ class ImportCustomers implements ShouldQueue
      */
     private function ensureCompanyLock(Lock $lock): void
     {
-        if (BatchRunner::holds($this->companyUuid)) {
+        if (BatchRunner::holds($this->companyUuid) === true) {
             return;
         }
-        if ($lock->get()) {
+        if ($lock->get() === true) {
             return;
         }
 

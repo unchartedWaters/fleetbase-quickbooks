@@ -23,7 +23,7 @@ class ConnectionProbe
             'company_name'  => null,
             'home_currency' => null,
         ];
-        if (!is_array($connection) || (string) ($connection['realm_id'] ?? '') === '' || (string) ($connection['access_token'] ?? '') === '') {
+        if (is_array($connection) === false || (string) ($connection['realm_id'] ?? '') === '' || (string) ($connection['access_token'] ?? '') === '') {
             return $empty;
         }
 
@@ -49,14 +49,14 @@ class ConnectionProbe
         return [
             'ok'            => true,
             'message'       => 'QuickBooks connection works.',
-            'company_name'  => isset($info['CompanyName']) ? (string) $info['CompanyName'] : null,
+            'company_name'  => isset($info['CompanyName']) === true ? (string) $info['CompanyName'] : null,
             'home_currency' => $currency,
         ];
     }
 
     private function failureMessage(QuickBooksException $exception): string
     {
-        if ($exception->status === 0 || $this->looksLikeTransportFailure($exception->getMessage())) {
+        if ($exception->status === 0 || $this->looksLikeTransportFailure($exception->getMessage()) === true) {
             return QuickBooksClient::TRANSPORT_MESSAGE;
         }
 

@@ -12,13 +12,13 @@ class SettingsStore
      */
     public function get(string $key): array
     {
-        if (!class_exists(Setting::class)) {
+        if (class_exists(Setting::class) === false) {
             return [];
         }
 
         $value = Setting::lookup($key, []);
 
-        return is_array($value) ? $value : [];
+        return is_array($value) === true ? $value : [];
     }
 
     /**
@@ -26,7 +26,7 @@ class SettingsStore
      */
     public function put(string $key, array $value): void
     {
-        if (str_ends_with($key, '.quickbooks.auth')) {
+        if (str_ends_with($key, '.quickbooks.auth') === true) {
             $value = $this->normalizeAuth($value);
         }
 
@@ -46,14 +46,14 @@ class SettingsStore
     {
         $normalized = [];
         foreach (['client_id', 'client_secret', 'redirect_uri', 'environment', 'webhook_verifier', 'public_webhook_receiver_url', 'public_oauth_redirect_url'] as $field) {
-            if (!array_key_exists($field, $auth)) {
+            if (array_key_exists($field, $auth) === false) {
                 continue;
             }
             $value = $auth[$field];
-            if (in_array($field, ['client_secret', 'webhook_verifier', 'public_webhook_receiver_url', 'public_oauth_redirect_url'], true) && (!is_string($value) || trim($value) === '')) {
+            if (in_array($field, ['client_secret', 'webhook_verifier', 'public_webhook_receiver_url', 'public_oauth_redirect_url'], true) === true && (is_string($value) === false || trim($value) === '')) {
                 continue;
             }
-            $normalized[$field] = in_array($field, ['public_webhook_receiver_url', 'public_oauth_redirect_url'], true) ? trim((string) $value) : $value;
+            $normalized[$field] = in_array($field, ['public_webhook_receiver_url', 'public_oauth_redirect_url'], true) === true ? trim((string) $value) : $value;
         }
 
         return $normalized;
@@ -96,7 +96,7 @@ class SettingsStore
     private function configuredEnvironment(): string
     {
         $environment = config('quickbooks.environment', 'production');
-        if (!is_string($environment) || trim($environment) === '') {
+        if (is_string($environment) === false || trim($environment) === '') {
             return 'production';
         }
 
@@ -110,7 +110,7 @@ class SettingsStore
     public function envWebhookVerifier(): string
     {
         $configured = config('quickbooks.webhook_verifier');
-        if (is_string($configured) && $configured !== '') {
+        if (is_string($configured) === true && $configured !== '') {
             return $configured;
         }
 
@@ -119,7 +119,7 @@ class SettingsStore
             $_ENV['QUICKBOOKS_WEBHOOK_VERIFIER'] ?? null,
             $_SERVER['QUICKBOOKS_WEBHOOK_VERIFIER'] ?? null,
         ] as $value) {
-            if (is_string($value) && $value !== '') {
+            if (is_string($value) === true && $value !== '') {
                 return $value;
             }
         }
@@ -150,6 +150,6 @@ class SettingsStore
     {
         $sync = config('quickbooks.sync', []);
 
-        return is_array($sync) ? $sync : [];
+        return is_array($sync) === true ? $sync : [];
     }
 }

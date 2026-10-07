@@ -30,20 +30,20 @@ class ConnectionTokens
      */
     public function refreshIfDue(array $connection, int $now): array
     {
-        if (!empty($connection['needs_reauth']) || !$this->refresher->isDue($connection, $now)) {
+        if (empty($connection['needs_reauth']) === false || $this->refresher->isDue($connection, $now) === false) {
             return $connection;
         }
 
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
         // A batch or import already holds this company's lock. Refresh inside it.
-        $heldAlready = $companyUuid !== '' && BatchRunner::holds($companyUuid);
+        $heldAlready = $companyUuid !== '' && BatchRunner::holds($companyUuid) === true;
         $lock        = null;
-        if (!$heldAlready) {
+        if ($heldAlready === false) {
             $lock = BatchRunner::lock($companyUuid);
             if ($lock === null) {
                 return $connection;
             }
-            if (!$lock->get()) {
+            if ($lock->get() === false) {
                 $connection['refresh_error'] = self::ALREADY_RUNNING;
 
                 return $connection;
@@ -71,18 +71,18 @@ class ConnectionTokens
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
         $sent        = (string) ($connection['refresh_token'] ?? '');
         $stored      = $this->currentConnection($companyUuid);
-        if (!is_array($stored) || (string) ($stored['refresh_token'] ?? '') !== $sent) {
-            return is_array($stored) ? $stored : $connection;
+        if (is_array($stored) === false || (string) ($stored['refresh_token'] ?? '') !== $sent) {
+            return is_array($stored) === true ? $stored : $connection;
         }
 
         $refreshed = $this->requestRefresh($connection);
-        if (!empty($refreshed['refresh_error'])) {
+        if (empty($refreshed['refresh_error']) === false) {
             return $refreshed;
         }
-        if (!$this->storeRefresh($connection, $refreshed, $sent)) {
+        if ($this->storeRefresh($connection, $refreshed, $sent) === false) {
             $current = $this->currentConnection($companyUuid);
 
-            return is_array($current) ? $current : $connection;
+            return is_array($current) === true ? $current : $connection;
         }
 
         return $refreshed;
@@ -106,12 +106,12 @@ class ConnectionTokens
      */
     private function storeRefresh(array $connection, array $refreshed, string $sentRefresh): bool
     {
-        if (!empty($refreshed['refresh_error']) || $refreshed === $connection) {
+        if (empty($refreshed['refresh_error']) === false || $refreshed === $connection) {
             return false;
         }
 
         $stored = $this->currentConnection((string) ($connection['company_uuid'] ?? ''));
-        if (!is_array($stored) || (string) ($stored['refresh_token'] ?? '') !== $sentRefresh) {
+        if (is_array($stored) === false || (string) ($stored['refresh_token'] ?? '') !== $sentRefresh) {
             return false;
         }
 
@@ -131,7 +131,7 @@ class ConnectionTokens
 
         $stored = $this->directory->connection($companyUuid);
 
-        return is_array($stored) ? $stored : null;
+        return is_array($stored) === true ? $stored : null;
     }
 
     /**
@@ -141,12 +141,12 @@ class ConnectionTokens
      */
     public static function blockedMessage(array $connection, int $now): ?string
     {
-        if (!empty($connection['needs_reauth'])) {
+        if (empty($connection['needs_reauth']) === false) {
             return self::REAUTH_MESSAGE;
         }
 
         $expiresAt = $connection['token_expires_at'] ?? null;
-        if (empty($connection['refresh_error']) || ($expiresAt !== null && (int) $expiresAt > $now)) {
+        if (empty($connection['refresh_error']) === true || ($expiresAt !== null && (int) $expiresAt > $now)) {
             return null;
         }
 

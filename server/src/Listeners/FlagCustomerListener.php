@@ -14,12 +14,12 @@ class FlagCustomerListener
 
     public function handle(object $event): void
     {
-        if (SyncSuppressor::paused()) {
+        if (SyncSuppressor::paused() === true) {
             return;
         }
 
         $customer = $event->customer ?? $event;
-        if (!is_object($customer)) {
+        if (is_object($customer) === false) {
             return;
         }
 

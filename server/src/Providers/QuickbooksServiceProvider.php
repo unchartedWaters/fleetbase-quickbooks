@@ -19,7 +19,7 @@ use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Fleetbase\Support\NotificationRegistry;
 use Illuminate\Support\Facades\Event;
 
-if (!class_exists(CoreServiceProvider::class)) {
+if (class_exists(CoreServiceProvider::class) === false) {
     throw new \Exception('Extension cannot be loaded without `fleetbase/core-api` installed!');
 }
 
@@ -74,7 +74,7 @@ class QuickbooksServiceProvider extends CoreServiceProvider
         $this->loadRoutesFrom(__DIR__ . '/../routes.php');
         $this->loadMigrationsFrom(__DIR__ . '/../../migrations');
 
-        if (class_exists(NotificationRegistry::class)) {
+        if (class_exists(NotificationRegistry::class) === true) {
             // The registry's parameter is annotated `sarray`, which PHPStan cannot resolve.
             /* @phpstan-ignore argument.type */
             NotificationRegistry::register(QuickbooksNeedsReauth::class);
@@ -93,27 +93,27 @@ class QuickbooksServiceProvider extends CoreServiceProvider
     private function observeFleetbase(): void
     {
         $customer = 'Fleetbase\\FleetOps\\Models\\Customer';
-        if (class_exists($customer)) {
+        if (class_exists($customer) === true) {
             $customer::observe(FlagCustomerObserver::class);
         }
 
         $place = 'Fleetbase\\FleetOps\\Models\\Place';
-        if (class_exists($place)) {
+        if (class_exists($place) === true) {
             $place::observe(FlagPlaceObserver::class);
         }
 
         $invoice = 'Fleetbase\\Ledger\\Models\\Invoice';
-        if (class_exists($invoice)) {
+        if (class_exists($invoice) === true) {
             $invoice::observe(FlagInvoiceObserver::class);
         }
 
         $item = 'Fleetbase\\Ledger\\Models\\InvoiceItem';
-        if (class_exists($item)) {
+        if (class_exists($item) === true) {
             $item::observe(FlagInvoiceItemObserver::class);
         }
 
         $wallet = 'Fleetbase\\Ledger\\Models\\Wallet';
-        if (class_exists($wallet)) {
+        if (class_exists($wallet) === true) {
             $wallet::observe(FlagWalletObserver::class);
         }
     }

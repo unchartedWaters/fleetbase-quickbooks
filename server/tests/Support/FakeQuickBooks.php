@@ -113,7 +113,7 @@ class FakeQuickBooks extends QuickBooksClient
     {
         $this->calls[] = 'createInvoice';
         $this->invoiceCreates++;
-        if (!$this->customTxnNumbers && empty($payload['DocNumber'])) {
+        if ($this->customTxnNumbers === false && empty($payload['DocNumber']) === true) {
             $payload['DocNumber'] = $this->autoDocNumber();
         }
         $id     = 'inv-' . $this->invoiceCreates;
@@ -233,7 +233,7 @@ class FakeQuickBooks extends QuickBooksClient
         $this->calls[] = 'voidInvoice';
 
         $invoice = $this->invoices[$id] ?? ['Id' => $id];
-        if (!empty($invoice['voided'])) {
+        if (empty($invoice['voided']) === false) {
             throw new QuickBooksException(400, 'QuickBooks request failed with status 400: The invoice is already voided.');
         }
 
@@ -311,7 +311,7 @@ class FakeQuickBooks extends QuickBooksClient
                 try {
                     $results[$bId] = $this->batchItem($connection, $item);
                 } catch (QuickBooksException $exception) {
-                    $halt          = $exception->isUnauthorized() || $exception->isRateLimit();
+                    $halt          = $exception->isUnauthorized() === true || $exception->isRateLimit() === true;
                     $results[$bId] = [
                         'ok'     => false,
                         'body'   => [],
@@ -320,7 +320,7 @@ class FakeQuickBooks extends QuickBooksClient
                         'status' => $exception->status,
                         'halt'   => $halt,
                     ];
-                    if ($halt) {
+                    if ($halt === true) {
                         return $results;
                     }
                 } catch (\Throwable $exception) {
@@ -347,7 +347,7 @@ class FakeQuickBooks extends QuickBooksClient
      */
     public function findPaymentsForCustomers(array $connection, array $customerIds, bool $asBatch = false): array
     {
-        $this->calls[] = ($asBatch || count($customerIds) > 1) ? 'findPaymentsForCustomers:batch' : 'findPaymentsForCustomers';
+        $this->calls[] = ($asBatch === true || count($customerIds) > 1) ? 'findPaymentsForCustomers:batch' : 'findPaymentsForCustomers';
 
         return array_values($this->payments);
     }
@@ -360,7 +360,7 @@ class FakeQuickBooks extends QuickBooksClient
      */
     private function batchItem(array $connection, array $item): array
     {
-        if (isset($item['query']) && is_string($item['query'])) {
+        if (isset($item['query']) === true && is_string($item['query']) === true) {
             return [
                 'ok'     => true,
                 'body'   => [],
@@ -373,7 +373,7 @@ class FakeQuickBooks extends QuickBooksClient
 
         $operation = (string) ($item['operation'] ?? 'create');
         $entity    = (string) ($item['entity'] ?? '');
-        $payload   = is_array($item['payload'] ?? null) ? $item['payload'] : [];
+        $payload   = is_array($item['payload'] ?? null) === true ? $item['payload'] : [];
         $body      = match ($entity . ':' . $operation) {
             'Customer:create' => $this->createCustomer($connection, $payload),
             'Customer:update' => $this->updateCustomer($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
@@ -418,13 +418,13 @@ class FakeQuickBooks extends QuickBooksClient
         if (preg_match("/\\bId\\s*=\\s*'((?:\\\\'|\\\\\\\\|[^'])*)'/i", $query, $match) === 1) {
             $id = str_replace(["\\'", '\\\\'], ["'", '\\'], $match[1]);
 
-            return isset($store[$id]) ? [$store[$id]] : [];
+            return isset($store[$id]) === true ? [$store[$id]] : [];
         }
         if (preg_match('/DocNumber\\s+IN\\s*\\(([^)]*)\\)/i', $query, $match) === 1) {
             $wanted = $this->quotedValues($match[1]);
             $rows   = [];
             foreach ($store as $row) {
-                if (in_array((string) ($row['DocNumber'] ?? ''), $wanted, true)) {
+                if (in_array((string) ($row['DocNumber'] ?? ''), $wanted, true) === true) {
                     $rows[] = $row;
                 }
             }
@@ -467,7 +467,7 @@ class FakeQuickBooks extends QuickBooksClient
     {
         $rows = [];
         foreach ($this->quotedValues($list) as $id) {
-            if (isset($store[$id])) {
+            if (isset($store[$id]) === true) {
                 $rows[] = $store[$id];
             }
         }
@@ -499,11 +499,11 @@ class FakeQuickBooks extends QuickBooksClient
         $this->calls[] = 'findPaymentForInvoice';
         foreach ($this->payments as $payment) {
             foreach ($payment['Line'] ?? [] as $line) {
-                if (!is_array($line)) {
+                if (is_array($line) === false) {
                     continue;
                 }
                 foreach ($line['LinkedTxn'] ?? [] as $txn) {
-                    if (is_array($txn) && (string) ($txn['TxnId'] ?? '') === $invoiceId) {
+                    if (is_array($txn) === true && (string) ($txn['TxnId'] ?? '') === $invoiceId) {
                         return $payment;
                     }
                 }
@@ -694,14 +694,14 @@ class FakeQuickBooks extends QuickBooksClient
     {
         $cents = 0;
         foreach ($payload['Line'] ?? [] as $line) {
-            if (!is_array($line)) {
+            if (is_array($line) === false) {
                 continue;
             }
             $amount = $line['Amount'] ?? 0;
-            if (is_float($amount)) {
+            if (is_float($amount) === true) {
                 throw new \InvalidArgumentException('Money must not be a float.');
             }
-            $cents += Amounts::toMinorUnits(is_int($amount) ? $amount : (string) $amount);
+            $cents += Amounts::toMinorUnits(is_int($amount) === true ? $amount : (string) $amount);
         }
 
         return Amounts::centsToDecimal($cents);

@@ -46,7 +46,7 @@ class SyncCompanyBatch implements ShouldQueue
     public static function dispatch(string $companyUuid, string $trigger = 'scheduled'): void
     {
         $dispatcher = Container::getInstance()->make(Dispatcher::class);
-        if ($dispatcher instanceof Dispatcher) {
+        if ($dispatcher instanceof Dispatcher === true) {
             $dispatcher->dispatch(new self($companyUuid, $trigger));
         }
     }
@@ -74,7 +74,7 @@ class SyncCompanyBatch implements ShouldQueue
     public function redeliveryKey(): string
     {
         $id = $this->job?->uuid();
-        if (is_string($id) && $id !== '') {
+        if (is_string($id) === true && $id !== '') {
             return $id;
         }
 
@@ -84,7 +84,7 @@ class SyncCompanyBatch implements ShouldQueue
     public function handle(BatchRunner $runner): void
     {
         $result = $runner->run($this->companyUuid, $this->trigger);
-        if (($result['reason'] ?? null) !== 'busy' || !in_array($this->trigger, ['drain', 'catalog'], true)) {
+        if (($result['reason'] ?? null) !== 'busy' || in_array($this->trigger, ['drain', 'catalog'], true) === false) {
             return;
         }
         if ($this->continuationRetry >= self::CONTINUATION_RETRY_LIMIT) {
@@ -98,7 +98,7 @@ class SyncCompanyBatch implements ShouldQueue
         ));
 
         $dispatcher = Container::getInstance()->make(Dispatcher::class);
-        if ($dispatcher instanceof Dispatcher) {
+        if ($dispatcher instanceof Dispatcher === true) {
             $dispatcher->dispatch($retry);
         }
     }

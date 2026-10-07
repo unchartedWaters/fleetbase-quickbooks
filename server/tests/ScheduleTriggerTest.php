@@ -82,14 +82,14 @@ function scheduleTriggerRun(int $lastBatchAt, int $pending, string $trigger = 's
 
         public function createCustomer(array $connection, array $payload): array
         {
-            $this->heldLock = $this->heldLock || BatchRunner::holds('company-uuid');
+            $this->heldLock = $this->heldLock === true || BatchRunner::holds('company-uuid') === true;
 
             return parent::createCustomer($connection, $payload);
         }
 
         public function batch(array $connection, array $items): array
         {
-            $this->heldLock = $this->heldLock || BatchRunner::holds('company-uuid');
+            $this->heldLock = $this->heldLock === true || BatchRunner::holds('company-uuid') === true;
 
             return parent::batch($connection, $items);
         }

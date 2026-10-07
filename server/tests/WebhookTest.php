@@ -88,7 +88,7 @@ function webhookController(SettingsService $settings, MemorySettingsStore $store
         protected function connectionsForRealm(string $realmId): array
         {
             $companies = $this->realms[$realmId] ?? [];
-            if (is_string($companies)) {
+            if (is_string($companies) === true) {
                 $companies = [$companies];
             }
 
@@ -154,7 +154,7 @@ function webhookSeenEvents(callable $callback): array
 {
     $seen       = [];
     $container  = Container::getInstance();
-    $previous   = $container->bound('events') ? $container->make('events') : null;
+    $previous   = $container->bound('events') === true ? $container->make('events') : null;
     $dispatcher = new Illuminate\Events\Dispatcher($container);
     $dispatcher->listen(QuickBooksEntityChanged::class, function (QuickBooksEntityChanged $event) use (&$seen): void {
         $seen[] = $event;
@@ -216,7 +216,7 @@ function withWebhookDispatcher(callable $callback): mixed
     };
 
     $container = Container::getInstance();
-    $previous  = $container->bound(Dispatcher::class) ? $container->make(Dispatcher::class) : null;
+    $previous  = $container->bound(Dispatcher::class) === true ? $container->make(Dispatcher::class) : null;
     $container->instance(Dispatcher::class, $dispatcher);
     try {
         return $callback($dispatcher);
@@ -238,7 +238,7 @@ function withWebhookDispatcher(callable $callback): mixed
  */
 function withoutWebhookVerifier(callable $callback): mixed
 {
-    if (class_exists(Cache::class)) {
+    if (class_exists(Cache::class) === true) {
         Cache::flush();
     }
     $previous  = getenv('QUICKBOOKS_WEBHOOK_VERIFIER');
@@ -258,10 +258,10 @@ function withoutWebhookVerifier(callable $callback): mixed
         } else {
             putenv('QUICKBOOKS_WEBHOOK_VERIFIER=' . $previous);
         }
-        if ($hadEnv) {
+        if ($hadEnv === true) {
             $_ENV['QUICKBOOKS_WEBHOOK_VERIFIER'] = $env;
         }
-        if ($hadServer) {
+        if ($hadServer === true) {
             $_SERVER['QUICKBOOKS_WEBHOOK_VERIFIER'] = $server;
         }
         config()->set('quickbooks.webhook_verifier', $config);

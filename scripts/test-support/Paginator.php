@@ -17,7 +17,7 @@ class Paginator implements JsonSerializable
         protected ?int $currentPage = null,
         protected array $options = [],
     ) {
-        $this->items = $items instanceof Collection ? $items : collect($items);
+        $this->items = $items instanceof Collection === TRUE ? $items : collect($items);
     }
 
     public static function resolveCurrentPage($pageName = 'page', $default = 1): int

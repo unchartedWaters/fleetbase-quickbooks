@@ -1221,15 +1221,15 @@ test('summary last sync is the latest finished batch and stays empty when every 
 
         public function select($query, $bindings = [], $useReadPdo = true)
         {
-            if (str_contains(strtolower($query), 'count(')) {
+            if (str_contains(strtolower($query), 'count(') === true) {
                 return [['aggregate' => 0]];
             }
 
-            if (!str_contains($query, 'quickbooks_sync_batches')) {
+            if (str_contains($query, 'quickbooks_sync_batches') === false) {
                 return [];
             }
 
-            $finishedOnly = str_contains($query, 'status') && in_array('finished', $bindings, true);
+            $finishedOnly = str_contains($query, 'status') === true && in_array('finished', $bindings, true) === true;
             $companyUuid  = $bindings[0] ?? null;
             $rows         = array_values(array_filter(
                 $this->rows,
@@ -1238,7 +1238,7 @@ test('summary last sync is the latest finished batch and stays empty when every 
                         return false;
                     }
 
-                    return !$finishedOnly || ($row['status'] ?? null) === 'finished';
+                    return $finishedOnly === false || ($row['status'] ?? null) === 'finished';
                 }
             ));
 
@@ -1391,7 +1391,7 @@ function qbCaptureDispatches(callable $callback): array
         }
     };
     $container          = Container::getInstance();
-    $previousDispatcher = $container->bound(Dispatcher::class) ? $container->make(Dispatcher::class) : null;
+    $previousDispatcher = $container->bound(Dispatcher::class) === true ? $container->make(Dispatcher::class) : null;
     $container->instance(Dispatcher::class, $dispatcher);
 
     try {

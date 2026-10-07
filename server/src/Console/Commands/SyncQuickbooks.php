@@ -28,10 +28,10 @@ class SyncQuickbooks extends Command
         }
 
         foreach ($companies as $companyUuid) {
-            if (!$runner->hasConnection($companyUuid)) {
+            if ($runner->hasConnection($companyUuid) === false) {
                 continue;
             }
-            if (!$runner->isScheduledDue($companyUuid, $now)) {
+            if ($runner->isScheduledDue($companyUuid, $now) === false) {
                 continue;
             }
             SyncCompanyBatch::dispatch($companyUuid);

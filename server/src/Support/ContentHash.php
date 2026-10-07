@@ -23,11 +23,11 @@ class ContentHash
     private static function sort(array $value): array
     {
         foreach ($value as $key => $item) {
-            if (is_array($item)) {
+            if (is_array($item) === true) {
                 $value[$key] = self::sort($item);
             }
         }
-        if (array_is_list($value)) {
+        if (array_is_list($value) === true) {
             return $value;
         }
         ksort($value);

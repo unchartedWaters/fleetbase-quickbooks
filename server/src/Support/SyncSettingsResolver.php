@@ -87,7 +87,7 @@ class SyncSettingsResolver
         if ($value === null || $value === '') {
             return null;
         }
-        if (is_bool($value)) {
+        if (is_bool($value) === true) {
             return $value;
         }
 
@@ -101,7 +101,7 @@ class SyncSettingsResolver
      */
     private function pickInt(string $field, array $company, int $default, int $minimum): array
     {
-        if (isset($company[$field]) && $company[$field] !== '') {
+        if (isset($company[$field]) === true && $company[$field] !== '') {
             return ['value' => max($minimum, (int) $company[$field]), 'source' => 'admin'];
         }
 
@@ -117,7 +117,7 @@ class SyncSettingsResolver
     private function pickChoice(string $field, array $company, string $default, array $allowed): array
     {
         $value = $company[$field] ?? null;
-        if (is_string($value) && in_array($value, $allowed, true)) {
+        if (is_string($value) === true && in_array($value, $allowed, true) === true) {
             return ['value' => $value, 'source' => 'admin'];
         }
 
@@ -134,7 +134,7 @@ class SyncSettingsResolver
      */
     private function pickDirection(string $field, array $company): array
     {
-        if (!array_key_exists($field, $company)) {
+        if (array_key_exists($field, $company) === false) {
             return ['value' => 'both', 'source' => 'default'];
         }
 
@@ -142,7 +142,7 @@ class SyncSettingsResolver
         if ($value === 'off' || $value === null || $value === '') {
             return ['value' => 'both', 'source' => 'admin'];
         }
-        if (is_string($value) && in_array($value, ['both', 'outbound', 'inbound'], true)) {
+        if (is_string($value) === true && in_array($value, ['both', 'outbound', 'inbound'], true) === true) {
             return ['value' => $value, 'source' => 'admin'];
         }
 

@@ -18,7 +18,7 @@ class SyncSchedule
      */
     public static function shouldRun(int $now, bool $connected): bool
     {
-        return $connected && self::shouldStart($now);
+        return $connected === true && self::shouldStart($now) === true;
     }
 
     /**
@@ -26,7 +26,7 @@ class SyncSchedule
      */
     public static function shouldStart(int $now): bool
     {
-        if (!self::cacheReady()) {
+        if (self::cacheReady() === false) {
             return true;
         }
 
@@ -37,7 +37,7 @@ class SyncSchedule
         }
 
         // Redis hands this value back as a numeric string. That is still a hold.
-        if (!is_int($until) && !(is_string($until) && ctype_digit($until))) {
+        if (is_int($until) === false && (is_string($until) === true && ctype_digit($until) === true) === false) {
             return true;
         }
 
@@ -49,7 +49,7 @@ class SyncSchedule
      */
     public static function defer(int $now, int $seconds): void
     {
-        if (!self::cacheReady()) {
+        if (self::cacheReady() === false) {
             return;
         }
 
@@ -65,7 +65,7 @@ class SyncSchedule
      */
     public static function wake(): void
     {
-        if (!self::cacheReady()) {
+        if (self::cacheReady() === false) {
             return;
         }
 

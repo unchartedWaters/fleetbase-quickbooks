@@ -26,7 +26,7 @@ class SecretCipher
         } catch (DecryptException $exception) {
             // Values saved before we switched to Crypt used plain AES-256-CBC. Open those once
             // so existing secrets and tokens keep working; they are re-encrypted on next save.
-            if (!$this->isLegacyCiphertext($payload)) {
+            if ($this->isLegacyCiphertext($payload) === false) {
                 throw new \RuntimeException('Unable to decrypt QuickBooks secret.');
             }
 
@@ -40,7 +40,7 @@ class SecretCipher
      */
     public function isLegacyCiphertext(string $payload): bool
     {
-        if ($payload === '' || $this->isCryptPayload($payload)) {
+        if ($payload === '' || $this->isCryptPayload($payload) === true) {
             return false;
         }
 
@@ -60,7 +60,7 @@ class SecretCipher
      */
     public function upgrade(string $payload): string
     {
-        if (!$this->isLegacyCiphertext($payload)) {
+        if ($this->isLegacyCiphertext($payload) === false) {
             return $payload;
         }
 
@@ -74,10 +74,10 @@ class SecretCipher
      */
     public function seal(string $payload): string
     {
-        if ($payload === '' || $this->isCryptPayload($payload)) {
+        if ($payload === '' || $this->isCryptPayload($payload) === true) {
             return $payload;
         }
-        if ($this->isLegacyCiphertext($payload)) {
+        if ($this->isLegacyCiphertext($payload) === true) {
             return $this->upgrade($payload);
         }
 
@@ -96,7 +96,7 @@ class SecretCipher
         if ($payload === '') {
             return $payload;
         }
-        if (!$this->isCryptPayload($payload) && !$this->isLegacyCiphertext($payload)) {
+        if ($this->isCryptPayload($payload) === false && $this->isLegacyCiphertext($payload) === false) {
             return null;
         }
 
@@ -110,17 +110,17 @@ class SecretCipher
     private function isCryptPayload(string $payload): bool
     {
         $decoded = base64_decode($payload, true);
-        if ($decoded === false || !str_starts_with($decoded, '{')) {
+        if ($decoded === false || str_starts_with($decoded, '{') === false) {
             return false;
         }
 
         $json = json_decode($decoded, true);
 
-        return is_array($json)
-            && isset($json['iv'], $json['value'], $json['mac'])
-            && is_string($json['iv'])
-            && is_string($json['value'])
-            && is_string($json['mac']);
+        return is_array($json) === true
+            && isset($json['iv'], $json['value'], $json['mac']) === true
+            && is_string($json['iv']) === true
+            && is_string($json['value']) === true
+            && is_string($json['mac']) === true;
     }
 
     private function requireAppKey(): void
@@ -148,7 +148,7 @@ class SecretCipher
     private function legacyKey(): string
     {
         $configured = (string) config('app.key', '');
-        if (str_starts_with($configured, 'base64:')) {
+        if (str_starts_with($configured, 'base64:') === true) {
             $decoded    = base64_decode(substr($configured, 7), true);
             $configured = $decoded === false ? $configured : $decoded;
         }

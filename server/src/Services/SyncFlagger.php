@@ -10,10 +10,10 @@ class SyncFlagger
 {
     public function flag(SyncLedger $ledger, string $companyUuid, string $localType, string $localUuid, string $reason, ?string $status = null): void
     {
-        if (SyncSuppressor::paused()) {
+        if (SyncSuppressor::paused() === true) {
             return;
         }
-        if (!ConnectionGate::hasRealm($ledger->connection($companyUuid))) {
+        if (ConnectionGate::hasRealm($ledger->connection($companyUuid)) === false) {
             return;
         }
         if ($localType === 'invoice' && ($status === null || $status === 'draft')) {
@@ -28,7 +28,7 @@ class SyncFlagger
     {
         $companyUuid = (string) ($invoice->company_uuid ?? '');
         $uuid        = (string) ($invoice->uuid ?? '');
-        $status      = isset($invoice->status) ? (string) $invoice->status : null;
+        $status      = isset($invoice->status) === true ? (string) $invoice->status : null;
         if ($companyUuid === '' || $uuid === '') {
             return;
         }
@@ -78,6 +78,6 @@ class SyncFlagger
      */
     private function entityOn(array $settings, string $key): bool
     {
-        return !array_key_exists($key, $settings) || $settings[$key] !== false;
+        return array_key_exists($key, $settings) === false || $settings[$key] !== false;
     }
 }

@@ -51,7 +51,7 @@ class EnqueueWebhookSync
                 if ($event->operation === 'delete' || $event->entityType !== 'payment') {
                     continue;
                 }
-                if ($this->allows($settings, $event->entityType)) {
+                if ($this->allows($settings, $event->entityType) === true) {
                     $payable[] = $event;
                 }
             }
@@ -67,16 +67,16 @@ class EnqueueWebhookSync
                     $deletes[] = $event;
                     continue;
                 }
-                if (!$this->allows($settings, $event->entityType)) {
+                if ($this->allows($settings, $event->entityType) === false) {
                     continue;
                 }
                 if ($event->entityType === 'payment') {
                     $target = $payments[$event->realmId . '|' . $event->quickbooksId] ?? null;
-                    if (!is_array($target)) {
+                    if (is_array($target) === false) {
                         continue;
                     }
-                    $invoiceUuids = is_array($target['invoices'] ?? null) ? $target['invoices'] : [];
-                    if ($invoiceUuids === [] && is_string($target['invoice'] ?? null) && $target['invoice'] !== '') {
+                    $invoiceUuids = is_array($target['invoices'] ?? null) === true ? $target['invoices'] : [];
+                    if ($invoiceUuids === [] && is_string($target['invoice'] ?? null) === true && $target['invoice'] !== '') {
                         $invoiceUuids = [$target['invoice']];
                     }
                     foreach ($invoiceUuids as $invoiceUuid) {
@@ -96,7 +96,7 @@ class EnqueueWebhookSync
                     ];
                     // A link stored under the QuickBooks payment id does not point loadLinked
                     // at the invoice. Name the invoice too so the inbound job loads it.
-                    if ($target['keyed_by_payment']) {
+                    if ($target['keyed_by_payment'] === true) {
                         foreach ($target['quickbooks_invoices'] as $invoiceId) {
                             $inbound[] = [
                                 'entity'    => 'Invoice',
@@ -111,17 +111,17 @@ class EnqueueWebhookSync
                 if ($event->entityType === 'invoice') {
                     $realmLinks = $invoices['qbo'][$event->realmId] ?? [];
                     $fromLink   = $realmLinks[$event->quickbooksId] ?? null;
-                    if (is_string($fromLink) && $fromLink !== '') {
+                    if (is_string($fromLink) === true && $fromLink !== '') {
                         $localUuid = $fromLink;
                     }
-                    $linked = isset($realmLinks[$event->quickbooksId])
-                        || (is_string($event->localUuid) && $event->localUuid !== '');
-                    $onFile = is_string($localUuid) && $localUuid !== '' && isset($invoices['local'][$localUuid]);
-                    if (!$linked && !$onFile) {
+                    $linked = isset($realmLinks[$event->quickbooksId]) === true
+                        || (is_string($event->localUuid) === true && $event->localUuid !== '');
+                    $onFile = is_string($localUuid) === true && $localUuid !== '' && isset($invoices['local'][$localUuid]) === true;
+                    if ($linked === false && $onFile === false) {
                         continue;
                     }
                 }
-                if (!is_string($localUuid) || $localUuid === '') {
+                if (is_string($localUuid) === false || $localUuid === '') {
                     continue;
                 }
                 $records[$event->entityType . '|' . $localUuid] = [
@@ -163,7 +163,7 @@ class EnqueueWebhookSync
         } catch (\Throwable) {
             return;
         }
-        if (!$directory instanceof FleetbaseDirectory) {
+        if ($directory instanceof FleetbaseDirectory === false) {
             return;
         }
 
@@ -181,9 +181,9 @@ class EnqueueWebhookSync
             if ($event->entityType === 'payment') {
                 $key    = $event->realmId . '|' . $event->quickbooksId;
                 $target = $resolved[$key] ?? null;
-                if (is_array($target)) {
-                    $named = is_array($target['invoices'] ?? null) ? $target['invoices'] : [];
-                    if ($named === [] && is_string($target['invoice'] ?? null) && $target['invoice'] !== '') {
+                if (is_array($target) === true) {
+                    $named = is_array($target['invoices'] ?? null) === true ? $target['invoices'] : [];
+                    if ($named === [] && is_string($target['invoice'] ?? null) === true && $target['invoice'] !== '') {
                         $named = [$target['invoice']];
                     }
                     foreach ($named as $invoiceUuid) {
@@ -240,7 +240,7 @@ class EnqueueWebhookSync
      */
     private function allows(array $settings, string $entityType): bool
     {
-        if (!$this->entityEnabled($settings, $entityType)) {
+        if ($this->entityEnabled($settings, $entityType) === false) {
             return false;
         }
 
@@ -257,14 +257,14 @@ class EnqueueWebhookSync
     private function entityEnabled(array $settings, string $entityType): bool
     {
         $key = $entityType . '_enabled';
-        if (!array_key_exists($key, $settings)) {
+        if (array_key_exists($key, $settings) === false) {
             return true;
         }
         $value = $settings[$key];
         if ($value === null || $value === '') {
             return true;
         }
-        if (is_bool($value)) {
+        if (is_bool($value) === true) {
             return $value;
         }
         $parsed = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
@@ -288,7 +288,7 @@ class EnqueueWebhookSync
                 continue;
             }
             $idsByRealm[$event->realmId][] = $event->quickbooksId;
-            if (is_string($event->localUuid) && $event->localUuid !== '') {
+            if (is_string($event->localUuid) === true && $event->localUuid !== '') {
                 $uuids[] = $event->localUuid;
             }
         }
@@ -302,7 +302,7 @@ class EnqueueWebhookSync
                 ->whereIn('qbo_id', array_values(array_unique($ids)))
                 ->get(['qbo_id', 'local_uuid']);
             foreach ($links as $link) {
-                if (!is_object($link)) {
+                if (is_object($link) === false) {
                     continue;
                 }
                 $qbo[$realmId][(string) $link->qbo_id] = (string) $link->local_uuid;
@@ -311,7 +311,7 @@ class EnqueueWebhookSync
         }
 
         $local = [];
-        if ($uuids !== [] && class_exists(Invoice::class)) {
+        if ($uuids !== [] && class_exists(Invoice::class) === true) {
             $found = Invoice::query()
                 ->where('company_uuid', $companyUuid)
                 ->whereIn('uuid', array_values(array_unique($uuids)))
@@ -338,7 +338,7 @@ class EnqueueWebhookSync
         $this->paymentReads = [];
         $idsByRealm         = [];
         foreach ($events as $event) {
-            if ($event->entityType !== 'payment' || (!$allowDelete && $event->operation === 'delete')) {
+            if ($event->entityType !== 'payment' || ($allowDelete === false && $event->operation === 'delete')) {
                 continue;
             }
             $idsByRealm[$event->realmId][] = $event->quickbooksId;
@@ -363,7 +363,7 @@ class EnqueueWebhookSync
             ->whereIn('realm_id', $realmIds)
             ->whereIn('qbo_id', $paymentIds)
             ->get(['realm_id', 'qbo_id', 'local_uuid']) as $link) {
-            if (!is_object($link)) {
+            if (is_object($link) === false) {
                 continue;
             }
             $key                 = (string) $link->realm_id . '|' . (string) $link->qbo_id;
@@ -396,25 +396,25 @@ class EnqueueWebhookSync
             $found = $this->quickbooksInvoiceIdsForPayments($companyUuid, (string) $realmId, array_values(array_unique($ids)));
             foreach (array_values(array_unique($ids)) as $paymentId) {
                 $key = $realmId . '|' . $paymentId;
-                if (!array_key_exists($paymentId, $found)) {
+                if (array_key_exists($paymentId, $found) === false) {
                     continue;
                 }
                 $invoiceIds = $found[$paymentId];
                 if ($invoiceIds === null) {
                     $this->paymentReads[$key] = 'missing';
-                    if ($allowDelete) {
+                    if ($allowDelete === true) {
                         $missingByRealm[$realmId][] = (string) $paymentId;
                     }
                     continue;
                 }
                 $this->paymentReads[$key] = 'found';
-                if (is_array($invoiceIds) && $invoiceIds !== []) {
+                if (is_array($invoiceIds) === true && $invoiceIds !== []) {
                     $remoteInvoices[$key] = $invoiceIds;
                 }
             }
         }
 
-        $storedInvoice = $allowDelete ? $this->storedPaymentInvoices($companyUuid, $missingByRealm) : [];
+        $storedInvoice = $allowDelete === true ? $this->storedPaymentInvoices($companyUuid, $missingByRealm) : [];
 
         $candidateUuids = [];
         foreach ($direct as $uuids) {
@@ -454,7 +454,7 @@ class EnqueueWebhookSync
                 })
                 ->get(['realm_id', 'local_uuid', 'qbo_id']);
             foreach ($invoiceLinks as $link) {
-                if (!is_object($link)) {
+                if (is_object($link) === false) {
                     continue;
                 }
                 $realm = (string) $link->realm_id;
@@ -473,7 +473,7 @@ class EnqueueWebhookSync
         foreach ($direct as $key => $uuids) {
             $realm = explode('|', $key, 2)[0];
             foreach ($uuids as $uuid) {
-                if (!isset($linkedByUuid[$realm . '|' . $uuid])) {
+                if (isset($linkedByUuid[$realm . '|' . $uuid]) === false) {
                     $needFile[] = $uuid;
                 }
             }
@@ -481,13 +481,13 @@ class EnqueueWebhookSync
         foreach ($storedInvoice as $key => $uuids) {
             $realm = explode('|', $key, 2)[0];
             foreach ($uuids as $uuid) {
-                if (!isset($linkedByUuid[$realm . '|' . $uuid])) {
+                if (isset($linkedByUuid[$realm . '|' . $uuid]) === false) {
                     $needFile[] = $uuid;
                 }
             }
         }
         $onFile = [];
-        if ($needFile !== [] && class_exists(Invoice::class)) {
+        if ($needFile !== [] && class_exists(Invoice::class) === true) {
             $found = Invoice::query()
                 ->where('company_uuid', $companyUuid)
                 ->whereIn('uuid', array_values(array_unique($needFile)))
@@ -501,7 +501,7 @@ class EnqueueWebhookSync
         foreach ($direct as $key => $uuids) {
             $realm = explode('|', $key, 2)[0];
             foreach ($uuids as $uuid) {
-                if (isset($linkedByUuid[$realm . '|' . $uuid]) || isset($onFile[$uuid])) {
+                if (isset($linkedByUuid[$realm . '|' . $uuid]) === true || isset($onFile[$uuid]) === true) {
                     $this->addResolvedInvoice($resolved, $key, $uuid, false, []);
                 }
             }
@@ -510,19 +510,19 @@ class EnqueueWebhookSync
             $realm = explode('|', $key, 2)[0];
             foreach ($invoiceIds as $invoiceId) {
                 $uuid = $uuidByQbo[$realm . '|' . $invoiceId] ?? null;
-                if (!is_string($uuid) || $uuid === '') {
+                if (is_string($uuid) === false || $uuid === '') {
                     continue;
                 }
                 $this->addResolvedInvoice($resolved, $key, $uuid, true, $invoiceIds);
             }
         }
         foreach ($storedInvoice as $key => $uuids) {
-            if (isset($resolved[$key])) {
+            if (isset($resolved[$key]) === true) {
                 continue;
             }
             $realm = explode('|', $key, 2)[0];
             foreach ($uuids as $uuid) {
-                if (isset($linkedByUuid[$realm . '|' . $uuid]) || isset($onFile[$uuid])) {
+                if (isset($linkedByUuid[$realm . '|' . $uuid]) === true || isset($onFile[$uuid]) === true) {
                     $this->addResolvedInvoice($resolved, $key, $uuid, true, []);
                 }
             }
@@ -543,7 +543,7 @@ class EnqueueWebhookSync
         if ($uuid === '') {
             return;
         }
-        if (!isset($resolved[$key])) {
+        if (isset($resolved[$key]) === false) {
             $resolved[$key] = [
                 'invoice'             => $uuid,
                 'invoices'            => [],
@@ -551,7 +551,7 @@ class EnqueueWebhookSync
                 'quickbooks_invoices' => $quickbooksInvoices,
             ];
         }
-        if (!in_array($uuid, $resolved[$key]['invoices'], true)) {
+        if (in_array($uuid, $resolved[$key]['invoices'], true) === false) {
             $resolved[$key]['invoices'][] = $uuid;
         }
     }
@@ -586,7 +586,7 @@ class EnqueueWebhookSync
             ->whereIn('realm_id', $realms)
             ->whereIn('local_uuid', $paymentIds)
             ->get(['realm_id', 'local_uuid', 'qbo_id']) as $link) {
-            if (!is_object($link)) {
+            if (is_object($link) === false) {
                 continue;
             }
             $paymentId   = trim((string) $link->local_uuid);
@@ -596,10 +596,10 @@ class EnqueueWebhookSync
                 continue;
             }
             $key = $realm . '|' . $paymentId;
-            if (!isset($mapped[$key])) {
+            if (isset($mapped[$key]) === false) {
                 $mapped[$key] = [];
             }
-            if (!in_array($invoiceUuid, $mapped[$key], true)) {
+            if (in_array($invoiceUuid, $mapped[$key], true) === false) {
                 $mapped[$key][] = $invoiceUuid;
             }
         }
@@ -627,7 +627,7 @@ class EnqueueWebhookSync
         } catch (\Throwable) {
             return [];
         }
-        if (!$directory instanceof FleetbaseDirectory || !$client instanceof QuickBooksClient) {
+        if ($directory instanceof FleetbaseDirectory === false || $client instanceof QuickBooksClient === false) {
             return [];
         }
 
@@ -636,7 +636,7 @@ class EnqueueWebhookSync
         } catch (\Throwable) {
             return [];
         }
-        if (!is_array($connection) || !empty($connection['needs_reauth'])) {
+        if (is_array($connection) === false || empty($connection['needs_reauth']) === false) {
             return [];
         }
         if ((string) ($connection['realm_id'] ?? '') !== $realmId) {
@@ -654,7 +654,7 @@ class EnqueueWebhookSync
             $mapped[(string) $paymentId] = $this->invoiceQboIdsOnPayment($remote);
         }
         foreach ($read['missing'] as $paymentId => $missing) {
-            if ($missing && !array_key_exists((string) $paymentId, $mapped)) {
+            if ($missing === true && array_key_exists((string) $paymentId, $mapped) === false) {
                 $mapped[(string) $paymentId] = null;
             }
         }
@@ -676,7 +676,7 @@ class EnqueueWebhookSync
         }
         if (count($paymentIds) === 1) {
             $remote = $client->getPayment($connection, $paymentIds[0]);
-            if (!is_array($remote)) {
+            if (is_array($remote) === false) {
                 return ['found' => [], 'missing' => [$paymentIds[0] => true]];
             }
 
@@ -692,12 +692,12 @@ class EnqueueWebhookSync
                 'query' => 'select * from Payment where Id IN (' . QuickBooksClient::quotedList($chunk) . ')',
             ]]);
             $result = $results[$bId] ?? null;
-            if (!is_array($result) || empty($result['ok']) || !is_array($result['rows'] ?? null)) {
+            if (is_array($result) === false || empty($result['ok']) === true || is_array($result['rows'] ?? null) === false) {
                 continue;
             }
             $seen = [];
             foreach ($result['rows'] as $remote) {
-                if (!is_array($remote)) {
+                if (is_array($remote) === false) {
                     continue;
                 }
                 $id = trim((string) ($remote['Id'] ?? ''));
@@ -707,7 +707,7 @@ class EnqueueWebhookSync
                 }
             }
             foreach ($chunk as $id) {
-                if (!isset($seen[$id])) {
+                if (isset($seen[$id]) === false) {
                     $missing[$id] = true;
                 }
             }
@@ -724,21 +724,21 @@ class EnqueueWebhookSync
     private function invoiceQboIdsOnPayment(array $remote): array
     {
         $lines = $remote['Line'] ?? null;
-        if (!is_array($lines)) {
+        if (is_array($lines) === false) {
             return [];
         }
 
         $ids = [];
         foreach ($lines as $line) {
-            if (!is_array($line)) {
+            if (is_array($line) === false) {
                 continue;
             }
             $txns = $line['LinkedTxn'] ?? [];
-            if (!is_array($txns)) {
+            if (is_array($txns) === false) {
                 continue;
             }
             foreach ($txns as $txn) {
-                if (!is_array($txn)) {
+                if (is_array($txn) === false) {
                     continue;
                 }
                 $type = (string) ($txn['TxnType'] ?? '');
@@ -746,7 +746,7 @@ class EnqueueWebhookSync
                     continue;
                 }
                 $id = trim((string) ($txn['TxnId'] ?? ''));
-                if ($id !== '' && !in_array($id, $ids, true)) {
+                if ($id !== '' && in_array($id, $ids, true) === false) {
                     $ids[] = $id;
                 }
             }

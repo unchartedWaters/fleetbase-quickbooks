@@ -31,7 +31,7 @@ class WalletMapper
         $description = trim((string) ($wallet['description'] ?? ''));
         if ($description !== '') {
             $payload['Description'] = $description;
-        } elseif ($pushClears) {
+        } elseif ($pushClears === true) {
             $payload['Description'] = '';
         }
 
@@ -102,7 +102,7 @@ class WalletMapper
 
         return [
             'acct'        => $remoteAcct,
-            'active'      => !array_key_exists('Active', $remote) || (bool) $remote['Active'],
+            'active'      => array_key_exists('Active', $remote) === false || (bool) $remote['Active'] === true,
             'currency'    => $remoteCurrency,
             'description' => (string) ($remote['Description'] ?? ''),
             'name'        => trim((string) ($remote['Name'] ?? '')),

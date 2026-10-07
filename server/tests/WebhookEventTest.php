@@ -90,7 +90,7 @@ function qboChangedController(SettingsService $settings, MemorySettingsStore $st
         protected function connectionsForRealm(string $realmId): array
         {
             $companies = $this->realms[$realmId] ?? [];
-            if (is_string($companies)) {
+            if (is_string($companies) === true) {
                 $companies = [$companies];
             }
 
@@ -112,7 +112,7 @@ function qboChangedController(SettingsService $settings, MemorySettingsStore $st
         {
             $realmLinks = $this->links[$companyUuid][$realmId] ?? [];
 
-            return is_array($realmLinks) ? $realmLinks : [];
+            return is_array($realmLinks) === true ? $realmLinks : [];
         }
 
         protected function linksOnRealm(string $realmId, array $quickbooksIds): array
@@ -131,7 +131,7 @@ function qboChangedController(SettingsService $settings, MemorySettingsStore $st
  */
 function qboChangedWithoutVerifier(callable $callback): mixed
 {
-    if (class_exists(Illuminate\Support\Facades\Cache::class)) {
+    if (class_exists(Illuminate\Support\Facades\Cache::class) === true) {
         Illuminate\Support\Facades\Cache::flush();
     }
     $previous  = getenv('QUICKBOOKS_WEBHOOK_VERIFIER');
@@ -151,10 +151,10 @@ function qboChangedWithoutVerifier(callable $callback): mixed
         } else {
             putenv('QUICKBOOKS_WEBHOOK_VERIFIER=' . $previous);
         }
-        if ($hadEnv) {
+        if ($hadEnv === true) {
             $_ENV['QUICKBOOKS_WEBHOOK_VERIFIER'] = $env;
         }
-        if ($hadServer) {
+        if ($hadServer === true) {
             $_SERVER['QUICKBOOKS_WEBHOOK_VERIFIER'] = $server;
         }
         config()->set('quickbooks.webhook_verifier', $config);
@@ -213,7 +213,7 @@ function qboChangedBus(callable $callback): mixed
     };
 
     $container = Container::getInstance();
-    $previous  = $container->bound(Dispatcher::class) ? $container->make(Dispatcher::class) : null;
+    $previous  = $container->bound(Dispatcher::class) === true ? $container->make(Dispatcher::class) : null;
     $container->instance(Dispatcher::class, $dispatcher);
     try {
         return $callback($dispatcher);
@@ -519,7 +519,7 @@ test('a controller link lookup failure propagates without dispatching an event o
         config()->set('database.default', $defaultConnection);
         config()->set('database.connections.sqlite', $sqliteConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('an invoice link lookup failure propagates without queuing an empty result', function () {
     $defaultConnection = config('database.default');
@@ -555,7 +555,7 @@ test('an invoice link lookup failure propagates without queuing an empty result'
         config()->set('database.default', $defaultConnection);
         config()->set('database.connections.sqlite', $sqliteConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a duplicate pending insert does not discard a later new row', function () {
     $defaultConnection = config('database.default');
@@ -628,7 +628,7 @@ SQL);
         config()->set('database.default', $defaultConnection);
         config()->set('database.connections.sqlite', $sqliteConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('apply does not call Intuit and the webhook url is the computed receiver url', function () {
     config()->set('app.url', 'https://api.example.test');
@@ -772,10 +772,10 @@ test('a quickbooks delete voids the invoice and retires customers and wallets wi
             $batch  = null;
             $remote = null;
             foreach ($dispatcher->jobs as $job) {
-                if ($job instanceof SyncWebhookBatch) {
+                if (($job instanceof SyncWebhookBatch) === true) {
                     $batch = $job;
                 }
-                if ($job instanceof ApplyRemoteChange) {
+                if (($job instanceof ApplyRemoteChange) === true) {
                     $remote = $job;
                 }
             }
@@ -826,7 +826,7 @@ test('a quickbooks delete voids the invoice and retires customers and wallets wi
         config()->set('database.connections.sqlite', $sqliteConnection);
         config()->set('fleetbase.connection.db', $ledgerConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a deleted payment stored under its quickbooks id unmarks the invoice and does not enqueue a create', function () {
     $defaultConnection = config('database.default');
@@ -905,7 +905,7 @@ test('a deleted payment stored under its quickbooks id unmarks the invoice and d
 
             $batch = null;
             foreach ($dispatcher->jobs as $job) {
-                if ($job instanceof SyncWebhookBatch) {
+                if (($job instanceof SyncWebhookBatch) === true) {
                     $batch = $job;
                 }
             }
@@ -933,7 +933,7 @@ test('a deleted payment stored under its quickbooks id unmarks the invoice and d
         config()->set('database.connections.sqlite', $sqliteConnection);
         config()->set('fleetbase.connection.db', $ledgerConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a deleted or voided payment quickbooks no longer returns unmarks only the remembered invoice', function () {
     $defaultConnection = config('database.default');
@@ -1035,7 +1035,7 @@ test('a deleted or voided payment quickbooks no longer returns unmarks only the 
         config()->set('database.connections.sqlite', $sqliteConnection);
         config()->set('fleetbase.connection.db', $ledgerConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a payment read does not unmark an invoice that payment did not pay', function () {
     $defaultConnection = config('database.default');
@@ -1133,7 +1133,7 @@ test('a payment read does not unmark an invoice that payment did not pay', funct
         config()->set('database.connections.sqlite', $sqliteConnection);
         config()->set('fleetbase.connection.db', $ledgerConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a deleted payment unmarks every invoice it paid and leaves the others', function () {
     $defaultConnection = config('database.default');
@@ -1239,7 +1239,7 @@ test('a deleted payment unmarks every invoice it paid and leaves the others', fu
         config()->set('database.connections.sqlite', $sqliteConnection);
         config()->set('fleetbase.connection.db', $ledgerConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a missing payment read unmarks every stored invoice on that payment', function () {
     $defaultConnection = config('database.default');
@@ -1346,7 +1346,7 @@ test('a missing payment read unmarks every stored invoice on that payment', func
         config()->set('database.connections.sqlite', $sqliteConnection);
         config()->set('fleetbase.connection.db', $ledgerConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 /**
  * Delete or void when the payment body was not read. The stored invoice is unmarked.
@@ -1412,7 +1412,7 @@ function qboChangedUnreadPaymentDelete(string $failure): void
         }
     };
     $container      = Container::getInstance();
-    $previousClient = $container->bound(QuickBooksClient::class) ? $container->make(QuickBooksClient::class) : null;
+    $previousClient = $container->bound(QuickBooksClient::class) === true ? $container->make(QuickBooksClient::class) : null;
     $container->instance(QuickBooksClient::class, $client);
 
     try {
@@ -1505,22 +1505,22 @@ function qboChangedUnreadPaymentDelete(string $failure): void
         expect((string) $paid->status)->toBe('sent')
             ->and((int) $paid->amount_paid)->toBe(2500)
             ->and((int) $paid->total_amount)->toBe(2500)
-            ->and((string) $partial->status)->toBe($batch ? 'sent' : 'partial')
+            ->and((string) $partial->status)->toBe($batch === true ? 'sent' : 'partial')
             ->and((int) $partial->amount_paid)->toBe(400)
             ->and((string) $other->status)->toBe('paid')
             ->and((int) $other->amount_paid)->toBe(700)
             ->and(DB::table('quickbooks_links')->where('uuid', 'link-pay')->exists())->toBeFalse()
             ->and(DB::table('quickbooks_links')->where('uuid', 'link-map')->exists())->toBeFalse()
-            ->and(DB::table('quickbooks_links')->where('uuid', 'link-pay-5')->exists())->toBe(!$batch)
-            ->and(DB::table('quickbooks_links')->where('uuid', 'link-map-5')->exists())->toBe(!$batch)
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-pay-5')->exists())->toBe($batch === false)
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-map-5')->exists())->toBe($batch === false)
             ->and(DB::table('quickbooks_links')->where('uuid', 'link-inv')->exists())->toBeTrue()
             ->and(DB::table('quickbooks_links')->where('uuid', 'link-partial')->exists())->toBeTrue()
             ->and(DB::table('quickbooks_links')->where('uuid', 'link-other')->exists())->toBeTrue()
             ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-paid')->value('status'))->toBe('done')
-            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-partial')->value('status'))->toBe($batch ? 'done' : 'pending')
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-partial')->value('status'))->toBe($batch === true ? 'done' : 'pending')
             ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-other')->value('status'))->toBe('pending')
             ->and(DB::table('quickbooks_pending_syncs')->where('status', 'pending')->whereIn('local_uuid', ['4', '5'])->exists())->toBeFalse()
-            ->and($client->reads)->toBe(in_array($failure, ['throw', 'batch'], true) ? 1 : 0);
+            ->and($client->reads)->toBe(in_array($failure, ['throw', 'batch'], true) === true ? 1 : 0);
     } finally {
         if ($previousClient !== null) {
             $container->instance(QuickBooksClient::class, $previousClient);
@@ -1536,19 +1536,19 @@ function qboChangedUnreadPaymentDelete(string $failure): void
 
 test('a thrown payment read on delete unmarks only the remembered invoice', function () {
     qboChangedUnreadPaymentDelete('throw');
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a reauth skip on delete unmarks only the remembered invoice', function () {
     qboChangedUnreadPaymentDelete('reauth');
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a realm mismatch on delete unmarks only the remembered invoice', function () {
     qboChangedUnreadPaymentDelete('realm');
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a batch fault on delete unmarks only the remembered invoices', function () {
     qboChangedUnreadPaymentDelete('batch');
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a delete or void webhook does not create a pending sync row', function () {
     $defaultConnection = config('database.default');
@@ -1620,10 +1620,10 @@ test('a delete or void webhook does not create a pending sync row', function () 
             $batch  = null;
             $remote = null;
             foreach ($dispatcher->jobs as $job) {
-                if ($job instanceof SyncWebhookBatch) {
+                if (($job instanceof SyncWebhookBatch) === true) {
                     $batch = $job;
                 }
-                if ($job instanceof ApplyRemoteChange) {
+                if (($job instanceof ApplyRemoteChange) === true) {
                     $remote = $job;
                 }
             }
@@ -1652,7 +1652,7 @@ test('a delete or void webhook does not create a pending sync row', function () 
         config()->set('database.default', $defaultConnection);
         config()->set('database.connections.sqlite', $sqliteConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a payment webhook queues the linked invoice and skips an unlinked payment', function () {
     $defaultConnection = config('database.default');
@@ -1730,10 +1730,10 @@ test('a payment webhook queues the linked invoice and skips an unlinked payment'
             $batch  = null;
             $remote = null;
             foreach ($dispatcher->jobs as $job) {
-                if ($job instanceof SyncWebhookBatch) {
+                if (($job instanceof SyncWebhookBatch) === true) {
                     $batch = $job;
                 }
-                if ($job instanceof ApplyRemoteChange) {
+                if (($job instanceof ApplyRemoteChange) === true) {
                     $remote = $job;
                 }
             }
@@ -1758,7 +1758,7 @@ test('a payment webhook queues the linked invoice and skips an unlinked payment'
         config()->set('database.default', $defaultConnection);
         config()->set('database.connections.sqlite', $sqliteConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a payment stored under its quickbooks id queues the fleetbase invoice', function () {
     $defaultConnection = config('database.default');
@@ -1851,10 +1851,10 @@ test('a payment stored under its quickbooks id queues the fleetbase invoice', fu
             $batch  = null;
             $remote = null;
             foreach ($dispatcher->jobs as $job) {
-                if ($job instanceof SyncWebhookBatch) {
+                if (($job instanceof SyncWebhookBatch) === true) {
                     $batch = $job;
                 }
-                if ($job instanceof ApplyRemoteChange) {
+                if (($job instanceof ApplyRemoteChange) === true) {
                     $remote = $job;
                 }
             }
@@ -1875,7 +1875,7 @@ test('a payment stored under its quickbooks id queues the fleetbase invoice', fu
         config()->set('database.default', $defaultConnection);
         config()->set('database.connections.sqlite', $sqliteConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('a shared connection queues another organization invoice on that realm', function () {
     $defaultConnection = config('database.default');
@@ -1987,7 +1987,7 @@ test('a shared connection queues another organization invoice on that realm', fu
 
                     $batch = null;
                     foreach ($dispatcher->jobs as $job) {
-                        if ($job instanceof SyncWebhookBatch && $job->companyUuid === 'company-b') {
+                        if (($job instanceof SyncWebhookBatch) === true && $job->companyUuid === 'company-b') {
                             $batch = $job;
                         }
                     }
@@ -2015,7 +2015,7 @@ test('a shared connection queues another organization invoice on that realm', fu
         config()->set('database.connections.sqlite', $sqliteConnection);
         config()->set('fleetbase.connection.db', $ledgerConnection);
     }
-})->skip(!in_array('sqlite', PDO::getAvailableDrivers(), true), 'PDO SQLite is unavailable.');
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('the same signed webhook body is rejected on replay and a bad signature is not cached', function () {
     $settings = qboChangedSettings();
@@ -2068,12 +2068,12 @@ function qboChangedSeen(): array
 {
     $events = $GLOBALS['qboChangedEvents'] ?? [];
 
-    return is_array($events) ? $events : [];
+    return is_array($events) === true ? $events : [];
 }
 
 function qboChangedRestoreEvents(): void
 {
-    if (isset($GLOBALS['qboChangedPrevious'])) {
+    if (isset($GLOBALS['qboChangedPrevious']) === true) {
         app()->instance('events', $GLOBALS['qboChangedPrevious']);
         unset($GLOBALS['qboChangedPrevious'], $GLOBALS['qboChangedEvents']);
     }

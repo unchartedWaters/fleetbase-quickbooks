@@ -12,11 +12,11 @@ return new class extends Migration {
 
     public function up(): void
     {
-        if (!Schema::hasTable($this->table)) {
+        if (Schema::hasTable($this->table) === FALSE) {
             return;
         }
 
-        if (Schema::hasColumn($this->table, $this->column) && Schema::hasIndex($this->table, $this->index)) {
+        if (Schema::hasColumn($this->table, $this->column) === TRUE && Schema::hasIndex($this->table, $this->index) === TRUE) {
             return;
         }
 
@@ -50,7 +50,7 @@ return new class extends Migration {
                 ->delete();
         }
 
-        if (!Schema::hasColumn($this->table, $this->column)) {
+        if (Schema::hasColumn($this->table, $this->column) === FALSE) {
             Schema::table($this->table, function (Blueprint $table) {
                 // char(36) + ':' + varchar(255) + ':' + char(36)
                 $table->string($this->column, 329)->nullable()->storedAs(
@@ -59,7 +59,7 @@ return new class extends Migration {
             });
         }
 
-        if (!Schema::hasIndex($this->table, $this->index)) {
+        if (Schema::hasIndex($this->table, $this->index) === FALSE) {
             Schema::table($this->table, function (Blueprint $table) {
                 $table->unique($this->column, $this->index);
             });
@@ -68,17 +68,17 @@ return new class extends Migration {
 
     public function down(): void
     {
-        if (!Schema::hasTable($this->table)) {
+        if (Schema::hasTable($this->table) === FALSE) {
             return;
         }
 
-        if (Schema::hasIndex($this->table, $this->index)) {
+        if (Schema::hasIndex($this->table, $this->index) === TRUE) {
             Schema::table($this->table, function (Blueprint $table) {
                 $table->dropUnique($this->index);
             });
         }
 
-        if (Schema::hasColumn($this->table, $this->column)) {
+        if (Schema::hasColumn($this->table, $this->column) === TRUE) {
             Schema::table($this->table, function (Blueprint $table) {
                 $table->dropColumn($this->column);
             });

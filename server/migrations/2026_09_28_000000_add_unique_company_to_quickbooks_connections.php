@@ -10,7 +10,7 @@ return new class extends Migration {
 
     public function up(): void
     {
-        if (!Schema::hasTable('quickbooks_connections') || Schema::hasIndex('quickbooks_connections', $this->index)) {
+        if (Schema::hasTable('quickbooks_connections') === FALSE || Schema::hasIndex('quickbooks_connections', $this->index) === TRUE) {
             return;
         }
 
@@ -40,7 +40,7 @@ return new class extends Migration {
 
     public function down(): void
     {
-        if (!Schema::hasTable('quickbooks_connections') || !Schema::hasIndex('quickbooks_connections', $this->index)) {
+        if (Schema::hasTable('quickbooks_connections') === FALSE || Schema::hasIndex('quickbooks_connections', $this->index) === FALSE) {
             return;
         }
 
