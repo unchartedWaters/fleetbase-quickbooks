@@ -1,4 +1,4 @@
-name: Registry Publish
+name: Fleetbase Extension Registry Publish
 
 # On a v* tag this publishes the extension the way Fleetbase already does.
 #
