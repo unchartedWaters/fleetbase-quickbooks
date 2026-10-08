@@ -2,7 +2,7 @@ import Component from '@glimmer/component';
 import { action } from '@ember/object';
 import { tracked } from '@glimmer/tracking';
 import { inject as service } from '@ember/service';
-import { schedule } from '@ember/runloop';
+import { scheduleTask } from 'ember-lifeline';
 import { DEFAULT_ENVIRONMENT, fieldState, normalizeSyncDirection, secretPresentation, validateSettings, webhookVerifierPresentation } from '../utils/settings-form';
 
 const NUMBER_FIELDS = ['interval_minutes', 'periodic_interval_hours', 'retry_limit', 'default_backoff_seconds'];
@@ -312,7 +312,9 @@ export default class QuickbooksSettingsComponent extends Component {
 
     revealFirstError(errors) {
         const key = firstErrorKey(errors);
-        schedule('afterRender', () => {
+        // ember-lifeline rejects the afterRender queue. The render queue is
+        // already holding Glimmer's revalidate job, so this runs after the DOM updates.
+        scheduleTask(this, 'render', () => {
             const root = document.querySelector('[data-test-settings-scope]');
             if (!root || !key) {
                 return;

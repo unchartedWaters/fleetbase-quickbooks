@@ -24,29 +24,29 @@ class AiRelativeDateResolver
     public function resolveWindow(string $prompt, ?string $timezone = null): ?array
     {
         $timezone = ($timezone !== null && $timezone !== '' && $timezone !== '0') ? $timezone : date_default_timezone_get();
-        $now = Carbon::now($timezone);
+        $now      = Carbon::now($timezone);
 
         if (str_contains(strtolower($prompt), 'last week') === true) {
             $start = $now->copy()->subWeek()->startOfWeek();
-            $end = $now->copy()->subWeek()->endOfWeek();
+            $end   = $now->copy()->subWeek()->endOfWeek();
 
             return [
-                'label' => 'last week',
+                'label'    => 'last week',
                 'timezone' => $timezone,
-                'start' => $start,
-                'end' => $end,
+                'start'    => $start,
+                'end'      => $end,
             ];
         }
 
         if (str_contains(strtolower($prompt), 'yesterday') === true) {
             $start = $now->copy()->subDay()->startOfDay();
-            $end = $now->copy()->subDay()->endOfDay();
+            $end   = $now->copy()->subDay()->endOfDay();
 
             return [
-                'label' => 'yesterday',
+                'label'    => 'yesterday',
                 'timezone' => $timezone,
-                'start' => $start,
-                'end' => $end,
+                'start'    => $start,
+                'end'      => $end,
             ];
         }
 

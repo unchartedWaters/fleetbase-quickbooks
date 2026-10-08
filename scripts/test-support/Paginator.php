@@ -52,8 +52,8 @@ class Paginator implements \JsonSerializable
     public function toArray(): array
     {
         return [
-            'data' => $this->items->values()->all(),
-            'per_page' => $this->perPage,
+            'data'         => $this->items->values()->all(),
+            'per_page'     => $this->perPage,
             'current_page' => $this->currentPage ?? 1,
         ];
     }
@@ -74,7 +74,7 @@ class LengthAwarePaginator extends Paginator
     public function toArray(): array
     {
         return array_merge(parent::toArray(), [
-            'total' => $this->total,
+            'total'     => $this->total,
             'last_page' => max(1, (int) ceil($this->total / $this->perPage)),
         ]);
     }

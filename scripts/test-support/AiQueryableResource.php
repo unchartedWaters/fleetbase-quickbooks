@@ -25,8 +25,8 @@ class AiQueryableResource
         ?string $directivePermission = null,
         int $maxLimit = 100,
     ) {
-        $this->key = $key;
-        $this->fields = $fields;
+        $this->key     = $key;
+        $this->fields  = $fields;
         $this->aliases = $aliases;
     }
 

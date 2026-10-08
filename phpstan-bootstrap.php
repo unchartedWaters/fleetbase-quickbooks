@@ -45,7 +45,7 @@ if (function_exists('event') === false) {
 }
 
 if (function_exists('now') === false) {
-    function now(\DateTimeZone|string|null $tz = null): Illuminate\Support\Carbon
+    function now(DateTimeZone|string|null $tz = null): Illuminate\Support\Carbon
     {
         return Illuminate\Support\Carbon::now($tz);
     }
