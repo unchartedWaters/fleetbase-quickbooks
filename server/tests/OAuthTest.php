@@ -1299,7 +1299,7 @@ test('summary last sync is the latest finished batch and stays empty when every 
     $previous = Model::getConnectionResolver();
     Model::setConnectionResolver($resolver);
 
-    $store = new MemorySettingsStore();
+    $store      = new MemorySettingsStore();
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
         new OAuthFlow(new QuickBooksClient()),
