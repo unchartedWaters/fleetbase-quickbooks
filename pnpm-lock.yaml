@@ -7536,8 +7536,8 @@ packages:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
 
-  shell-quote@1.9.0:
-    resolution: {integrity: sha512-Iov+JwFv/2HcTpcwNMKd8+IWNb8tboQJNQTkAY/LLVK7gGH9jy+LGkVqPxfekHl+yMmiqXszdGWXgkfml7hjqA==}
+  shell-quote@1.12.0:
+    resolution: {integrity: sha512-PcByqNyT/38F2kDNi006HAMRJaULuBzq/FOsw3qdZvX/GA9W/jamDaRskgHjubHiftXK5sIFxLNkvrXUwcof6Q==}
     engines: {node: '>= 0.4'}
 
   shellwords@0.1.1:
@@ -11305,7 +11305,7 @@ snapshots:
       babel-generator: 6.26.1
       babel-helpers: 6.24.1(supports-color@8.1.1)
       babel-messages: 6.23.0
-      babel-register: 6.26.0
+      babel-register: 6.26.0(supports-color@8.1.1)
       babel-runtime: 6.26.0
       babel-template: 6.26.0(supports-color@8.1.1)
       babel-traverse: 6.26.0(supports-color@8.1.1)
@@ -11461,7 +11461,7 @@ snapshots:
 
   babel-plugin-syntax-dynamic-import@6.18.0: {}
 
-  babel-register@6.26.0:
+  babel-register@6.26.0(supports-color@8.1.1):
     dependencies:
       babel-core: 6.26.3(supports-color@8.1.1)
       babel-runtime: 6.26.0
@@ -11470,6 +11470,8 @@ snapshots:
       lodash: 4.18.1
       mkdirp: 0.5.6
       source-map-support: 0.4.18
+    transitivePeerDependencies:
+      - supports-color
 
   babel-runtime@6.26.0:
     dependencies:
@@ -12592,7 +12594,7 @@ snapshots:
       date-fns: 2.30.0
       lodash: 4.18.1
       rxjs: 7.8.2
-      shell-quote: 1.9.0
+      shell-quote: 1.12.0
       spawn-command: 0.0.2
       supports-color: 8.1.1
       tree-kill: 1.2.2
@@ -18295,7 +18297,7 @@ snapshots:
 
   shebang-regex@3.0.0: {}
 
-  shell-quote@1.9.0: {}
+  shell-quote@1.12.0: {}
 
   shellwords@0.1.1: {}
 
