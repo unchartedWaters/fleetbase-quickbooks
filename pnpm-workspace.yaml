@@ -1,5 +1,22 @@
+# Real node_modules directories. The default linker only symlinks these packages
+# into .pnpm, and a resolver that will not follow those symlinks cannot see them.
+nodeLinker: hoisted
 overrides:
   "clean-css@3": "5.3.3"
+  "fast-uri@3": "3.1.7"
+  "devalue@5": "5.9.3"
+  "browserslist@4": "4.28.7"
+  "prosemirror-view@1": "1.42.3"
+  "nanoid@3": "3.3.18"
+  "js-yaml@4": "4.3.2"
+  "brace-expansion@1": "1.1.20"
+  "postcss@8": "8.5.18"
+  "tmp@<0.2.6": "0.2.7"
+  "serialize-javascript@4": "7.0.3"
+  "json5@0": "1.0.2"
+  "linkify-it@<5.0.2": "5.0.2"
+  "babel-traverse@6": "npm:@babel/traverse@7.23.2"
+  "braces@2": "3.0.3"
 allowBuilds:
   '@fortawesome/fontawesome-common-types': false
   '@fortawesome/fontawesome-svg-core': false
