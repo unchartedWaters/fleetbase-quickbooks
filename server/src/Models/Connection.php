@@ -56,7 +56,7 @@ class Connection extends QuickbooksModel
 
     public function getAccessTokenAttribute(?string $value): ?string
     {
-        return $this->open($value);
+        return $this->open($value, 'access_token');
     }
 
     public function setRefreshTokenAttribute(?string $value): void
@@ -66,7 +66,7 @@ class Connection extends QuickbooksModel
 
     public function getRefreshTokenAttribute(?string $value): ?string
     {
-        return $this->open($value);
+        return $this->open($value, 'refresh_token');
     }
 
     private function seal(?string $value): ?string
@@ -78,13 +78,40 @@ class Connection extends QuickbooksModel
         return (new SecretCipher())->encrypt($value);
     }
 
-    private function open(?string $value): ?string
+    private function open(?string $value, string $attribute): ?string
     {
         if ($value === null || $value === '') {
             return $value;
         }
 
-        return (new SecretCipher())->reveal($value);
+        $opened = (new SecretCipher())->read($value);
+        if ($opened === null) {
+            return null;
+        }
+        if ($opened['stored'] !== $value) {
+            $this->attributes[$attribute] = $opened['stored'];
+            $this->persistUpgradedAttribute($attribute, $opened['stored']);
+        }
+
+        return $opened['plain'];
+    }
+
+    /**
+     * Write the Crypt ciphertext as soon as a stored legacy token is read.
+     * A model that is not saved yet keeps the upgrade in memory for the next insert.
+     */
+    private function persistUpgradedAttribute(string $attribute, string $sealed): void
+    {
+        if ($this->exists === false || $this->getKey() === null) {
+            return;
+        }
+
+        try {
+            (new self())->newQuery()->where($this->getKeyName(), $this->getKey())->update([$attribute => $sealed]);
+            $this->syncOriginalAttribute($attribute);
+        } catch (\Throwable) {
+            // The plaintext still opens. A later read retries the write.
+        }
     }
 
     /**

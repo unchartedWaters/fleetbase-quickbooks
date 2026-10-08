@@ -6,7 +6,13 @@
             {{else if this.isLoading}}
                 <p class="text-sm text-gray-500 mb-4" data-test-connection-loading>{{t "quickbooks.connection.loading"}}</p>
             {{else if this.needsReauth}}
-                <p class="text-sm text-red-600 dark:text-red-400 mb-4" data-test-reauth>{{t "quickbooks.connection.reauth-status"}}</p>
+                <p class="text-sm text-red-600 dark:text-red-400 mb-4" data-test-reauth>
+                    {{#if this.isConfigured}}
+                        {{t "quickbooks.connection.reauth-status"}}
+                    {{else}}
+                        {{t "quickbooks.connection.reauth-save-first"}}
+                    {{/if}}
+                </p>
             {{else if this.isConnected}}
                 <p class="text-sm text-gray-500 mb-4" data-test-connected>
                     {{#if @connection.environment}}
@@ -67,6 +73,16 @@
                             @onClick={{this.disconnect}}
                             data-test-disconnect
                         />
+                        {{#if this.credentialsMissing}}
+                            <p class="text-sm text-gray-500 dark:text-gray-400" data-test-credentials-missing>
+                                {{t "quickbooks.widget.credentials-missing"}}
+                            </p>
+                        {{/if}}
+                        {{#if this.syncPermissionDenied}}
+                            <p class="text-sm text-gray-500 dark:text-gray-400" data-test-sync-denied>
+                                {{t "quickbooks.actions.sync-denied"}}
+                            </p>
+                        {{/if}}
                     </div>
                 {{/unless}}
             {{/unless}}

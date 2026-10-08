@@ -50,7 +50,7 @@ Turning the switch off stores that type as not enabled. Turning it on again keep
 
 **Primary**, under Data Resolution, decides which system wins when the records differ and which system supplies identifiers. Primary and direction are separate. Outbound still sends the Fleetbase record when Primary is QuickBooks.
 
-Sync Frequency is the schedule. It is separate from each entity switch. When QuickBooks is not connected, Sync now returns HTTP 422, saves a skipped activity row, and the console shows that error.
+Sync Frequency is the schedule. It is separate from each entity switch. There is no Enable schedule control, and a stored `enabled` flag does not stop the scheduler. Sync now with no connection returns HTTP 422 and does not save an activity row. The console shows that error. A stored realm that needs reconnect returns HTTP 422 and saves a skipped activity row.
 
 ### Environments
 
@@ -91,17 +91,21 @@ Home currency comes from QuickBooks Preferences. Test connection also reads Pref
 
 ## Sync
 
-`quickbooks:sync` stays registered on the Laravel scheduler, which the system cron invokes every minute, but the command does not start on a minute when no organization is due before its Sync Frequency. Flagging a record allows the next scheduler run to start it. It queues an organization when Enable schedule is on, the connection does not need reconnect, and QuickBooks is not rate limited.
+`quickbooks:sync` stays registered on the Laravel scheduler, which the system cron invokes every minute. There is no Enable schedule control. The form does not send `sync.enabled`, and the command does not read a stored `enabled` flag, so `enabled: false` does not stop a due sync. The command does not start when no connection can be synced, or while a schedule hold is still in the future. It queues an organization when the connection does not need reconnect, QuickBooks is not rate limited, and either Sync Frequency has elapsed with at least one due pending row, or at least 20 pending rows are already due. The customer catalog is the other reason a minute can start work. It is skipped when Customers is off.
 
-An organization with nothing due does not sync. The schedule does not read a stored batch size.
+One flagged row does not start the next minute. Flagging clears a stored schedule hold, so the next `schedule:run` may start the command, but the command still waits until Sync Frequency (`interval_minutes`, default 5) has elapsed after `last_batch_at`, unless 20 or more rows are already due. A first sync, with no `last_batch_at`, can start from one due row. After a run that queues work, the command holds the next start for 60 seconds.
 
-**Sync now** is on Quickbooks Setup. It uses the pending queue and does not load the whole organization. Reconcile is not a control on this screen. It covers invoices already in this Fleetbase organization: a local non-draft invoice, or a `quickbooks_links` row for this organization whose local type is invoice. It does not list every invoice in the QuickBooks organization.
+An organization with nothing due does not sync. The schedule does not read a stored batch size. Each run still stops after one page. That page is the stored `batch_size` when an older settings row has one, otherwise 100. The settings form does not send `batch_size`.
+
+**Sync now** is on Quickbooks Setup. It uses the pending queue and does not load the whole organization. It processes one pending page and does not drain the rest of the queue. Leftover rows wait for the schedule above. Drain is chained from a finished reconcile, and from a finished drain that still has due rows. Sync now does not chain it. Reconcile is not a control on this screen. It covers invoices already in this Fleetbase organization: a local non-draft invoice, or a `quickbooks_links` row for this organization whose local type is invoice. It does not list every invoice in the QuickBooks organization.
 
 QuickBooks update operations are posted in chunks of 20. Queries, creates, and voids are posted in chunks of at most 30.
 
 Sync Frequency is minutes (`interval_minutes`, default 5). Full Sync Frequency (hours) (`periodic_interval_hours`, default 24) limits only the customer catalog, and that catalog is skipped when Customers is unchecked. Customer import reads QuickBooks in pages of at most 100 records and stores the next start in `quickbooks_connections.customer_import_start`, so a run that stops at the 600 second organization lock continues there.
 
-Activity rows show created, updated, aligned, linked, skipped, unmatched, voided, and failed. Aligned is the outbound sync count. Linked is the customer-import count.
+Sync now with no connection returns HTTP 422 and does not save an activity row. The console shows that error. A stored realm that needs reconnect returns HTTP 422 and saves a skipped activity row.
+
+Activity rows show created, updated, aligned, linked, skipped, unmatched, voided, and failed. Aligned counts inbound matches as well as outbound ones, including an inbound customer or invoice that already matched and was not written. A From QuickBooks run that changes nothing can show aligned. Linked is the customer-import count.
 
 The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires `quickbooks reconcile sync` or an installation administrator, plus a connection and a configured Client ID, Redirect URI, and Client secret.
 
@@ -146,18 +150,18 @@ Open Organization settings → Quickbooks Setup, save the Intuit Client ID and C
 
 ### Developer checkout
 
-On this machine the repository is checked out at `/opt/fleetbase-quickbooks` on `develop`, next to Fleetbase, not inside the Fleetbase tree. `application`, `queue`, and `scheduler` use the published `fleetbase/fleetbase-api:latest` image. That image does not contain this package. Do not build a custom API image for it.
+On this machine the repository is checked out at `/opt/fleetbase-quickbooks` on `main`, next to Fleetbase, not inside the Fleetbase tree. `application`, `queue`, and `scheduler` use the published `fleetbase/fleetbase-api:latest` image. That image does not contain this package. Do not build a custom API image for it. The running console bakes this engine into its image. A change in this checkout shows up in the API through the read-only mount. The console UI stays at that image build until the console image is rebuilt.
 
-1. Check out this repository to `/opt/fleetbase-quickbooks` on `develop`.
+1. Check out this repository to `/opt/fleetbase-quickbooks` on `main`.
 2. Point the Fleetbase app at that directory. Composer path repository `../../fleetbase-quickbooks`, console dependency `link:../../fleetbase-quickbooks`, and a read-only mount of `/opt/fleetbase-quickbooks` at `/fleetbase/packages/quickbooks`. A symlink at `packages/quickbooks` can point at the same checkout. These Fleetbase edits stay local and are not committed to `fleetbase/fleetbase`.
 3. Put the existing Fleetbase `APP_KEY` in `api/.env`. Use the key that already decrypts this install.
 4. Start the stack with Docker Compose. `docker-compose.yml` mounts `./api/.env` into `application`, `queue`, and `scheduler`, so all three read the same `APP_KEY`. It mounts `/opt/fleetbase-quickbooks` read-only at `/fleetbase/packages/quickbooks`. The entrypoint for those three services is `/fleetbase/packages/quickbooks/docker/ensure-quickbooks-extension.sh`. Console and API image builds take the package from a BuildKit context named `quickbooks`, not from a copy inside the Fleetbase tree.
 5. On start, that script exits with an error if `/fleetbase/packages/quickbooks` is missing. It Composer-requires `unchartedwaters/quickbooks-api:0.0.2` when the provider is not installed, or when the mounted `composer.json` version or `require` entries differ from the installed package. Only `application` runs `php artisan migrate --force`. `queue` and `scheduler` do not migrate on startup. A later application start skips the require when the installed package still matches, and migrate applies only pending migrations.
-6. Install console dependencies from `console/`. `console/package.json` links `@unchartedwaters/quickbooks-engine` to `../../fleetbase-quickbooks`. The console mounts that engine at `/quickbooks`. `console/fleetbase.config.json` lists `@unchartedwaters/quickbooks-engine` in `EXTENSIONS`.
+6. Install console dependencies from `console/`. `console/package.json` links `@unchartedwaters/quickbooks-engine` to `../../fleetbase-quickbooks`. `console/fleetbase.config.json` lists `@unchartedwaters/quickbooks-engine` in `EXTENSIONS`. The running console bakes the engine into the image at `/usr/share/nginx/html/engines-dist/@unchartedwaters/quickbooks-engine`, from the BuildKit context named `quickbooks`. That container's bind is `console/fleetbase.config.json`.
 
-`api/composer.json` requires `unchartedwaters/quickbooks-api` and has a path repository at `../../fleetbase-quickbooks`. The running containers get the package from the ensure script, not from a rebuilt image.
+`api/composer.json` requires `unchartedwaters/quickbooks-api` and has a path repository at `../../fleetbase-quickbooks`. The running `application`, `queue`, and `scheduler` containers get the package from the ensure script and the read-only mount. The console UI is the copy baked into the console image.
 
-`QuickbooksServiceProvider` loads `server/src/routes.php`, `server/migrations`, and registers `quickbooks:sync` on the Laravel scheduler. The system cron invokes that scheduler every minute, but the command does not start on a minute when no organization is due before its Sync Frequency.
+`QuickbooksServiceProvider` loads `server/src/routes.php`, `server/migrations`, and registers `quickbooks:sync` on the Laravel scheduler. The system cron invokes that scheduler every minute. The command does not read a stored `enabled` flag. It does not start when no connection can be synced, or while a schedule hold is still in the future. The Sync section is when an organization is queued.
 
 ## Tests
 

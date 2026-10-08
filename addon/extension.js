@@ -36,6 +36,10 @@ export default {
             }
         };
 
+        // The header item id "quickbooks" is checked as this permission.
+        // A settings item stays available to anyone who can open Settings unless it passes the same permission.
+        const seeExtension = 'quickbooks see extension';
+
         menuService.registerSettingsMenuItem(
             new MenuItem({
                 title: 'Quickbooks Setup',
@@ -43,6 +47,7 @@ export default {
                 slug: 'quickbooks-setup',
                 index: 0,
                 view: 'index',
+                permission: seeExtension,
                 component: new ExtensionComponent('@unchartedwaters/quickbooks-engine', 'quickbooks-company-settings'),
                 onClick: openOrganizationSettings,
             })
@@ -55,6 +60,7 @@ export default {
                 slug: 'quickbooks-activity',
                 index: 1,
                 view: 'index',
+                permission: seeExtension,
                 component: new ExtensionComponent('@unchartedwaters/quickbooks-engine', 'quickbooks-activity'),
                 onClick: openOrganizationSettings,
             })

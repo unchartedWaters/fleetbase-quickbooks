@@ -205,6 +205,36 @@ test('a fleetbase invoice clear sends an empty note and due date', function () {
         ->and($omitted)->not->toHaveKey('DueDate');
 });
 
+test('clearing only street2 email or phone is sent when fleetbase is the source', function () {
+    $mapper  = new CustomerMapper();
+    $cleared = $mapper->toQuickBooks([
+        'name'    => 'Ada',
+        'email'   => '',
+        'phone'   => '',
+        'address' => [
+            'line1' => '1 Analytical Engine', 'line2' => '', 'city' => 'London',
+            'state' => 'LN', 'postal_code' => 'SW1', 'country' => 'UK',
+        ],
+    ], true);
+    $omitted = $mapper->toQuickBooks([
+        'name'    => 'Ada',
+        'email'   => '',
+        'phone'   => '',
+        'address' => [
+            'line1' => '1 Analytical Engine', 'line2' => '', 'city' => 'London',
+            'state' => 'LN', 'postal_code' => 'SW1', 'country' => 'UK',
+        ],
+    ]);
+
+    expect($cleared['PrimaryEmailAddr']['Address'])->toBe('')
+        ->and($cleared['PrimaryPhone']['FreeFormNumber'])->toBe('')
+        ->and($cleared['BillAddr']['Line1'])->toBe('1 Analytical Engine')
+        ->and($cleared['BillAddr']['Line2'])->toBe('')
+        ->and($omitted)->not->toHaveKey('PrimaryEmailAddr')
+        ->and($omitted)->not->toHaveKey('PrimaryPhone')
+        ->and($omitted['BillAddr'])->not->toHaveKey('Line2');
+});
+
 test('a fleetbase clear sends an empty note and billing address', function () {
     $mapper  = new CustomerMapper();
     $cleared = $mapper->toQuickBooks([
@@ -265,7 +295,7 @@ test('an invoice reports an error when its customer cannot be synced', function 
         ->and($client->calls)->not->toContain('createInvoice');
 });
 
-test('a foreign currency invoice is skipped with a recorded reason', function () {
+test('a foreign currency does not fail the invoice and is not sent', function () {
     [$engine, $client]                                    = qbEngine();
     $ledger                                               = connectedLedger();
     $ledger->connections['company-uuid']['home_currency'] = 'USD';
@@ -273,11 +303,13 @@ test('a foreign currency invoice is skipped with a recorded reason', function ()
     $ledger->links[]                                      = customerLink('cust-1');
     $ledger->pending[]                                    = pending('invoice', 'inv-1');
 
-    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
-    $attempt = $ledger->attempts[0];
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($attempt['error'])->toContain('EUR')
-        ->and($client->calls)->not->toContain('createInvoice');
+    expect($batch['created'])->toBe(1)
+        ->and($batch['failed'])->toBe(0)
+        ->and($ledger->attempts[0]['error'])->toBeNull()
+        ->and($client->calls)->toContain('createInvoice')
+        ->and($client->invoices['inv-1'])->not->toHaveKey('CurrencyRef');
 });
 
 test('use the quickbooks invoice copies the total and understood line items', function () {

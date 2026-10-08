@@ -33,7 +33,7 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
     test('sync now runs for an operator', async function (assert) {
         class OperatorAbilitiesStubService extends Service {
             can(permission) {
-                return permission === 'quickbooks reconcile sync';
+                return permission === 'quickbooks reconcile sync' || permission === 'quickbooks connect connection' || permission === 'quickbooks disconnect connection';
             }
         }
 
@@ -62,7 +62,38 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
 
         await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @onSync={{this.onSync}} />`);
         assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom('[data-test-sync-denied]').hasText('You do not have permission to run Sync now.');
+        assert.dom('[data-test-connect]').isDisabled();
+        assert.dom('[data-test-disconnect]').isDisabled();
         assert.false(this.synced);
+    });
+
+    test('connect and disconnect stay off without those permissions', async function (assert) {
+        class DeniedAbilitiesStubService extends Service {
+            can(permission) {
+                return permission === 'quickbooks reconcile sync';
+            }
+        }
+
+        this.owner.register('service:abilities', DeniedAbilitiesStubService);
+        this.set('connection', null);
+        this.set('connected', false);
+        this.set('disconnected', false);
+        this.set('onConnect', () => this.set('connected', true));
+        this.set('onDisconnect', () => this.set('disconnected', true));
+
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @onConnect={{this.onConnect}} @onDisconnect={{this.onDisconnect}} />`);
+
+        assert.dom('[data-test-connect]').isDisabled();
+        assert.dom('[data-test-disconnect]').isDisabled();
+        assert.dom('[data-test-sync-denied]').doesNotExist();
+        assert.false(this.connected);
+
+        this.set('connection', { realm_id: '123', needs_reauth: true });
+        assert.dom('[data-test-connect]').isDisabled();
+        assert.dom('[data-test-disconnect]').isDisabled();
+        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.false(this.disconnected);
     });
 
     test('the actions section is not rendered', async function (assert) {
@@ -94,14 +125,18 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom().doesNotIncludeText('Open Actions');
     });
 
-    test('sync now stays available for an active connection even when credentials are not marked configured', async function (assert) {
+    test('sync now stays off for an active connection when credentials are not marked configured', async function (assert) {
         this.set('connection', { realm_id: '123', environment: 'sandbox' });
-        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{false}} />`);
+        this.set('synced', false);
+        this.set('onSync', () => this.set('synced', true));
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{false}} @onSync={{this.onSync}} />`);
 
-        assert.dom('[data-test-sync-now]').isNotDisabled();
+        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom('[data-test-credentials-missing]').hasText('Enter Client ID and Client secret on Quickbooks Setup before Sync now.');
+        assert.dom('[data-test-sync-denied]').doesNotExist();
         assert.dom('[data-test-connect]').isDisabled();
         assert.dom('[data-test-disconnect]').isNotDisabled();
-        assert.dom('[data-test-credentials-missing]').doesNotExist();
+        assert.false(this.synced);
         assert.dom('[data-test-reconcile]').doesNotExist();
         assert.dom('[data-test-import]').doesNotExist();
         assertConnectionButtons(assert);
@@ -183,6 +218,7 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-disconnect]').isDisabled();
         assertConnectionButtons(assert);
 
+        this.set('disconnected', false);
         this.set('connection', { realm_id: '123', needs_reauth: true });
         assert.dom('[data-test-reauth]').exists();
         assert.dom('[data-test-sync-now]').isDisabled();
@@ -190,8 +226,14 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-connect]').hasClass('btn-sm');
         assert.dom('[data-test-disconnect]').includesText('Disconnect');
         assert.dom('[data-test-disconnect]').doesNotIncludeText('unsubscribe');
-        assert.dom('[data-test-disconnect]').isDisabled();
+        assert.dom('[data-test-disconnect]').isNotDisabled();
         assert.dom('[data-test-disconnect]').hasClass('btn-sm');
+        assertConnectionButtons(assert);
+
+        await click('[data-test-disconnect]');
+        assert.true(this.disconnected, 'a connection that needs to be authorized again can be removed');
+        assert.dom('[data-test-disconnected]').includesText('Not connected');
+        assert.dom('[data-test-disconnect]').isDisabled();
         assertConnectionButtons(assert);
     });
 
@@ -295,10 +337,16 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         this.set('connection', { realm_id: '123', needs_reauth: true });
         this.set('configured', false);
         assert.dom('[data-test-sync-now]').isDisabled();
-        assert.dom('[data-test-connect]').isNotDisabled();
-        assert.dom('[data-test-disconnect]').isDisabled();
+        assert.dom('[data-test-credentials-missing]').doesNotExist();
+        assert.dom('[data-test-connect]').isDisabled();
+        assert.dom('[data-test-disconnect]').isNotDisabled();
+        assert.dom('[data-test-reauth]').includesText('Choose Save Changes first');
+        assert.dom('[data-test-reauth]').doesNotIncludeText('Choose Connect to QuickBooks');
         assertConnectionButtons(assert);
 
+        this.set('configured', true);
+        assert.dom('[data-test-connect]').isNotDisabled();
+        assert.dom('[data-test-reauth]').includesText('Choose Connect to QuickBooks');
         await click('[data-test-connect]');
         assert.true(this.connected, 'Connect still runs when the saved connection only needs reauth');
     });

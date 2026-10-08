@@ -1044,6 +1044,28 @@ test('saving queues an entity only when its switch is turned on', function () {
         ])
             ->and($stayed->getStatusCode())->toBe(200)
             ->and($store->rows[SettingsKeys::adminSync()]['wallet_enabled'])->toBeFalse();
+
+        $directory->queued                      = [];
+        $store->rows[SettingsKeys::adminSync()] = qbSettings([
+            'customer_enabled' => true,
+            'invoice_enabled'  => true,
+            'wallet_enabled'   => true,
+            'payment_enabled'  => false,
+        ]);
+        $controller->save(Request::create('/settings', 'POST', [
+            'scope' => 'admin',
+            'auth'  => validAuth(),
+            'sync'  => qbSettings([
+                'customer_enabled' => true,
+                'invoice_enabled'  => true,
+                'wallet_enabled'   => true,
+                'payment_enabled'  => true,
+            ]),
+        ]));
+
+        expect($directory->queued)->toBe([
+            ['company-uuid', ['invoice' => true]],
+        ]);
     } finally {
         session(['company' => null]);
     }

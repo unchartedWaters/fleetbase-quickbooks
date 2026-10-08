@@ -2,7 +2,7 @@ import Component from '@glimmer/component';
 import { action } from '@ember/object';
 import { inject as service } from '@ember/service';
 import { connectionState } from '../utils/connection-view';
-import { canRunSyncNow } from '../utils/sync-access';
+import { canConnect, canDisconnect, canRunSyncNow } from '../utils/sync-access';
 
 export default class QuickbooksConnectionComponent extends Component {
     @service intl;
@@ -39,9 +39,9 @@ export default class QuickbooksConnectionComponent extends Component {
         return this.state === 'needs-reauth';
     }
 
-    // Active means a saved realm that does not need to be connected again.
+    // A saved realm can be removed, including one that needs to be connected again.
     get disconnectDisabled() {
-        return this.busy || !this.isConnected;
+        return this.busy || (!this.isConnected && !this.needsReauth) || !canDisconnect(this.abilities);
     }
 
     get busy() {
@@ -56,19 +56,25 @@ export default class QuickbooksConnectionComponent extends Component {
         return canRunSyncNow(this.abilities);
     }
 
-    get syncDisabled() {
-        return this.busy || this.isLoading || !this.isConnected || !this.canSync;
+    // An active realm without saved keys matches the dashboard widget: Sync now stays off.
+    get credentialsMissing() {
+        return this.isConnected && !this.isConfigured;
     }
 
-    // Connect uses the saved Client ID and Client secret. A connection that only needs reauth can connect again.
+    // The button is disabled with no other explanation when the realm and keys are ready.
+    get syncPermissionDenied() {
+        return this.isConnected && this.isConfigured && !this.canSync;
+    }
+
+    get syncDisabled() {
+        return this.busy || this.isLoading || !this.isConnected || !this.isConfigured || !this.canSync;
+    }
+
+    // Connect uses the saved Client ID and Client secret, including when the realm needs to be connected again.
     // An active connection stays in the row and does not start a second sign-in.
     get connectDisabled() {
-        if (this.busy || this.isLoading || this.loadFailed || this.isConnected) {
+        if (this.busy || this.isLoading || this.loadFailed || this.isConnected || !canConnect(this.abilities)) {
             return true;
-        }
-
-        if (this.needsReauth) {
-            return false;
         }
 
         return !this.isConfigured;

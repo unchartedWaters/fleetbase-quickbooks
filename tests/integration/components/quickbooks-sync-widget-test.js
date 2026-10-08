@@ -13,11 +13,20 @@ class NotificationsStubService extends Service {
 class FetchStubService extends Service {
     connection = null;
     credentialsConfigured = false;
+    clientId = undefined;
+    secretSet = undefined;
+    redirectUri = 'http://localhost:8000/quickbooks/int/v1/oauth/callback';
     posts = [];
 
     async get() {
+        const secretSet = this.secretSet ?? this.credentialsConfigured === true;
+        const clientId = this.clientId ?? (secretSet ? 'client-id' : '');
+
         return {
             connection: this.connection,
+            client_id: clientId,
+            client_secret_set: secretSet,
+            redirect_uri: this.redirectUri,
             credentials_configured: this.credentialsConfigured,
             queue: 0,
             last_sync: null,
@@ -84,10 +93,19 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         await render(hbs`<Widget::QuickbooksSync />`);
         assert.dom('[data-test-widget-sync]').isDisabled();
         assert.dom('[data-test-widget-credentials-missing]').hasText('Enter Client ID and Client secret on Quickbooks Setup before Sync now.');
+        assert.dom('[data-test-sync-denied]').doesNotExist();
 
         this.fetch.credentialsConfigured = true;
         await render(hbs`<Widget::QuickbooksSync />`);
         assert.dom('[data-test-widget-sync]').isNotDisabled();
+        assert.dom('[data-test-widget-credentials-missing]').doesNotExist();
+
+        this.fetch.credentialsConfigured = false;
+        this.fetch.clientId = 'client-id';
+        this.fetch.secretSet = true;
+        this.fetch.redirectUri = 'http://localhost:8000/quickbooks/int/v1/oauth/callback';
+        await render(hbs`<Widget::QuickbooksSync />`);
+        assert.dom('[data-test-widget-sync]').isNotDisabled('saved keys enable Sync now when the API URL is localhost');
         assert.dom('[data-test-widget-credentials-missing]').doesNotExist();
     });
 
@@ -113,6 +131,8 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
 
         await render(hbs`<Widget::QuickbooksSync />`);
         assert.dom('[data-test-widget-sync]').isDisabled();
+        assert.dom('[data-test-sync-denied]').hasText('You do not have permission to run Sync now.');
+        assert.dom('[data-test-widget-credentials-missing]').doesNotExist();
         assert.strictEqual(this.fetch.posts.length, 0);
     });
 

@@ -5,6 +5,7 @@ quickbooks:
     unavailable: QuickBooks status could not be loaded.
     settings-unavailable: QuickBooks settings could not be loaded.
     reauth-status: QuickBooks needs to be connected again before sync can continue. Choose Connect to QuickBooks.
+    reauth-save-first: QuickBooks needs to be connected again before sync can continue. Choose Save Changes first.
     connected: "Connected to QuickBooks organization {realm} ({environment})."
     connected-plain: "Connected to QuickBooks organization {realm}."
     home-currency: "Home currency is {currency}."
@@ -28,6 +29,7 @@ quickbooks:
   actions:
     sync-now: Sync now
     sync-queued: Sync queued.
+    sync-denied: You do not have permission to run Sync now.
   activity:
     title: Activity
     empty: No syncs yet. Connect on Quickbooks Setup, then choose Sync now or wait for the schedule.

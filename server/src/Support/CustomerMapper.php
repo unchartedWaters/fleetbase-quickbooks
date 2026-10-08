@@ -19,11 +19,17 @@ class CustomerMapper
             'DisplayName' => (string) ($customer['name'] ?? 'Customer'),
         ];
 
-        if (empty($customer['email']) === false) {
-            $payload['PrimaryEmailAddr'] = ['Address' => $customer['email']];
+        $email = trim((string) ($customer['email'] ?? ''));
+        if ($email !== '') {
+            $payload['PrimaryEmailAddr'] = ['Address' => $email];
+        } elseif ($pushClears === true) {
+            $payload['PrimaryEmailAddr'] = ['Address' => ''];
         }
-        if (empty($customer['phone']) === false) {
-            $payload['PrimaryPhone'] = ['FreeFormNumber' => $customer['phone']];
+        $phone = trim((string) ($customer['phone'] ?? ''));
+        if ($phone !== '') {
+            $payload['PrimaryPhone'] = ['FreeFormNumber' => $phone];
+        } elseif ($pushClears === true) {
+            $payload['PrimaryPhone'] = ['FreeFormNumber' => ''];
         }
         if (empty($customer['notes']) === false) {
             $payload['Notes'] = $customer['notes'];
@@ -33,14 +39,7 @@ class CustomerMapper
 
         $address = $customer['address'] ?? null;
         if (is_array($address) === true && $this->addressHasContent($address) === true) {
-            $payload['BillAddr'] = array_filter([
-                'Line1'                  => $address['line1'] ?? null,
-                'Line2'                  => $address['line2'] ?? null,
-                'City'                   => $address['city'] ?? null,
-                'CountrySubDivisionCode' => $address['state'] ?? null,
-                'PostalCode'             => $address['postal_code'] ?? null,
-                'Country'                => $address['country'] ?? null,
-            ], static fn ($value) => $value !== null && $value !== '');
+            $payload['BillAddr'] = $this->billAddr($address, $pushClears);
         } elseif ($pushClears === true) {
             $payload['BillAddr'] = [
                 'Line1'                  => '',
@@ -134,6 +133,43 @@ class CustomerMapper
             'notes'   => $party['notes'] ?? null,
             'address' => $party['address'] ?? null,
         ];
+    }
+
+    /**
+     * A Fleetbase clear of one line keeps the other lines and sends the blank as an empty string.
+     * Omitting the key leaves the old QuickBooks value in place.
+     *
+     * @param array<string, mixed> $address
+     *
+     * @return array<string, string>
+     */
+    private function billAddr(array $address, bool $pushClears): array
+    {
+        $fields = [
+            'Line1'                  => $address['line1'] ?? null,
+            'Line2'                  => $address['line2'] ?? null,
+            'City'                   => $address['city'] ?? null,
+            'CountrySubDivisionCode' => $address['state'] ?? null,
+            'PostalCode'             => $address['postal_code'] ?? null,
+            'Country'                => $address['country'] ?? null,
+        ];
+        if ($pushClears === true) {
+            $cleared = [];
+            foreach ($fields as $key => $value) {
+                $cleared[$key] = is_scalar($value) === true ? trim((string) $value) : '';
+            }
+
+            return $cleared;
+        }
+
+        $kept = [];
+        foreach ($fields as $key => $value) {
+            if ($value !== null && $value !== '') {
+                $kept[$key] = is_scalar($value) === true ? (string) $value : '';
+            }
+        }
+
+        return $kept;
     }
 
     /**

@@ -22,7 +22,7 @@ class InvoiceMapper
         foreach ($items as $item) {
             $amountCents = (int) ($item['amount'] ?? 0);
             $qty         = (int) ($item['quantity'] ?? 1);
-            $lines[]     = [
+            $line        = [
                 'Amount'              => Amounts::centsToDecimal($amountCents),
                 'DetailType'          => 'SalesItemLineDetail',
                 'Description'         => (string) ($item['description'] ?? ''),
@@ -32,6 +32,11 @@ class InvoiceMapper
                     'UnitPrice' => Amounts::unitPriceDecimal($amountCents, $qty),
                 ],
             ];
+            $lineId = trim((string) ($item['qbo_line_id'] ?? ''));
+            if ($lineId !== '') {
+                $line['Id'] = $lineId;
+            }
+            $lines[] = $line;
         }
 
         $tax = (int) ($invoice['tax'] ?? 0);
@@ -76,6 +81,222 @@ class InvoiceMapper
         }
 
         return $payload;
+    }
+
+    /**
+     * Sparse invoice updates append a line that has no Id. Copy the Ids QuickBooks
+     * already stored onto the sales lines this payload replaces. A line that already
+     * carries one of those ids keeps it; other Fleetbase lines take the remaining
+     * ids in order. Sales lines past the Fleetbase count stay out of the payload,
+     * so a sparse update does not delete them. Discount and subtotal lines are left
+     * out for the same reason. A cleared tax amount updates the existing tax line
+     * to zero instead of leaving it.
+     *
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $remote
+     *
+     * @return array<string, mixed>
+     */
+    public function withExistingLineIds(array $payload, array $remote): array
+    {
+        $lines       = is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [];
+        $taxId       = null;
+        $itemId      = '';
+        $remoteSales = $this->remoteSalesLines($remote, $taxId, $itemId);
+        $wanted      = [];
+        $salesAt     = [];
+        $hasTax      = false;
+        foreach ($lines as $index => $line) {
+            if (is_array($line) === false) {
+                continue;
+            }
+            if ((string) ($line['Description'] ?? '') === self::TAX_LINE_DESCRIPTION) {
+                $hasTax = true;
+                if ($taxId !== null) {
+                    $lines[$index]['Id'] = $taxId;
+                }
+                continue;
+            }
+            if ((string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
+                continue;
+            }
+            $salesAt[] = $index;
+            $wanted[]  = trim((string) ($line['Id'] ?? ''));
+            $ref       = is_array($line['SalesItemLineDetail']['ItemRef'] ?? null) === true
+                ? trim((string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? ''))
+                : '';
+            if ($ref !== '') {
+                $itemId = $ref;
+            }
+        }
+        foreach ($this->pairSalesLines($wanted, $remoteSales) as $localIndex => $remoteIndex) {
+            if ($remoteIndex === null || isset($salesAt[$localIndex]) === false) {
+                continue;
+            }
+            $id = trim((string) ($remoteSales[$remoteIndex]['Id'] ?? ''));
+            if ($id === '') {
+                continue;
+            }
+            $lines[$salesAt[$localIndex]]['Id'] = $id;
+        }
+        if ($hasTax === false && $taxId !== null) {
+            $zero    = Amounts::centsToDecimal(0);
+            $lines[] = [
+                'Id'                  => $taxId,
+                'Amount'              => $zero,
+                'DetailType'          => 'SalesItemLineDetail',
+                'Description'         => self::TAX_LINE_DESCRIPTION,
+                'SalesItemLineDetail' => [
+                    'ItemRef'   => ['value' => $itemId !== '' ? $itemId : '1'],
+                    'Qty'       => 1,
+                    'UnitPrice' => $zero,
+                ],
+            ];
+        }
+        $payload['Line'] = $lines;
+
+        return $payload;
+    }
+
+    /**
+     * Remote sales lines that do not pair with a Fleetbase line are left out of the
+     * comparison. A Fleetbase line that already has a QuickBooks id keeps that line.
+     * The rest pair with the remaining remote sales lines in order. Lines past that
+     * set stay in QuickBooks; their amount is returned so the compared total can
+     * leave them out. Discount, subtotal, and the synthetic tax line are kept.
+     *
+     * @param array<int, mixed>    $localItems
+     * @param array<string, mixed> $remote
+     *
+     * @return array{remote: array<string, mixed>, omitted_cents: int}
+     */
+    public function withoutUnmatchedSalesLines(array $localItems, array $remote): array
+    {
+        $taxId       = null;
+        $itemId      = '';
+        $remoteSales = $this->remoteSalesLines($remote, $taxId, $itemId);
+        $wanted      = [];
+        foreach ($localItems as $item) {
+            if (is_array($item) === false) {
+                continue;
+            }
+            $wanted[] = trim((string) ($item['qbo_line_id'] ?? ''));
+        }
+        $paired = [];
+        foreach ($this->pairSalesLines($wanted, $remoteSales) as $remoteIndex) {
+            if ($remoteIndex !== null) {
+                $paired[$remoteIndex] = true;
+            }
+        }
+
+        $kept    = [];
+        $omitted = 0;
+        $cursor  = 0;
+        $lines   = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
+        foreach ($lines as $line) {
+            if (is_array($line) === false || $this->isProductSalesLine($line) === false) {
+                $kept[] = $line;
+                continue;
+            }
+            if (isset($paired[$cursor]) === true) {
+                $kept[] = $line;
+            } else {
+                $omitted += self::lineAmount($line['Amount'] ?? 0);
+            }
+            $cursor++;
+        }
+        $filtered         = $remote;
+        $filtered['Line'] = $kept;
+
+        return ['remote' => $filtered, 'omitted_cents' => $omitted];
+    }
+
+    /**
+     * @param array<string, mixed> $remote
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function remoteSalesLines(array $remote, ?string &$taxId, string &$itemId): array
+    {
+        $sales = [];
+        $lines = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
+        foreach ($lines as $line) {
+            if (is_array($line) === false || (string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
+                continue;
+            }
+            $detail = is_array($line['SalesItemLineDetail'] ?? null) === true ? $line['SalesItemLineDetail'] : [];
+            $ref    = is_array($detail['ItemRef'] ?? null) === true ? trim((string) ($detail['ItemRef']['value'] ?? '')) : '';
+            if ($ref !== '' && $itemId === '') {
+                $itemId = $ref;
+            }
+            if ((string) ($line['Description'] ?? '') === self::TAX_LINE_DESCRIPTION) {
+                $id = trim((string) ($line['Id'] ?? ''));
+                if ($id !== '') {
+                    $taxId = $id;
+                }
+                continue;
+            }
+            $sales[] = $line;
+        }
+
+        return $sales;
+    }
+
+    /**
+     * @param array<int, string>               $wantedIds
+     * @param array<int, array<string, mixed>> $remoteSales
+     *
+     * @return array<int, int|null>
+     */
+    private function pairSalesLines(array $wantedIds, array $remoteSales): array
+    {
+        $pairs   = [];
+        $used    = [];
+        $pending = [];
+        foreach ($wantedIds as $localIndex => $wanted) {
+            $pairs[$localIndex] = null;
+            $wanted             = trim($wanted);
+            if ($wanted === '') {
+                $pending[] = $localIndex;
+                continue;
+            }
+            $found = null;
+            foreach ($remoteSales as $index => $line) {
+                $remoteId = trim((string) ($line['Id'] ?? ''));
+                if (isset($used[$index]) === true || $remoteId === '' || $remoteId !== $wanted) {
+                    continue;
+                }
+                $found = $index;
+                break;
+            }
+            if ($found === null) {
+                $pending[] = $localIndex;
+                continue;
+            }
+            $used[$found]       = true;
+            $pairs[$localIndex] = $found;
+        }
+        foreach ($pending as $localIndex) {
+            foreach (array_keys($remoteSales) as $index) {
+                if (isset($used[$index]) === true) {
+                    continue;
+                }
+                $used[$index]       = true;
+                $pairs[$localIndex] = $index;
+                break;
+            }
+        }
+
+        return $pairs;
+    }
+
+    /**
+     * @param array<string, mixed> $line
+     */
+    private function isProductSalesLine(array $line): bool
+    {
+        return (string) ($line['DetailType'] ?? '') === 'SalesItemLineDetail'
+            && (string) ($line['Description'] ?? '') !== self::TAX_LINE_DESCRIPTION;
     }
 
     /**

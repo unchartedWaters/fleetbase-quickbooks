@@ -72,10 +72,21 @@ class WebhookController extends Controller
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
 
-        // HMAC already matched. Remember this exact body for a short time and
-        // reject a second delivery of it. The check does not replace the signature test.
-        if ($this->rememberSignedBody($rawBody) === false) {
+        // HMAC already matched. A captured body is not accepted once its
+        // entity timestamps are older than the replay window.
+        if ($this->staleTimestamp($rawBody, time()) === true) {
             return response()->json(['message' => 'Invalid signature.'], 401);
+        }
+
+        // Remember this exact body for a short time and reject a second delivery
+        // of it. The check does not replace the signature test. A down replay
+        // store is not an invalid signature.
+        $replay = $this->rememberSignedBody($rawBody);
+        if ($replay === 'replay') {
+            return response()->json(['message' => 'Invalid signature.'], 401);
+        }
+        if ($replay === 'unavailable') {
+            return response()->json(['message' => 'Webhook delivery could not be recorded.'], 503);
         }
 
         $this->dispatchEntities($this->entitiesByRealm($rawBody), $matched);
@@ -145,14 +156,68 @@ class WebhookController extends Controller
     }
 
     /**
-     * True the first time this raw body is seen. A later copy of the same bytes is a replay.
+     * ok the first time this raw body is seen. replay when the same bytes were
+     * stored already. unavailable when the replay store cannot be written.
      */
-    private function rememberSignedBody(string $rawBody): bool
+    private function rememberSignedBody(string $rawBody): string
     {
         try {
-            return Cache::add('quickbooks.webhook.replay.' . hash('sha256', $rawBody), 1, self::REPLAY_TTL_SECONDS) === true;
+            $added = Cache::add('quickbooks.webhook.replay.' . hash('sha256', $rawBody), 1, self::REPLAY_TTL_SECONDS);
         } catch (\Throwable) {
+            return 'unavailable';
+        }
+
+        return $added === true ? 'ok' : 'replay';
+    }
+
+    /**
+     * True when a signed entity timestamp is older than the replay window.
+     * A body with no timestamp is left to the replay store.
+     */
+    private function staleTimestamp(string $rawBody, int $now): bool
+    {
+        $decoded = json_decode($rawBody, true);
+        if (is_array($decoded) === false) {
             return false;
+        }
+        $notifications = $decoded['eventNotifications'] ?? null;
+        if (is_array($notifications) === false) {
+            return false;
+        }
+
+        foreach ($notifications as $notification) {
+            if (is_array($notification) === false) {
+                continue;
+            }
+            $change   = $notification['dataChangeEvent'] ?? null;
+            $entities = is_array($change) === true ? ($change['entities'] ?? null) : null;
+            if (is_array($entities) === false) {
+                continue;
+            }
+            foreach ($entities as $entity) {
+                if (is_array($entity) === false || array_key_exists('lastUpdated', $entity) === false) {
+                    continue;
+                }
+                $timestamp = $this->webhookTimestamp($entity['lastUpdated']);
+                if ($timestamp === null || ($now - $timestamp) > self::REPLAY_TTL_SECONDS) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function webhookTimestamp(mixed $value): ?int
+    {
+        if (is_string($value) === false || trim($value) === '') {
+            return null;
+        }
+
+        try {
+            return (new \DateTimeImmutable(trim($value)))->getTimestamp();
+        } catch (\Exception) {
+            return null;
         }
     }
 

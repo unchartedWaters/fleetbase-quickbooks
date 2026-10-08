@@ -2,6 +2,7 @@ import { module, test } from 'qunit';
 import { setupTest } from 'dummy/tests/helpers';
 import { fieldState, normalizeSyncDirection, secretPresentation, validateSettings } from '@unchartedwaters/quickbooks-engine/utils/settings-form';
 import { connectionState } from '@unchartedwaters/quickbooks-engine/utils/connection-view';
+import { keysSavedForSync } from '@unchartedwaters/quickbooks-engine/utils/sync-access';
 import { activityRows } from '@unchartedwaters/quickbooks-engine/utils/activity-view';
 import ConnectionRoute from '@unchartedwaters/quickbooks-engine/routes/connection';
 import ActionsRoute from '@unchartedwaters/quickbooks-engine/routes/actions';
@@ -60,6 +61,21 @@ module('Unit | QuickBooks views', function (hooks) {
         this.owner.lookup('route:quickbooks-activity').beforeModel();
 
         assert.deepEqual(replaced, ['console.quickbooks.settings']);
+    });
+
+    test('sync now uses saved keys and does not require a public https redirect', function (assert) {
+        const localhost = {
+            client_id: 'client-id',
+            client_secret_set: true,
+            redirect_uri: 'http://localhost:8000/quickbooks/int/v1/oauth/callback',
+            credentials_configured: false,
+        };
+
+        assert.true(keysSavedForSync(localhost));
+        assert.false(keysSavedForSync({ ...localhost, client_secret_set: false }));
+        assert.false(keysSavedForSync({ ...localhost, client_id: '  ' }));
+        assert.false(keysSavedForSync({ credentials_configured: true }));
+        assert.false(keysSavedForSync(null));
     });
 
     test('settings fields mark inherited company values and omit a blank secret', function (assert) {

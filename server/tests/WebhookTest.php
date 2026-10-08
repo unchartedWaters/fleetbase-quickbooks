@@ -897,7 +897,7 @@ test('the remote change job passes the whole entity list to the engine once', fu
     }
 });
 
-test('a busy or unavailable lock does not call the engine', function () {
+test('a busy lock is retried and an unavailable lock does not call the engine', function () {
     [$engine]  = webhookEngine();
     $directory = webhookDirectory();
     $settings  = webhookSettings();
@@ -909,10 +909,13 @@ test('a busy or unavailable lock does not call the engine', function () {
     $repository = new Repository(new ArrayStore());
     Cache::swap($repository);
 
-    try {
+    withWebhookDispatcher(function ($dispatcher) use ($engine, $directory, $settings, $store, $job, $repository) {
         $held = $repository->getStore()->lock('quickbooks.batch.company-uuid', BatchRunner::LOCK_SECONDS);
         expect($held->get())->toBeTrue();
         $job->handle($engine, $directory, $settings, $store);
+
+        $exhausted = new ApplyRemoteChange('company-uuid', $job->entities, ApplyRemoteChange::LOCK_RETRY_LIMIT);
+        $exhausted->handle($engine, $directory, $settings, $store);
         $held->release();
 
         Cache::swap(new class {
@@ -920,13 +923,19 @@ test('a busy or unavailable lock does not call the engine', function () {
         $job->handle($engine, $directory, $settings, $store);
 
         expect($engine->calls)->toBe([])
-            ->and($directory->skipped)->toHaveCount(2)
+            ->and($directory->skipped)->toHaveCount(3)
             ->and($directory->skipped[0]['message'])->toBe('Another QuickBooks sync is already running.')
-            ->and($directory->skipped[1]['message'])->toBe(BatchRunner::LOCK_UNAVAILABLE)
-            ->and($directory->saved)->toBeNull();
-    } finally {
-        Cache::swap($previous);
-    }
+            ->and($directory->skipped[1]['message'])->toBe('Another QuickBooks sync is already running.')
+            ->and($directory->skipped[2]['message'])->toBe(BatchRunner::LOCK_UNAVAILABLE)
+            ->and($directory->saved)->toBeNull()
+            ->and($dispatcher->jobs)->toHaveCount(1)
+            ->and($dispatcher->jobs[0])->toBeInstanceOf(ApplyRemoteChange::class)
+            ->and($dispatcher->jobs[0]->lockAttempt)->toBe(1)
+            ->and($dispatcher->jobs[0]->delay)->toBe(ApplyRemoteChange::LOCK_RETRY_DELAY_SECONDS)
+            ->and($dispatcher->jobs[0]->entities)->toBe($job->entities);
+    });
+
+    Cache::swap($previous);
 });
 
 test('quickbooks http in a remote change releases the company lock', function () {
@@ -1004,6 +1013,12 @@ test('quickbooks http in a remote change releases the company lock', function ()
     };
     $settings                               = webhookSettings();
     $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminSync()] = [
+        'customer_conflict'  => 'quickbooks',
+        'customer_direction' => 'both',
+        'payment_conflict'   => 'quickbooks',
+        'payment_direction'  => 'both',
+    ];
     $previous                               = Cache::getFacadeRoot();
     Cache::swap(new Repository(new ArrayStore()));
 

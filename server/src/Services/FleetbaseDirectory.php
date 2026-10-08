@@ -1607,7 +1607,7 @@ class FleetbaseDirectory
             $companyUuid = (string) ($invoice['company_uuid'] ?? '');
             $uuid        = (string) $invoice['uuid'];
             $updates     = [];
-            foreach (self::changedColumns($invoice, is_array($loaded) === true ? $loaded : null, ['number', 'notes', 'date', 'due_date']) as $field => $value) {
+            foreach (self::changedColumns($invoice, is_array($loaded) === true ? $loaded : null, ['number', 'notes', 'date', 'due_date', 'customer_uuid', 'currency']) as $field => $value) {
                 if ($value === '' || $value === null) {
                     continue;
                 }
@@ -1707,7 +1707,7 @@ class FleetbaseDirectory
             return true;
         }
 
-        return self::changedColumns($invoice, $loaded, ['number', 'notes', 'date', 'due_date', 'status', 'amount_paid', 'paid_at', 'tax', 'total']) !== []
+        return self::changedColumns($invoice, $loaded, ['number', 'notes', 'date', 'due_date', 'status', 'amount_paid', 'paid_at', 'tax', 'total', 'customer_uuid', 'currency']) !== []
             || is_array($loaded) === false;
     }
 

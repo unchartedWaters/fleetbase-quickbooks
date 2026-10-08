@@ -29,7 +29,12 @@ class FetchStubService extends Service {
     async get(path) {
         if (path === 'settings') {
             return {
-                auth: { client_id: 'id', redirect_uri: 'https://example.test/callback', environment: 'sandbox', client_secret_set: this.secretSet },
+                auth: {
+                    client_id: 'id',
+                    redirect_uri: 'http://localhost:8000/quickbooks/int/v1/oauth/callback',
+                    environment: 'sandbox',
+                    client_secret_set: this.secretSet,
+                },
                 sync: { enabled: true, interval_minutes: 5, batch_size: 100, retry_limit: 5, default_backoff_seconds: 30, override: false },
             };
         }
@@ -138,7 +143,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-connected]').exists();
         assert.dom('[data-test-disconnect]').exists({ count: 1 });
         assert.dom('[data-test-connect]').isDisabled();
-        assert.dom('[data-test-sync-now]').isNotDisabled();
+        assert.dom('[data-test-sync-now]').isNotDisabled('a localhost API callback does not block Sync now');
         assert.dom('[data-test-reconcile]').doesNotExist();
         assert.dom('[data-test-import]').doesNotExist();
         assert.dom('[data-test-actions]').doesNotExist();
@@ -186,8 +191,9 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
 
         fetch.secretSet = false;
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
-        assert.dom('[data-test-sync-now]').isNotDisabled();
-        assert.dom('[data-test-credentials-missing]').doesNotExist();
+        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom('[data-test-credentials-missing]').hasText('Enter Client ID and Client secret on Quickbooks Setup before Sync now.');
+        assert.dom('[data-test-disconnect]').isNotDisabled();
     });
 
     test('connect shows an error notification when oauth start fails', async function (assert) {

@@ -1,6 +1,7 @@
 <?php
 
 use Fleetbase\Quickbooks\Http\Controllers\ConnectionController;
+use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Services\OAuthFlow;
@@ -11,6 +12,8 @@ use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -166,6 +169,125 @@ test('page 1 of sync activity returns meta and omits later batches', function ()
         expect($clamped['meta'])->toBe($pageOne['meta'])
             ->and(array_column($clamped['batches'], 'uuid'))->toBe($expected);
     } finally {
+        DB::purge('sqlite');
+        config()->set('database.default', $defaultConnection);
+        config()->set('database.connections.sqlite', $sqliteConnection);
+        session(['company' => null]);
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a company with no connection does not receive another company connection', function () {
+    $defaultConnection = config('database.default');
+    $sqliteConnection  = config('database.connections.sqlite');
+    config()->set('database.default', 'sqlite');
+    config()->set('database.connections.sqlite', [
+        'driver'                  => 'sqlite',
+        'database'                => ':memory:',
+        'prefix'                  => '',
+        'foreign_key_constraints' => true,
+    ]);
+    DB::purge('sqlite');
+    $schema = DB::connection('sqlite')->getSchemaBuilder();
+    $schema->create('quickbooks_connections', function (Blueprint $table) {
+        $table->char('uuid', 36)->primary();
+        $table->char('company_uuid', 36)->index();
+        $table->string('realm_id')->nullable();
+        $table->text('access_token')->nullable();
+        $table->text('refresh_token')->nullable();
+        $table->timestamp('token_expires_at')->nullable();
+        $table->string('environment')->default('sandbox');
+        $table->boolean('needs_reauth')->default(false);
+        $table->string('home_currency', 3)->nullable();
+        $table->timestamp('last_batch_at')->nullable();
+        $table->timestamps();
+    });
+    $owner = new Connection();
+    $owner->fill([
+        'uuid'         => 'conn-owner',
+        'company_uuid' => 'owner-company',
+        'realm_id'     => 'realm-owner',
+        'environment'  => 'sandbox',
+        'needs_reauth' => false,
+    ]);
+    $owner->save();
+
+    $controller = new ConnectionController(
+        new Authorizer(static fn () => true),
+        new OAuthFlow(new QuickBooksClient()),
+        new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
+        new MemorySettingsStore(),
+        new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
+    );
+    $dispatcher = new class implements Dispatcher {
+        /** @var array<int, object> */
+        public array $jobs = [];
+
+        public function dispatch($command)
+        {
+            $this->jobs[] = $command;
+
+            return $command;
+        }
+
+        public function dispatchSync($command, $handler = null)
+        {
+            return $command;
+        }
+
+        public function dispatchNow($command, $handler = null)
+        {
+            return $command;
+        }
+
+        public function hasCommandHandler($command)
+        {
+            return false;
+        }
+
+        public function getCommandHandler($command)
+        {
+            return false;
+        }
+
+        public function pipeThrough(array $pipes)
+        {
+            return $this;
+        }
+
+        public function map(array $map)
+        {
+            return $this;
+        }
+    };
+    $container          = Container::getInstance();
+    $previousDispatcher = $container->bound(Dispatcher::class) === true ? $container->make(Dispatcher::class) : null;
+    $container->instance(Dispatcher::class, $dispatcher);
+
+    try {
+        session(['company' => 'empty-company']);
+        $shown = $controller->show(Request::create('/connection', 'GET'))->getData(true);
+
+        expect($shown['connection'])->toBeNull();
+
+        foreach (['import' => 'import', 'reconcile' => 'reconcile', 'sync' => 'sync'] as $method => $path) {
+            $response = $controller->{$method}(Request::create('/' . $path, 'POST'));
+            expect($response->getStatusCode())->toBe(422)
+                ->and($response->getData(true)['message'])->toBe('QuickBooks is not connected. Connect from Quickbooks Setup.');
+        }
+
+        expect($dispatcher->jobs)->toBe([])
+            ->and(Connection::query()->count())->toBe(1);
+
+        session(['company' => 'owner-company']);
+        $ownerShown = $controller->show(Request::create('/connection', 'GET'))->getData(true);
+
+        expect($ownerShown['connection']['realm_id'])->toBe('realm-owner');
+    } finally {
+        if ($previousDispatcher !== null) {
+            $container->instance(Dispatcher::class, $previousDispatcher);
+        } else {
+            $container->forgetInstance(Dispatcher::class);
+        }
         DB::purge('sqlite');
         config()->set('database.default', $defaultConnection);
         config()->set('database.connections.sqlite', $sqliteConnection);

@@ -3,7 +3,7 @@ import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
 import { inject as service } from '@ember/service';
 import { connectionState } from '../../utils/connection-view';
-import { canRunSyncNow } from '../../utils/sync-access';
+import { canRunSyncNow, keysSavedForSync } from '../../utils/sync-access';
 
 const NAMESPACE = 'quickbooks/int/v1';
 
@@ -46,7 +46,7 @@ export default class WidgetQuickbooksSyncComponent extends Component {
     }
 
     get credentialsConfigured() {
-        return this.summary?.credentials_configured === true;
+        return keysSavedForSync(this.summary);
     }
 
     get credentialsMissing() {
@@ -55,6 +55,11 @@ export default class WidgetQuickbooksSyncComponent extends Component {
 
     get canSync() {
         return canRunSyncNow(this.abilities);
+    }
+
+    // Shown when Sync now would run except the signed-in user cannot reconcile.
+    get syncPermissionDenied() {
+        return !this.isLoading && !this.error && this.isConnected && this.credentialsConfigured && !this.canSync;
     }
 
     get syncDisabled() {

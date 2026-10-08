@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Models\Setting;
+use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 
 class SettingsStore
@@ -64,7 +65,7 @@ class SettingsStore
      */
     public function companyAuth(string $companyUuid): array
     {
-        return $this->normalizeAuth($this->get(SettingsKeys::companyAuth($companyUuid)));
+        return $this->upgradeStoredSecrets(SettingsKeys::companyAuth($companyUuid));
     }
 
     /**
@@ -72,7 +73,41 @@ class SettingsStore
      */
     public function adminAuth(): array
     {
-        return $this->normalizeAuth($this->get(SettingsKeys::adminAuth()));
+        return $this->upgradeStoredSecrets(SettingsKeys::adminAuth());
+    }
+
+    /**
+     * Legacy AES-256-CBC secrets still open. On a successful read they are
+     * re-encrypted with Laravel Crypt and written back so CBC is not stored.
+     *
+     * @return array<string, mixed>
+     */
+    private function upgradeStoredSecrets(string $key): array
+    {
+        $stored  = $this->get($key);
+        $cipher  = new SecretCipher();
+        $changed = false;
+        foreach (['client_secret', 'webhook_verifier'] as $field) {
+            $value = $stored[$field] ?? null;
+            if (is_string($value) === false || $value === '') {
+                continue;
+            }
+            $opened = $cipher->read($value);
+            if ($opened === null || $opened['stored'] === $value) {
+                continue;
+            }
+            $stored[$field] = $opened['stored'];
+            $changed        = true;
+        }
+        if ($changed === true && class_exists(Setting::class) === true) {
+            try {
+                Setting::configure($key, $stored);
+            } catch (\Throwable) {
+                // The value in memory is already Crypt. A later read retries the write.
+            }
+        }
+
+        return $this->normalizeAuth($stored);
     }
 
     /**

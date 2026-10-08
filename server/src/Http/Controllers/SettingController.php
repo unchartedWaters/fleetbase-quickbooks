@@ -648,6 +648,9 @@ class SettingController extends QuickbooksController
                 $enabled[$entity] = true;
             }
         }
+        if ($this->entitySwitchOn($existing, 'payment_enabled') === false && $this->entitySwitchOn($merged, 'payment_enabled') === true) {
+            $enabled['invoice'] = true;
+        }
         if ($enabled === [] || $companyUuid === '') {
             return;
         }

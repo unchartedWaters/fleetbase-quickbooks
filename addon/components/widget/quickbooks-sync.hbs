@@ -34,6 +34,11 @@
                         {{t "quickbooks.widget.credentials-missing"}}
                     </p>
                 {{/if}}
+                {{#if this.syncPermissionDenied}}
+                    <p class="text-sm text-gray-500 dark:text-gray-400" data-test-sync-denied>
+                        {{t "quickbooks.actions.sync-denied"}}
+                    </p>
+                {{/if}}
             </div>
         {{/if}}
     </div>

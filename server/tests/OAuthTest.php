@@ -132,6 +132,40 @@ test('a long base64 secret is not legacy ciphertext', function () {
         });
 });
 
+test('reading a legacy secret re-encrypts it and a crypt payload stays put', function () {
+    $cipher = new SecretCipher();
+    $key    = substr(hash('sha256', base64_decode(substr((string) config('app.key'), 7), true), true), 0, 32);
+    $iv     = random_bytes(16);
+    $legacy = base64_encode($iv . openssl_encrypt('old-secret', 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
+    $crypt  = $cipher->encrypt('kept-secret');
+
+    $opened = $cipher->read($legacy);
+
+    expect($opened)->toBeArray()
+        ->and($opened['plain'])->toBe('old-secret')
+        ->and($opened['stored'])->not->toBe($legacy)
+        ->and($cipher->isLegacyCiphertext($opened['stored']))->toBeFalse()
+        ->and($cipher->decrypt($opened['stored']))->toBe('old-secret')
+        ->and($cipher->read($crypt))->toBe(['plain' => 'kept-secret', 'stored' => $crypt])
+        ->and($cipher->reveal($legacy))->toBe('old-secret');
+});
+
+test('reading a connection re-encrypts a legacy token without waiting for save', function () {
+    $cipher = new SecretCipher();
+    $key    = substr(hash('sha256', base64_decode(substr((string) config('app.key'), 7), true), true), 0, 32);
+    $iv     = random_bytes(16);
+    $legacy = base64_encode($iv . openssl_encrypt('old-access', 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
+
+    $connection = new Fleetbase\Quickbooks\Models\Connection();
+    $connection->setRawAttributes([
+        'access_token' => $legacy,
+    ]);
+
+    expect($connection->access_token)->toBe('old-access')
+        ->and($cipher->isLegacyCiphertext($connection->getAttributes()['access_token']))->toBeFalse()
+        ->and($cipher->decrypt($connection->getAttributes()['access_token']))->toBe('old-access');
+});
+
 test('saving a connection re-encrypts a legacy token and leaves a crypt token alone', function () {
     $cipher = new SecretCipher();
     $key    = substr(hash('sha256', base64_decode(substr((string) config('app.key'), 7), true), true), 0, 32);
@@ -675,7 +709,9 @@ test('oauth complete exchanges the code with the same computed callback', functi
             ->and($syncs[0]->companyUuid)->toBe('company-uuid')
             ->and($syncs[0]->trigger)->toBe('now')
             ->and($imports)->toHaveCount(1)
-            ->and($imports[0]->companyUuid)->toBe('company-uuid');
+            ->and($imports[0]->companyUuid)->toBe('company-uuid')
+            ->and($imports[0]->waitForLock)->toBeTrue()
+            ->and($imports[0]->lockWaitSeconds)->toBe(0);
     } finally {
         qbRestoreConfig($previous);
         session(['company' => null, 'user' => null]);
@@ -894,7 +930,8 @@ test('the oauth callback only keeps the code and the user who started the flow c
         expect($syncs)->toHaveCount(1)
             ->and($syncs[0]->trigger)->toBe('now')
             ->and($imports)->toHaveCount(1)
-            ->and($imports[0]->companyUuid)->toBe('company-uuid');
+            ->and($imports[0]->companyUuid)->toBe('company-uuid')
+            ->and($imports[0]->waitForLock)->toBeTrue();
     } finally {
         session(['company' => null, 'user' => null]);
     }
@@ -1262,11 +1299,12 @@ test('summary last sync is the latest finished batch and stays empty when every 
     $previous = Model::getConnectionResolver();
     Model::setConnectionResolver($resolver);
 
+    $store = new MemorySettingsStore();
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
         new OAuthFlow(new QuickBooksClient()),
         new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()),
-        new MemorySettingsStore(),
+        $store,
         new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
     );
     $request = Request::create('/summary', 'GET', ['company_uuid' => 'company-uuid']);
@@ -1297,6 +1335,22 @@ test('summary last sync is the latest finished batch and stays empty when every 
 
         expect($none['last_sync'])->toBeNull()
             ->and($none['credentials_configured'])->toBeFalse();
+
+        $previousUrl = config('app.url');
+        config()->set('app.url', 'http://localhost:8000');
+        $store->rows[SettingsKeys::adminAuth()] = [
+            'client_id'     => 'client-id',
+            'client_secret' => (new SecretCipher())->encrypt('secret'),
+            'environment'   => 'sandbox',
+        ];
+        try {
+            $local = $controller->summary($request)->getData(true);
+            expect($local['credentials_configured'])->toBeTrue()
+                ->and($local['client_id'])->toBe('client-id')
+                ->and($local['client_secret_set'])->toBeTrue();
+        } finally {
+            config()->set('app.url', $previousUrl);
+        }
     } finally {
         if ($previous === null) {
             Model::unsetConnectionResolver();

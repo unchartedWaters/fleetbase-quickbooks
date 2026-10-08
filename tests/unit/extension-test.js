@@ -95,6 +95,7 @@ module('Unit | extension', function (hooks) {
         assert.strictEqual(settingsItems[0].icon, 'plug');
         assert.strictEqual(settingsItems[0].component.engine, '@unchartedwaters/quickbooks-engine');
         assert.strictEqual(settingsItems[0].component.path, 'quickbooks-company-settings');
+        assert.strictEqual(settingsItems[0].permission, 'quickbooks see extension');
         assert.false(settingsItems[0].overwriteWrapperClass);
         assert.strictEqual(settingsItems[0].wrapperClass, null);
 
@@ -105,6 +106,7 @@ module('Unit | extension', function (hooks) {
         assert.strictEqual(settingsItems[1].icon, 'clock-rotate-left');
         assert.strictEqual(settingsItems[1].component.engine, '@unchartedwaters/quickbooks-engine');
         assert.strictEqual(settingsItems[1].component.path, 'quickbooks-activity');
+        assert.strictEqual(settingsItems[1].permission, 'quickbooks see extension');
         assert.false(settingsItems[1].overwriteWrapperClass);
         assert.strictEqual(settingsItems[1].wrapperClass, null);
 

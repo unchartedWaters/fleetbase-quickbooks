@@ -23,6 +23,7 @@ use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
@@ -131,8 +132,8 @@ function qboChangedController(SettingsService $settings, MemorySettingsStore $st
  */
 function qboChangedWithoutVerifier(callable $callback): mixed
 {
-    if (class_exists(Illuminate\Support\Facades\Cache::class) === true) {
-        Illuminate\Support\Facades\Cache::flush();
+    if (class_exists(Cache::class) === true) {
+        Cache::flush();
     }
     $previous  = getenv('QUICKBOOKS_WEBHOOK_VERIFIER');
     $hadEnv    = array_key_exists('QUICKBOOKS_WEBHOOK_VERIFIER', $_ENV);
@@ -390,9 +391,12 @@ test('the sync listener treats a stored off direction as both and skips outbound
     $store->rows[SettingsKeys::adminSync()]              = [
         'override'           => true,
         'customer_direction' => 'off',
+        'customer_conflict'  => 'quickbooks',
         'payment_direction'  => 'outbound',
         'invoice_direction'  => 'both',
+        'invoice_conflict'   => 'quickbooks',
         'wallet_direction'   => 'both',
+        'wallet_conflict'    => 'quickbooks',
     ];
     $listener = new class($settings) extends EnqueueWebhookSync {
         protected function knownInvoices(string $companyUuid, array $events): array
@@ -755,9 +759,13 @@ test('a quickbooks delete voids the invoice and retires customers and wallets wi
         $store                                  = new MemorySettingsStore();
         $store->rows[SettingsKeys::adminSync()] = [
             'customer_direction' => 'both',
+            'customer_conflict'  => 'quickbooks',
             'invoice_direction'  => 'both',
+            'invoice_conflict'   => 'quickbooks',
             'wallet_direction'   => 'both',
+            'wallet_conflict'    => 'quickbooks',
             'payment_direction'  => 'both',
+            'payment_conflict'   => 'quickbooks',
         ];
         $listener = new EnqueueWebhookSync($settings);
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '1', 'delete', 'cust-1'));
@@ -1595,9 +1603,13 @@ test('a delete or void webhook does not create a pending sync row', function () 
         $store                                  = new MemorySettingsStore();
         $store->rows[SettingsKeys::adminSync()] = [
             'customer_direction' => 'both',
+            'customer_conflict'  => 'quickbooks',
             'invoice_direction'  => 'both',
+            'invoice_conflict'   => 'quickbooks',
             'wallet_direction'   => 'both',
+            'wallet_conflict'    => 'quickbooks',
             'payment_direction'  => 'both',
+            'payment_conflict'   => 'quickbooks',
         ];
         $listener = new class($settings) extends EnqueueWebhookSync {
             protected function knownInvoices(string $companyUuid, array $events): array
@@ -1711,9 +1723,13 @@ test('a payment webhook queues the linked invoice and skips an unlinked payment'
         $store                                  = new MemorySettingsStore();
         $store->rows[SettingsKeys::adminSync()] = [
             'customer_direction' => 'both',
+            'customer_conflict'  => 'quickbooks',
             'invoice_direction'  => 'both',
+            'invoice_conflict'   => 'quickbooks',
             'payment_direction'  => 'both',
+            'payment_conflict'   => 'quickbooks',
             'wallet_direction'   => 'both',
+            'wallet_conflict'    => 'quickbooks',
         ];
         $listener = new EnqueueWebhookSync($settings);
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '1', 'update', 'cust-1'));
@@ -1829,7 +1845,9 @@ test('a payment stored under its quickbooks id queues the fleetbase invoice', fu
         $store                                  = new MemorySettingsStore();
         $store->rows[SettingsKeys::adminSync()] = [
             'payment_direction' => 'both',
+            'payment_conflict'  => 'quickbooks',
             'invoice_direction' => 'both',
+            'invoice_conflict'  => 'quickbooks',
         ];
         $listener = new class($settings) extends EnqueueWebhookSync {
             /** @var array<int, string> */
@@ -2016,6 +2034,67 @@ test('a shared connection queues another organization invoice on that realm', fu
         config()->set('fleetbase.connection.db', $ledgerConnection);
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('fleetbase primary does not queue a quickbooks copy and still queues the fleetbase push', function () {
+    $settings                               = qboChangedSettings();
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminSync()] = [
+        'customer_direction' => 'both',
+        'customer_conflict'  => 'fleetbase',
+    ];
+    $listener = new EnqueueWebhookSync($settings);
+    $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '1', 'update', 'cust-1'));
+
+    qboChangedBus(function ($dispatcher) use ($listener, $store) {
+        $listener->flush($store);
+
+        expect($dispatcher->jobs)->toHaveCount(1)
+            ->and($dispatcher->jobs[0])->toBeInstanceOf(SyncWebhookBatch::class)
+            ->and($dispatcher->jobs[0]->records)->toBe([
+                ['local_type' => 'customer', 'local_uuid' => 'cust-1'],
+            ]);
+    });
+});
+
+test('a signed webhook older than ten minutes is rejected and a down replay store returns 503', function () {
+    $settings = qboChangedSettings();
+    $staleAt  = (new DateTimeImmutable('@' . (time() - 700)))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:sO');
+    $freshAt  = (new DateTimeImmutable('@' . time()))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:sO');
+    $stale    = '{"eventNotifications":[{"realmId":"realm-replay","dataChangeEvent":{"entities":[{"name":"Customer","id":"77","operation":"Create","lastUpdated":"' . $staleAt . '"}]}}]}';
+    $fresh    = '{"eventNotifications":[{"realmId":"realm-replay","dataChangeEvent":{"entities":[{"name":"Customer","id":"78","operation":"Update","lastUpdated":"' . $freshAt . '"}]}}]}';
+
+    qboChangedWithoutVerifier(function () use ($settings, $stale, $fresh) {
+        $store                                  = new MemorySettingsStore();
+        $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
+        $controller                             = qboChangedController($settings, $store, ['realm-replay' => 'company-a'], []);
+        qboChangedCollect();
+
+        try {
+            $rejected = $controller->handle(qboChangedRequest($stale, qboChangedSignature($stale, 'verifier-token')));
+            expect($rejected->getStatusCode())->toBe(401)
+                ->and(qboChangedSeen())->toBe([]);
+
+            $previous = Cache::getFacadeRoot();
+            Cache::swap(new class {
+                public function add(string $key, mixed $value, mixed $ttl = null): bool
+                {
+                    throw new RuntimeException('redis down');
+                }
+            });
+            try {
+                $down = $controller->handle(qboChangedRequest($fresh, qboChangedSignature($fresh, 'verifier-token')));
+            } finally {
+                Cache::swap($previous);
+            }
+
+            expect($down->getStatusCode())->toBe(503)
+                ->and($down->getData(true)['message'])->not->toBe('Invalid signature.')
+                ->and(qboChangedSeen())->toBe([]);
+        } finally {
+            qboChangedRestoreEvents();
+        }
+    });
+});
 
 test('the same signed webhook body is rejected on replay and a bad signature is not cached', function () {
     $settings = qboChangedSettings();

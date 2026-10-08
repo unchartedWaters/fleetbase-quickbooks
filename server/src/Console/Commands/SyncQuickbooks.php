@@ -4,11 +4,9 @@ namespace Fleetbase\Quickbooks\Console\Commands;
 
 use Fleetbase\Quickbooks\Jobs\SyncCompanyBatch;
 use Fleetbase\Quickbooks\Models\Connection;
-use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Services\BatchRunner;
 use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Illuminate\Console\Command;
-use Illuminate\Support\Carbon;
 
 class SyncQuickbooks extends Command
 {
@@ -73,21 +71,19 @@ class SyncQuickbooks extends Command
             $connected[] = $companyUuid;
         }
 
-        $due = count($connected) === 1 ? $this->dueCompanies() : [];
-
-        return self::companiesToSchedule($connected, $due);
+        return self::companiesToSchedule($connected);
     }
 
     /**
-     * One shared connection schedules every organization with due pending rows
-     * for that realm. Several connections schedule only the organization on each row.
+     * Schedule the organization that owns each connection row.
+     * A pending row for another organization does not borrow that connection.
      *
      * @param array<int, string> $connected
      * @param array<int, string> $dueCompanies
      *
      * @return array<int, string>
      */
-    public static function companiesToSchedule(array $connected, array $dueCompanies): array
+    public static function companiesToSchedule(array $connected, array $dueCompanies = []): array
     {
         $owners = [];
         foreach ($connected as $companyUuid) {
@@ -96,47 +92,15 @@ class SyncQuickbooks extends Command
                 $owners[$companyUuid] = true;
             }
         }
-        if ($owners === []) {
-            return [];
-        }
-        if (count($owners) !== 1) {
-            return array_keys($owners);
-        }
-
+        // Pending rows do not add an organization that does not own a connection.
         foreach ($dueCompanies as $companyUuid) {
             $companyUuid = trim((string) $companyUuid);
-            if ($companyUuid !== '') {
+            if ($companyUuid !== '' && isset($owners[$companyUuid]) === true) {
                 $owners[$companyUuid] = true;
             }
         }
 
         return array_keys($owners);
-    }
-
-    /**
-     * Organizations with a pending row that is due now.
-     *
-     * @return array<int, string>
-     */
-    private function dueCompanies(): array
-    {
-        $ids       = [];
-        $now       = Carbon::now();
-        $companies = PendingSync::query()
-            ->where('status', 'pending')
-            ->where(function ($query) use ($now): void {
-                $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', $now);
-            })
-            ->distinct()
-            ->pluck('company_uuid');
-        foreach ($companies as $companyUuid) {
-            $companyUuid = trim((string) $companyUuid);
-            if ($companyUuid !== '') {
-                $ids[] = $companyUuid;
-            }
-        }
-
-        return $ids;
     }
 
     /**

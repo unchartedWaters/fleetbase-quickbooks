@@ -112,9 +112,9 @@ test('the global connection gates sync and a missing connection writes no activi
         ->and($ledger->pending[0]['status'])->toBe('done');
 });
 
-test('one connection schedules every organization with due pending rows', function () {
+test('one connection schedules only the organization that owns the row', function () {
     expect(SyncQuickbooks::companiesToSchedule(['owner-company'], ['owner-company', 'other-company']))
-        ->toEqualCanonicalizing(['owner-company', 'other-company'])
+        ->toBe(['owner-company'])
         ->and(SyncQuickbooks::companiesToSchedule(['owner-company', 'second-company'], ['other-company']))
         ->toEqualCanonicalizing(['owner-company', 'second-company'])
         ->and(SyncQuickbooks::companiesToSchedule([], ['other-company']))->toBe([]);

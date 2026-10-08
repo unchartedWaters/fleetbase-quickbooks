@@ -108,7 +108,7 @@
     "ember-engines": "^0.9.0"
   },
   "engines": {
-    "node": ">= 18"
+    "node": ">= 22"
   },
   "ember": {
     "edition": "octane"

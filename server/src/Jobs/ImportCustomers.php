@@ -31,6 +31,12 @@ class ImportCustomers implements ShouldQueue
 
     public const CONTINUATION_RETRY_DELAY_SECONDS = 5;
 
+    /**
+     * Connect dispatches the sync first, and that sync holds the company lock.
+     * Poll until the lock can expire, then the import runs or the caller records the skip.
+     */
+    public const LOCK_WAIT_DELAY_SECONDS = 15;
+
     public int $tries = 1;
 
     public int $timeout = BatchRunner::LOCK_SECONDS;
@@ -38,6 +44,8 @@ class ImportCustomers implements ShouldQueue
     public function __construct(
         public string $companyUuid,
         public ?int $continuationAttempt = null,
+        public bool $waitForLock = false,
+        public int $lockWaitSeconds = 0,
     ) {
     }
 
@@ -60,6 +68,14 @@ class ImportCustomers implements ShouldQueue
         self::dispatchJob(new self($companyUuid));
     }
 
+    /**
+     * Queue the customer import so a sync that already holds the company lock does not drop it.
+     */
+    public static function dispatchAfterLock(string $companyUuid): void
+    {
+        self::dispatchJob(new self($companyUuid, null, true));
+    }
+
     public function handle(
         CustomerImporter $importer,
         FleetbaseDirectory $directory,
@@ -78,6 +94,9 @@ class ImportCustomers implements ShouldQueue
             return;
         }
         if ($lock->get() === false) {
+            if ($this->scheduleLockWait() === true) {
+                return;
+            }
             $directory->saveSkipped($this->companyUuid, 'import', 'inbound', 'Another QuickBooks sync is already running.');
             $this->retryBusyContinuation();
 
@@ -93,9 +112,30 @@ class ImportCustomers implements ShouldQueue
             }
             if ($continue === true) {
                 // Mark only deadline-created jobs as continuations, and dispatch after releasing the company lock.
-                self::dispatchJob(new self($this->companyUuid, 0));
+                self::dispatchJob(new self($this->companyUuid, 0, $this->waitForLock));
             }
         }
+    }
+
+    /**
+     * True when this import was queued again and the busy lock was not recorded as a skip.
+     */
+    private function scheduleLockWait(): bool
+    {
+        if ($this->waitForLock !== true) {
+            return false;
+        }
+
+        $waited = $this->lockWaitSeconds + self::LOCK_WAIT_DELAY_SECONDS;
+        if ($waited > BatchRunner::LOCK_SECONDS) {
+            return false;
+        }
+
+        $retry = new self($this->companyUuid, $this->continuationAttempt, true, $waited);
+        $retry->delay(self::LOCK_WAIT_DELAY_SECONDS);
+        self::dispatchJob($retry);
+
+        return true;
     }
 
     private function retryBusyContinuation(): void
@@ -105,7 +145,7 @@ class ImportCustomers implements ShouldQueue
         }
 
         $attempt = $this->continuationAttempt + 1;
-        $retry   = new self($this->companyUuid, $attempt);
+        $retry   = new self($this->companyUuid, $attempt, $this->waitForLock);
         $retry->delay(self::CONTINUATION_RETRY_DELAY_SECONDS * $attempt);
         self::dispatchJob($retry);
     }

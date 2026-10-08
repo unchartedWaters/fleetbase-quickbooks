@@ -27,8 +27,7 @@
 # ember-cli temporary build output
 /tmp/
 
-# package manager lockfiles are regenerated locally and are never committed.
-pnpm-lock.yaml
+# The pnpm lockfile is tracked. Other package manager lockfiles stay local.
 package-lock.json
 yarn.lock
 npm-shrinkwrap.json

@@ -4,6 +4,7 @@ import { tracked } from '@glimmer/tracking';
 import { inject as service } from '@ember/service';
 import { scheduleTask } from 'ember-lifeline';
 import { DEFAULT_ENVIRONMENT, fieldState, normalizeSyncDirection, secretPresentation, validateSettings, webhookVerifierPresentation } from '../utils/settings-form';
+import { canUpdateSettings } from '../utils/sync-access';
 
 const NUMBER_FIELDS = ['interval_minutes', 'periodic_interval_hours', 'retry_limit', 'default_backoff_seconds'];
 const MINIMUMS = {
@@ -142,13 +143,14 @@ const URL_COPY = {
 export default class QuickbooksSettingsComponent extends Component {
     @service notifications;
     @service intl;
+    @service abilities;
 
     @tracked draft = {};
     @tracked errors = {};
     @tracked saving = false;
 
     get saveDisabled() {
-        return this.args.settingsLoadFailed === true || this.saving;
+        return this.args.settingsLoadFailed === true || this.saving || !canUpdateSettings(this.abilities);
     }
 
     primaryTouched = new Set();

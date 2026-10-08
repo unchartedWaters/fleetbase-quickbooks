@@ -89,20 +89,22 @@ class EnqueueWebhookSync
                             'local_uuid' => $invoiceUuid,
                         ];
                     }
-                    $inbound[] = [
-                        'entity'    => 'Payment',
-                        'id'        => $event->quickbooksId,
-                        'operation' => $event->operation,
-                    ];
-                    // A link stored under the QuickBooks payment id does not point loadLinked
-                    // at the invoice. Name the invoice too so the inbound job loads it.
-                    if ($target['keyed_by_payment'] === true) {
-                        foreach ($target['quickbooks_invoices'] as $invoiceId) {
-                            $inbound[] = [
-                                'entity'    => 'Invoice',
-                                'id'        => $invoiceId,
-                                'operation' => 'update',
-                            ];
+                    if ($this->quickbooksSupplies($settings, 'payment') === true) {
+                        $inbound[] = [
+                            'entity'    => 'Payment',
+                            'id'        => $event->quickbooksId,
+                            'operation' => $event->operation,
+                        ];
+                        // A link stored under the QuickBooks payment id does not point loadLinked
+                        // at the invoice. Name the invoice too so the inbound job loads it.
+                        if ($target['keyed_by_payment'] === true) {
+                            foreach ($target['quickbooks_invoices'] as $invoiceId) {
+                                $inbound[] = [
+                                    'entity'    => 'Invoice',
+                                    'id'        => $invoiceId,
+                                    'operation' => 'update',
+                                ];
+                            }
                         }
                     }
                     continue;
@@ -129,7 +131,7 @@ class EnqueueWebhookSync
                     'local_uuid' => $localUuid,
                 ];
                 $remote = $this->remoteEntity($event->entityType);
-                if ($remote !== null) {
+                if ($remote !== null && $this->quickbooksSupplies($settings, $event->entityType) === true) {
                     $inbound[] = [
                         'entity'    => $remote,
                         'id'        => $event->quickbooksId,
@@ -247,6 +249,24 @@ class EnqueueWebhookSync
         $direction = (string) ($settings[$entityType . '_direction'] ?? 'both');
 
         return $direction !== 'outbound' && $direction !== 'off';
+    }
+
+    /**
+     * Copy QuickBooks onto Fleetbase only when QuickBooks wins, or when the
+     * direction does not push Fleetbase back. Primary Fleetbase keeps its row.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private function quickbooksSupplies(array $settings, string $entityType): bool
+    {
+        if ($this->allows($settings, $entityType) === false) {
+            return false;
+        }
+        if ((string) ($settings[$entityType . '_conflict'] ?? 'fleetbase') === 'quickbooks') {
+            return true;
+        }
+
+        return (string) ($settings[$entityType . '_direction'] ?? 'both') === 'inbound';
     }
 
     /**

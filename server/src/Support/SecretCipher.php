@@ -24,14 +24,50 @@ class SecretCipher
         try {
             return Crypt::decryptString($payload);
         } catch (DecryptException $exception) {
-            // Values saved before we switched to Crypt used plain AES-256-CBC. Open those once
-            // so existing secrets and tokens keep working; they are re-encrypted on next save.
+            // Values saved before we switched to Crypt used plain AES-256-CBC. Open those
+            // so existing secrets and tokens keep working. read() re-encrypts them to Crypt.
             if ($this->isLegacyCiphertext($payload) === false) {
                 throw new \RuntimeException('Unable to decrypt QuickBooks secret.');
             }
 
             return $this->decryptLegacy($payload);
         }
+    }
+
+    /**
+     * Open a stored secret.
+     * A Crypt payload decrypts and is returned unchanged.
+     * Legacy AES-256-CBC still decrypts, and `stored` is that plaintext
+     * re-encrypted with Crypt so the caller can replace the CBC blob.
+     * Anything else, including a decrypt that fails, returns null.
+     *
+     * @return array{plain: string, stored: string}|null
+     */
+    public function read(string $payload): ?array
+    {
+        if ($payload === '') {
+            return ['plain' => '', 'stored' => ''];
+        }
+
+        if ($this->isCryptPayload($payload) === true) {
+            try {
+                return ['plain' => $this->decrypt($payload), 'stored' => $payload];
+            } catch (\RuntimeException) {
+                return null;
+            }
+        }
+
+        if ($this->isLegacyCiphertext($payload) === false) {
+            return null;
+        }
+
+        try {
+            $plain = $this->decrypt($payload);
+        } catch (\RuntimeException) {
+            return null;
+        }
+
+        return ['plain' => $plain, 'stored' => $this->encrypt($plain)];
     }
 
     /**
@@ -93,18 +129,9 @@ class SecretCipher
      */
     public function reveal(string $payload): ?string
     {
-        if ($payload === '') {
-            return $payload;
-        }
-        if ($this->isCryptPayload($payload) === false && $this->isLegacyCiphertext($payload) === false) {
-            return null;
-        }
+        $opened = $this->read($payload);
 
-        try {
-            return $this->decrypt($payload);
-        } catch (\RuntimeException) {
-            return null;
-        }
+        return $opened === null ? null : $opened['plain'];
     }
 
     private function isCryptPayload(string $payload): bool

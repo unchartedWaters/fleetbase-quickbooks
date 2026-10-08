@@ -328,6 +328,44 @@ test('a busy deadline continuation requeues at five ten and fifteen seconds then
     });
 });
 
+test('a connect import waits out a busy company lock and then records the skip', function () {
+    withImportDispatcher(function ($dispatcher): void {
+        $client                = new FakeQuickBooks();
+        $client->customerPages = [1 => [remoteCustomer('1', 'Ada', 'ada@example.test', null)]];
+        $directory             = new FleetbaseDirectory();
+        $directory->memory     = importLedger();
+        $lock                  = BatchRunner::lock('company-uuid');
+
+        expect($lock)->not->toBeNull()
+            ->and($lock->get())->toBeTrue();
+
+        try {
+            (new ImportCustomers('company-uuid', null, true))->handle(new CustomerImporter($client), $directory);
+
+            expect($dispatcher->jobs)->toHaveCount(1)
+                ->and($dispatcher->jobs[0]->waitForLock)->toBeTrue()
+                ->and($dispatcher->jobs[0]->lockWaitSeconds)->toBe(ImportCustomers::LOCK_WAIT_DELAY_SECONDS)
+                ->and($dispatcher->jobs[0]->delay)->toBe(ImportCustomers::LOCK_WAIT_DELAY_SECONDS)
+                ->and($dispatcher->jobs[0]->continuationAttempt)->toBeNull()
+                ->and($directory->memory->attempts)->toBe([])
+                ->and($client->calls)->toBe([]);
+
+            $givingUp = new ImportCustomers('company-uuid', null, true, BatchRunner::LOCK_SECONDS);
+            $givingUp->handle(new CustomerImporter($client), $directory);
+        } finally {
+            $lock->release();
+        }
+
+        expect($dispatcher->jobs)->toHaveCount(1)
+            ->and($directory->memory->attempts[0]['error'])->toBe('Another QuickBooks sync is already running.');
+
+        $dispatcher->jobs[0]->handle(new CustomerImporter($client), $directory);
+
+        expect($client->calls)->toBe(['queryCustomers:1'])
+            ->and($dispatcher->jobs)->toHaveCount(1);
+    });
+});
+
 test('an initial manual import does not requeue when the company lock is busy', function () {
     withImportDispatcher(function ($dispatcher): void {
         $directory         = new FleetbaseDirectory();

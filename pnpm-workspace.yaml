@@ -7,4 +7,5 @@ allowBuilds:
   '@fortawesome/free-solid-svg-icons': false
   core-js: false
   fsevents: false
-minimumReleaseAge: 0
+# Minutes after publish before pnpm will install a version. 1440 is one day.
+minimumReleaseAge: 1440

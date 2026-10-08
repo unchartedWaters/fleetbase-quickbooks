@@ -2,6 +2,7 @@ import Component from '@glimmer/component';
 import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
 import { inject as service } from '@ember/service';
+import { keysSavedForSync } from '../utils/sync-access';
 
 const NAMESPACE = 'quickbooks/int/v1';
 
@@ -126,9 +127,7 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     }
 
     get configured() {
-        const clientId = this.settings?.client_id;
-
-        return typeof clientId === 'string' && clientId.trim() !== '' && this.settings?.client_secret_set === true;
+        return keysSavedForSync(this.settings);
     }
 
     @action

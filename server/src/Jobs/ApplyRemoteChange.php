@@ -28,16 +28,24 @@ class ApplyRemoteChange implements ShouldQueue
 
     /**
      * Intuit retries the HTTP delivery. Laravel must not run this job again on its own.
+     * A busy company lock is the exception: that delivery is queued again here.
      */
     public int $tries = 1;
 
     public int $timeout = BatchRunner::LOCK_SECONDS;
 
+    public const LOCK_RETRY_LIMIT = 3;
+
+    public const LOCK_RETRY_DELAY_SECONDS = 5;
+
     /**
      * @param array<int, array{entity: string, id: string, operation: string}> $entities
      */
-    public function __construct(public string $companyUuid, public array $entities)
-    {
+    public function __construct(
+        public string $companyUuid,
+        public array $entities,
+        public int $lockAttempt = 0,
+    ) {
     }
 
     /**
@@ -70,6 +78,7 @@ class ApplyRemoteChange implements ShouldQueue
         }
         if ($lock->get() === false) {
             $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', 'Another QuickBooks sync is already running.');
+            $this->retryBusyLock();
 
             return;
         }
@@ -117,6 +126,24 @@ class ApplyRemoteChange implements ShouldQueue
                     $lock->release();
                 }
             }
+        }
+    }
+
+    /**
+     * The company lock is held by another sync. Queue this delivery again.
+     * Giving up here drops the webhook: Intuit already received HTTP 200.
+     */
+    private function retryBusyLock(): void
+    {
+        if ($this->lockAttempt >= self::LOCK_RETRY_LIMIT) {
+            return;
+        }
+
+        $retry = new self($this->companyUuid, $this->entities, $this->lockAttempt + 1);
+        $retry->delay(self::LOCK_RETRY_DELAY_SECONDS * ($this->lockAttempt + 1));
+        $dispatcher = Container::getInstance()->make(Dispatcher::class);
+        if ($dispatcher instanceof Dispatcher === true) {
+            $dispatcher->dispatch($retry);
         }
     }
 

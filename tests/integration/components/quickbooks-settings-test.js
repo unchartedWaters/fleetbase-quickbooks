@@ -558,6 +558,39 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
     });
 
+    test('save stays disabled without permission to update settings', async function (assert) {
+        class DeniedSettingsAbilitiesStubService extends Service {
+            can() {
+                return false;
+            }
+        }
+
+        this.owner.register('service:abilities', DeniedSettingsAbilitiesStubService);
+        this.set('settings', {
+            client_id: 'id',
+            environment: 'sandbox',
+            client_secret_set: true,
+        });
+        this.set('sync', { interval_minutes: 5 });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`
+            <QuickbooksSettings
+                @scope="company"
+                @settings={{this.settings}}
+                @sync={{this.sync}}
+                @settingsLoaded={{true}}
+                @onSave={{this.onSave}}
+            />
+        `);
+
+        assert.dom('[data-test-settings-unavailable]').doesNotExist();
+        assert.dom('[data-test-save]', document).isDisabled();
+        assert.strictEqual(this.saved, null);
+        assert.deepEqual(this.notifications.messages, []);
+    });
+
     test('a blank webhook verifier stays out of the save and direction is independent of Primary', async function (assert) {
         this.set('settings', {
             client_id: 'id',

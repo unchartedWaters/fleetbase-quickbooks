@@ -95,10 +95,11 @@ jobs:
 
       - name: Login to Fleetbase Registry
         env:
-          FLEETBASE_REGISTRY_USERNAME: ${{ secrets.FLEETBASE_REGISTRY_USERNAME }}
-          FLEETBASE_REGISTRY_PASSWORD: ${{ secrets.FLEETBASE_REGISTRY_PASSWORD }}
-          FLEETBASE_REGISTRY_EMAIL: ${{ secrets.FLEETBASE_REGISTRY_EMAIL }}
-        run: npm-cli-login -u "$FLEETBASE_REGISTRY_USERNAME" -p "$FLEETBASE_REGISTRY_PASSWORD" -e "$FLEETBASE_REGISTRY_EMAIL" -r https://registry.fleetbase.io
+          NPM_USER: ${{ secrets.FLEETBASE_REGISTRY_USERNAME }}
+          NPM_PASS: ${{ secrets.FLEETBASE_REGISTRY_PASSWORD }}
+          NPM_EMAIL: ${{ secrets.FLEETBASE_REGISTRY_EMAIL }}
+          NPM_REGISTRY: https://registry.fleetbase.io
+        run: npm-cli-login
 
       - name: Confirm registry login
         run: npm whoami --registry https://registry.fleetbase.io

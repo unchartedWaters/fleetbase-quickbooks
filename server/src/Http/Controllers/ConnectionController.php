@@ -223,9 +223,9 @@ class ConnectionController extends QuickbooksController
         $this->queueExistingRecords($companyUuid);
         SyncCompanyBatch::dispatch($companyUuid, 'now');
         // Customers in Data Resolution is the control for copying QuickBooks customers.
-        // The import job records a skip when a sync already holds the company lock.
+        // The sync above usually holds the company lock, so a queued import waits and runs after that lock is released.
         if ($this->customersEnabled() === true) {
-            ImportCustomers::dispatch($companyUuid);
+            ImportCustomers::dispatchAfterLock($companyUuid);
         }
 
         return response()->json(['connected' => true]);
@@ -302,14 +302,13 @@ class ConnectionController extends QuickbooksController
             ->where('status', 'finished')
             ->orderByDesc('finished_at')
             ->first();
-        $credentials = $this->credentials($companyUuid);
-        $configured  = trim($credentials['client_id']) !== ''
-            && trim($credentials['client_secret']) !== ''
-            && $this->isAbsoluteHttpUrl($credentials['redirect_uri']) === true;
+        $savedKeys   = $this->syncCredentialStatus($companyUuid);
 
         return response()->json([
             'connection'             => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
-            'credentials_configured' => $configured,
+            'client_id'              => $savedKeys['client_id'],
+            'client_secret_set'      => $savedKeys['client_secret_set'],
+            'credentials_configured' => $savedKeys['credentials_configured'],
             'queue'                  => PendingSync::query()->where('company_uuid', $companyUuid)->where('status', 'pending')->count(),
             'last_sync'              => $last instanceof SyncBatch === true ? [
                 'finished_at'   => $last->finished_at?->toIso8601String(),
@@ -438,17 +437,8 @@ class ConnectionController extends QuickbooksController
             ->where('company_uuid', $companyUuid)
             ->latest('updated_at')
             ->first();
-        if ($connection instanceof Connection === true) {
-            return $connection;
-        }
 
-        $rows = Connection::query()->latest('updated_at')->limit(2)->get();
-        if ($rows->count() !== 1) {
-            return null;
-        }
-        $only = $rows->first();
-
-        return $only instanceof Connection === true ? $only : null;
+        return $connection instanceof Connection === true ? $connection : null;
     }
 
     /**
@@ -525,6 +515,26 @@ class ConnectionController extends QuickbooksController
         $attempt->save();
 
         return response()->json(['message' => $message], 422);
+    }
+
+    /**
+     * Sync now uses the saved Client ID and Client secret.
+     * A public https redirect is required to start OAuth, not to sync.
+     * The computed callback may be http://localhost.
+     *
+     * @return array{client_id: string, client_secret_set: bool, credentials_configured: bool}
+     */
+    private function syncCredentialStatus(string $companyUuid): array
+    {
+        $credentials = $this->settings->credentialsFor($this->store, $companyUuid);
+        $clientId    = trim($credentials['client_id']);
+        $secretSet   = trim($credentials['client_secret']) !== '';
+
+        return [
+            'client_id'              => $clientId,
+            'client_secret_set'      => $secretSet,
+            'credentials_configured' => $clientId !== '' && $secretSet,
+        ];
     }
 
     /**

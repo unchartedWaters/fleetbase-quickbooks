@@ -62,7 +62,7 @@
         "policy": {
             "advisories": {
                 "ignore-id": {
-                    "PKSA-zwc5-qtrz-zm1n": "fleetbase/core-api 1.6 requires illuminate/notifications 9 or 10, and every illuminate/mail release on those lines is flagged for CVE-2026-48019. No patched mail release exists until 12.60 or 13.10, which this stack cannot use."
+                    "PKSA-zwc5-qtrz-zm1n": "Inherited CVE-2026-48019 via fleetbase/core-api ^1.6 (newest 1.6.68 still requires illuminate/notifications 9 or 10). Not fixable in this package."
                 }
             }
         }

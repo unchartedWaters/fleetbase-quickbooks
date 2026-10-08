@@ -1180,6 +1180,32 @@ function directoryWebhookEntities(): array
     ];
 }
 
+test('an invoice customer and currency from quickbooks are saved and an empty value is not', function () {
+    [$restore] = directorySqlite();
+    try {
+        directoryWebhookSchema(DB::connection('sqlite')->getSchemaBuilder());
+        directoryWebhookRows();
+        $directory                                      = new FleetbaseDirectory();
+        $loaded                                         = $directory->load('company-uuid');
+        $ledger                                         = $loaded['ledger'];
+        $ledger->invoices['inv-9']['customer_uuid']     = 'cust-extra';
+        $ledger->invoices['inv-9']['currency']          = 'EUR';
+        $ledger->invoices['inv-extra']['customer_uuid'] = '';
+        $ledger->invoices['inv-extra']['currency']      = '';
+
+        $directory->save($ledger);
+        $saved = DB::table('ledger_invoices')->where('uuid', 'inv-9')->first();
+        $left  = DB::table('ledger_invoices')->where('uuid', 'inv-extra')->first();
+
+        expect($saved->customer_uuid)->toBe('cust-extra')
+            ->and($saved->currency)->toBe('EUR')
+            ->and($left->customer_uuid)->toBe('cust-extra')
+            ->and($left->currency)->toBe('USD');
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
 function directoryWebhookSchema(Illuminate\Database\Schema\Builder $schema): void
 {
     $schema->create('quickbooks_connections', function (Blueprint $table) {
