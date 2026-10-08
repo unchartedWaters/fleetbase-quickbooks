@@ -234,9 +234,8 @@ class ConnectionController extends QuickbooksController
     public function disconnect(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks disconnect connection');
-        // Intuit has no webhook unsubscribe API. This deletes the install-wide connection only.
-        $this->companyUuid($request);
-        Connection::query()->delete();
+        // Intuit has no webhook unsubscribe API. This deletes this organization's connection only.
+        Connection::query()->where('company_uuid', $this->companyUuid($request))->delete();
 
         return response()->json(['disconnected' => true]);
     }
@@ -340,18 +339,15 @@ class ConnectionController extends QuickbooksController
     }
 
     /**
-     * Save the freshly authorized connection. The install keeps one connection row.
+     * Save the freshly authorized connection for the organization that connected.
      *
      * @param array<string, mixed> $connection
      */
     protected function persist(array $connection): void
     {
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
-        if ($companyUuid !== '') {
-            Connection::query()->where('company_uuid', '!=', $companyUuid)->delete();
-        }
-        $existing = $this->latestConnection($companyUuid);
-        $model    = $existing instanceof Connection === true ? $existing : new Connection();
+        $existing    = $this->latestConnection($companyUuid);
+        $model       = $existing instanceof Connection === true ? $existing : new Connection();
         $model->fill($connection);
         $model->save();
     }

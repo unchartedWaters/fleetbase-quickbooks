@@ -403,7 +403,8 @@ test('disconnect deletes only the signed-in company connection and does not call
             ->and($checked)->toBe(['quickbooks disconnect connection', 'quickbooks disconnect connection'])
             ->and($connection->deletes)->toHaveCount(1)
             ->and($connection->deletes[0]['query'])->toContain('quickbooks_connections')
-            ->and($connection->deletes[0]['bindings'])->toBe([])
+            ->and($connection->deletes[0]['query'])->toContain('company_uuid')
+            ->and($connection->deletes[0]['bindings'])->toBe(['company-uuid'])
             ->and(Http::recorded())->toHaveCount(0);
     } finally {
         if ($previous === null) {

@@ -58,7 +58,7 @@ test('disconnected sync reconcile drain catalog and import do not record activit
         ->and($client->calls)->toBe([]);
 });
 
-test('the global connection gates sync and a missing connection writes no activity', function () {
+test('another organization connection does not sync this organization and a missing connection writes no activity', function () {
     $now   = time();
     $empty = new SyncLedger();
     $idle  = gateRunner($empty);
@@ -97,19 +97,20 @@ test('the global connection gates sync and a missing connection writes no activi
     ];
     [$runner, $client] = gateRunnerWith($ledger, new MemorySettingsStore());
 
-    expect($runner->hasConnection('company-uuid'))->toBeTrue();
+    expect($runner->hasConnection('company-uuid'))->toBeFalse()
+        ->and($runner->hasConnection('other-company'))->toBeTrue();
 
     $batch = null;
     gateDispatch(function () use ($runner, &$batch) {
         $batch = $runner->run('company-uuid', 'now');
     });
 
-    expect($batch['status'])->toBe('finished')
-        ->and($client->calls)->toContain('createCustomer')
-        ->and($ledger->batches)->not->toBe([])
-        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-1')['company_uuid'])->toBe('company-uuid')
-        ->and($ledger->pending[0]['company_uuid'])->toBe('company-uuid')
-        ->and($ledger->pending[0]['status'])->toBe('done');
+    expect($batch['status'])->toBe('skipped')
+        ->and($client->calls)->toBe([])
+        ->and($ledger->batches)->toBe([])
+        ->and($ledger->attempts)->toBe([])
+        ->and($ledger->connections)->not->toHaveKey('company-uuid')
+        ->and($ledger->pending[0]['status'])->toBe('pending');
 });
 
 test('one connection schedules only the organization that owns the row', function () {
@@ -335,6 +336,54 @@ test('a webhook change is not applied when the organization has no connection', 
     expect($directory->loads)->toBe(0)
         ->and($directory->skipped)->toBe(0)
         ->and($client->calls)->toBe([]);
+});
+
+test('a webhook batch does not use a connection owned by another organization', function () {
+    $connection = new class(new class extends PDO {
+        public function __construct()
+        {
+        }
+    }, 'testing', '', ['name' => 'testing']) extends DatabaseConnection {
+        /** @var array<int, string> */
+        public array $inserts = [];
+
+        public function select($query, $bindings = [], $useReadPdo = true)
+        {
+            if (in_array('company-uuid', $bindings, true) === false) {
+                throw new RuntimeException('borrowed another organization connection');
+            }
+
+            return [];
+        }
+
+        public function insert($query, $bindings = [])
+        {
+            $this->inserts[] = $query;
+
+            return true;
+        }
+    };
+    $resolver = new ConnectionResolver(['testing' => $connection]);
+    $resolver->setDefaultConnection('testing');
+    $previous = Model::getConnectionResolver();
+    Model::setConnectionResolver($resolver);
+
+    try {
+        gateDispatch(function ($dispatcher) use ($connection) {
+            (new SyncWebhookBatch('company-uuid', [
+                ['local_type' => 'invoice', 'local_uuid' => 'inv-1'],
+            ]))->handle();
+
+            expect($connection->inserts)->toBe([])
+                ->and($dispatcher->jobs)->toBe([]);
+        });
+    } finally {
+        if ($previous === null) {
+            Model::unsetConnectionResolver();
+        } else {
+            Model::setConnectionResolver($previous);
+        }
+    }
 });
 
 test('a webhook batch does not queue a sync when the organization has no connection', function () {

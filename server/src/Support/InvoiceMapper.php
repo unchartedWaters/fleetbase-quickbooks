@@ -84,12 +84,12 @@ class InvoiceMapper
     }
 
     /**
-     * Sparse invoice updates append a line that has no Id. Copy the Ids QuickBooks
-     * already stored onto the sales lines this payload replaces. A line that already
-     * carries one of those ids keeps it; other Fleetbase lines take the remaining
-     * ids in order. Sales lines past the Fleetbase count stay out of the payload,
-     * so a sparse update does not delete them. Discount and subtotal lines are left
-     * out for the same reason. A cleared tax amount updates the existing tax line
+     * QuickBooks replaces the invoice Line array on update, including a sparse
+     * update. Copy the Ids QuickBooks already stored onto the sales lines this
+     * payload replaces. A line that already carries one of those ids keeps it;
+     * other Fleetbase lines take the remaining ids in order. Extra sales lines,
+     * and discount and subtotal lines, are included unchanged so the update
+     * does not delete them. A cleared tax amount updates the existing tax line
      * to zero instead of leaving it.
      *
      * @param array<string, mixed> $payload
@@ -129,8 +129,13 @@ class InvoiceMapper
                 $itemId = $ref;
             }
         }
+        $pairedRemote = [];
         foreach ($this->pairSalesLines($wanted, $remoteSales) as $localIndex => $remoteIndex) {
-            if ($remoteIndex === null || isset($salesAt[$localIndex]) === false) {
+            if ($remoteIndex === null) {
+                continue;
+            }
+            $pairedRemote[$remoteIndex] = true;
+            if (isset($salesAt[$localIndex]) === false) {
                 continue;
             }
             $id = trim((string) ($remoteSales[$remoteIndex]['Id'] ?? ''));
@@ -153,9 +158,49 @@ class InvoiceMapper
                 ],
             ];
         }
+        foreach ($this->extraRemoteLines($remote, $pairedRemote) as $line) {
+            $lines[] = $line;
+        }
         $payload['Line'] = $lines;
 
         return $payload;
+    }
+
+    /**
+     * Unmatched sales lines, discounts, and subtotals. A Line array replaces
+     * the invoice lines, so these have to travel with the update unchanged.
+     *
+     * @param array<string, mixed> $remote
+     * @param array<int, true>     $pairedSales remote sales indexes already copied onto Fleetbase lines
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function extraRemoteLines(array $remote, array $pairedSales): array
+    {
+        $extra = [];
+        $sales = 0;
+        $lines = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
+        foreach ($lines as $line) {
+            if (is_array($line) === false) {
+                continue;
+            }
+            $detail = (string) ($line['DetailType'] ?? '');
+            if ($detail === 'SalesItemLineDetail') {
+                if ((string) ($line['Description'] ?? '') === self::TAX_LINE_DESCRIPTION) {
+                    continue;
+                }
+                if (isset($pairedSales[$sales]) === false) {
+                    $extra[] = $line;
+                }
+                $sales++;
+                continue;
+            }
+            if ($detail === 'DiscountLineDetail' || $detail === 'SubTotalLineDetail') {
+                $extra[] = $line;
+            }
+        }
+
+        return $extra;
     }
 
     /**

@@ -473,27 +473,23 @@ class FleetbaseDirectory
     }
 
     /**
+     * The connection owned by this organization. Another organization's row is not used.
+     *
      * @return array<string, mixed>|null
      */
     public function connection(string $companyUuid): ?array
     {
         $own = $this->storedConnection($companyUuid);
-        if ($own !== null) {
-            return $this->withEntityCompany($own, $companyUuid);
-        }
-
-        $shared = $this->soleConnection();
-        if ($shared === null) {
+        if ($own === null) {
             return null;
         }
 
-        return $this->withEntityCompany($shared, $companyUuid);
+        return $this->withEntityCompany($own, $companyUuid);
     }
 
     /**
      * The connection this company syncs with. A company without its own row
-     * uses the single install-wide connection. A second organization's row
-     * is not used when more than one connection is stored.
+     * does not use another organization's connection.
      *
      * @return array<string, mixed>|null
      */
@@ -501,21 +497,17 @@ class FleetbaseDirectory
     {
         $connection = $ledger->connection($companyUuid);
         if (is_array($connection) === false) {
-            $connection = $this->soleConnection($ledger);
-        }
-        if (is_array($connection) === false) {
             return null;
         }
 
-        $connection                            = $this->withEntityCompany($connection, $companyUuid);
-        $ledger->connections[$companyUuid]     = $connection;
+        $connection                        = $this->withEntityCompany($connection, $companyUuid);
+        $ledger->connections[$companyUuid] = $connection;
 
         return $connection;
     }
 
     /**
      * Links and pending rows belong to the organization that owns the record.
-     * A shared connection row keeps the owner's uuid; the working copy does not.
      *
      * @param array<string, mixed> $connection
      *
@@ -538,34 +530,6 @@ class FleetbaseDirectory
         }
 
         $connection = (new Connection())->newQuery()->where('company_uuid', $companyUuid)->first();
-
-        return $connection instanceof Connection ? self::connectionToArray($connection) : null;
-    }
-
-    /**
-     * @return array<string, mixed>|null
-     */
-    private function soleConnection(?SyncLedger $ledger = null): ?array
-    {
-        if ($this->memory !== null) {
-            $ledger = $this->memory;
-        }
-        if ($ledger !== null) {
-            $connections = [];
-            foreach ($ledger->connections as $connection) {
-                if (is_array($connection) === true) {
-                    $connections[] = $connection;
-                }
-            }
-
-            return count($connections) === 1 ? $connections[0] : null;
-        }
-
-        $rows = (new Connection())->newQuery()->orderByDesc('updated_at')->limit(2)->get();
-        if ($rows->count() !== 1) {
-            return null;
-        }
-        $connection = $rows->first();
 
         return $connection instanceof Connection ? self::connectionToArray($connection) : null;
     }

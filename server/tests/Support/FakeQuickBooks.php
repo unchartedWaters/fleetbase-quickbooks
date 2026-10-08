@@ -697,6 +697,10 @@ class FakeQuickBooks extends QuickBooksClient
             if (is_array($line) === false) {
                 continue;
             }
+            // A subtotal repeats the sales lines above it. QuickBooks does not add it again.
+            if ((string) ($line['DetailType'] ?? '') === 'SubTotalLineDetail') {
+                continue;
+            }
             $amount = $line['Amount'] ?? 0;
             if (is_float($amount) === true) {
                 throw new \InvalidArgumentException('Money must not be a float.');

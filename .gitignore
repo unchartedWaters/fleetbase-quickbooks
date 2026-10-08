@@ -27,7 +27,7 @@
 # ember-cli temporary build output
 /tmp/
 
-# The pnpm lockfile is tracked. Other package manager lockfiles stay local.
+# pnpm-lock.yaml and composer.lock are tracked. Other package manager lockfiles stay local.
 package-lock.json
 yarn.lock
 npm-shrinkwrap.json
@@ -48,11 +48,9 @@ ui-copy-review.csv
 # server
 .idea/*
 .idea/codeStyleSettings.xml
-composer.lock
 /server_vendor
 /vendor
 /server/vendor/
-composer.lock
 .phpunit.result.cache
 .php_cs.cache
 .php-cs-fixer.cache

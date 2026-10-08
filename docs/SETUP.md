@@ -107,7 +107,7 @@ Sync now with no connection returns HTTP 422 and does not save an activity row. 
 
 Activity rows show created, updated, aligned, linked, skipped, unmatched, voided, and failed. Aligned counts inbound matches as well as outbound ones, including an inbound customer or invoice that already matched and was not written. A From QuickBooks run that changes nothing can show aligned. Linked is the customer-import count.
 
-The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires `quickbooks reconcile sync` or an installation administrator, plus a connection and a configured Client ID, Redirect URI, and Client secret.
+The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires `quickbooks reconcile sync` or an installation administrator, plus a connection and a saved Client ID and Client secret. It does not require a Redirect URI. OAuth connect still needs the public https redirect.
 
 ## Webhooks
 

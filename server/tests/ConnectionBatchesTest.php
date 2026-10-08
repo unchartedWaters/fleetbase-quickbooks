@@ -294,3 +294,73 @@ test('a company with no connection does not receive another company connection',
         session(['company' => null]);
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('connecting one organization leaves the other organization connection in place', function () {
+    $defaultConnection = config('database.default');
+    $sqliteConnection  = config('database.connections.sqlite');
+    config()->set('database.default', 'sqlite');
+    config()->set('database.connections.sqlite', [
+        'driver'                  => 'sqlite',
+        'database'                => ':memory:',
+        'prefix'                  => '',
+        'foreign_key_constraints' => true,
+    ]);
+    DB::purge('sqlite');
+    $schema = DB::connection('sqlite')->getSchemaBuilder();
+    $schema->create('quickbooks_connections', function (Blueprint $table) {
+        $table->char('uuid', 36)->primary();
+        $table->char('company_uuid', 36)->index();
+        $table->string('realm_id')->nullable();
+        $table->text('access_token')->nullable();
+        $table->text('refresh_token')->nullable();
+        $table->timestamp('token_expires_at')->nullable();
+        $table->string('environment')->default('sandbox');
+        $table->boolean('needs_reauth')->default(false);
+        $table->string('home_currency', 3)->nullable();
+        $table->timestamp('last_batch_at')->nullable();
+        $table->timestamps();
+    });
+    $owner = new Connection();
+    $owner->fill([
+        'uuid'         => 'conn-owner',
+        'company_uuid' => 'owner-company',
+        'realm_id'     => 'realm-owner',
+        'environment'  => 'sandbox',
+        'needs_reauth' => false,
+    ]);
+    $owner->save();
+
+    $controller = new class(new Authorizer(static fn () => true), new OAuthFlow(new QuickBooksClient()), new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()), new MemorySettingsStore(), new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {
+        /**
+         * @param array<string, mixed> $connection
+         */
+        public function storeConnection(array $connection): void
+        {
+            $this->persist($connection);
+        }
+    };
+
+    try {
+        $controller->storeConnection([
+            'uuid'         => 'conn-second',
+            'company_uuid' => 'second-company',
+            'realm_id'     => 'realm-second',
+            'environment'  => 'sandbox',
+            'needs_reauth' => false,
+        ]);
+
+        expect(Connection::query()->orderBy('company_uuid')->pluck('company_uuid')->all())
+            ->toBe(['owner-company', 'second-company']);
+
+        session(['company' => 'second-company']);
+        $response = $controller->disconnect(Request::create('/disconnect', 'POST'));
+
+        expect($response->getStatusCode())->toBe(200)
+            ->and(Connection::query()->pluck('company_uuid')->all())->toBe(['owner-company']);
+    } finally {
+        DB::purge('sqlite');
+        config()->set('database.default', $defaultConnection);
+        config()->set('database.connections.sqlite', $sqliteConnection);
+        session(['company' => null]);
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
