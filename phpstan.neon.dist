@@ -1,0 +1,29 @@
+includes:
+    # Errors that predate Composer being able to install this package in CI. New code must stay
+    # clean; regenerate with `phpstan analyse --generate-baseline=phpstan-baseline.neon` only when
+    # an entry is genuinely fixed.
+    - phpstan-baseline.neon
+
+parameters:
+    level: max
+    paths:
+        - server/src
+    bootstrapFiles:
+        - phpstan-bootstrap.php
+
+    # Illuminate\Foundation ships only in laravel/framework, which this package does not depend on
+    # but the host application always provides. The stub lets analysis resolve Dispatchable.
+    scanFiles:
+        - phpstan/laravel-foundation.php
+
+    # Eloquent models expose columns through __get; do not report them as undefined properties.
+    universalObjectCratesClasses:
+        - Illuminate\Database\Eloquent\Model
+
+    checkMissingIterableValueType: true
+    checkGenericClassInNonGenericObjectType: false
+    reportUnmatchedIgnoredErrors: true
+    ignoreErrors:
+        - identifier: cast.string
+        - identifier: cast.int
+        - identifier: offsetAccess.nonOffsetAccessible

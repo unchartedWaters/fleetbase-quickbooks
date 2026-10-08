@@ -1,0 +1,105 @@
+<?php
+
+namespace Fleetbase\Quickbooks\Support;
+
+/**
+ * Resolves Intuit app credentials without reading the session.
+ * The install-wide system row is the only source for client id, client secret,
+ * redirect URI, and webhook verifier. A blank system field stays blank.
+ * An organization row is unused. Environment may fall back to the env value.
+ *
+ * @phpstan-type ResolvedAuth array{client_id: string, client_secret: string, redirect_uri: string, environment: string, webhook_verifier: string, sources: array<string, string>}
+ */
+class CredentialResolver
+{
+    /**
+     * @param array<string, mixed> $company
+     * @param array<string, mixed> $admin
+     * @param array<string, mixed> $env
+     *
+     * @return ResolvedAuth
+     */
+    public function resolve(array $company, array $admin, array $env): array
+    {
+        unset($company);
+        $clientId    = $this->storedValue($admin, 'client_id');
+        $secret      = $this->storedValue($admin, 'client_secret');
+        $redirectUri = $this->storedValue($admin, 'redirect_uri');
+        $environment = $this->pick($admin, $env, 'environment');
+        $verifier    = $this->storedValue($admin, 'webhook_verifier');
+
+        return [
+            'client_id'        => $clientId['value'],
+            'client_secret'    => $secret['value'],
+            'redirect_uri'     => $redirectUri['value'],
+            'environment'      => $environment['value'],
+            'webhook_verifier' => $verifier['value'],
+            'sources'          => [
+                'client_id'        => $clientId['source'],
+                'client_secret'    => $secret['source'],
+                'redirect_uri'     => $redirectUri['source'],
+                'environment'      => $environment['source'],
+                'webhook_verifier' => $verifier['source'],
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $stored
+     *
+     * @return array<string, mixed>
+     */
+    public function forBrowser(array $stored): array
+    {
+        $copy                         = $stored;
+        $copy['client_secret_set']    = isset($stored['client_secret']) === true && $stored['client_secret'] !== '';
+        $copy['webhook_verifier_set'] = isset($stored['webhook_verifier']) === true && $stored['webhook_verifier'] !== '';
+        unset(
+            $copy['client_secret'],
+            $copy['webhook_verifier'],
+            $copy['public_receiver_url'],
+            $copy['webhook_url'],
+            $copy['internal_webhook_receiver_url'],
+            $copy['public_webhook_receiver_url'],
+            $copy['internal_oauth_redirect_url'],
+            $copy['public_oauth_redirect_url']
+        );
+
+        return $copy;
+    }
+
+    /**
+     * System value only. A blank field stays blank and does not read env.
+     *
+     * @param array<string, mixed> $admin
+     *
+     * @return array{value: string, source: string}
+     */
+    private function storedValue(array $admin, string $field): array
+    {
+        $value = $admin[$field] ?? null;
+        if (is_string($value) === true && $value !== '') {
+            return ['value' => $value, 'source' => 'admin'];
+        }
+
+        return ['value' => '', 'source' => 'none'];
+    }
+
+    /**
+     * @param array<string, mixed> $admin
+     * @param array<string, mixed> $env
+     *
+     * @return array{value: string, source: string}
+     */
+    private function pick(array $admin, array $env, string $field): array
+    {
+        foreach (['admin' => $admin, 'env' => $env] as $source => $bag) {
+            $value = $bag[$field] ?? null;
+            if (is_string($value) === true && $value !== '') {
+                return ['value' => $value, 'source' => $source];
+            }
+        }
+
+        return ['value' => '', 'source' => 'none'];
+    }
+}

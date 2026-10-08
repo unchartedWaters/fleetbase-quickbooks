@@ -1,0 +1,62 @@
+# compiled output
+/dist/
+/declarations/
+
+# dependencies
+/node_modules/
+
+# misc
+/.env*
+/.pnp*
+/.eslintcache
+/coverage/
+/npm-debug.log*
+/testem.log
+/yarn-error.log
+
+# ember-try
+/.node_modules.ember-try/
+/npm-shrinkwrap.json.ember-try
+/package.json.ember-try
+/package-lock.json.ember-try
+/yarn.lock.ember-try
+
+# broccoli-debug
+/DEBUG/
+
+# ember-cli temporary build output
+/tmp/
+
+# package manager lockfiles are regenerated locally and are never committed.
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+npm-shrinkwrap.json
+
+# extra debug logs
+pnpm-debug.log*
+yarn-debug.log*
+
+# phpunit cache directory (newer phpunit)
+.phpunit.cache/
+
+# local review exports
+ui-copy-review.csv
+
+# `flb bundle` writes this next to the extension. The registry upload sends it.
+*-v*-bundle.tar.gz
+
+# server
+.idea/*
+.idea/codeStyleSettings.xml
+composer.lock
+/server_vendor
+/vendor
+/server/vendor/
+composer.lock
+.phpunit.result.cache
+.php_cs.cache
+.php-cs-fixer.cache
+*.swp
+*.swo
+.DS_Store

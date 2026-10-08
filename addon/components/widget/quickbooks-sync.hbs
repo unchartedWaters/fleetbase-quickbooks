@@ -1,0 +1,40 @@
+<div class="ledger-dashboard-widget flex h-full flex-col rounded-md border bg-white shadow-sm dark:bg-gray-800" ...attributes>
+    <div class="ledger-widget-header">
+        <div class="min-w-0">
+            <div class="ledger-widget-title">{{t "quickbooks.widget.title"}}</div>
+            {{#unless this.isLoading}}
+                {{#unless this.error}}
+                    <div class="ledger-widget-subtitle">{{this.statusLabel}}</div>
+                {{/unless}}
+            {{/unless}}
+        </div>
+        <button type="button" class="ledger-icon-button" {{on "click" this.refresh}} disabled={{this.busy}} aria-label={{t "quickbooks.widget.refresh"}}>
+            <FaIcon @icon="rotate" />
+        </button>
+    </div>
+
+    <div class="ledger-widget-body space-y-4">
+        {{#if this.isLoading}}
+            <div class="ledger-widget-empty" data-test-widget-loading>{{t "quickbooks.widget.loading"}}</div>
+        {{else if this.error}}
+            <div class="ledger-widget-empty">{{this.error}}</div>
+        {{else}}
+            <div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{t "quickbooks.widget.last-sync"}}</div>
+                <div class="text-sm font-medium" data-test-last-sync>{{this.lastSyncLabel}}</div>
+            </div>
+            <div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{t "quickbooks.widget.records-waiting"}}</div>
+                <div class="text-sm font-medium" data-test-sync-queue>{{t "quickbooks.widget.waiting" count=this.queueCount}}</div>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+                <Button @type="primary" @size="sm" @icon="play" @text={{t "quickbooks.actions.sync-now"}} @disabled={{this.syncDisabled}} @onClick={{this.sync}} data-test-widget-sync />
+                {{#if this.credentialsMissing}}
+                    <p class="text-sm text-gray-500 dark:text-gray-400" data-test-widget-credentials-missing>
+                        {{t "quickbooks.widget.credentials-missing"}}
+                    </p>
+                {{/if}}
+            </div>
+        {{/if}}
+    </div>
+</div>

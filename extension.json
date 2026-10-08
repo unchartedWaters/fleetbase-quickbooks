@@ -1,0 +1,10 @@
+{
+    "name": "QuickBooks Extension",
+    "version": "0.0.2",
+    "description": "Sync Fleetbase customers, invoices, payments, and wallets with QuickBooks Online.",
+    "repository": "https://github.com/unchartedWaters/fleetbase-quickbooks",
+    "license": "AGPL-3.0-or-later",
+    "author": "unchartedWaters",
+    "engine": "package.json",
+    "api": "composer.json"
+}
