@@ -27,7 +27,7 @@ Money is stored as integer minor units. QuickBooks major-unit amounts are conver
 
 ## Settings
 
-Settings are install-wide. Client ID, Client secret, Redirect URI, webhook verifier, and sync options are saved on the system rows `system.quickbooks.auth` and `system.quickbooks.sync`. Organization settings → Quickbooks Setup loads and saves them with `scope=admin`.
+Settings are install-wide, and only an installation administrator can save them. An organization role, including one that holds `quickbooks update settings`, can view the settings (`GET settings` returns `can_edit`) but `POST settings` returns HTTP 403, and the console shows the form read-only with a note. Client ID, Client secret, Redirect URI, webhook verifier, and sync options are saved on the system rows `system.quickbooks.auth` and `system.quickbooks.sync`. Organization settings → Quickbooks Setup loads and saves them with `scope=admin`.
 
 Organization settings lists **Quickbooks Setup** and **Quickbooks Activity** with Organization, Two Factor, and Notifications. Quickbooks Setup is route `console.settings.virtual`, slug `quickbooks-setup`, view `index` (`/settings/quickbooks-setup?view=index`). Quickbooks Activity is slug `quickbooks-activity` (`/settings/quickbooks-activity?view=index`). The QuickBooks header item opens Quickbooks Setup. There is no Admin QuickBooks panel and no Ledger settings entry.
 
@@ -37,7 +37,7 @@ The settings form does not ask for a batch size and does not send `batch_size`.
 
 ### Enable and sync direction
 
-Each of Customers, Invoices, Payments, and Accounts / Wallets is a switch, then that name. The switch defaults to on. Primary and Sync direction are required while the switch is on. Off means that type is not synced.
+Each of Customers, Invoices, Payments, and Accounts / Wallets is a switch, then that name. The switch defaults to on, except Accounts / Wallets, which defaults to off on a fresh install because a wallet per driver or customer can flood the QuickBooks chart of accounts. Turning wallets on queues the existing wallets. An install that already saved a value keeps it; an install that never saved settings and relied on the old default must switch wallets on again. Primary and Sync direction are required while the switch is on. Off means that type is not synced.
 
 | Switch | Stored direction | Meaning |
 | --- | --- | --- |
@@ -79,17 +79,17 @@ Connect uses PKCE (`S256`). The API stores a code verifier with the OAuth state 
 
 Intuit redirects the browser to the public route `GET /quickbooks/int/v1/oauth/callback`. That request has no Fleetbase session. It checks the single-use state, keeps the code, and sends the browser to the console at `/quickbooks?oauth_state=...`. The signed-in console finishes the connection with `POST /quickbooks/int/v1/oauth/complete`, which checks the user and organization that started it and exchanges the code at `https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer`.
 
-A failed callback returns to `/quickbooks?error=...`:
+The callback is limited to 30 requests per minute per client. The `realmId` must be 6 to 20 digits. If the first Intuit call for a new connection returns 401, 403, or 404, the connection is not stored. A failed callback returns to `/quickbooks?error=...`:
 
 - `cancelled` — the user cancelled on Intuit.
-- `state` — the OAuth state is missing, expired, or already used.
+- `state` — the OAuth state is missing, expired, or already used, or the `realmId` is not valid.
 - `failed` — Intuit returned any other error.
 
 `QUICKBOOKS_CONSOLE_HOST` is checked first, then `CONSOLE_HOST`, then `fleetbase.console.host`. One of those must be the console origin so the callback can return to the console. An `http://` or `https://` prefix is kept. If the host has no prefix, the API adds `https://`. Without a console host, the callback returns HTTP 500.
 
-**Disconnect** deletes the local connection row only. `quickbooks_links` rows are kept. Intuit has no unsubscribe API, so disconnect does not change the Intuit app.
+**Disconnect** revokes the refresh token at Intuit (`developer.api.intuit.com/v2/oauth2/tokens/revoke`) on a best-effort basis, then deletes the local connection row and this organization's still-pending sync rows. A failed revoke does not block the disconnect. `quickbooks_links` rows are kept so a later reconnect restores the mappings. Disconnect does not change the Intuit app or its webhook subscription.
 
-Home currency comes from QuickBooks Preferences. Test connection also reads Preferences. Tokens are refreshed before a sync, import, or connection test when they expire within 5 minutes. If refresh fails, the connection is marked as needing reconnection. HTTP 401 during a sync stops the batch, and the console asks to connect QuickBooks again. Copying QuickBooks customers on connect runs only when Customers is enabled in Data Resolution. If Customers is off, the import is skipped. An import does not run while a sync is running.
+Home currency comes from QuickBooks Preferences. Test connection also reads Preferences. Tokens are refreshed before a sync, import, webhook job, or connection test when they expire within 5 minutes. HTTP 401 during a sync first refreshes the token and retries that call once. The console asks to connect QuickBooks again only when Intuit refuses the refresh token (`invalid_grant`) or the new token is also refused. A refresh that fails for another reason (for example a 503) fails the row and does not ask to reconnect. Copying QuickBooks customers on connect runs only when Customers is enabled in Data Resolution. If Customers is off, the import is skipped. An import does not run while a sync is running.
 
 ## Sync
 
@@ -113,9 +113,9 @@ The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires `qu
 
 ## Webhooks
 
-There is one public receiver: `POST /quickbooks/int/v1/webhooks`. It is outside the session and does not use CSRF. Intuit signs the raw body. Intuit's `intuit-signature` is checked against the install-wide system webhook verifier. If that verifier is not saved, the webhook is rejected with HTTP 401. An organization verifier and `QUICKBOOKS_WEBHOOK_VERIFIER` are not accepted. Unsigned posts are HTTP 401 and do not dispatch events. A valid signature returns HTTP 200 after events are dispatched. The request does not call QuickBooks.
+There is one public receiver: `POST /quickbooks/int/v1/webhooks`. It is outside the session and does not use CSRF. Intuit signs the raw body. Intuit's `intuit-signature` is checked against the install-wide system webhook verifier. If that verifier is not saved, the webhook is rejected with HTTP 401. An organization verifier and `QUICKBOOKS_WEBHOOK_VERIFIER` are not accepted. Unsigned posts are HTTP 401 and do not dispatch events. A valid signature returns HTTP 200 after events are dispatched. A valid signature for a realm with no connection (for example after a disconnect) also returns HTTP 200 and does nothing. If processing fails, the request returns a 5xx and Intuit's retry of the same body is processed; an exact repeat of a delivery that was processed is HTTP 401. A delivery is rejected when its entity `lastUpdated` is older than `quickbooks.webhook.max_age_seconds` (default 600), and that value is also the replay-cache lifetime. The request itself does not call QuickBooks: payment lookups run in the queued job `ResolveWebhookPayments`, so queue workers must be running.
 
-After the signature check, each notification is applied to Fleetbase organizations connected to that `realmId`. Direction `outbound` or `off` does not sync that type. The event is still dispatched.
+After the signature check, each notification is applied to Fleetbase organizations connected to that `realmId`. Direction `outbound` or `off` does not sync that type. The event is still dispatched. This also applies to deletes and voids. A delete or void in QuickBooks changes Fleetbase (void the invoice, remove the customer, close and remove the wallet, unmark the paid invoice for a deleted payment) only when the type is enabled, the direction takes inbound, and QuickBooks is primary (or the direction is `inbound`). Otherwise Fleetbase keeps its record and the deletion is ignored. A wallet delete closes and removes the local wallet whatever its balance, so keep Wallets on Fleetbase-primary unless QuickBooks should own them.
 
 Internal Webhook Receiver URL is computed from the configured origin and is not stored. Public Webhook Receiver URL is saved on the install-wide settings row when you set it. When that field is blank, the value shown is the internal URL. Paste the public URL into the Intuit Endpoint URL. The internal path stays `/quickbooks/int/v1/webhooks`. Saving settings does not register the URL with Intuit.
 
@@ -136,12 +136,23 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 
 ## Known limitations
 
+- **Currency.** An invoice whose currency differs from the QuickBooks home currency syncs only when QuickBooks multi-currency is enabled (Settings, Advanced, Currency). Otherwise the row fails with "Invoice currency EUR does not match QuickBooks home currency USD" and nothing is sent; wallets behave the same way. With multi-currency on, QuickBooks applies its own exchange rate because no `ExchangeRate` is sent. Invoices that were posted in the home currency by an earlier version stay aligned until a push is attempted.
+- **Invoice numbers.** With `invoice_reference=quickbooks`, a QuickBooks DocNumber that another Fleetbase invoice (any organization) already uses is not copied. The invoice keeps its number and the Activity row shows a note. The note repeats on each sync until the duplicate is resolved.
+- **Quantities.** Fleetbase invoice line quantities are whole numbers. A fractional QuickBooks quantity imports as 1 unit at the line amount.
 - **Tax.** Invoice tax is sent as an ordinary sales line whose description is `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No `TxnTaxDetail` or tax code is sent. A QuickBooks company that uses automated sales tax can show different tax and totals than Fleetbase. On the way back, only that synthetic line is read as tax.
 - **Partial payments.** An invoice has at most one QuickBooks Payment from this package. Partial and later payments are not created as separate Payments. The one Payment is created with the amount recorded as paid on the Fleetbase invoice (its total when the invoice is paid and no amount is recorded) and is updated when that amount changes (`SyncEngine::syncPayment`). If an invoice has more than one QuickBooks payment, or the payment also applies to other invoices, Fleetbase leaves them unchanged and the row is skipped.
 - **Wallets.** Each Fleetbase wallet becomes one QuickBooks chart-of-accounts entry (`Other Current Asset`).
 - **Shared QuickBooks company.** Several Fleetbase organizations can connect to the same QuickBooks company (realm). `quickbooks_connections` is unique per organization, not per realm, and a webhook for a realm is applied to every organization connected to it (`WebhookController`). Intuit app credentials, the redirect, and the webhook verifier are install-wide, so every organization on the install uses the same Intuit app.
 - **Links.** `quickbooks_links` holds links for customers, invoices, and wallets, and also for payments. A payment link is keyed by the Fleetbase invoice uuid, or by the QuickBooks payment id when the payment was found in QuickBooks.
 - **Customer matching.** A Fleetbase customer is matched to an existing QuickBooks customer by email first, then by display name. When Primary is Fleetbase, a name match is rejected if both sides have an email and the emails differ, so that customer is not matched. Names are the only key when there is no email, so two different customers with the same name are treated as one.
+
+## Overlapping syncs and history
+
+A running sync leases the pending rows it loaded (`claimed_until`, `claimed_by` on `quickbooks_pending_syncs`) so a second run, such as the one a webhook starts while the first is waiting on QuickBooks, cannot send the same row again. A lease left by a killed worker expires after `quickbooks.sync.claim_seconds` (default 900; keep it above the 570 second job timeout). Run the migrations before enabling more than one queue worker; until the columns exist, runs work but are not protected against overlap.
+
+`quickbooks:prune` runs daily and deletes sync attempts older than `quickbooks.retention.attempt_days` (90), finished or skipped batches older than `quickbooks.retention.batch_days` (180) that have no attempts left, and done pending rows older than `quickbooks.retention.pending_days` (30). A value of 0 keeps that history forever. Pending and failed rows and links are never pruned.
+
+A company with no QuickBooks connection is looked up at most once per 30 seconds per PHP process when Fleetbase records change, and a company that connects can take up to 30 seconds to start being flagged; connecting already queues all existing records. Failures while flagging a Fleetbase change are logged as warnings ("QuickBooks could not flag a Fleetbase … change") with ids only and never block the Fleetbase save.
 
 ## Requirements and install
 
