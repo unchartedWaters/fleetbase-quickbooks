@@ -4,7 +4,6 @@ import { tracked } from '@glimmer/tracking';
 import { inject as service } from '@ember/service';
 import { scheduleTask } from 'ember-lifeline';
 import { DEFAULT_ENVIRONMENT, fieldState, normalizeSyncDirection, secretPresentation, validateSettings, webhookVerifierPresentation } from '../utils/settings-form';
-import { canUpdateSettings } from '../utils/sync-access';
 
 const NUMBER_FIELDS = ['interval_minutes', 'periodic_interval_hours', 'retry_limit', 'default_backoff_seconds'];
 const MINIMUMS = {
@@ -143,14 +142,19 @@ const URL_COPY = {
 export default class QuickbooksSettingsComponent extends Component {
     @service notifications;
     @service intl;
-    @service abilities;
 
     @tracked draft = {};
     @tracked errors = {};
     @tracked saving = false;
 
+    // Saving is for installation administrators, so the server's can_edit is the only answer.
+    // A missing value (a host that does not pass it) leaves the form editable and the server decides.
+    get readOnly() {
+        return this.args.canEdit === false;
+    }
+
     get saveDisabled() {
-        return this.args.settingsLoadFailed === true || this.saving || !canUpdateSettings(this.abilities);
+        return this.args.settingsLoadFailed === true || this.saving || this.readOnly;
     }
 
     primaryTouched = new Set();

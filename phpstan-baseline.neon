@@ -112,7 +112,7 @@ parameters:
 
 		-
 			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
-			count: 2
+			count: 1
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
 		-
@@ -122,12 +122,12 @@ parameters:
 
 		-
 			message: "#^Offset 'invoice' on array\\{invoice\\: string, invoices\\: array\\<int, string\\>, keyed_by_payment\\: bool, quickbooks_invoices\\: array\\<int, string\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 2
+			count: 1
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
 		-
 			message: "#^Offset 'invoices' on array\\{invoice\\: string, invoices\\: array\\<int, string\\>, keyed_by_payment\\: bool, quickbooks_invoices\\: array\\<int, string\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 2
+			count: 1
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
 		-
@@ -307,11 +307,6 @@ parameters:
 
 		-
 			message: "#^Parameter \\#1 \\$customers of method Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory\\:\\:customerPlaceIds\\(\\) expects iterable\\<Illuminate\\\\Database\\\\Eloquent\\\\Model\\>, array\\<Illuminate\\\\Database\\\\Eloquent\\\\Builder\\>\\|Illuminate\\\\Database\\\\Eloquent\\\\Collection given\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Property Fleetbase\\\\Quickbooks\\\\Services\\\\SyncLedger\\:\\:\\$connections \\(array\\<string, array\\<string, mixed\\>\\>\\) does not accept array\\<string, array\\<string, mixed\\>\\|null\\>\\.$#"
 			count: 1
 			path: server/src/Services/FleetbaseDirectory.php
 
@@ -594,11 +589,6 @@ parameters:
 			message: "#^Strict comparison using \\=\\=\\= between non\\-empty\\-array\\<int, array\\{bId\\: string, query\\: string, uuid\\: string, email\\: string, name\\: string\\}\\> and array\\{\\} will always evaluate to false\\.$#"
 			count: 1
 			path: server/src/Services/SyncEngine.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 1
-			path: server/src/Support/Authorizer.php
 
 		-
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"

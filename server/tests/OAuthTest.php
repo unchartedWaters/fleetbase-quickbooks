@@ -17,6 +17,7 @@ use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
+use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
@@ -214,7 +215,7 @@ test('an unrecognized token is not a live secret and plaintext is encrypted on t
 
     session(['company' => 'company-uuid']);
     try {
-        $response = $controller->save(Request::create('/settings', 'POST', [
+        $response = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => [
                 'client_id'        => 'id',
@@ -303,7 +304,7 @@ test('a failed decrypt or unrecognized secret is missing and legacy ciphertext s
         ->and($connection->refresh_token)->toBe('old-secret');
 });
 
-test('a controller action without quickbooks update settings returns 403', function () {
+test('saving settings without an installation administrator returns 403', function () {
     $request    = Request::create('/settings', 'POST', []);
     $controller = new SettingController(
         new Authorizer(static fn () => false),
@@ -342,7 +343,7 @@ test('disconnect without quickbooks disconnect connection returns 403', function
     }
 });
 
-test('disconnect deletes only the signed-in company connection and does not call Intuit', function () {
+test('disconnect deletes only the signed-in company connection and its pending rows and skips Intuit when there is nothing to revoke', function () {
     $routes       = (string) file_get_contents(dirname(__DIR__) . '/src/routes.php');
     $protectedAt  = strpos($routes, "'middleware' => ['fleetbase.protected']");
     $disconnectAt = strpos($routes, "\$router->post('disconnect', [ConnectionController::class, 'disconnect']);");
@@ -401,10 +402,12 @@ test('disconnect deletes only the signed-in company connection and does not call
         expect($response->getStatusCode())->toBe(200)
             ->and($response->getData(true))->toBe(['disconnected' => true])
             ->and($checked)->toBe(['quickbooks disconnect connection', 'quickbooks disconnect connection'])
-            ->and($connection->deletes)->toHaveCount(1)
+            ->and($connection->deletes)->toHaveCount(2)
             ->and($connection->deletes[0]['query'])->toContain('quickbooks_connections')
             ->and($connection->deletes[0]['query'])->toContain('company_uuid')
             ->and($connection->deletes[0]['bindings'])->toBe(['company-uuid'])
+            ->and($connection->deletes[1]['query'])->toContain('quickbooks_pending_syncs')
+            ->and($connection->deletes[1]['bindings'])->toBe(['company-uuid', 'pending'])
             ->and(Http::recorded())->toHaveCount(0);
     } finally {
         if ($previous === null) {
@@ -686,7 +689,7 @@ test('oauth complete exchanges the code with the same computed callback', functi
         $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
             'state'   => $state,
             'code'    => 'code',
-            'realmId' => 'realm-1',
+            'realmId' => '9341453000000001',
         ]));
         expect($callback->getTargetUrl())->toStartWith('http://10.30.0.34:4200/quickbooks?oauth_state=');
         parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
@@ -705,7 +708,7 @@ test('oauth complete exchanges the code with the same computed callback', functi
         expect($completed->getStatusCode())->toBe(200)
             ->and($completed->getData(true))->toBe(['connected' => true])
             ->and($form['redirect_uri'])->toBe($computed)
-            ->and($controller->saved['realm_id'])->toBe('realm-1')
+            ->and($controller->saved['realm_id'])->toBe('9341453000000001')
             ->and($syncs)->toHaveCount(1)
             ->and($syncs[0]->companyUuid)->toBe('company-uuid')
             ->and($syncs[0]->trigger)->toBe('now')
@@ -773,7 +776,7 @@ test('oauth complete skips customer import when customers are turned off', funct
         $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
             'state'   => $state,
             'code'    => 'code',
-            'realmId' => 'realm-1',
+            'realmId' => '9341453000000001',
         ]));
         parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
         $jobs = qbCaptureDispatches(function () use ($controller, $query): void {
@@ -793,14 +796,46 @@ test('oauth complete skips customer import when customers are turned off', funct
     }
 });
 
-test('the oauth callback route stays a public get', function () {
+test('the oauth callback route stays a public get and is the only throttled route', function () {
     $routes      = (string) file_get_contents(dirname(__DIR__) . '/src/routes.php');
-    $callbackAt  = strpos($routes, "\$router->get('v1/oauth/callback', [ConnectionController::class, 'callback']);");
+    $callbackAt  = strpos($routes, "\$router->get('v1/oauth/callback', [ConnectionController::class, 'callback'])");
+    $webhookAt   = strpos($routes, "\$router->post('v1/webhooks', [WebhookController::class, 'handle']);");
     $protectedAt = strpos($routes, "'middleware' => ['fleetbase.protected']");
 
     expect($callbackAt)->not->toBeFalse()
+        ->and($webhookAt)->not->toBeFalse()
         ->and($protectedAt)->not->toBeFalse()
-        ->and($callbackAt)->toBeLessThan($protectedAt);
+        ->and($callbackAt)->toBeLessThan($protectedAt)
+        // Intuit may burst webhook notifications, so only the callback is throttled: the webhook
+        // statement above carries no middleware.
+        ->and(substr_count($routes, 'ConnectionController::callbackThrottle()'))->toBe(1)
+        ->and(substr_count($routes, '->middleware('))->toBe(1);
+});
+
+test('the oauth callback limit comes from config and zero turns it off', function () {
+    $previous = config('quickbooks.oauth.callback_per_minute');
+
+    try {
+        config()->set('quickbooks.oauth.callback_per_minute', null);
+        expect(ConnectionController::callbackThrottle())->toBe('throttle:30,1');
+
+        config()->set('quickbooks.oauth.callback_per_minute', 120);
+        expect(ConnectionController::callbackThrottle())->toBe('throttle:120,1');
+
+        config()->set('quickbooks.oauth.callback_per_minute', '45');
+        expect(ConnectionController::callbackThrottle())->toBe('throttle:45,1');
+
+        foreach ([0, '0', -5] as $off) {
+            config()->set('quickbooks.oauth.callback_per_minute', $off);
+            expect(ConnectionController::callbackThrottle())->toBeNull();
+        }
+
+        // A value that is not a number keeps the default limit rather than turning it off.
+        config()->set('quickbooks.oauth.callback_per_minute', 'abc');
+        expect(ConnectionController::callbackThrottle())->toBe('throttle:30,1');
+    } finally {
+        config()->set('quickbooks.oauth.callback_per_minute', $previous);
+    }
 });
 
 test('oauth start rejects missing client id or redirect uri', function () {
@@ -834,7 +869,7 @@ test('the oauth callback rejects an unknown state and sends the browser back to 
         new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
     );
 
-    $response = $controller->callback(Request::create('/oauth/callback', 'GET', ['state' => 'bogus', 'code' => 'code', 'realmId' => 'realm']));
+    $response = $controller->callback(Request::create('/oauth/callback', 'GET', ['state' => 'bogus', 'code' => 'code', 'realmId' => '123456789']));
 
     expect($response)->toBeInstanceOf(RedirectResponse::class)
         ->and($response->getTargetUrl())->toBe('https://console.example.test/quickbooks?error=state');
@@ -850,6 +885,14 @@ test('the oauth callback only keeps the code and the user who started the flow c
             'expires_in'    => 3600,
         ], 200),
         'sandbox-quickbooks.api.intuit.com/*' => Http::response([
+            'CompanyInfo'   => ['CompanyName' => 'unchartedWaters', 'Country' => 'US'],
+            'Preferences'   => ['CurrencyPrefs' => ['HomeCurrency' => ['value' => 'USD']]],
+            'Item'          => ['Id' => '7'],
+            'QueryResponse' => ['Item' => [], 'Account' => [['Id' => '79', 'AccountType' => 'Income']]],
+        ], 200),
+        // complete() reads credentials from the empty store, so it uses the production default.
+        // Without this, the test calls the real API, and a 401 there now fails the connection.
+        'quickbooks.api.intuit.com/*' => Http::response([
             'CompanyInfo'   => ['CompanyName' => 'unchartedWaters', 'Country' => 'US'],
             'Preferences'   => ['CurrencyPrefs' => ['HomeCurrency' => ['value' => 'USD']]],
             'Item'          => ['Id' => '7'],
@@ -886,7 +929,7 @@ test('the oauth callback only keeps the code and the user who started the flow c
     $callback = Request::create('/oauth/callback', 'GET', [
         'state'   => $begun['state'],
         'code'    => 'code',
-        'realmId' => 'realm-1',
+        'realmId' => '9341453000000001',
     ]);
     $response = $controller->callback($callback);
 
@@ -906,7 +949,7 @@ test('the oauth callback only keeps the code and the user who started the flow c
             expect($completed->getStatusCode())->toBe(200)
                 ->and($completed->getData(true))->toBe(['connected' => true])
                 ->and($controller->saved['company_uuid'])->toBe('company-uuid')
-                ->and($controller->saved['realm_id'])->toBe('realm-1')
+                ->and($controller->saved['realm_id'])->toBe('9341453000000001')
                 ->and($controller->saved['refresh_token'])->toBe('refresh')
                 ->and($controller->saved)->not->toHaveKey('import_customers');
 
@@ -978,7 +1021,7 @@ test('oauth state is validated before the code exchange', function () {
         ->toThrow(QuickBooksException::class);
 
     $again      = $flow->begin('company-uuid', 'user-uuid', $credentials);
-    $handle     = $flow->receive($again['state'], 'code', 'realm-1');
+    $handle     = $flow->receive($again['state'], 'code', '9341453000000001');
     $connection = $flow->complete($handle, 'company-uuid', 'user-uuid', $credentials);
 
     expect($connection['refresh_token'])->toBe('refresh')
@@ -1028,7 +1071,7 @@ test('completing a handle again is allowed only for the user who completed it an
         'environment'   => 'sandbox',
     ];
     $begun  = $flow->begin('company-uuid', 'user-uuid', $credentials);
-    $handle = $flow->receive($begun['state'], 'code', 'realm-1');
+    $handle = $flow->receive($begun['state'], 'code', '9341453000000001');
 
     expect(fn () => $flow->complete($handle, 'company-uuid', 'other-user', $credentials))
         ->toThrow(QuickBooksException::class, 'different user or organization')
@@ -1080,7 +1123,7 @@ test('a failed token exchange and an unreachable probe do not return transport t
     ];
     $flow   = new OAuthFlow($client);
     $begun  = $flow->begin('company-uuid', 'user-uuid', $credentials);
-    $handle = $flow->receive($begun['state'], 'code', 'realm-1');
+    $handle = $flow->receive($begun['state'], 'code', '9341453000000001');
 
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     try {

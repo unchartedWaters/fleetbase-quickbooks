@@ -12,9 +12,17 @@ class QuickbooksController extends Controller
     {
     }
 
-    protected function authorizeQuickbooks(string $permission): void
+    protected function authorizeQuickbooks(string $permission, Request $request): void
     {
-        $this->authorizer->check($permission);
+        $this->authorizer->check($permission, $request);
+    }
+
+    /**
+     * Install-wide settings and the connection test are for installation administrators only.
+     */
+    protected function authorizeInstallationAdmin(Request $request): void
+    {
+        $this->authorizer->checkInstallationAdmin($request);
     }
 
     /**

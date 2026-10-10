@@ -9,6 +9,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SettingsValidator;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
+use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -142,7 +143,7 @@ test('a missing or off direction resolves to both and an organization row is unu
         ->and($off['sources']['periodic_interval_hours'])->toBe('admin');
 });
 
-test('a missing entity enable flag resolves to true from the default', function () {
+test('a missing entity enable flag resolves from the default and wallets default to off', function () {
     $resolver = new SyncSettingsResolver();
     $company  = qbSettings();
     $defaults = qbSettings();
@@ -158,7 +159,7 @@ test('a missing entity enable flag resolves to true from the default', function 
         ->and($resolved['sources']['invoice_enabled'])->toBe('default')
         ->and($resolved['payment_enabled'])->toBeTrue()
         ->and($resolved['sources']['payment_enabled'])->toBe('default')
-        ->and($resolved['wallet_enabled'])->toBeTrue()
+        ->and($resolved['wallet_enabled'])->toBeFalse()
         ->and($resolved['sources']['wallet_enabled'])->toBe('default');
 });
 
@@ -273,7 +274,7 @@ test('a blank client secret is not configured and interval minutes stay out of a
             'client_secret'    => 'kept-secret',
             'interval_minutes' => '5',
         ];
-        $response = $controller->save(Request::create('/settings', 'POST', [
+        $response = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
             'auth'         => [
@@ -342,7 +343,7 @@ test('admin connection uses the global secret and ignores an organization row', 
             ->and($credentials['client_secret'])->toBe('admin-secret')
             ->and($store->companyAuth('company-uuid')['client_secret'])->toBe($companySecret);
 
-        $saved = $controller->save(Request::create('/settings', 'POST', [
+        $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
             'auth'         => validAuth(['client_id' => 'saved-id', 'client_secret' => 'saved-secret']),
@@ -475,7 +476,7 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
         config()->set('quickbooks.console_host', null);
         expect(SettingController::publicReceiverUrl())->toBe('/quickbooks/int/v1/webhooks');
 
-        $saved = $controller->save(Request::create('/settings', 'POST', [
+        $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
             'auth'         => validAuth([
@@ -515,7 +516,7 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
             ->and($body['auth']['internal_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback')
             ->and($body['auth']['public_oauth_redirect_url'])->toBe('https://example.com/quickbooks/int/v1/oauth/callback');
 
-        $cleared = $controller->save(Request::create('/settings', 'POST', [
+        $cleared = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
             'auth'         => validAuth([
@@ -565,7 +566,7 @@ test('batch size must be from 1 to 100 when it is sent', function () {
     );
 
     try {
-        $saved = $controller->save(Request::create('/settings', 'POST', [
+        $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => validAuth(),
             'sync'  => qbSettings(['batch_size' => 101]),
@@ -591,7 +592,7 @@ test('a company save with override on does not require batch size', function () 
     unset($sync['batch_size']);
 
     try {
-        $saved = $controller->save(Request::create('/settings', 'POST', [
+        $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
             'auth'         => validAuth(),
@@ -607,7 +608,7 @@ test('a company save with override on does not require batch size', function () 
             'override'   => true,
             'batch_size' => 40,
         ]);
-        $kept = $controller->save(Request::create('/settings', 'POST', [
+        $kept = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
             'auth'         => validAuth(),
@@ -641,7 +642,7 @@ test('a blank path-only loopback or port 4200 redirect is saved as the api callb
             'http://[::1]/callback',
             'https://console.example.test:4200/callback',
         ] as $redirect) {
-            $saved = $controller->save(Request::create('/settings', 'POST', [
+            $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
                 'scope'        => 'admin',
                 'company_uuid' => 'company-uuid',
                 'auth'         => validAuth(['redirect_uri' => $redirect]),
@@ -652,7 +653,7 @@ test('a blank path-only loopback or port 4200 redirect is saved as the api callb
                 ->and($store->rows[SettingsKeys::adminAuth()]['redirect_uri'])->toBe($callback);
         }
 
-        $kept = $controller->save(Request::create('/settings', 'POST', [
+        $kept = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
             'auth'         => validAuth(['redirect_uri' => 'https://example.com/callback']),
@@ -830,7 +831,7 @@ test('a new install defaults to production and a stored sandbox stays stored', f
             ->and($unusedSystem['auth']['sources']['environment'])->toBe('admin');
 
         $store->rows[SettingsKeys::adminAuth()]                 = validAuth(['environment' => 'sandbox']);
-        $saved                                                  = $controller->save(Request::create('/settings', 'POST', [
+        $saved                                                  = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
             'auth'         => [
@@ -896,7 +897,7 @@ test('a public oauth or webhook url must be https and not an internal address', 
             'https://127.0.0.1.nip.io/callback',
             'https://public.example.test/callback',
         ] as $redirect) {
-            $saved = $controller->save(Request::create('/settings', 'POST', [
+            $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
                 'scope' => 'admin',
                 'auth'  => validAuth([
                     'redirect_uri'                => $redirect,
@@ -920,7 +921,7 @@ test('a public oauth or webhook url must be https and not an internal address', 
 
         $public = 'https://example.com/quickbooks/int/v1/oauth/callback';
         $hook   = 'https://example.com/quickbooks/int/v1/webhooks';
-        $kept   = $controller->save(Request::create('/settings', 'POST', [
+        $kept   = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => validAuth([
                 'redirect_uri'                => $public,
@@ -964,7 +965,7 @@ test('sync settings drop keys that are not on the allowlist', function () {
     );
 
     try {
-        $saved = $controller->save(Request::create('/settings', 'POST', [
+        $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => validAuth(),
             'sync'  => qbSettings([
@@ -1018,7 +1019,7 @@ test('saving queues an entity only when its switch is turned on', function () {
     ]);
 
     try {
-        $controller->save(Request::create('/settings', 'POST', [
+        $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => validAuth(),
             'sync'  => qbSettings([
@@ -1028,7 +1029,7 @@ test('saving queues an entity only when its switch is turned on', function () {
                 'payment_enabled'  => true,
             ]),
         ]));
-        $stayed = $controller->save(Request::create('/settings', 'POST', [
+        $stayed = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => validAuth(),
             'sync'  => qbSettings([
@@ -1052,7 +1053,7 @@ test('saving queues an entity only when its switch is turned on', function () {
             'wallet_enabled'   => true,
             'payment_enabled'  => false,
         ]);
-        $controller->save(Request::create('/settings', 'POST', [
+        $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => validAuth(),
             'sync'  => qbSettings([

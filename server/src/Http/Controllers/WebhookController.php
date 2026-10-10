@@ -8,11 +8,11 @@ use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
+use Fleetbase\Quickbooks\Support\WebhookReplayGuard;
 use Fleetbase\Quickbooks\Support\WebhookSignature;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Facades\Cache;
 
 class WebhookController extends Controller
 {
@@ -33,16 +33,14 @@ class WebhookController extends Controller
         'merge'  => 'update',
     ];
 
-    /**
-     * How long a signed body stays remembered so the same delivery cannot be replayed.
-     */
-    private const REPLAY_TTL_SECONDS = 600;
+    private WebhookReplayGuard $replay;
 
     public function __construct(
         private SettingsService $settings,
         private SettingsStore $store,
         private WebhookSignature $signatures,
     ) {
+        $this->replay = new WebhookReplayGuard();
     }
 
     public function handle(Request $request): JsonResponse
@@ -52,36 +50,28 @@ class WebhookController extends Controller
             $rawBody = '';
         }
 
-        // The signature is checked with the install-wide verifier. Realm ids
-        // choose which connection to apply. Entities are not trusted until it matches.
-        $signature = $request->headers->get('intuit-signature');
-        if (is_string($signature) === true) {
-            $signature = trim($signature);
-        }
-        if (is_string($signature) === false || $signature === '') {
+        // Entities are not trusted until the signature matches the install-wide verifier.
+        $matched = $this->verifiedConnections($request, $rawBody);
+        if ($matched === null) {
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
-
-        $realmIds = $this->realmIds($rawBody);
-        if ($realmIds === []) {
-            return response()->json(['message' => 'Invalid signature.'], 401);
-        }
-
-        $matched = $this->matchingConnections($rawBody, $signature, $realmIds);
-        if ($matched === []) {
-            return response()->json(['message' => 'Invalid signature.'], 401);
-        }
-
         // HMAC already matched. A captured body is not accepted once its
-        // entity timestamps are older than the replay window.
-        if ($this->staleTimestamp($rawBody, time()) === true) {
+        // entity timestamps are older than the configured maximum age.
+        if ($this->replay->isStale($rawBody, time()) === true) {
             return response()->json(['message' => 'Invalid signature.'], 401);
+        }
+
+        // The signature is genuine, but no organization is connected to these realms
+        // (for example after a disconnect). There is nothing to apply. Answer 200 so
+        // Intuit does not keep retrying a delivery that can never be used.
+        if ($matched === []) {
+            return response()->json(['ok' => true]);
         }
 
         // Remember this exact body for a short time and reject a second delivery
         // of it. The check does not replace the signature test. A down replay
         // store is not an invalid signature.
-        $replay = $this->rememberSignedBody($rawBody);
+        $replay = $this->replay->remember($rawBody);
         if ($replay === 'replay') {
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
@@ -89,10 +79,43 @@ class WebhookController extends Controller
             return response()->json(['message' => 'Webhook delivery could not be recorded.'], 503);
         }
 
-        $this->dispatchEntities($this->entitiesByRealm($rawBody), $matched);
-        app(EnqueueWebhookSync::class)->flush($this->store);
+        // The body is remembered only briefly while it is processed. A failure forgets it,
+        // and a worker that dies here leaves a key that expires on its own, so Intuit's
+        // retry of the identical body is processed and the events are not lost.
+        try {
+            $this->dispatchEntities($this->entitiesByRealm($rawBody), $matched);
+            app(EnqueueWebhookSync::class)->flush($this->store);
+        } catch (\Throwable $exception) {
+            $this->replay->forget($rawBody);
+
+            throw $exception;
+        }
+        $this->replay->keep($rawBody);
 
         return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Connections on the delivery's realms when the intuit-signature header matches. Null when
+     * the header is missing, the body names no realm, or the signature does not match.
+     *
+     * @return array<string, array<int, Connection>>|null
+     */
+    private function verifiedConnections(Request $request, string $rawBody): ?array
+    {
+        // Realm ids choose which connections to apply.
+        $signature = $request->headers->get('intuit-signature');
+        $signature = is_string($signature) === true ? trim($signature) : '';
+        if ($signature === '') {
+            return null;
+        }
+
+        $realmIds = $this->realmIds($rawBody);
+        if ($realmIds === []) {
+            return null;
+        }
+
+        return $this->matchingConnections($rawBody, $signature, $realmIds);
     }
 
     /**
@@ -129,17 +152,18 @@ class WebhookController extends Controller
     /**
      * Connections on the named realms when the install-wide verifier matches.
      * An organization verifier is not consulted, and a second organization's
-     * secret is not a fallback.
+     * secret is not a fallback. Null means the signature did not match. An empty
+     * array means it matched but no organization is connected to those realms.
      *
      * @param array<int, string> $realmIds
      *
-     * @return array<string, array<int, Connection>>
+     * @return array<string, array<int, Connection>>|null
      */
-    private function matchingConnections(string $rawBody, string $signature, array $realmIds): array
+    private function matchingConnections(string $rawBody, string $signature, array $realmIds): ?array
     {
         $verifiers = $this->settings->webhookVerifiersFor($this->store, '');
         if ($this->signatures->accepts($rawBody, $signature, $verifiers) === false) {
-            return [];
+            return null;
         }
 
         $matched = [];
@@ -153,72 +177,6 @@ class WebhookController extends Controller
         }
 
         return $matched;
-    }
-
-    /**
-     * ok the first time this raw body is seen. replay when the same bytes were
-     * stored already. unavailable when the replay store cannot be written.
-     */
-    private function rememberSignedBody(string $rawBody): string
-    {
-        try {
-            $added = Cache::add('quickbooks.webhook.replay.' . hash('sha256', $rawBody), 1, self::REPLAY_TTL_SECONDS);
-        } catch (\Throwable) {
-            return 'unavailable';
-        }
-
-        return $added === true ? 'ok' : 'replay';
-    }
-
-    /**
-     * True when a signed entity timestamp is older than the replay window.
-     * A body with no timestamp is left to the replay store.
-     */
-    private function staleTimestamp(string $rawBody, int $now): bool
-    {
-        $decoded = json_decode($rawBody, true);
-        if (is_array($decoded) === false) {
-            return false;
-        }
-        $notifications = $decoded['eventNotifications'] ?? null;
-        if (is_array($notifications) === false) {
-            return false;
-        }
-
-        foreach ($notifications as $notification) {
-            if (is_array($notification) === false) {
-                continue;
-            }
-            $change   = $notification['dataChangeEvent'] ?? null;
-            $entities = is_array($change) === true ? ($change['entities'] ?? null) : null;
-            if (is_array($entities) === false) {
-                continue;
-            }
-            foreach ($entities as $entity) {
-                if (is_array($entity) === false || array_key_exists('lastUpdated', $entity) === false) {
-                    continue;
-                }
-                $timestamp = $this->webhookTimestamp($entity['lastUpdated']);
-                if ($timestamp === null || ($now - $timestamp) > self::REPLAY_TTL_SECONDS) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private function webhookTimestamp(mixed $value): ?int
-    {
-        if (is_string($value) === false || trim($value) === '') {
-            return null;
-        }
-
-        try {
-            return (new \DateTimeImmutable(trim($value)))->getTimestamp();
-        } catch (\Exception) {
-            return null;
-        }
     }
 
     /**

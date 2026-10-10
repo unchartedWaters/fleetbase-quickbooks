@@ -12,10 +12,12 @@ use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
+use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 
@@ -39,6 +41,29 @@ class FleetbaseDirectory
     public const CUSTOMER_FIELDS = ['name', 'email', 'phone', 'notes'];
 
     public ?SyncLedger $memory = null;
+
+    /** Marks a lease whose row was flagged again while the holding run was sending it. */
+    private const REFLAG_PREFIX = 'reflag:';
+
+    /** How long a company without a connection is remembered by flag(). */
+    public const UNTRACKED_SECONDS = 30;
+
+    /** @var \WeakMap<object, bool>|null */
+    private static ?\WeakMap $claimSupport = null;
+
+    /**
+     * Companies flag() found without a connection, mapped to the time the answer expires.
+     *
+     * @var array<string, int>
+     */
+    private array $untracked = [];
+
+    /**
+     * Lease tokens this directory took in loadPending(), given back by releaseClaims().
+     *
+     * @var array<int, string>
+     */
+    private array $claimTokens = [];
 
     /**
      * Rows as loadLedger() read them, so save() writes only what the engine changed.
@@ -313,16 +338,26 @@ class FleetbaseDirectory
         // writeConnection already no-ops in those cases; these rows do not.
         $skipped = $this->companiesSkippingLedgerWrites($ledger);
 
-        $loadedByUuid = [];
-        foreach ($this->loaded['links'] as $loadedLink) {
-            if (is_array($loadedLink) === false) {
-                continue;
-            }
-            $loadedUuid = (string) ($loadedLink['uuid'] ?? '');
-            if ($loadedUuid !== '') {
-                $loadedByUuid[$loadedUuid] = $loadedLink;
-            }
-        }
+        // Links are committed first, on their own. They record QuickBooks records that already
+        // exist, so losing them would make the next run create those records a second time.
+        // Pending rows, attempts and the Fleetbase rows then land together or not at all: a
+        // failure leaves the rows pending, and the retry updates through the kept links.
+        // Connection rows above stay outside: tokens and rate-limit state are saved either way.
+        $database = (new Link())->getConnection();
+        $database->transaction(function () use ($ledger, $skipped): void {
+            $this->writeLinks($ledger, $skipped);
+        });
+        $database->transaction(function () use ($ledger, $skipped): void {
+            $this->writeRecords($ledger, $skipped);
+        });
+    }
+
+    /**
+     * @param array<string, true> $skipped
+     */
+    private function writeLinks(SyncLedger $ledger, array $skipped): void
+    {
+        $loadedByUuid     = $this->loadedLinksByUuid();
         $linkFields       = ['company_uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_entity', 'qbo_id', 'sync_token'];
         $freshLinks       = [];
         $changedLinks     = [];
@@ -345,16 +380,7 @@ class FleetbaseDirectory
                     $identityReleases[] = ['link' => $link, 'keep' => $uuid];
                 }
                 if ($uuid === '') {
-                    $payload = $link;
-                    unset($payload['invoice_uuid']);
-                    Link::query()->updateOrCreate(
-                        [
-                            'company_uuid' => $link['company_uuid'],
-                            'local_type'   => $link['local_type'],
-                            'local_uuid'   => $link['local_uuid'],
-                        ],
-                        $payload
-                    );
+                    $this->upsertLinkByLocalKey($link);
                     continue;
                 }
                 $changedLinks[] = ['uuid' => $uuid, 'columns' => $changed];
@@ -368,6 +394,55 @@ class FleetbaseDirectory
         $this->updateByUuid(new Link(), $inserted['updates'], $linkFields);
         $this->dropStaleInvoicePaymentLinks($ledger, $skipped);
         $this->rememberPaymentInvoices($ledger, $skipped);
+    }
+
+    /**
+     * The links loaded for this batch, keyed by their uuid.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function loadedLinksByUuid(): array
+    {
+        $loadedByUuid = [];
+        foreach ($this->loaded['links'] as $loadedLink) {
+            if (is_array($loadedLink) === false) {
+                continue;
+            }
+            $loadedUuid = (string) ($loadedLink['uuid'] ?? '');
+            if ($loadedUuid !== '') {
+                $loadedByUuid[$loadedUuid] = $loadedLink;
+            }
+        }
+
+        return $loadedByUuid;
+    }
+
+    /**
+     * Saves a link that was loaded without a uuid, matched on its local identity.
+     *
+     * @param array<string, mixed> $link
+     */
+    private function upsertLinkByLocalKey(array $link): void
+    {
+        $payload = $link;
+        unset($payload['invoice_uuid']);
+        Link::query()->updateOrCreate(
+            [
+                'company_uuid' => $link['company_uuid'],
+                'local_type'   => $link['local_type'],
+                'local_uuid'   => $link['local_uuid'],
+            ],
+            $payload
+        );
+    }
+
+    /**
+     * @param array<string, true> $skipped
+     */
+    private function writeRecords(SyncLedger $ledger, array $skipped): void
+    {
+        $this->keepUnclaimedInvoiceNumbers($ledger, $skipped);
+
         $freshPending   = [];
         $changedPending = [];
         foreach ($ledger->pending as $row) {
@@ -384,8 +459,44 @@ class FleetbaseDirectory
             }
             $changedPending[] = ['uuid' => (string) $row['uuid'], 'columns' => $columns];
         }
-        $this->updateByUuid(new PendingSync(), $changedPending, ['company_uuid', 'local_type', 'local_uuid', 'reason', 'status', 'attempts', 'next_attempt_at']);
+        $this->updatePendingRows($changedPending);
         $this->writePendingMany($freshPending);
+        $this->insertBatchAttempts($ledger);
+        $this->persistCustomers($ledger, $skipped);
+        $this->persistInvoices($ledger, $skipped);
+        $this->persistWallets($ledger, $skipped);
+    }
+
+    /**
+     * @param array<int, array{uuid: string, columns: array<string, mixed>}> $changedPending
+     */
+    private function updatePendingRows(array $changedPending): void
+    {
+        $pendingColumns = ['company_uuid', 'local_type', 'local_uuid', 'reason', 'status', 'attempts', 'next_attempt_at'];
+        if ($this->claimsSupported() === true) {
+            // A row flagged again during this run stays pending for the next run, but still records
+            // the attempt and backoff, so a row that keeps failing cannot skip its backoff. An
+            // expired re-flag mark (its run died) no longer holds the row.
+            $now      = Carbon::now()->toDateTimeString();
+            $reflag   = self::REFLAG_PREFIX . '%';
+            $this->updateByUuid(new PendingSync(), $changedPending, $pendingColumns, [
+                '(claimed_by IS NULL OR claimed_by NOT LIKE ? OR claimed_until IS NULL OR claimed_until <= ?)',
+                [$reflag, $now],
+            ]);
+            $this->updateByUuid(new PendingSync(), $changedPending, ['attempts', 'next_attempt_at'], [
+                'claimed_by LIKE ? AND claimed_until > ?',
+                [$reflag, $now],
+            ]);
+        } else {
+            $this->updateByUuid(new PendingSync(), $changedPending, $pendingColumns);
+        }
+    }
+
+    /**
+     * Saves this run's batch record and its attempts, pointing new attempts at the batch.
+     */
+    private function insertBatchAttempts(SyncLedger $ledger): void
+    {
         $batchUuid = null;
         foreach ($ledger->batches as $batch) {
             if (empty($batch['uuid']) === false) {
@@ -406,9 +517,64 @@ class FleetbaseDirectory
             }
         }
         $this->insertAttempts($ledger->attempts);
-        $this->persistCustomers($ledger, $skipped);
-        $this->persistInvoices($ledger, $skipped);
-        $this->persistWallets($ledger, $skipped);
+    }
+
+    /**
+     * ledger_invoices.number is unique across every company. A QuickBooks DocNumber that another
+     * Fleetbase invoice already holds is not copied: the local number stays, and this batch's
+     * attempt for the invoice says why. The rest of the batch still saves.
+     *
+     * @param array<string, true> $skipped
+     */
+    private function keepUnclaimedInvoiceNumbers(SyncLedger $ledger, array $skipped): void
+    {
+        $class = 'Fleetbase\\Ledger\\Models\\Invoice';
+        if (class_exists($class) === false) {
+            return;
+        }
+
+        $model   = new $class();
+        $claimed = [];
+        foreach (array_keys($ledger->invoices) as $key) {
+            $invoice = $ledger->invoices[$key];
+            $uuid    = (string) ($invoice['uuid'] ?? '');
+            if ($uuid === '' || isset($skipped[(string) ($invoice['company_uuid'] ?? '')]) === true) {
+                continue;
+            }
+            $loaded = $this->loaded['invoices'][$uuid] ?? null;
+            $kept   = is_array($loaded) === true ? trim((string) ($loaded['number'] ?? '')) : '';
+            $number = trim((string) ($invoice['number'] ?? ''));
+            if ($number === '' || $number === $kept) {
+                continue;
+            }
+            if (isset($claimed[$number]) === false && $model->getConnection()->table($model->getTable())->where('number', $number)->where('uuid', '!=', $uuid)->exists() === false) {
+                $claimed[$number] = $uuid;
+                continue;
+            }
+
+            $ledger->invoices[$key]['number'] = $kept;
+            $ledger->rememberInvoice($uuid, $ledger->invoices[$key]);
+            $this->noteInvoiceNumberCollision($ledger, (string) ($invoice['company_uuid'] ?? ''), $uuid, $number, $kept);
+        }
+    }
+
+    private function noteInvoiceNumberCollision(SyncLedger $ledger, string $companyUuid, string $uuid, string $number, string $kept): void
+    {
+        $note  = 'QuickBooks invoice number ' . $number . ' was not copied because another Fleetbase invoice already uses it.'
+            . ($kept === '' ? '' : ' This invoice keeps ' . $kept . '.');
+        $noted = false;
+        foreach ($ledger->attempts as $index => $attempt) {
+            if (empty($attempt['uuid']) === false
+                || (string) ($attempt['local_type'] ?? '') !== 'invoice' || (string) ($attempt['local_uuid'] ?? '') !== $uuid) {
+                continue;
+            }
+            $existing                          = trim((string) ($attempt['error'] ?? ''));
+            $ledger->attempts[$index]['error'] = $existing === '' ? $note : $existing . ' ' . $note;
+            $noted                             = true;
+        }
+        if ($noted === false) {
+            Log::warning('QuickBooks invoice number was not copied.', ['company_uuid' => $companyUuid, 'invoice_uuid' => $uuid, 'note' => $note]);
+        }
     }
 
     /**
@@ -459,8 +625,8 @@ class FleetbaseDirectory
             return;
         }
 
-        $connection = $this->connection($companyUuid);
-        if (ConnectionGate::hasRealm($connection) === false) {
+        $connection = $this->trackedConnection($companyUuid);
+        if ($connection === null) {
             return;
         }
 
@@ -470,6 +636,41 @@ class FleetbaseDirectory
         foreach ($ledger->pending as $row) {
             $this->writePending($row);
         }
+    }
+
+    /**
+     * Whether saves for this organization should be flagged at all: it has a connection
+     * with a realm. The observers on Fleetbase's own models ask this before any other work.
+     */
+    public function tracks(string $companyUuid): bool
+    {
+        return $this->memory !== null || $this->trackedConnection($companyUuid) !== null;
+    }
+
+    /**
+     * The company's connection when it has a realm. A company without one is remembered
+     * for UNTRACKED_SECONDS, so the many saves of an organization that does not use
+     * QuickBooks cost one lookup now and then, not one per save. A company that connects
+     * is picked up within that time, and connecting queues its existing records anyway.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function trackedConnection(string $companyUuid): ?array
+    {
+        $now = time();
+        if (($this->untracked[$companyUuid] ?? 0) > $now) {
+            return null;
+        }
+
+        $connection = $this->connection($companyUuid);
+        if (ConnectionGate::hasRealm($connection) === false) {
+            $this->untracked[$companyUuid] = $now + self::UNTRACKED_SECONDS;
+
+            return null;
+        }
+        unset($this->untracked[$companyUuid]);
+
+        return $connection;
     }
 
     /**
@@ -665,13 +866,18 @@ class FleetbaseDirectory
             return $count;
         }
 
-        return (int) PendingSync::query()
+        $query = PendingSync::query()
             ->where('company_uuid', $companyUuid)
             ->where('status', 'pending')
             ->where(function ($query) use ($now): void {
                 $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', Carbon::createFromTimestamp($now));
-            })
-            ->count();
+            });
+        // A row another run holds is not due work for this one.
+        if ($this->claimsSupported() === true) {
+            $this->excludeClaimed($query, Carbon::createFromTimestamp($now));
+        }
+
+        return (int) $query->count();
     }
 
     /**
@@ -680,7 +886,7 @@ class FleetbaseDirectory
     protected function writePending(array $row): void
     {
         try {
-            PendingSync::query()->firstOrCreate(
+            $pending = PendingSync::query()->firstOrCreate(
                 [
                     'company_uuid' => $row['company_uuid'],
                     'local_type'   => $row['local_type'],
@@ -693,7 +899,31 @@ class FleetbaseDirectory
             if (self::isDuplicatePendingWrite($exception) === false) {
                 throw $exception;
             }
+
+            return;
         }
+        if ($pending instanceof PendingSync === true && $pending->wasRecentlyCreated === false) {
+            $this->markReflagged($pending);
+        }
+    }
+
+    /**
+     * A running sync holds this row and may already have read the record. Mark the lease
+     * so that run leaves the row pending instead of marking it done; the lease itself is
+     * unchanged, so no other run takes the row meanwhile.
+     */
+    private function markReflagged(PendingSync $pending): void
+    {
+        $holder = (string) ($pending->claimed_by ?? '');
+        if ($holder === '' || str_starts_with($holder, self::REFLAG_PREFIX) === true || $this->claimsSupported() === false) {
+            return;
+        }
+
+        PendingSync::query()
+            ->where('uuid', (string) $pending->uuid)
+            ->where('claimed_by', $holder)
+            ->where('claimed_until', '>', Carbon::now())
+            ->update(['claimed_by' => self::REFLAG_PREFIX . $holder]);
     }
 
     /**
@@ -722,6 +952,146 @@ class FleetbaseDirectory
             && preg_match('/(?:UNIQUE|PRIMARY KEY) constraint failed/i', $message) === 1;
     }
 
+    /**
+     * Whether quickbooks_pending_syncs has the lease columns. A deploy that has not run
+     * the migration yet keeps working, unclaimed. Only a positive answer is remembered,
+     * per connection object, so a purged connection is asked again.
+     */
+    private function claimsSupported(): bool
+    {
+        $model              = new PendingSync();
+        $connection         = $model->getConnection();
+        $supported          = self::$claimSupport ?? new \WeakMap();
+        self::$claimSupport = $supported;
+        if (($supported[$connection] ?? false) === true) {
+            return true;
+        }
+
+        try {
+            $schema = $connection->getSchemaBuilder();
+            $has    = $schema->hasColumn($model->getTable(), 'claimed_until') === true && $schema->hasColumn($model->getTable(), 'claimed_by') === true;
+        } catch (\Throwable) {
+            return false;
+        }
+        if ($has === true) {
+            $supported[$connection] = true;
+        }
+
+        return $has;
+    }
+
+    private function claimSeconds(): int
+    {
+        return max(60, (int) config('quickbooks.sync.claim_seconds', 900));
+    }
+
+    /**
+     * Rows with no lease, or a lease that has run out.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder|\Illuminate\Database\Query\Builder $query
+     */
+    private function excludeClaimed($query, Carbon $moment): void
+    {
+        $query->where(function ($claim) use ($moment): void {
+            $claim->whereNull('claimed_until')->orWhere('claimed_until', '<=', $moment);
+        });
+    }
+
+    /**
+     * Lease the loaded rows to this run. The update repeats the lease check, so a row
+     * another run took since the read is not taken twice; only rows this run really
+     * holds are returned. The rows stay status 'pending', so the open-identity index
+     * and the flag upsert behave as before.
+     *
+     * @param iterable<mixed> $rows
+     *
+     * @return array<int, mixed>
+     */
+    private function claimPending(iterable $rows, int $now): array
+    {
+        $rows  = is_array($rows) === true ? $rows : iterator_to_array($rows, false);
+        $uuids = [];
+        foreach ($rows as $row) {
+            if ($row instanceof PendingSync) {
+                $uuids[] = (string) $row->uuid;
+            }
+        }
+        if ($uuids === []) {
+            return $rows;
+        }
+
+        $token  = (string) Str::uuid();
+        $moment = Carbon::createFromTimestamp($now);
+        $until  = Carbon::createFromTimestamp($now + $this->claimSeconds());
+        foreach (array_chunk($uuids, 500) as $chunk) {
+            $query = PendingSync::query()->whereIn('uuid', $chunk)->where('status', 'pending');
+            $this->excludeClaimed($query, $moment);
+            $query->update(['claimed_by' => $token, 'claimed_until' => $until]);
+        }
+        $this->claimTokens[] = $token;
+
+        $mine = array_flip(array_map(static fn (mixed $uuid): string => (string) $uuid, PendingSync::query()->where('claimed_by', $token)->pluck('uuid')->all()));
+
+        return array_values(array_filter(
+            $rows,
+            static fn ($row): bool => $row instanceof PendingSync && isset($mine[(string) $row->uuid]) === true
+        ));
+    }
+
+    /**
+     * Give back the rows this directory leased. Call it after the batch is saved; a
+     * lease that could not be given back expires on its own after claim_seconds.
+     */
+    public function releaseClaims(): void
+    {
+        $tokens            = $this->claimTokens;
+        $this->claimTokens = [];
+        if ($tokens === [] || $this->memory !== null) {
+            return;
+        }
+
+        try {
+            $held = $tokens;
+            foreach ($tokens as $token) {
+                $held[] = self::REFLAG_PREFIX . $token;
+            }
+            PendingSync::query()->whereIn('claimed_by', $held)->update(['claimed_by' => null, 'claimed_until' => null]);
+        } catch (\Throwable $exception) {
+            SafeLog::warning('QuickBooks could not release its pending-row lease; it will expire on its own.', ['error' => $exception->getMessage()]);
+        }
+    }
+
+    /**
+     * Local ids of the given type whose pending row another run holds right now.
+     * The customer catalog leaves these to that run.
+     *
+     * @param array<int, string> $uuids
+     *
+     * @return array<int, string>
+     */
+    public function claimedLocalUuids(string $companyUuid, string $localType, array $uuids, int $now): array
+    {
+        if ($uuids === [] || $this->memory !== null || $this->claimsSupported() === false) {
+            return [];
+        }
+
+        $held = [];
+        foreach (array_chunk($uuids, 500) as $chunk) {
+            $rows = PendingSync::query()
+                ->where('company_uuid', $companyUuid)
+                ->where('local_type', $localType)
+                ->where('status', 'pending')
+                ->whereIn('local_uuid', $chunk)
+                ->where('claimed_until', '>', Carbon::createFromTimestamp($now))
+                ->pluck('local_uuid');
+            foreach ($rows as $uuid) {
+                $held[] = (string) $uuid;
+            }
+        }
+
+        return $held;
+    }
+
     private function loadLedger(string $companyUuid, ?int $pendingLimit = null, ?int $now = null): SyncLedger
     {
         $ledger     = new SyncLedger();
@@ -729,18 +1099,11 @@ class FleetbaseDirectory
         if ($connection !== null) {
             $ledger->connections[$companyUuid] = $connection;
         }
-        $pendingQuery = (new PendingSync())->newQuery()->where('company_uuid', $companyUuid)->where('status', 'pending');
-        if ($pendingLimit !== null) {
-            $moment = Carbon::createFromTimestamp($now ?? time());
-            $pendingQuery->where(function ($query) use ($moment): void {
-                $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', $moment);
-            })->orderBy('next_attempt_at')->orderBy('uuid')->limit($pendingLimit);
-        }
         $customerIds     = [];
         $invoiceIds      = [];
         $walletIds       = [];
         $flaggedInvoices = [];
-        foreach ($pendingQuery->get() as $row) {
+        foreach ($this->loadPendingRows($companyUuid, $pendingLimit, $now) as $row) {
             if ($row instanceof PendingSync === false) {
                 continue;
             }
@@ -785,6 +1148,32 @@ class FleetbaseDirectory
         $this->loaded['wallets']   = $ledger->wallets;
 
         return $ledger;
+    }
+
+    /**
+     * The company's pending rows. A batch (a limit is given) takes only due rows, skips rows
+     * another run holds and leases the rows it takes, in the same lock-protected read, so the
+     * company lock can be released for HTTP. Without a limit every pending row is read.
+     *
+     * @return iterable<mixed>
+     */
+    private function loadPendingRows(string $companyUuid, ?int $pendingLimit, ?int $now): iterable
+    {
+        $pendingQuery = (new PendingSync())->newQuery()->where('company_uuid', $companyUuid)->where('status', 'pending');
+        if ($pendingLimit === null) {
+            return $pendingQuery->get();
+        }
+
+        $moment = Carbon::createFromTimestamp($now ?? time());
+        $pendingQuery->where(function ($query) use ($moment): void {
+            $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', $moment);
+        })->orderBy('next_attempt_at')->orderBy('uuid')->limit($pendingLimit);
+        if ($this->claimsSupported() === false) {
+            return $pendingQuery->get();
+        }
+        $this->excludeClaimed($pendingQuery, $moment);
+
+        return $this->claimPending($pendingQuery->get(), $now ?? time());
     }
 
     /**
@@ -1228,16 +1617,17 @@ class FleetbaseDirectory
             return;
         }
 
+        // Only this company's own row. When it is gone (disconnected mid-batch) nothing is
+        // written; another organization's row on the same realm is never used.
         $existing = (new Connection())->newQuery()->where('company_uuid', $companyUuid)->first();
         if ($existing instanceof Connection === false) {
-            $realm = trim((string) ($connection['realm_id'] ?? ''));
-            if ($realm !== '') {
-                $existing = $this->soleStoredConnection($realm);
-            }
+            SafeLog::debug('QuickBooks connection update skipped: the company has no connection.', ['company_uuid' => $companyUuid]);
+
+            return;
         }
-        $storedRealm = $existing instanceof Connection ? (string) ($existing->realm_id ?? '') : null;
+        $storedRealm = (string) ($existing->realm_id ?? '');
         $columns     = self::connectionColumns($connection, $storedRealm, $fields);
-        if ($columns === null || $existing instanceof Connection === false) {
+        if ($columns === null) {
             return;
         }
 
@@ -1462,6 +1852,8 @@ class FleetbaseDirectory
                 'currency'     => (string) $wallet->currency,
                 'status'       => (string) $wallet->status,
                 'meta'         => $wallet->meta,
+                // Read only: QuickBooks never changes a wallet balance, and it is not saved back.
+                'balance'      => (int) ($wallet->balance ?? 0),
             ];
         }
 
@@ -1921,20 +2313,6 @@ class FleetbaseDirectory
         return 0;
     }
 
-    /**
-     * The one stored connection for this realm, when the working company has no row of its own.
-     */
-    private function soleStoredConnection(string $realm): ?Connection
-    {
-        $rows = (new Connection())->newQuery()->where('realm_id', $realm)->limit(2)->get();
-        if ($rows->count() !== 1) {
-            return null;
-        }
-        $connection = $rows->first();
-
-        return $connection instanceof Connection ? $connection : null;
-    }
-
     private function stampOwnedCompanies(SyncLedger $ledger): void
     {
         foreach ($ledger->links as $index => $link) {
@@ -2356,6 +2734,11 @@ class FleetbaseDirectory
             return;
         }
         if ($localType === 'wallet') {
+            if ($this->walletsHoldingBalance($companyUuid, [$localUuid]) !== []) {
+                $this->finishPending($companyUuid, 'wallet', $localUuid);
+
+                return;
+            }
             $this->retireLocal('Fleetbase\\Ledger\\Models\\Wallet', $companyUuid, $localUuid, ['status' => 'closed']);
             $this->dropLocalLinks($companyUuid, $realmId, 'wallet', $localUuid);
             $this->finishPending($companyUuid, 'wallet', $localUuid);
@@ -2473,6 +2856,7 @@ class FleetbaseDirectory
         $customers     = [];
         $wallets       = [];
         $linkUuids     = [];
+        $walletLinks   = [];
         $voidRealms    = [];
         $namedPayments = [];
 
@@ -2532,7 +2916,10 @@ class FleetbaseDirectory
             if ($this->deletionMatchesLink($deletions, $type, $realm, $qbo, $local) === false) {
                 continue;
             }
-            if ($uuid !== '') {
+            if ($uuid !== '' && $type === 'wallet' && $local !== '') {
+                // Dropped below only when the wallet is really closed.
+                $walletLinks[$local][] = $uuid;
+            } elseif ($uuid !== '') {
                 $linkUuids[] = $uuid;
             }
             if ($local === '') {
@@ -2556,7 +2943,15 @@ class FleetbaseDirectory
             static fn (string $uuid): bool => $uuid !== '' && in_array($uuid, $voidInvoices, true) === false
         )));
         $customers = array_values(array_unique($customers));
-        $wallets   = array_values(array_unique($wallets));
+        // Every deleted wallet's pending row is finished, held or not: pushing a held wallet
+        // would reactivate the account that was deleted in QuickBooks.
+        $settled = array_values(array_unique($wallets));
+        $wallets = array_values(array_diff($settled, $this->walletsHoldingBalance($companyUuid, $settled)));
+        foreach ($wallets as $wallet) {
+            foreach ($walletLinks[$wallet] ?? [] as $walletLink) {
+                $linkUuids[] = $walletLink;
+            }
+        }
         $linkUuids = array_values(array_unique($linkUuids));
 
         $this->updateInvoiceStatuses($companyUuid, $voidInvoices, $sentInvoices);
@@ -2566,7 +2961,7 @@ class FleetbaseDirectory
         $this->finishPendingMany($companyUuid, [
             'invoice'  => array_values(array_unique(array_merge($voidInvoices, $sentInvoices))),
             'customer' => $customers,
-            'wallet'   => $wallets,
+            'wallet'   => $settled,
         ]);
     }
 
@@ -2757,6 +3152,47 @@ class FleetbaseDirectory
 
             throw $exception;
         }
+    }
+
+    /**
+     * Wallets that still hold money are not closed when QuickBooks deletes their account:
+     * closing them would hide a balance. They stay open and linked, and the log says why.
+     * When the balance cannot be read, every wallet is kept.
+     *
+     * @param array<int, string> $uuids
+     *
+     * @return array<int, string>
+     */
+    private function walletsHoldingBalance(string $companyUuid, array $uuids): array
+    {
+        $class = 'Fleetbase\\Ledger\\Models\\Wallet';
+        $uuids = array_values(array_filter($uuids, static fn (string $uuid): bool => $uuid !== ''));
+        if ($uuids === [] || $companyUuid === '' || class_exists($class) === false) {
+            return [];
+        }
+
+        try {
+            $held = array_map(
+                static fn (mixed $uuid): string => (string) $uuid,
+                $class::query()->where('company_uuid', $companyUuid)->whereIn('uuid', $uuids)->where('balance', '!=', 0)->pluck('uuid')->all()
+            );
+        } catch (\Throwable $exception) {
+            SafeLog::warning('QuickBooks deleted a wallet account, but the wallet balance could not be read, so the wallet stays open.', [
+                'company_uuid' => $companyUuid,
+                'wallet_uuids' => $uuids,
+                'exception'    => $exception::class,
+            ]);
+
+            return $uuids;
+        }
+        if ($held !== []) {
+            SafeLog::warning('QuickBooks deleted a wallet account, but the wallet still holds a balance, so it stays open and linked.', [
+                'company_uuid' => $companyUuid,
+                'wallet_uuids' => $held,
+            ]);
+        }
+
+        return $held;
     }
 
     /**
@@ -3271,8 +3707,9 @@ class FleetbaseDirectory
      *
      * @param array<int, array{uuid: string, columns: array<string, mixed>}> $rows
      * @param array<int, string>                                             $allowed
+     * @param array{0: string, 1: array<int, mixed>}|null                    $guard   an extra WHERE condition and its bindings
      */
-    private function updateByUuid(Model $model, array $rows, array $allowed): void
+    private function updateByUuid(Model $model, array $rows, array $allowed, ?array $guard = null): void
     {
         $rows = array_values(array_filter(
             $rows,
@@ -3283,51 +3720,81 @@ class FleetbaseDirectory
         }
 
         $connection = $model->getConnection();
-        $grammar    = $connection->getQueryGrammar();
-        $table      = $grammar->wrapTable($model->getTable());
-        $uuidColumn = $grammar->wrap('uuid');
         foreach (array_chunk($rows, 200) as $chunk) {
-            $names = [];
-            foreach ($chunk as $row) {
-                foreach ($row['columns'] as $column => $value) {
-                    if (in_array($column, $allowed, true) === true) {
-                        $names[$column] = true;
-                    }
-                }
+            $statement = $this->chunkUpdate($connection->getQueryGrammar(), $model->getTable(), $chunk, $allowed, $guard);
+            if ($statement !== null) {
+                $connection->update($statement[0], $statement[1]);
             }
-            if ($names === []) {
-                continue;
-            }
+        }
+    }
 
-            $assignments = [];
-            $bindings    = [];
-            foreach (array_keys($names) as $column) {
-                $cases = [];
-                foreach ($chunk as $row) {
-                    if (array_key_exists($column, $row['columns']) === false || in_array($column, $allowed, true) === false) {
-                        continue;
-                    }
-                    $cases[]    = 'WHEN ? THEN ?';
-                    $bindings[] = $row['uuid'];
-                    $bindings[] = $this->sqlValue($row['columns'][$column]);
-                }
-                if ($cases === []) {
+    /**
+     * One UPDATE for a chunk: each changed, allowed column is set with a CASE on the uuid.
+     * Null when no row in the chunk changes an allowed column.
+     *
+     * @param array<int, array{uuid: string, columns: array<string, mixed>}> $chunk
+     * @param array<int, string>                                             $allowed
+     * @param array{0: string, 1: array<int, mixed>}|null                    $guard
+     *
+     * @return array{0: string, 1: array<int, mixed>}|null
+     */
+    private function chunkUpdate(\Illuminate\Database\Grammar $grammar, string $tableName, array $chunk, array $allowed, ?array $guard): ?array
+    {
+        $uuidColumn  = $grammar->wrap('uuid');
+        $assignments = [];
+        $bindings    = [];
+        foreach ($this->chunkColumns($chunk, $allowed) as $column) {
+            $cases = [];
+            foreach ($chunk as $row) {
+                if (array_key_exists($column, $row['columns']) === false) {
                     continue;
                 }
-                $assignments[] = $grammar->wrap($column) . ' = CASE ' . $uuidColumn . ' ' . implode(' ', $cases) . ' ELSE ' . $grammar->wrap($column) . ' END';
-            }
-            if ($assignments === []) {
-                continue;
-            }
-            $assignments[] = $grammar->wrap('updated_at') . ' = ?';
-            $bindings[]    = Carbon::now()->toDateTimeString();
-            $placeholders  = implode(', ', array_fill(0, count($chunk), '?'));
-            foreach ($chunk as $row) {
+                $cases[]    = 'WHEN ? THEN ?';
                 $bindings[] = $row['uuid'];
+                $bindings[] = $this->sqlValue($row['columns'][$column]);
             }
-            $sql = 'UPDATE ' . $table . ' SET ' . implode(', ', $assignments) . ' WHERE ' . $uuidColumn . ' IN (' . $placeholders . ')';
-            $connection->update($sql, $bindings);
+            $assignments[] = $grammar->wrap($column) . ' = CASE ' . $uuidColumn . ' ' . implode(' ', $cases) . ' ELSE ' . $grammar->wrap($column) . ' END';
         }
+        if ($assignments === []) {
+            return null;
+        }
+        $assignments[] = $grammar->wrap('updated_at') . ' = ?';
+        $bindings[]    = Carbon::now()->toDateTimeString();
+        foreach ($chunk as $row) {
+            $bindings[] = $row['uuid'];
+        }
+        $sql = 'UPDATE ' . $grammar->wrapTable($tableName) . ' SET ' . implode(', ', $assignments)
+            . ' WHERE ' . $uuidColumn . ' IN (' . implode(', ', array_fill(0, count($chunk), '?')) . ')';
+        if ($guard !== null) {
+            $sql .= ' AND ' . $guard[0];
+            foreach ($guard[1] as $binding) {
+                $bindings[] = $binding;
+            }
+        }
+
+        return [$sql, $bindings];
+    }
+
+    /**
+     * The allowed columns that at least one row of the chunk changes, in first-seen order.
+     *
+     * @param array<int, array{uuid: string, columns: array<string, mixed>}> $chunk
+     * @param array<int, string>                                             $allowed
+     *
+     * @return array<int, string>
+     */
+    private function chunkColumns(array $chunk, array $allowed): array
+    {
+        $names = [];
+        foreach ($chunk as $row) {
+            foreach (array_keys($row['columns']) as $column) {
+                if (in_array($column, $allowed, true) === true) {
+                    $names[$column] = true;
+                }
+            }
+        }
+
+        return array_map(static fn (int|string $column): string => (string) $column, array_keys($names));
     }
 
     private function sqlValue(mixed $value): mixed

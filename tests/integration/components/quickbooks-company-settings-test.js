@@ -25,10 +25,12 @@ class FetchStubService extends Service {
     postCalls = [];
     posts = [];
     secretSet = true;
+    canEdit = true;
 
     async get(path) {
         if (path === 'settings') {
             return {
+                can_edit: this.canEdit,
                 auth: {
                     client_id: 'id',
                     redirect_uri: 'http://localhost:8000/quickbooks/int/v1/oauth/callback',
@@ -273,6 +275,37 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.deepEqual(fetch.postCalls, []);
         assert.false(this.notifications.messages.some((entry) => entry[0] === 'success'));
         assert.dom('[data-test-settings-unavailable]').hasText('QuickBooks settings could not be loaded.');
+    });
+
+    test('the form is read only with a note when the caller is not an installation administrator', async function (assert) {
+        const fetch = this.owner.lookup('service:fetch');
+        fetch.canEdit = false;
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        assert.dom('[data-test-settings-read-only]').includesText('only an installation administrator can change them');
+        assert.dom('[data-test-save]', document).isDisabled();
+        assert.dom('[data-test-field="client_id"]').isDisabled();
+        assert.dom('[data-test-field="environment"]').isDisabled();
+        assert.dom('[data-test-field="client_secret"]').isDisabled();
+        assert.dom('[data-test-field="webhook_verifier"]').isDisabled();
+        assert.dom('[data-test-field="public_webhook_receiver_url"]').isDisabled();
+        assert.dom('[data-test-sync="interval_minutes"]').isDisabled();
+        assert.dom('[data-test-sync="customer_conflict"]').isDisabled();
+        assert.dom('[data-test-sync="customer_direction"]').isDisabled();
+        assert.dom('[data-test-sync="customer_enabled"]').hasAttribute('data-disabled');
+        assert.deepEqual(fetch.postCalls, []);
+        // Connecting and syncing are per organization and stay on their own permissions.
+        assert.dom('[data-test-sync-now]').isNotDisabled();
+    });
+
+    test('an installation administrator sees an editable form without the note', async function (assert) {
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        assert.dom('[data-test-settings-read-only]').doesNotExist();
+        assert.dom('[data-test-save]', document).isNotDisabled();
+        assert.dom('[data-test-field="client_id"]').isNotDisabled();
+        assert.dom('[data-test-sync="interval_minutes"]').isNotDisabled();
     });
 
     test('a successful settings load posts directions without override', async function (assert) {

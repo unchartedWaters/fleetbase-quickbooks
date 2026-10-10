@@ -371,8 +371,19 @@ class InvoiceMapper
                 continue;
             }
 
-            $detail    = is_array($line['SalesItemLineDetail'] ?? null) === true ? $line['SalesItemLineDetail'] : [];
-            $quantity  = (int) ($detail['Qty'] ?? 1);
+            $detail   = is_array($line['SalesItemLineDetail'] ?? null) === true ? $line['SalesItemLineDetail'] : [];
+            $quantity = self::wholeQuantity($detail['Qty'] ?? 1);
+            if ($quantity === null) {
+                // A Fleetbase line quantity is a whole number, so 1.5 hours cannot be kept as 1.5.
+                // One unit at the line amount keeps quantity times price equal to the QuickBooks line.
+                $items[] = [
+                    'description' => $description,
+                    'quantity'    => 1,
+                    'unit_price'  => $amountCents,
+                    'amount'      => $amountCents,
+                ];
+                continue;
+            }
             $unitCents = array_key_exists('UnitPrice', $detail) === true
                 ? self::lineAmount($detail['UnitPrice'])
                 : ($quantity > 0 ? intdiv($amountCents, max($quantity, 1)) : $amountCents);
@@ -389,6 +400,27 @@ class InvoiceMapper
             'tax'   => $tax,
             'total' => self::lineAmount($remote['TotalAmt'] ?? 0),
         ];
+    }
+
+    /**
+     * The whole-number quantity of a QuickBooks line, or null when it has a fractional part.
+     * A non-numeric or missing quantity is 1.
+     */
+    private static function wholeQuantity(mixed $quantity): ?int
+    {
+        if (is_int($quantity) === true) {
+            return $quantity;
+        }
+        if (is_float($quantity) === true) {
+            $whole = $quantity === floor($quantity);
+
+            return $whole === true ? (int) $quantity : null;
+        }
+        if (is_string($quantity) === true && preg_match('/^\s*(-?\d+)(?:\.(\d+))?\s*$/', $quantity, $parts) === 1) {
+            return trim($parts[2] ?? '', '0') === '' ? (int) $parts[1] : null;
+        }
+
+        return 1;
     }
 
     private static function lineAmount(mixed $amount): int

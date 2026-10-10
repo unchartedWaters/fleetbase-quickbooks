@@ -1,0 +1,16 @@
+---
+# JSHint cannot parse the Ember code here (decorators, class fields), so every file it
+# reads is a false report. ESLint with the Ember plugin checks this JavaScript instead.
+engines:
+  jshint:
+    exclude_paths:
+      - "addon/**"
+      - "app/**"
+      - "tests/**"
+      - "config/**"
+      - "*.js"
+  # Lizard's function-length rule (50 lines) flags test setup helpers, which build whole
+  # fixtures in one place by design. Production code under server/src is still checked.
+  lizard:
+    exclude_paths:
+      - "server/tests/**"

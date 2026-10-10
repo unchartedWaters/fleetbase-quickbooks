@@ -3,10 +3,13 @@
 namespace Fleetbase\Quickbooks\Providers;
 
 use Fleetbase\Providers\CoreServiceProvider;
+use Fleetbase\Quickbooks\Console\Commands\PruneQuickbooks;
 use Fleetbase\Quickbooks\Console\Commands\SyncQuickbooks;
 use Fleetbase\Quickbooks\Events\QuickBooksEntityChanged;
 use Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync;
+use Fleetbase\Quickbooks\Listeners\FlagCustomerListener;
 use Fleetbase\Quickbooks\Listeners\FlagInvoiceListener;
+use Fleetbase\Quickbooks\Listeners\FlagWalletListener;
 use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
 use Fleetbase\Quickbooks\Observers\FlagCustomerObserver;
 use Fleetbase\Quickbooks\Observers\FlagInvoiceItemObserver;
@@ -38,6 +41,7 @@ class QuickbooksServiceProvider extends CoreServiceProvider
      */
     public $commands = [
         SyncQuickbooks::class,
+        PruneQuickbooks::class,
     ];
 
     /**
@@ -48,6 +52,11 @@ class QuickbooksServiceProvider extends CoreServiceProvider
         $this->app->register(CoreServiceProvider::class);
         $this->mergeConfigFrom(__DIR__ . '/../../config/quickbooks.php', 'quickbooks');
         $this->app->singleton(Authorizer::class);
+        // One instance each, so the directory inside remembers which organizations have no
+        // connection between saves instead of asking the database on every one.
+        $this->app->singleton(FlagCustomerListener::class);
+        $this->app->singleton(FlagInvoiceListener::class);
+        $this->app->singleton(FlagWalletListener::class);
     }
 
     /**
@@ -69,6 +78,12 @@ class QuickbooksServiceProvider extends CoreServiceProvider
                 ->withoutOverlapping()
                 ->name('quickbooks-sync')
                 ->when(static fn (): bool => SyncSchedule::shouldRun(time(), ConnectionGate::hasActiveConnection()));
+            // History is trimmed whether or not a connection is active, so a disconnected install does not keep growing.
+            $schedule
+                ->command('quickbooks:prune')
+                ->daily()
+                ->withoutOverlapping()
+                ->name('quickbooks-prune');
         });
         $this->registerObservers();
         $this->loadRoutesFrom(__DIR__ . '/../routes.php');

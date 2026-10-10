@@ -20,7 +20,7 @@ jobs:
   manifest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check package versions match
         run: python3 .github/workflows/check-versions.py
@@ -35,9 +35,9 @@ jobs:
           fi
 
       - name: Setup Node.js 22.x
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22.x
+          node-version: lts/*
 
       - name: Check the registry tarball includes the Composer package
         run: python3 .github/workflows/check-registry-manifest.py

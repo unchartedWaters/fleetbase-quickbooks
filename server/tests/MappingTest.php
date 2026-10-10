@@ -295,7 +295,7 @@ test('an invoice reports an error when its customer cannot be synced', function 
         ->and($client->calls)->not->toContain('createInvoice');
 });
 
-test('a foreign currency does not fail the invoice and is not sent', function () {
+test('a foreign currency fails the invoice instead of posting it in the home currency', function () {
     [$engine, $client]                                    = qbEngine();
     $ledger                                               = connectedLedger();
     $ledger->connections['company-uuid']['home_currency'] = 'USD';
@@ -305,11 +305,11 @@ test('a foreign currency does not fail the invoice and is not sent', function ()
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(1)
-        ->and($batch['failed'])->toBe(0)
-        ->and($ledger->attempts[0]['error'])->toBeNull()
-        ->and($client->calls)->toContain('createInvoice')
-        ->and($client->invoices['inv-1'])->not->toHaveKey('CurrencyRef');
+    expect($batch['created'])->toBe(0)
+        ->and($batch['failed'])->toBe(1)
+        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match QuickBooks home currency USD')
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and($client->invoices)->toBeEmpty();
 });
 
 test('use the quickbooks invoice copies the total and understood line items', function () {
@@ -633,3 +633,44 @@ function customerLink(string $uuid): array
         'sync_token'   => '0',
     ];
 }
+
+/**
+ * @return array{0: mixed, 1: mixed, 2: SyncLedger}
+ */
+function inactiveAccountRun(int $balance): array
+{
+    [$engine, $client]        = qbEngine();
+    $ledger                   = connectedLedger();
+    $ledger->wallets['wal-1'] = [
+        'uuid'         => 'wal-1',
+        'company_uuid' => 'company-uuid',
+        'public_id'    => 'wallet_1',
+        'name'         => 'Operating',
+        'description'  => 'Float',
+        'currency'     => 'USD',
+        'status'       => 'active',
+        'balance'      => $balance,
+    ];
+    $client->accounts['acct-9'] = ['Id' => 'acct-9', 'SyncToken' => '1', 'Name' => 'Operating', 'Description' => 'Float', 'Active' => false, 'CurrencyRef' => ['value' => 'USD']];
+    $ledger->links[]            = [
+        'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'wallet', 'local_uuid' => 'wal-1',
+        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '1',
+    ];
+    $ledger->pending[] = pending('wallet', 'wal-1');
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'wallet_conflict' => 'quickbooks']), time());
+
+    return [$engine, $client, $ledger];
+}
+
+test('an inactive quickbooks account does not close a wallet that still holds a balance', function () {
+    [, $client, $ledger] = inactiveAccountRun(2500);
+
+    expect($ledger->wallets['wal-1']['status'])->toBe('active')
+        ->and($client->calls)->not->toContain('updateAccount');
+});
+
+test('an inactive quickbooks account closes a wallet whose balance is zero', function () {
+    [, , $ledger] = inactiveAccountRun(0);
+
+    expect($ledger->wallets['wal-1']['status'])->toBe('closed');
+});

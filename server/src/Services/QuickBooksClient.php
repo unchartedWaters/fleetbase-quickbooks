@@ -81,13 +81,34 @@ class QuickBooksClient
     }
 
     /**
+     * Revoke a refresh token at Intuit, which also ends the access token issued with it.
+     * The caller decides what a failure means; the token is never part of an error message.
+     *
+     * @param array{client_id: string, client_secret: string, redirect_uri: string, environment: string} $credentials
+     */
+    public function revoke(array $credentials, string $refreshToken): void
+    {
+        try {
+            $response = Http::asJson()
+                ->acceptJson()
+                ->timeout(10)
+                ->withBasicAuth($credentials['client_id'], $credentials['client_secret'])
+                ->post('https://developer.api.intuit.com/v2/oauth2/tokens/revoke', ['token' => $refreshToken]);
+        } catch (ConnectionException) {
+            throw new QuickBooksException(0, self::TRANSPORT_MESSAGE);
+        }
+
+        $this->throwIfFailed($response);
+    }
+
+    /**
      * @param array<string, mixed> $connection
      *
      * @return array<string, mixed>
      */
     public function companyInfo(array $connection): array
     {
-        $response = $this->accounting($connection, 'get', 'companyinfo/' . $connection['realm_id']);
+        $response = $this->accounting($connection, 'get', 'companyinfo/' . rawurlencode((string) $connection['realm_id']));
         $body     = $this->decodeBody($response);
 
         return is_array($body['CompanyInfo'] ?? null) === true ? $body['CompanyInfo'] : [];
@@ -103,6 +124,18 @@ class QuickBooksClient
         $value = $this->preferences($connection)['CurrencyPrefs']['HomeCurrency']['value'] ?? null;
 
         return is_string($value) === true && $value !== '' ? strtoupper($value) : null;
+    }
+
+    /**
+     * Only a company with multi-currency turned on accepts an invoice in a foreign currency.
+     *
+     * @param array<string, mixed> $connection
+     */
+    public function multiCurrencyEnabled(array $connection): bool
+    {
+        $value = $this->preferences($connection)['CurrencyPrefs']['MultiCurrencyEnabled'] ?? false;
+
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN) === true;
     }
 
     /**
@@ -717,13 +750,52 @@ class QuickBooksClient
         }
 
         $results = [];
+        $refused = null;
         foreach (self::batchChunks($items) as $chunk) {
-            foreach ($this->postBatch($connection, $chunk) as $bId => $result) {
+            if ($refused !== null) {
+                $this->refuseChunk($results, $chunk, $refused);
+                continue;
+            }
+            try {
+                $chunkResults = $this->postBatch($connection, $chunk);
+            } catch (QuickBooksException $exception) {
+                // A refused first chunk wrote nothing, so the caller may refresh the token and send
+                // everything again. After an earlier chunk was written, sending again would repeat
+                // those writes, so its results are kept and the rest fail as items to retry later.
+                if ($exception->isUnauthorized() === false || $results === []) {
+                    throw $exception;
+                }
+                $refused = $exception->getMessage();
+                $this->refuseChunk($results, $chunk, $refused);
+                continue;
+            }
+            foreach ($chunkResults as $bId => $result) {
                 $results[$bId] = $result;
             }
         }
 
         return $results;
+    }
+
+    /**
+     * Item errors for a chunk that was refused, or not sent, after an earlier chunk was written.
+     * They do not halt: a halting 401 asks the user to reconnect without trying a refresh.
+     *
+     * @param array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}> $results
+     * @param array<int, array{bId?: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}>                            $chunk
+     */
+    private function refuseChunk(array &$results, array $chunk, string $message): void
+    {
+        foreach ($chunk as $item) {
+            $results[(string) ($item['bId'] ?? '')] = [
+                'ok'     => false,
+                'body'   => [],
+                'rows'   => [],
+                'error'  => $message,
+                'status' => 401,
+                'halt'   => false,
+            ];
+        }
     }
 
     /**
@@ -914,20 +986,7 @@ class QuickBooksClient
      */
     private function postBatch(array $connection, array $items): array
     {
-        $requests = [];
-        foreach ($items as $item) {
-            $entry = ['bId' => (string) $item['bId']];
-            if (isset($item['query']) === true && is_string($item['query']) === true && $item['query'] !== '') {
-                $entry['Query'] = $item['query'];
-            } else {
-                $entity             = (string) ($item['entity'] ?? 'Customer');
-                $entry['operation'] = (string) ($item['operation'] ?? 'create');
-                $entry[$entity]     = is_array($item['payload'] ?? null) === true ? $item['payload'] : [];
-            }
-            $requests[] = $entry;
-        }
-
-        $response = $this->accounting($connection, 'post', 'batch', ['BatchItemRequest' => $requests]);
+        $response = $this->accounting($connection, 'post', 'batch', ['BatchItemRequest' => self::batchRequests($items)]);
         $body     = $this->decodeBody($response);
         $rows     = $body['BatchItemResponse'] ?? [];
         if (is_array($rows) === false) {
@@ -945,6 +1004,7 @@ class QuickBooksClient
                 'halt'   => false,
             ];
         }
+        $unauthorized = [];
         foreach ($rows as $row) {
             if (is_array($row) === false) {
                 continue;
@@ -954,9 +1014,61 @@ class QuickBooksClient
                 continue;
             }
             $results[$bId] = $this->batchItemResult($row);
+            if (self::isAuthenticationFault($row) === true) {
+                $unauthorized[$bId] = true;
+            }
+        }
+        // QuickBooks can answer 200 with an authentication fault on each item instead of HTTP 401.
+        // When every item was refused nothing in this chunk was written, so this is the same as
+        // a 401 (batch() decides whether a retry is safe). A partly refused chunk is not a 401,
+        // because the items that were accepted would be written twice.
+        if ($unauthorized !== [] && count($unauthorized) === count($results)) {
+            throw new QuickBooksException(401, 'QuickBooks request failed with status 401: the access token was refused.');
         }
 
         return $results;
+    }
+
+    /**
+     * BatchItemRequest entries: a query, or an entity write with its operation and payload.
+     *
+     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function batchRequests(array $items): array
+    {
+        $requests = [];
+        foreach ($items as $item) {
+            $entry = ['bId' => (string) $item['bId']];
+            if (isset($item['query']) === true && is_string($item['query']) === true && $item['query'] !== '') {
+                $entry['Query'] = $item['query'];
+            } else {
+                $entity             = (string) ($item['entity'] ?? 'Customer');
+                $entry['operation'] = (string) ($item['operation'] ?? 'create');
+                $entry[$entity]     = is_array($item['payload'] ?? null) === true ? $item['payload'] : [];
+            }
+            $requests[] = $entry;
+        }
+
+        return $requests;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private static function isAuthenticationFault(array $row): bool
+    {
+        $fault = $row['Fault'] ?? null;
+        if (is_array($fault) === false) {
+            return false;
+        }
+        if (strtoupper((string) ($fault['type'] ?? '')) === 'AUTHENTICATION') {
+            return true;
+        }
+        $code = (string) ($fault['Error'][0]['code'] ?? '');
+
+        return $code === '3200';
     }
 
     /**
@@ -1044,7 +1156,7 @@ class QuickBooksClient
         $base = ($connection['environment'] ?? 'sandbox') === 'production'
             ? 'https://quickbooks.api.intuit.com'
             : 'https://sandbox-quickbooks.api.intuit.com';
-        $url       = $base . '/v3/company/' . $connection['realm_id'] . '/' . $path;
+        $url       = $base . '/v3/company/' . rawurlencode((string) $connection['realm_id']) . '/' . $path;
         $separator = str_contains($url, '?') === true ? '&' : '?';
         $url .= $separator . 'minorversion=75';
 

@@ -73,7 +73,9 @@ class SettingController extends QuickbooksController
 
     public function save(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks update settings');
+        // These keys are install-wide (the Intuit app credentials, the webhook verifier and the sync
+        // policy for every organization), so an organization role is not enough to change them.
+        $this->authorizeInstallationAdmin($request);
 
         $companyUuid  = $this->companyUuid($request);
         $this->rejectCompanyScope($request);
@@ -133,17 +135,17 @@ class SettingController extends QuickbooksController
         $this->queueTurnedOnEntities($companyUuid, $this->onlySyncKeys($existingSync), $mergedSync);
         $this->applyWebhookSubscriptions($companyUuid);
 
-        return response()->json($this->payload());
+        return response()->json($this->payload($request));
     }
 
     public function show(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks view settings');
+        $this->authorizeQuickbooks('quickbooks view settings', $request);
 
         $this->companyUuid($request);
         $this->rejectCompanyScope($request);
 
-        return response()->json($this->payload());
+        return response()->json($this->payload($request));
     }
 
     /**
@@ -159,7 +161,7 @@ class SettingController extends QuickbooksController
     /**
      * @return array<string, mixed>
      */
-    private function payload(): array
+    private function payload(Request $request): array
     {
         $companySync = $this->store->adminSync();
         $companyAuth = $this->store->adminAuth();
@@ -184,6 +186,7 @@ class SettingController extends QuickbooksController
         unset($browser['sources']['webhook_url']);
 
         return [
+            'can_edit'                        => $this->authorizer->isInstallationAdmin($request),
             'auth'                            => $browser,
             'sync'                            => $this->settings->resolveSync(
                 [],
@@ -663,7 +666,12 @@ class SettingController extends QuickbooksController
      */
     private function entitySwitchOn(array $sync, string $key): bool
     {
-        return array_key_exists($key, $sync) === false || $sync[$key] !== false;
+        // A wallet switch that was never stored is off; the other entities default to on.
+        if (array_key_exists($key, $sync) === false) {
+            return $key !== 'wallet_enabled';
+        }
+
+        return $sync[$key] !== false;
     }
 
     private function directory(): FleetbaseDirectory

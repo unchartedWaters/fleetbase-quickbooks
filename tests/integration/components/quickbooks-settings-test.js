@@ -558,7 +558,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
     });
 
-    test('save stays disabled without permission to update settings', async function (assert) {
+    test('save follows the server can edit answer and not an organization permission', async function (assert) {
         class DeniedSettingsAbilitiesStubService extends Service {
             can() {
                 return false;
@@ -566,6 +566,35 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         }
 
         this.owner.register('service:abilities', DeniedSettingsAbilitiesStubService);
+        this.set('settings', {
+            client_id: 'id',
+            environment: 'sandbox',
+            client_secret_set: true,
+        });
+        this.set('sync', { interval_minutes: 5 });
+        this.set('canEdit', true);
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`
+            <QuickbooksSettings
+                @scope="company"
+                @settings={{this.settings}}
+                @sync={{this.sync}}
+                @settingsLoaded={{true}}
+                @canEdit={{this.canEdit}}
+                @onSave={{this.onSave}}
+            />
+        `);
+
+        assert.dom('[data-test-save]', document).isNotDisabled();
+
+        this.set('canEdit', false);
+        assert.dom('[data-test-save]', document).isDisabled();
+        assert.strictEqual(this.saved, null);
+    });
+
+    test('save and every field are disabled with a note when the server says the caller cannot edit', async function (assert) {
         this.set('settings', {
             client_id: 'id',
             environment: 'sandbox',
@@ -581,14 +610,27 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
                 @settings={{this.settings}}
                 @sync={{this.sync}}
                 @settingsLoaded={{true}}
+                @canEdit={{false}}
                 @onSave={{this.onSave}}
             />
         `);
 
-        assert.dom('[data-test-settings-unavailable]').doesNotExist();
+        assert.dom('[data-test-settings-read-only]').exists();
         assert.dom('[data-test-save]', document).isDisabled();
+        assert.dom('[data-test-field="client_id"]').isDisabled();
+        assert.dom('[data-test-sync="retry_limit"]').isDisabled();
+        assert.dom('[data-test-sync="wallet_conflict"]').isDisabled();
         assert.strictEqual(this.saved, null);
-        assert.deepEqual(this.notifications.messages, []);
+    });
+
+    test('the form stays editable when the host does not pass can edit', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', { interval_minutes: 5 });
+
+        await render(hbs`<QuickbooksSettings @scope="company" @settings={{this.settings}} @sync={{this.sync}} @settingsLoaded={{true}} />`);
+
+        assert.dom('[data-test-settings-read-only]').doesNotExist();
+        assert.dom('[data-test-field="client_id"]').isNotDisabled();
     });
 
     test('a blank webhook verifier stays out of the save and direction is independent of Primary', async function (assert) {

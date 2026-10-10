@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Observers;
 
 use Fleetbase\Quickbooks\Listeners\FlagWalletListener;
+use Fleetbase\Quickbooks\Support\FlagGuard;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Container\Container;
 
@@ -16,9 +17,12 @@ class FlagWalletObserver
             return;
         }
 
-        $listener = Container::getInstance()->make(FlagWalletListener::class);
-        if ($listener instanceof FlagWalletListener === true) {
-            $listener->handle((object) ['wallet' => $wallet]);
-        }
+        // A failure here must never fail the wallet save.
+        FlagGuard::run(static function () use ($wallet): void {
+            $listener = Container::getInstance()->make(FlagWalletListener::class);
+            if ($listener instanceof FlagWalletListener === true) {
+                $listener->handle((object) ['wallet' => $wallet]);
+            }
+        }, 'wallet', ['company_uuid' => (string) ($wallet->company_uuid ?? ''), 'uuid' => (string) ($wallet->uuid ?? '')]);
     }
 }

@@ -24,6 +24,41 @@
   <rule ref="rulesets/unusedcode.xml"/>
   <rule ref="rulesets/codesize.xml">
     <exclude name="ExcessiveMethodLength"/>
+    <exclude name="CyclomaticComplexity"/>
+    <exclude name="NPathComplexity"/>
+    <exclude name="ExcessiveClassComplexity"/>
+    <exclude name="TooManyMethods"/>
+    <exclude name="TooManyPublicMethods"/>
+  </rule>
+  <!--
+    The PHPMD defaults (cyclomatic 10, NPath 200, class complexity 50, 25 methods, 10 public
+    methods) flag ordinary sync and controller code, so these limits are raised to values
+    that still catch methods and classes that need splitting.
+  -->
+  <rule ref="rulesets/codesize.xml/CyclomaticComplexity">
+    <properties>
+      <property name="reportLevel" value="15"/>
+    </properties>
+  </rule>
+  <rule ref="rulesets/codesize.xml/NPathComplexity">
+    <properties>
+      <property name="minimum" value="1000"/>
+    </properties>
+  </rule>
+  <rule ref="rulesets/codesize.xml/ExcessiveClassComplexity">
+    <properties>
+      <property name="maximum" value="100"/>
+    </properties>
+  </rule>
+  <rule ref="rulesets/codesize.xml/TooManyMethods">
+    <properties>
+      <property name="maxmethods" value="40"/>
+    </properties>
+  </rule>
+  <rule ref="rulesets/codesize.xml/TooManyPublicMethods">
+    <properties>
+      <property name="maxmethods" value="20"/>
+    </properties>
   </rule>
   <!--
     minimum is the only ExcessiveMethodLength threshold. 100 is the PHPMD and

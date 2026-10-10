@@ -22,6 +22,8 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     @tracked connectionLoading = true;
     @tracked settingsLoadFailed = false;
     @tracked settingsLoaded = false;
+    // The settings are install-wide. Only an installation administrator can change them.
+    @tracked canEdit = false;
     @tracked busy = false;
 
     constructor() {
@@ -35,6 +37,7 @@ export default class QuickbooksCompanySettingsComponent extends Component {
         try {
             const result = await this.fetch.get('settings', { scope: 'admin', company_uuid: companyUuid }, { namespace: NAMESPACE });
             this.settings = result.auth;
+            this.canEdit = result.can_edit === true;
             this.sync = result.sync ?? { interval_minutes: 5 };
             this.companySettings = result.company_auth ?? null;
             this.companySync = result.company_sync ?? null;

@@ -22,6 +22,7 @@ use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 use Fleetbase\Quickbooks\Support\WebhookSignature;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
+use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
@@ -424,7 +425,7 @@ test('hash_equals rejects a tampered body and a different-length signature', fun
     });
 });
 
-test('a realm with no connection is not applied and the signature is still required', function () {
+test('a realm with no connection is not applied, a valid signature is acknowledged and the signature is still required', function () {
     $settings = webhookSettings();
     $body     = '{"eventNotifications":[{"realmId":"realm-missing","dataChangeEvent":{"entities":[{"name":"Customer","id":"9","operation":"Update"}]}}]}';
 
@@ -434,8 +435,14 @@ test('a realm with no connection is not applied and the signature is still requi
             $unsigned = $controller->handle(webhookRequest($body, null));
             $signed   = $controller->handle(webhookRequest($body, webhookSignature($body, 'verifier-token')));
 
+            $forged = $controller->handle(webhookRequest($body, webhookSignature($body, 'other-token')));
+
+            // A genuine signature with no connection to apply it to is acknowledged
+            // so Intuit stops retrying. A bad or missing signature is still refused.
             expect($unsigned->getStatusCode())->toBe(401)
-                ->and($signed->getStatusCode())->toBe(401)
+                ->and($forged->getStatusCode())->toBe(401)
+                ->and($signed->getStatusCode())->toBe(200)
+                ->and($signed->getData(true))->toBe(['ok' => true])
                 ->and($dispatcher->jobs)->toBe([]);
         });
     });
@@ -816,7 +823,7 @@ test('saving a blank webhook verifier keeps the stored ciphertext and does not p
 
     session(['company' => 'company-uuid']);
     try {
-        $response = $controller->save(Request::create('/settings', 'POST', [
+        $response = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => [
                 'client_id'            => 'client-id',

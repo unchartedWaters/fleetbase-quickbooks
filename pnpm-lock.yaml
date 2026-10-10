@@ -18855,7 +18855,7 @@ snapshots:
       chokidar: 5.0.0
       commander: 14.0.3
       compression: 1.8.2(supports-color@8.1.1)
-      consolidate: 1.0.4(@babel/core@7.29.7(supports-color@8.1.1))(handlebars@4.7.9)(lodash@4.18.1)(mustache@4.2.0)(underscore@1.13.8)
+      consolidate: 1.0.4(@babel/core@7.29.7(supports-color@8.1.1))(handlebars@4.7.10)(lodash@4.18.1)(mustache@4.2.0)(underscore@1.13.8)
       execa: 9.6.1
       express: 5.2.1(supports-color@8.1.1)
       glob: 13.0.6

@@ -11,6 +11,7 @@ use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Services\ConnectionProbe;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\OAuthFlow;
+use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
@@ -23,22 +24,26 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 
 class ConnectionController extends QuickbooksController
 {
+    private const CALLBACK_PER_MINUTE = 30;
+
     public function __construct(
         Authorizer $authorizer,
         private OAuthFlow $oauth,
         private SettingsService $settings,
         private SettingsStore $store,
         private ConnectionProbe $probe,
+        private ?QuickBooksClient $client = null,
     ) {
         parent::__construct($authorizer);
     }
 
     public function show(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks view connection');
+        $this->authorizeQuickbooks('quickbooks view connection', $request);
         $connection = $this->latestConnection($this->companyUuid($request));
 
         return response()->json([
@@ -48,7 +53,7 @@ class ConnectionController extends QuickbooksController
 
     public function batches(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks view sync');
+        $this->authorizeQuickbooks('quickbooks view sync', $request);
         $perPage   = $this->pageArgument($request->input('per_page', 25), 25, 25);
         $page      = $this->pageArgument($request->input('page', 1), 1, PHP_INT_MAX);
         $paginator = SyncBatch::query()
@@ -145,7 +150,7 @@ class ConnectionController extends QuickbooksController
 
     public function start(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks connect connection');
+        $this->authorizeQuickbooks('quickbooks connect connection', $request);
         $companyUuid = $this->companyUuid($request);
         $credentials = $this->credentials($companyUuid);
         if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '' || $this->isAbsoluteHttpUrl($credentials['redirect_uri']) === false) {
@@ -193,7 +198,7 @@ class ConnectionController extends QuickbooksController
      */
     public function complete(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks connect connection');
+        $this->authorizeQuickbooks('quickbooks connect connection', $request);
         $companyUuid = $this->companyUuid($request);
 
         try {
@@ -233,16 +238,20 @@ class ConnectionController extends QuickbooksController
 
     public function disconnect(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks disconnect connection');
-        // Intuit has no webhook unsubscribe API. This deletes this organization's connection only.
-        Connection::query()->where('company_uuid', $this->companyUuid($request))->delete();
+        $this->authorizeQuickbooks('quickbooks disconnect connection', $request);
+        $companyUuid = $this->companyUuid($request);
+        // Intuit has no webhook unsubscribe API. The refresh token is revoked first, best effort,
+        // then this organization's connection and its queued work are removed. Links stay for a reconnect.
+        $this->revokeAtIntuit($companyUuid);
+        Connection::query()->where('company_uuid', $companyUuid)->delete();
+        PendingSync::query()->where('company_uuid', $companyUuid)->where('status', 'pending')->delete();
 
         return response()->json(['disconnected' => true]);
     }
 
     public function import(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks import-customers connection');
+        $this->authorizeQuickbooks('quickbooks import-customers connection', $request);
         $companyUuid = $this->companyUuid($request);
         $blocked     = $this->blockedConnection($companyUuid, 'import', 'inbound');
         if ($blocked !== null) {
@@ -255,7 +264,7 @@ class ConnectionController extends QuickbooksController
 
     public function reconcile(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks reconcile sync');
+        $this->authorizeQuickbooks('quickbooks reconcile sync', $request);
         $companyUuid = $this->companyUuid($request);
         $blocked     = $this->blockedConnection($companyUuid, 'manual');
         if ($blocked !== null) {
@@ -268,7 +277,7 @@ class ConnectionController extends QuickbooksController
 
     public function sync(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks reconcile sync');
+        $this->authorizeQuickbooks('quickbooks reconcile sync', $request);
         $companyUuid = $this->companyUuid($request);
         $blocked     = $this->blockedConnection($companyUuid, 'now');
         if ($blocked !== null) {
@@ -281,7 +290,7 @@ class ConnectionController extends QuickbooksController
 
     public function test(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks view connection');
+        $this->authorizeInstallationAdmin($request);
         $row = $this->latestConnection($this->companyUuid($request));
 
         return response()->json($this->probe->probe(
@@ -291,7 +300,7 @@ class ConnectionController extends QuickbooksController
 
     public function summary(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks view sync');
+        $this->authorizeQuickbooks('quickbooks view sync', $request);
         $companyUuid = $this->companyUuid($request);
         $connection  = $this->latestConnection($companyUuid);
         // Refused imports and not-connected syncs are stored as skipped, with finished_at set.
@@ -318,6 +327,67 @@ class ConnectionController extends QuickbooksController
                 'failed_count'  => (int) $last->failed_count,
             ] : null,
         ]);
+    }
+
+    /**
+     * Ask Intuit to revoke this organization's refresh tokens. A failure or timeout is logged
+     * without any token and never stops the disconnect.
+     */
+    private function revokeAtIntuit(string $companyUuid): void
+    {
+        try {
+            $credentials = $this->settings->credentialsFor($this->store, $companyUuid);
+            if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '') {
+                return;
+            }
+
+            foreach (Connection::query()->where('company_uuid', $companyUuid)->get() as $row) {
+                $token = $row instanceof Connection === true ? trim((string) $row->refresh_token) : '';
+                if ($token === '') {
+                    continue;
+                }
+
+                try {
+                    $this->client()->revoke($credentials, $token);
+                } catch (QuickBooksException $exception) {
+                    Log::warning('QuickBooks token revocation failed during disconnect.', [
+                        'company_uuid' => $companyUuid,
+                        'status'       => $exception->status,
+                    ]);
+                }
+            }
+        } catch (\Throwable $exception) {
+            Log::warning('QuickBooks token revocation could not run during disconnect.', [
+                'company_uuid' => $companyUuid,
+                'exception'    => $exception::class,
+            ]);
+        }
+    }
+
+    /**
+     * Rate limit for the public OAuth callback, per client IP. Behind a proxy that the host does
+     * not trust, every user shares the proxy's IP and so one limit; raise the value, or set 0 to
+     * turn it off. A value that is not a number keeps the default.
+     */
+    public static function callbackThrottle(): ?string
+    {
+        $configured = config('quickbooks.oauth.callback_per_minute', self::CALLBACK_PER_MINUTE);
+        $perMinute  = is_numeric($configured) === true ? (int) $configured : self::CALLBACK_PER_MINUTE;
+        if ($perMinute < 1) {
+            return null;
+        }
+
+        return 'throttle:' . $perMinute . ',1';
+    }
+
+    private function client(): QuickBooksClient
+    {
+        if ($this->client === null) {
+            $client       = app(QuickBooksClient::class);
+            $this->client = $client instanceof QuickBooksClient === true ? $client : new QuickBooksClient();
+        }
+
+        return $this->client;
     }
 
     /**
