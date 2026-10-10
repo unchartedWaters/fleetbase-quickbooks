@@ -16,6 +16,7 @@ use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 
@@ -313,6 +314,21 @@ class FleetbaseDirectory
         // writeConnection already no-ops in those cases; these rows do not.
         $skipped = $this->companiesSkippingLedgerWrites($ledger);
 
+        // Links, pending rows, attempts, and the Fleetbase rows land together or not at all.
+        // A failure part way through must not leave links and done rows without the invoice change.
+        // Connection rows above stay outside: tokens and rate-limit state are saved either way.
+        (new Link())->getConnection()->transaction(function () use ($ledger, $skipped): void {
+            $this->writeLedger($ledger, $skipped);
+        });
+    }
+
+    /**
+     * @param array<string, true> $skipped
+     */
+    private function writeLedger(SyncLedger $ledger, array $skipped): void
+    {
+        $this->keepUnclaimedInvoiceNumbers($ledger, $skipped);
+
         $loadedByUuid = [];
         foreach ($this->loaded['links'] as $loadedLink) {
             if (is_array($loadedLink) === false) {
@@ -409,6 +425,64 @@ class FleetbaseDirectory
         $this->persistCustomers($ledger, $skipped);
         $this->persistInvoices($ledger, $skipped);
         $this->persistWallets($ledger, $skipped);
+    }
+
+    /**
+     * ledger_invoices.number is unique across every company. A QuickBooks DocNumber that another
+     * Fleetbase invoice already holds is not copied: the local number stays, and this batch's
+     * attempt for the invoice says why. The rest of the batch still saves.
+     *
+     * @param array<string, true> $skipped
+     */
+    private function keepUnclaimedInvoiceNumbers(SyncLedger $ledger, array $skipped): void
+    {
+        $class = 'Fleetbase\\Ledger\\Models\\Invoice';
+        if (class_exists($class) === false) {
+            return;
+        }
+
+        $model   = new $class();
+        $claimed = [];
+        foreach (array_keys($ledger->invoices) as $key) {
+            $invoice = $ledger->invoices[$key];
+            $uuid    = (string) ($invoice['uuid'] ?? '');
+            if ($uuid === '' || isset($skipped[(string) ($invoice['company_uuid'] ?? '')]) === true) {
+                continue;
+            }
+            $loaded = $this->loaded['invoices'][$uuid] ?? null;
+            $kept   = is_array($loaded) === true ? trim((string) ($loaded['number'] ?? '')) : '';
+            $number = trim((string) ($invoice['number'] ?? ''));
+            if ($number === '' || $number === $kept) {
+                continue;
+            }
+            if (isset($claimed[$number]) === false && $model->getConnection()->table($model->getTable())->where('number', $number)->where('uuid', '!=', $uuid)->exists() === false) {
+                $claimed[$number] = $uuid;
+                continue;
+            }
+
+            $ledger->invoices[$key]['number'] = $kept;
+            $ledger->rememberInvoice($uuid, $ledger->invoices[$key]);
+            $this->noteInvoiceNumberCollision($ledger, (string) ($invoice['company_uuid'] ?? ''), $uuid, $number, $kept);
+        }
+    }
+
+    private function noteInvoiceNumberCollision(SyncLedger $ledger, string $companyUuid, string $uuid, string $number, string $kept): void
+    {
+        $note  = 'QuickBooks invoice number ' . $number . ' was not copied because another Fleetbase invoice already uses it.'
+            . ($kept === '' ? '' : ' This invoice keeps ' . $kept . '.');
+        $noted = false;
+        foreach ($ledger->attempts as $index => $attempt) {
+            if (is_array($attempt) === false || empty($attempt['uuid']) === false
+                || (string) ($attempt['local_type'] ?? '') !== 'invoice' || (string) ($attempt['local_uuid'] ?? '') !== $uuid) {
+                continue;
+            }
+            $existing                          = trim((string) ($attempt['error'] ?? ''));
+            $ledger->attempts[$index]['error'] = $existing === '' ? $note : $existing . ' ' . $note;
+            $noted                             = true;
+        }
+        if ($noted === false) {
+            Log::warning('QuickBooks invoice number was not copied.', ['company_uuid' => $companyUuid, 'invoice_uuid' => $uuid, 'note' => $note]);
+        }
     }
 
     /**
