@@ -160,7 +160,7 @@ test('an authorization started by another organization cannot be completed by th
     $redirect = $controller->callback(Request::create('/oauth/callback', 'GET', [
         'state'   => $begun['state'],
         'code'    => 'victim-code',
-        'realmId' => 'victim-realm',
+        'realmId' => '9341453000000002',
     ]));
     parse_str((string) parse_url($redirect->getTargetUrl(), PHP_URL_QUERY), $query);
     $handle = (string) $query['oauth_state'];
@@ -210,7 +210,7 @@ test('a cancelled authorization forgets the state and says it was cancelled', fu
     ]));
 
     expect($redirect->getTargetUrl())->toBe('https://console.example.test/quickbooks?error=cancelled')
-        ->and(fn () => $flow->receive($begun['state'], 'code', 'realm'))->toThrow(QuickBooksException::class);
+        ->and(fn () => $flow->receive($begun['state'], 'code', '123456789'))->toThrow(QuickBooksException::class);
 });
 
 test('an intuit error sends only a fixed code back to the console', function () {

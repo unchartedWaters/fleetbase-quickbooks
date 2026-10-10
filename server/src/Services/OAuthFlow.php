@@ -9,6 +9,8 @@ class OAuthFlow
 {
     private const OTHER_USER_MESSAGE = 'This QuickBooks authorization was started by a different user or organization. Connect again from Quickbooks Setup.';
 
+    private const REALM_PATTERN = '/^\d{6,20}\z/';
+
     private const CONNECT_FAILED_MESSAGE = 'QuickBooks could not finish connecting. Connect again from Quickbooks Setup.';
 
     public function __construct(private QuickBooksClient $client)
@@ -48,6 +50,11 @@ class OAuthFlow
     {
         $stored = $this->validState(Cache::pull($this->key($state)));
         if (isset($stored['code']) === true) {
+            throw new QuickBooksException(400, 'QuickBooks authorization state is invalid or expired.');
+        }
+
+        // The realm comes from a browser redirect. It is a number, and it becomes part of API URLs.
+        if (preg_match(self::REALM_PATTERN, $realmId) !== 1) {
             throw new QuickBooksException(400, 'QuickBooks authorization state is invalid or expired.');
         }
 
@@ -98,12 +105,6 @@ class OAuthFlow
         } catch (QuickBooksException $exception) {
             throw new QuickBooksException($exception->status, self::CONNECT_FAILED_MESSAGE);
         }
-        // A reload of the console keeps ?oauth_state in the URL and calls complete() again.
-        Cache::put($key, [
-            'done'         => true,
-            'company_uuid' => $companyUuid,
-            'user_uuid'    => $userUuid,
-        ], 600);
 
         $connection = [
             'company_uuid'    => $stored['company_uuid'],
@@ -115,14 +116,50 @@ class OAuthFlow
             'needs_reauth'    => false,
         ];
 
+        $connection = $this->withCompanyDetails($connection);
+
+        // A reload of the console keeps ?oauth_state in the URL and calls complete() again.
+        Cache::put($key, [
+            'done'         => true,
+            'company_uuid' => $companyUuid,
+            'user_uuid'    => $userUuid,
+        ], 600);
+
+        return $connection;
+    }
+
+    /**
+     * The first Intuit call for the new realm answering 401, 403 or 404 means the token does not
+     * belong to the realm that came back on the redirect, so nothing is stored. Any other failure
+     * (network, 5xx, rate limit) is tolerated and the details are filled in on a later sync.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>
+     */
+    private function withCompanyDetails(array $connection): array
+    {
+        $connection['home_currency']   = null;
+        $connection['default_item_id'] = null;
+
         try {
-            $connection['home_currency']   = $this->client->homeCurrency($connection);
-            $defaultItemId                 = $this->client->ensureServiceItem($connection);
-            $connection['default_item_id'] = ($defaultItemId !== '' && $defaultItemId !== '0') ? $defaultItemId : null;
+            $homeCurrency = $this->client->homeCurrency($connection);
         } catch (QuickBooksException $exception) {
-            $connection['home_currency']   = null;
-            $connection['default_item_id'] = null;
+            if (in_array($exception->status, [401, 403, 404], true) === true) {
+                throw new QuickBooksException($exception->status, self::CONNECT_FAILED_MESSAGE);
+            }
+
+            return $connection;
         }
+
+        try {
+            $defaultItemId = $this->client->ensureServiceItem($connection);
+        } catch (QuickBooksException) {
+            return $connection;
+        }
+
+        $connection['home_currency']   = $homeCurrency;
+        $connection['default_item_id'] = ($defaultItemId !== '' && $defaultItemId !== '0') ? $defaultItemId : null;
 
         return $connection;
     }

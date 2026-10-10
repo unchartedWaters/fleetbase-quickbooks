@@ -87,7 +87,7 @@ class QuickBooksClient
      */
     public function companyInfo(array $connection): array
     {
-        $response = $this->accounting($connection, 'get', 'companyinfo/' . $connection['realm_id']);
+        $response = $this->accounting($connection, 'get', 'companyinfo/' . rawurlencode((string) $connection['realm_id']));
         $body     = $this->decodeBody($response);
 
         return is_array($body['CompanyInfo'] ?? null) === true ? $body['CompanyInfo'] : [];
@@ -1044,7 +1044,7 @@ class QuickBooksClient
         $base = ($connection['environment'] ?? 'sandbox') === 'production'
             ? 'https://quickbooks.api.intuit.com'
             : 'https://sandbox-quickbooks.api.intuit.com';
-        $url       = $base . '/v3/company/' . $connection['realm_id'] . '/' . $path;
+        $url       = $base . '/v3/company/' . rawurlencode((string) $connection['realm_id']) . '/' . $path;
         $separator = str_contains($url, '?') === true ? '&' : '?';
         $url .= $separator . 'minorversion=75';
 

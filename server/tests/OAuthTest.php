@@ -687,7 +687,7 @@ test('oauth complete exchanges the code with the same computed callback', functi
         $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
             'state'   => $state,
             'code'    => 'code',
-            'realmId' => 'realm-1',
+            'realmId' => '9341453000000001',
         ]));
         expect($callback->getTargetUrl())->toStartWith('http://10.30.0.34:4200/quickbooks?oauth_state=');
         parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
@@ -706,7 +706,7 @@ test('oauth complete exchanges the code with the same computed callback', functi
         expect($completed->getStatusCode())->toBe(200)
             ->and($completed->getData(true))->toBe(['connected' => true])
             ->and($form['redirect_uri'])->toBe($computed)
-            ->and($controller->saved['realm_id'])->toBe('realm-1')
+            ->and($controller->saved['realm_id'])->toBe('9341453000000001')
             ->and($syncs)->toHaveCount(1)
             ->and($syncs[0]->companyUuid)->toBe('company-uuid')
             ->and($syncs[0]->trigger)->toBe('now')
@@ -774,7 +774,7 @@ test('oauth complete skips customer import when customers are turned off', funct
         $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
             'state'   => $state,
             'code'    => 'code',
-            'realmId' => 'realm-1',
+            'realmId' => '9341453000000001',
         ]));
         parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
         $jobs = qbCaptureDispatches(function () use ($controller, $query): void {
@@ -835,7 +835,7 @@ test('the oauth callback rejects an unknown state and sends the browser back to 
         new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
     );
 
-    $response = $controller->callback(Request::create('/oauth/callback', 'GET', ['state' => 'bogus', 'code' => 'code', 'realmId' => 'realm']));
+    $response = $controller->callback(Request::create('/oauth/callback', 'GET', ['state' => 'bogus', 'code' => 'code', 'realmId' => '123456789']));
 
     expect($response)->toBeInstanceOf(RedirectResponse::class)
         ->and($response->getTargetUrl())->toBe('https://console.example.test/quickbooks?error=state');
@@ -887,7 +887,7 @@ test('the oauth callback only keeps the code and the user who started the flow c
     $callback = Request::create('/oauth/callback', 'GET', [
         'state'   => $begun['state'],
         'code'    => 'code',
-        'realmId' => 'realm-1',
+        'realmId' => '9341453000000001',
     ]);
     $response = $controller->callback($callback);
 
@@ -907,7 +907,7 @@ test('the oauth callback only keeps the code and the user who started the flow c
             expect($completed->getStatusCode())->toBe(200)
                 ->and($completed->getData(true))->toBe(['connected' => true])
                 ->and($controller->saved['company_uuid'])->toBe('company-uuid')
-                ->and($controller->saved['realm_id'])->toBe('realm-1')
+                ->and($controller->saved['realm_id'])->toBe('9341453000000001')
                 ->and($controller->saved['refresh_token'])->toBe('refresh')
                 ->and($controller->saved)->not->toHaveKey('import_customers');
 
@@ -979,7 +979,7 @@ test('oauth state is validated before the code exchange', function () {
         ->toThrow(QuickBooksException::class);
 
     $again      = $flow->begin('company-uuid', 'user-uuid', $credentials);
-    $handle     = $flow->receive($again['state'], 'code', 'realm-1');
+    $handle     = $flow->receive($again['state'], 'code', '9341453000000001');
     $connection = $flow->complete($handle, 'company-uuid', 'user-uuid', $credentials);
 
     expect($connection['refresh_token'])->toBe('refresh')
@@ -1029,7 +1029,7 @@ test('completing a handle again is allowed only for the user who completed it an
         'environment'   => 'sandbox',
     ];
     $begun  = $flow->begin('company-uuid', 'user-uuid', $credentials);
-    $handle = $flow->receive($begun['state'], 'code', 'realm-1');
+    $handle = $flow->receive($begun['state'], 'code', '9341453000000001');
 
     expect(fn () => $flow->complete($handle, 'company-uuid', 'other-user', $credentials))
         ->toThrow(QuickBooksException::class, 'different user or organization')
@@ -1081,7 +1081,7 @@ test('a failed token exchange and an unreachable probe do not return transport t
     ];
     $flow   = new OAuthFlow($client);
     $begun  = $flow->begin('company-uuid', 'user-uuid', $credentials);
-    $handle = $flow->receive($begun['state'], 'code', 'realm-1');
+    $handle = $flow->receive($begun['state'], 'code', '9341453000000001');
 
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     try {
