@@ -267,6 +267,15 @@ class SyncEngine
     }
 
     /**
+     * Whether this run stopped because the token could not be refreshed for now. The caller
+     * then waits for the next scheduled run instead of queueing another one straight away.
+     */
+    public function refreshFailed(string $companyUuid): bool
+    {
+        return isset($this->refreshFailed[$companyUuid]);
+    }
+
+    /**
      * The connection to retry a rejected call with, or null when the 401 stands.
      *
      * @param array<string, mixed> $connection
@@ -1992,7 +2001,13 @@ class SyncEngine
         }
 
         if (array_key_exists('Active', $remote) === true) {
-            $ledger->wallets[$uuid]['status'] = (bool) $remote['Active'] === true ? 'active' : 'closed';
+            $active = (bool) $remote['Active'];
+            // An inactive account does not close a wallet that still holds money: closing it
+            // would hide the balance. The same rule applies to a delete from QuickBooks.
+            $holdsMoney = (int) ($ledger->wallets[$uuid]['balance'] ?? 0) !== 0;
+            if ($active === true || $holdsMoney === false) {
+                $ledger->wallets[$uuid]['status'] = $active === true ? 'active' : 'closed';
+            }
         }
 
         if ($reference !== 'quickbooks') {

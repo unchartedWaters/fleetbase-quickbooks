@@ -542,3 +542,106 @@ test('a flag on a row nobody holds does not change its lease', function () {
         $restore();
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+/**
+ * Refuses every access token and cannot refresh for a temporary reason (Intuit down).
+ */
+class ClaimRefreshDownQuickBooks extends ClaimProbeQuickBooks
+{
+    public int $refreshes = 0;
+
+    public function refresh(array $credentials, string $refreshToken): array
+    {
+        $this->refreshes++;
+
+        throw new Fleetbase\Quickbooks\Support\QuickBooksException(503, 'unavailable');
+    }
+
+    public function createCustomer(array $connection, array $payload): array
+    {
+        throw new Fleetbase\Quickbooks\Support\QuickBooksException(401, 'QuickBooks request failed with status 401');
+    }
+
+    public function batch(array $connection, array $items): array
+    {
+        throw new Fleetbase\Quickbooks\Support\QuickBooksException(401, 'QuickBooks request failed with status 401');
+    }
+}
+
+test('a drain run whose token refresh failed for now does not queue another drain at once', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        $client                                 = new ClaimRefreshDownQuickBooks();
+        $directory                              = new FleetbaseDirectory();
+        $store                                  = new MemorySettingsStore();
+        $store->rows[SettingsKeys::adminSync()] = ['batch_size' => 50];
+        $store->rows[SettingsKeys::adminAuth()] = ['client_id' => 'id', 'client_secret' => (new SecretCipher())->encrypt('secret'), 'environment' => 'sandbox'];
+        $settings                               = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
+        $tokens                                 = new ConnectionTokens(new TokenRefresher($client), $settings, $store, $directory);
+        // As in production, where the container gives the engine the token service.
+        $engine = new SyncEngine($client, new CustomerMapper(), new InvoiceMapper(), new WalletMapper(), new BackoffPolicy(static fn (int $wait): int => $wait), $tokens);
+        $runner = new BatchRunner($engine, $directory, $settings, $store, $tokens);
+
+        $jobs = qbCaptureDispatches(function () use ($runner): void {
+            $runner->run('company-1', 'drain');
+        });
+
+        $drains = array_filter($jobs, static fn (object $job): bool => $job instanceof Fleetbase\Quickbooks\Jobs\SyncCompanyBatch);
+        expect($client->refreshes)->toBe(1)
+            ->and($drains)->toBe([])
+            ->and(DB::table('quickbooks_pending_syncs')->where('status', 'pending')->count())->toBe(3)
+            ->and(DB::table('quickbooks_connections')->where('company_uuid', 'company-1')->value('needs_reauth'))->toBeFalsy();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a row flagged again while leased still records its failed attempt and backoff', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        $running = new FleetbaseDirectory();
+        $ledger  = $running->loadPending('company-1', 50, time())['ledger'];
+        $flagger = new class extends FleetbaseDirectory {
+            public function flagRow(array $row): void
+            {
+                $this->writePending($row);
+            }
+        };
+        $flagger->flagRow(['company_uuid' => 'company-1', 'local_type' => 'customer', 'local_uuid' => 'cust-1', 'status' => 'pending', 'attempts' => 0]);
+
+        $retryAt = time() + 300;
+        $ledger->updatePending('company-1', 'customer', 'cust-1', ['status' => 'failed', 'attempts' => 6, 'next_attempt_at' => $retryAt]);
+        $running->save($ledger);
+        $running->releaseClaims();
+
+        $row = DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-cust-1')->first();
+        expect($row->status)->toBe('pending')
+            ->and((int) $row->attempts)->toBe(6)
+            ->and($row->next_attempt_at)->not->toBeNull();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('an expired re-flag lease does not keep a later save from finishing the row', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->loadPending('company-1', 50, time())['ledger'];
+        // A run that died left a re-flag mark whose lease has run out.
+        DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-cust-1')->update(['claimed_by' => 'reflag:dead-run', 'claimed_until' => now()->subMinute()]);
+
+        $ledger->updatePending('company-1', 'customer', 'cust-1', ['status' => 'done']);
+        $directory->save($ledger);
+
+        expect(DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-cust-1')->value('status'))->toBe('done');
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');

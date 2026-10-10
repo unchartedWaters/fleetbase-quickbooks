@@ -81,3 +81,65 @@ test('ordinary validation faults on every item are still item errors, not a 401'
         ->and($results['a']['status'])->toBe(400)
         ->and($results['b']['ok'])->toBeFalse();
 });
+
+/**
+ * @return array<int, array<string, mixed>>
+ */
+function batchAuthManyItems(int $count): array
+{
+    $items = [];
+    for ($index = 0; $index < $count; $index++) {
+        $items[] = ['bId' => 'c' . $index, 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Customer ' . $index]];
+    }
+
+    return $items;
+}
+
+/**
+ * @param array<string, mixed> $request
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function batchAuthAccepted(Illuminate\Http\Client\Request $request): array
+{
+    $rows = [];
+    foreach ($request->data()['BatchItemRequest'] ?? [] as $item) {
+        $rows[] = ['bId' => $item['bId'], 'Customer' => ['Id' => 'q-' . $item['bId'], 'SyncToken' => '0']];
+    }
+
+    return $rows;
+}
+
+foreach (['every item refused in the body' => 'faults', 'HTTP 401' => 'http'] as $batchAuthLabel => $batchAuthMode) {
+    test('a later chunk refused with ' . $batchAuthLabel . ' keeps the earlier chunk results and sends nothing more', function () use ($batchAuthMode) {
+        Http::swap(new Illuminate\Http\Client\Factory());
+        $calls = 0;
+        Http::fake(function (Illuminate\Http\Client\Request $request) use (&$calls, $batchAuthMode) {
+            $calls++;
+            if ($calls === 1) {
+                return Http::response(['BatchItemResponse' => batchAuthAccepted($request)], 200);
+            }
+            if ($batchAuthMode === 'http') {
+                return Http::response(['Fault' => ['Error' => [['Message' => 'AuthenticationFailed', 'code' => '3200']]]], 401);
+            }
+            $rows = [];
+            foreach ($request->data()['BatchItemRequest'] as $item) {
+                $rows[] = batchAuthFault($item['bId']);
+            }
+
+            return Http::response(['BatchItemResponse' => $rows], 200);
+        });
+
+        $results = (new QuickBooksClient())->batch(batchAuthConnection(), batchAuthManyItems(70));
+
+        $accepted = array_filter($results, static fn (array $result): bool => $result['ok'] === true);
+        $refused  = array_filter($results, static fn (array $result): bool => $result['ok'] === false);
+        expect($calls)->toBe(2)
+            ->and($results)->toHaveCount(70)
+            ->and($accepted)->toHaveCount(30)
+            ->and($results['c0']['body']['Id'])->toBe('q-c0')
+            ->and($refused)->toHaveCount(40)
+            // Not a halt: halting on 401 asks the user to reconnect without trying a refresh.
+            ->and(array_unique(array_column($refused, 'halt')))->toBe([false]);
+    });
+}

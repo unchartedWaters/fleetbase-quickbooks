@@ -437,9 +437,24 @@ class FleetbaseDirectory
             }
             $changedPending[] = ['uuid' => (string) $row['uuid'], 'columns' => $columns];
         }
-        // A row flagged again during this run keeps its pending state for the next run.
-        $guard = $this->claimsSupported() === true ? ['(claimed_by IS NULL OR claimed_by NOT LIKE ?)', [self::REFLAG_PREFIX . '%']] : null;
-        $this->updateByUuid(new PendingSync(), $changedPending, ['company_uuid', 'local_type', 'local_uuid', 'reason', 'status', 'attempts', 'next_attempt_at'], $guard);
+        $pendingColumns = ['company_uuid', 'local_type', 'local_uuid', 'reason', 'status', 'attempts', 'next_attempt_at'];
+        if ($this->claimsSupported() === true) {
+            // A row flagged again during this run stays pending for the next run, but still records
+            // the attempt and backoff, so a row that keeps failing cannot skip its backoff. An
+            // expired re-flag mark (its run died) no longer holds the row.
+            $now      = Carbon::now()->toDateTimeString();
+            $reflag   = self::REFLAG_PREFIX . '%';
+            $this->updateByUuid(new PendingSync(), $changedPending, $pendingColumns, [
+                '(claimed_by IS NULL OR claimed_by NOT LIKE ? OR claimed_until IS NULL OR claimed_until <= ?)',
+                [$reflag, $now],
+            ]);
+            $this->updateByUuid(new PendingSync(), $changedPending, ['attempts', 'next_attempt_at'], [
+                'claimed_by LIKE ? AND claimed_until > ?',
+                [$reflag, $now],
+            ]);
+        } else {
+            $this->updateByUuid(new PendingSync(), $changedPending, $pendingColumns);
+        }
         $this->writePendingMany($freshPending);
         $batchUuid = null;
         foreach ($ledger->batches as $batch) {
@@ -1791,6 +1806,8 @@ class FleetbaseDirectory
                 'currency'     => (string) $wallet->currency,
                 'status'       => (string) $wallet->status,
                 'meta'         => $wallet->meta,
+                // Read only: QuickBooks never changes a wallet balance, and it is not saved back.
+                'balance'      => (int) ($wallet->balance ?? 0),
             ];
         }
 
@@ -2672,6 +2689,8 @@ class FleetbaseDirectory
         }
         if ($localType === 'wallet') {
             if ($this->walletsHoldingBalance($companyUuid, [$localUuid]) !== []) {
+                $this->finishPending($companyUuid, 'wallet', $localUuid);
+
                 return;
             }
             $this->retireLocal('Fleetbase\\Ledger\\Models\\Wallet', $companyUuid, $localUuid, ['status' => 'closed']);
@@ -2878,7 +2897,10 @@ class FleetbaseDirectory
             static fn (string $uuid): bool => $uuid !== '' && in_array($uuid, $voidInvoices, true) === false
         )));
         $customers = array_values(array_unique($customers));
-        $wallets   = array_values(array_diff(array_unique($wallets), $this->walletsHoldingBalance($companyUuid, array_values(array_unique($wallets)))));
+        // Every deleted wallet's pending row is finished, held or not: pushing a held wallet
+        // would reactivate the account that was deleted in QuickBooks.
+        $settled = array_values(array_unique($wallets));
+        $wallets = array_values(array_diff($settled, $this->walletsHoldingBalance($companyUuid, $settled)));
         foreach ($wallets as $wallet) {
             foreach ($walletLinks[$wallet] ?? [] as $walletLink) {
                 $linkUuids[] = $walletLink;
@@ -2893,7 +2915,7 @@ class FleetbaseDirectory
         $this->finishPendingMany($companyUuid, [
             'invoice'  => array_values(array_unique(array_merge($voidInvoices, $sentInvoices))),
             'customer' => $customers,
-            'wallet'   => $wallets,
+            'wallet'   => $settled,
         ]);
     }
 

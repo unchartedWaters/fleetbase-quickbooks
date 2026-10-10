@@ -750,13 +750,52 @@ class QuickBooksClient
         }
 
         $results = [];
+        $refused = null;
         foreach (self::batchChunks($items) as $chunk) {
-            foreach ($this->postBatch($connection, $chunk) as $bId => $result) {
+            if ($refused !== null) {
+                $this->refuseChunk($results, $chunk, $refused);
+                continue;
+            }
+            try {
+                $chunkResults = $this->postBatch($connection, $chunk);
+            } catch (QuickBooksException $exception) {
+                // A refused first chunk wrote nothing, so the caller may refresh the token and send
+                // everything again. After an earlier chunk was written, sending again would repeat
+                // those writes, so its results are kept and the rest fail as items to retry later.
+                if ($exception->isUnauthorized() === false || $results === []) {
+                    throw $exception;
+                }
+                $refused = $exception->getMessage();
+                $this->refuseChunk($results, $chunk, $refused);
+                continue;
+            }
+            foreach ($chunkResults as $bId => $result) {
                 $results[$bId] = $result;
             }
         }
 
         return $results;
+    }
+
+    /**
+     * Item errors for a chunk that was refused, or not sent, after an earlier chunk was written.
+     * They do not halt: a halting 401 asks the user to reconnect without trying a refresh.
+     *
+     * @param array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}> $results
+     * @param array<int, array{bId?: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}>                            $chunk
+     */
+    private function refuseChunk(array &$results, array $chunk, string $message): void
+    {
+        foreach ($chunk as $item) {
+            $results[(string) ($item['bId'] ?? '')] = [
+                'ok'     => false,
+                'body'   => [],
+                'rows'   => [],
+                'error'  => $message,
+                'status' => 401,
+                'halt'   => false,
+            ];
+        }
     }
 
     /**
@@ -993,9 +1032,9 @@ class QuickBooksClient
             }
         }
         // QuickBooks can answer 200 with an authentication fault on each item instead of HTTP 401.
-        // When every item was refused nothing was written, so this is the same as a 401: the
-        // caller refreshes the token and sends the batch again. A partly refused batch is not
-        // repeated, because the items that were accepted would be written twice.
+        // When every item was refused nothing in this chunk was written, so this is the same as
+        // a 401 (batch() decides whether a retry is safe). A partly refused chunk is not a 401,
+        // because the items that were accepted would be written twice.
         if ($unauthorized !== [] && count($unauthorized) === count($results)) {
             throw new QuickBooksException(401, 'QuickBooks request failed with status 401: the access token was refused.');
         }

@@ -140,7 +140,11 @@ class BatchRunner
             };
             $nothingRecorded = count($ledger->batches) === $batchesBefore;
             $save            = (($batch['status'] ?? null) === 'skipped' && $nothingRecorded === true) === false;
-            $followUp        = in_array($trigger, ['manual', 'drain'], true) === true && ($batch['status'] ?? '') === 'finished';
+            // A run stopped by a token refresh that failed for now is not followed up at once:
+            // each follow-up would try the refresh again for one row. The schedule retries it.
+            $followUp = in_array($trigger, ['manual', 'drain'], true) === true
+                && ($batch['status'] ?? '') === 'finished'
+                && $this->engine->refreshFailed($companyUuid) === false;
 
             return $batch;
         } finally {

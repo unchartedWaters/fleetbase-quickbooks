@@ -633,3 +633,44 @@ function customerLink(string $uuid): array
         'sync_token'   => '0',
     ];
 }
+
+/**
+ * @return array{0: mixed, 1: mixed, 2: SyncLedger}
+ */
+function inactiveAccountRun(int $balance): array
+{
+    [$engine, $client]        = qbEngine();
+    $ledger                   = connectedLedger();
+    $ledger->wallets['wal-1'] = [
+        'uuid'         => 'wal-1',
+        'company_uuid' => 'company-uuid',
+        'public_id'    => 'wallet_1',
+        'name'         => 'Operating',
+        'description'  => 'Float',
+        'currency'     => 'USD',
+        'status'       => 'active',
+        'balance'      => $balance,
+    ];
+    $client->accounts['acct-9'] = ['Id' => 'acct-9', 'SyncToken' => '1', 'Name' => 'Operating', 'Description' => 'Float', 'Active' => false, 'CurrencyRef' => ['value' => 'USD']];
+    $ledger->links[]            = [
+        'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'wallet', 'local_uuid' => 'wal-1',
+        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '1',
+    ];
+    $ledger->pending[] = pending('wallet', 'wal-1');
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'wallet_conflict' => 'quickbooks']), time());
+
+    return [$engine, $client, $ledger];
+}
+
+test('an inactive quickbooks account does not close a wallet that still holds a balance', function () {
+    [, $client, $ledger] = inactiveAccountRun(2500);
+
+    expect($ledger->wallets['wal-1']['status'])->toBe('active')
+        ->and($client->calls)->not->toContain('updateAccount');
+});
+
+test('an inactive quickbooks account closes a wallet whose balance is zero', function () {
+    [, , $ledger] = inactiveAccountRun(0);
+
+    expect($ledger->wallets['wal-1']['status'])->toBe('closed');
+});
