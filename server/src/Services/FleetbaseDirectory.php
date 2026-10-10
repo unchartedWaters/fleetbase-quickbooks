@@ -2031,10 +2031,6 @@ class FleetbaseDirectory
     }
 
     /**
-     * @param array<string, mixed> $invoice
-     * @param array<string, true>  $skipped
-     */
-    /**
      * @param class-string         $class
      * @param array<string, mixed> $invoice
      * @param array<string, true>  $skipped
@@ -3883,16 +3879,14 @@ class FleetbaseDirectory
             if (is_array($link) === false) {
                 continue;
             }
-            $paymentMap = $this->memoryPaymentInvoiceLink($link, $companyUuid, $realmId, $quickbooksId);
-            $matched    = $paymentMap === true || $this->memoryLinkMatches($link, $companyUuid, $realmId, $localType, $quickbooksId, $localUuid) === true;
-            if ($matched === true) {
-                $localId = (string) ($link['local_uuid'] ?? '');
-                if ($localId !== '' && $paymentMap === false) {
-                    $uuids[] = $localId;
-                }
+            $dropped = $this->droppedMemoryLinkUuid($link, $companyUuid, $realmId, $localType, $quickbooksId, $localUuid);
+            if ($dropped === null) {
+                $kept[] = $link;
                 continue;
             }
-            $kept[] = $link;
+            if ($dropped !== '') {
+                $uuids[] = $dropped;
+            }
         }
         if (is_string($localUuid) === true && $localUuid !== '') {
             $uuids[] = $localUuid;
@@ -3922,6 +3916,25 @@ class FleetbaseDirectory
             unset($memory->wallets[$uuid]);
         }
         $this->finishMemoryPending($companyUuid, $localType, $quickbooksId, $pendingUuids);
+    }
+
+    /**
+     * Null keeps the link. Otherwise the link is dropped, and a non-empty value is the local uuid it
+     * pointed at. A payment's invoice map is dropped without a uuid, and only on a payment delete:
+     * QuickBooks numbers each entity type separately, so an invoice can share a payment's id.
+     *
+     * @param array<string, mixed> $link
+     */
+    private function droppedMemoryLinkUuid(array $link, string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid): ?string
+    {
+        if ($localType === 'payment' && $this->memoryPaymentInvoiceLink($link, $companyUuid, $realmId, $quickbooksId) === true) {
+            return '';
+        }
+        if ($this->memoryLinkMatches($link, $companyUuid, $realmId, $localType, $quickbooksId, $localUuid) === false) {
+            return null;
+        }
+
+        return (string) ($link['local_uuid'] ?? '');
     }
 
     private function memoryPaymentInvoiceLink(mixed $link, string $companyUuid, string $realmId, string $quickbooksId): bool

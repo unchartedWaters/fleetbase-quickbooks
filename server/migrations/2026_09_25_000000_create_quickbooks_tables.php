@@ -34,7 +34,6 @@ return new class extends Migration {
                 $table->timestamps();
             });
         }
-
     }
 
     private function createLinks(): void
@@ -53,7 +52,6 @@ return new class extends Migration {
                 $table->unique(['company_uuid', 'local_type', 'local_uuid'], 'quickbooks_links_local_unique');
             });
         }
-
     }
 
     private function createPendingSyncs(): void
@@ -72,7 +70,6 @@ return new class extends Migration {
                 $table->index(['company_uuid', 'status'], 'quickbooks_pending_company_status');
             });
         }
-
     }
 
     private function createSyncBatches(): void
@@ -97,7 +94,6 @@ return new class extends Migration {
                 $table->timestamps();
             });
         }
-
     }
 
     private function createSyncAttempts(): void
