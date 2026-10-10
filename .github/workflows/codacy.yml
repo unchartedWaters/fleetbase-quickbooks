@@ -54,19 +54,42 @@ jobs:
           # This will handover control about PR rejection to the GitHub side
           max-allowed-issues: 2147483647
 
-      # The CLI writes one SARIF run per tool, and code scanning refuses several runs that share a
-      # category. Give each run its own category, numbered within its tool so it stays stable.
-      - name: Give each SARIF run its own category
+      # The CLI writes one SARIF run per tool. Code scanning refuses several runs that share a
+      # category, so each run gets its own, numbered within its tool so it stays stable. It also
+      # takes at most 25 runs per upload, so the runs are split across files of 25.
+      - name: Prepare SARIF runs for upload
         run: |
           jq '.runs |= (reduce .[] as $run ({runs: [], seen: {}};
                 ($run.tool.driver.name // "tool") as $name
                 | (.seen[$name] // 0) as $n
                 | .runs += [$run + {automationDetails: {id: ("codacy/" + $name + "/" + ($n | tostring) + "/")}}]
                 | .seen[$name] = $n + 1) | .runs)' results.sarif > results.categorized.sarif
-          mv results.categorized.sarif results.sarif
+          total=$(jq '.runs | length' results.categorized.sarif)
+          if [ "$total" -gt 75 ]; then
+            echo "::error::Codacy produced $total SARIF runs; add another upload step for runs past 75."
+            exit 1
+          fi
+          for part in 0 1 2; do
+            start=$((part * 25))
+            if [ "$part" -eq 0 ] || [ "$start" -lt "$total" ]; then
+              jq --argjson start "$start" '.runs |= .[$start:$start + 25]' results.categorized.sarif > "results-$part.sarif"
+            fi
+          done
 
-      # Upload the SARIF file generated in the previous step
-      - name: Upload SARIF results file
+      # Upload the SARIF files generated in the previous step
+      - name: Upload SARIF results (runs 1-25)
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: results.sarif
+          sarif_file: results-0.sarif
+
+      - name: Upload SARIF results (runs 26-50)
+        if: hashFiles('results-1.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results-1.sarif
+
+      - name: Upload SARIF results (runs 51-75)
+        if: hashFiles('results-2.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results-2.sarif
