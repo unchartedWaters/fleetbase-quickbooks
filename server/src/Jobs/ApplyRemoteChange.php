@@ -3,11 +3,13 @@
 namespace Fleetbase\Quickbooks\Jobs;
 
 use Fleetbase\Quickbooks\Services\BatchRunner;
+use Fleetbase\Quickbooks\Services\ConnectionTokens;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Services\TokenRefresher;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Illuminate\Bus\Queueable;
 use Illuminate\Container\Container;
@@ -64,6 +66,7 @@ class ApplyRemoteChange implements ShouldQueue
         FleetbaseDirectory $directory,
         SettingsService $settings,
         SettingsStore $store,
+        ?ConnectionTokens $tokens = null,
     ): void {
         $entities = $this->knownEntities();
         if ($entities === [] || ConnectionGate::hasRealm($directory->connection($this->companyUuid)) === false) {
@@ -112,6 +115,9 @@ class ApplyRemoteChange implements ShouldQueue
             if ($ledger instanceof SyncLedger === false) {
                 return;
             }
+            if ($tokens !== null && $this->tokenUnusable($engine, $directory, $tokens, $ledger, $lock) === true) {
+                return;
+            }
             $engine->acceptRemoteChanges($ledger, $this->companyUuid, $entities, $syncSettings, time());
             $save = true;
         } finally {
@@ -127,6 +133,38 @@ class ApplyRemoteChange implements ShouldQueue
                 }
             }
         }
+    }
+
+    /**
+     * Refresh the access token when it is close to expiring, as a company batch does, and
+     * put the result on the ledger connection. The webhook can arrive long after the last
+     * sync, so the stored token may have expired. The Intuit call runs with the company
+     * lock released and takes it again itself. True when QuickBooks cannot be called: the
+     * run is recorded as skipped, and a temporary refresh failure queues this delivery again.
+     */
+    private function tokenUnusable(SyncEngine $engine, FleetbaseDirectory $directory, ConnectionTokens $tokens, SyncLedger $ledger, Lock $lock): bool
+    {
+        $connection = $ledger->connection($this->companyUuid);
+        if (is_array($connection) === false) {
+            return false;
+        }
+
+        $now        = time();
+        $connection = $engine->runHttp(fn () => $tokens->refreshIfDue($connection, $now));
+        $blocked    = ConnectionTokens::blockedMessage($connection, $now);
+        if ($blocked === null) {
+            $ledger->connections[$this->companyUuid] = $connection;
+
+            return false;
+        }
+
+        $this->reacquireCompanyLock($lock);
+        $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', $blocked);
+        if (in_array($blocked, [ConnectionTokens::ALREADY_RUNNING, TokenRefresher::UNAVAILABLE_MESSAGE], true) === true) {
+            $this->retryBusyLock();
+        }
+
+        return true;
     }
 
     /**
