@@ -250,32 +250,47 @@ class QuickBooksClient
         }
 
         if ($count === 1) {
-            for ($attempt = 0; $attempt < 5; $attempt++) {
-                if ($this->findInvoiceByDocNumber($connection, $candidate) === null) {
-                    return [$candidate];
-                }
-
-                $next = NextDocNumber::after($candidate);
-                if ($next === null) {
-                    return [];
-                }
-
-                $candidate = $next;
-            }
-
-            return [];
+            return $this->firstFreeInvoiceDocNumber($connection, $candidate);
         }
 
+        return $this->freeInvoiceDocNumbers($connection, $candidate, $count);
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<int, string>
+     */
+    private function firstFreeInvoiceDocNumber(array $connection, string $candidate): array
+    {
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            if ($this->findInvoiceByDocNumber($connection, $candidate) === null) {
+                return [$candidate];
+            }
+
+            $next = NextDocNumber::after($candidate);
+            if ($next === null) {
+                return [];
+            }
+
+            $candidate = $next;
+        }
+
+        return [];
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<int, string>
+     */
+    private function freeInvoiceDocNumbers(array $connection, ?string $candidate, int $count): array
+    {
         $numbers    = [];
         $checksLeft = $count + 5;
         while (count($numbers) < $count && $candidate !== null && $checksLeft > 0) {
-            $window = [];
-            $cursor = $candidate;
-            $room   = min(($count - count($numbers)) + 5, $checksLeft);
-            while (count($window) < $room && $cursor !== null) {
-                $window[] = $cursor;
-                $cursor   = NextDocNumber::after($cursor);
-            }
+            $room                 = min(($count - count($numbers)) + 5, $checksLeft);
+            [$window, $candidate] = $this->invoiceDocNumberWindow($candidate, $room);
             if ($window === []) {
                 break;
             }
@@ -290,10 +305,23 @@ class QuickBooksClient
                     return $numbers;
                 }
             }
-            $candidate = $cursor;
         }
 
         return $numbers;
+    }
+
+    /**
+     * @return array{0: array<int, string>, 1: ?string}
+     */
+    private function invoiceDocNumberWindow(?string $cursor, int $room): array
+    {
+        $window = [];
+        while (count($window) < $room && $cursor !== null) {
+            $window[] = $cursor;
+            $cursor   = NextDocNumber::after($cursor);
+        }
+
+        return [$window, $cursor];
     }
 
     /**
@@ -497,52 +525,82 @@ class QuickBooksClient
      */
     private function findPaymentsForInvoiceTargets(array $connection, array $invoiceIds): array
     {
-        $invoiceIds = array_values(array_unique(array_filter(array_map(
-            static fn (mixed $id): string => trim((string) $id),
-            $invoiceIds
-        ), static fn (string $id): bool => $id !== '')));
+        $invoiceIds = $this->trimmedIdList($invoiceIds);
         if ($invoiceIds === []) {
             return [];
         }
 
-        $invoices = [];
-        if (count($invoiceIds) === 1) {
-            $invoice = $this->getInvoice($connection, $invoiceIds[0]);
-            if (is_array($invoice) === true) {
-                $invoices[] = $invoice;
-            }
-        } else {
-            $items = [];
-            foreach (array_chunk($invoiceIds, self::BATCH_LIMIT) as $index => $chunk) {
-                $items[] = [
-                    'bId'   => 'payment-invoices-' . $index,
-                    'query' => 'select * from Invoice where Id IN (' . self::quotedList($chunk) . ')',
-                ];
-            }
-            foreach ($this->batch($connection, $items) as $result) {
-                if (is_array($result) === false || empty($result['ok']) === true) {
-                    $status  = is_array($result) === true ? (int) ($result['status'] ?? 400) : 400;
-                    $message = is_array($result) === true ? (string) ($result['error'] ?? 'QuickBooks invoice lookup failed.') : 'QuickBooks invoice lookup failed.';
-                    throw new QuickBooksException($status, $message);
-                }
-                foreach ($result['rows'] as $invoice) {
-                    if (is_array($invoice) === true) {
-                        $invoices[] = $invoice;
-                    }
-                }
-            }
-        }
-
-        $paymentIds = [];
-        foreach ($invoices as $invoice) {
-            foreach ($this->linkedPaymentIds($invoice) as $id) {
-                $paymentIds[$id] = true;
-            }
-        }
-        $ids = array_keys($paymentIds);
+        $ids = $this->paymentIdsOnInvoices($this->invoicesForPaymentLookup($connection, $invoiceIds));
         if ($ids === []) {
             return [];
         }
+
+        return $this->paymentsForIds($connection, $ids);
+    }
+
+    /**
+     * @param array<int, mixed> $ids
+     *
+     * @return array<int, string>
+     */
+    private function trimmedIdList(array $ids): array
+    {
+        return array_values(array_unique(array_filter(array_map(
+            static fn (mixed $id): string => trim((string) $id),
+            $ids
+        ), static fn (string $id): bool => $id !== '')));
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     * @param array<int, string>   $invoiceIds
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function invoicesForPaymentLookup(array $connection, array $invoiceIds): array
+    {
+        if (count($invoiceIds) === 1) {
+            $invoice = $this->getInvoice($connection, $invoiceIds[0]);
+
+            return is_array($invoice) === true ? [$invoice] : [];
+        }
+
+        $items = [];
+        foreach (array_chunk($invoiceIds, self::BATCH_LIMIT) as $index => $chunk) {
+            $items[] = [
+                'bId'   => 'payment-invoices-' . $index,
+                'query' => 'select * from Invoice where Id IN (' . self::quotedList($chunk) . ')',
+            ];
+        }
+
+        return $this->rowsFromBatch($connection, $items, 'QuickBooks invoice lookup failed.');
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $invoices
+     *
+     * @return array<int, string>
+     */
+    private function paymentIdsOnInvoices(array $invoices): array
+    {
+        $paymentIds = [];
+        foreach ($invoices as $invoice) {
+            foreach ($this->linkedPaymentIds($invoice) as $paymentId) {
+                $paymentIds[$paymentId] = true;
+            }
+        }
+
+        return array_keys($paymentIds);
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     * @param array<int, string>   $ids
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function paymentsForIds(array $connection, array $ids): array
+    {
         if (count($ids) === 1) {
             $payment = $this->getPayment($connection, $ids[0]);
 
@@ -556,21 +614,33 @@ class QuickBooksClient
                 'query' => 'select * from Payment where Id IN (' . self::quotedList($chunk) . ')',
             ];
         }
-        $payments = [];
+
+        return $this->rowsFromBatch($connection, $items, 'QuickBooks payment lookup failed.');
+    }
+
+    /**
+     * @param array<string, mixed>                                                                                                $connection
+     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function rowsFromBatch(array $connection, array $items, string $fallback): array
+    {
+        $rows = [];
         foreach ($this->batch($connection, $items) as $result) {
             if (is_array($result) === false || empty($result['ok']) === true) {
                 $status  = is_array($result) === true ? (int) ($result['status'] ?? 400) : 400;
-                $message = is_array($result) === true ? (string) ($result['error'] ?? 'QuickBooks payment lookup failed.') : 'QuickBooks payment lookup failed.';
+                $message = is_array($result) === true ? (string) ($result['error'] ?? $fallback) : $fallback;
                 throw new QuickBooksException($status, $message);
             }
-            foreach ($result['rows'] as $payment) {
-                if (is_array($payment) === true) {
-                    $payments[] = $payment;
+            foreach ($result['rows'] as $row) {
+                if (is_array($row) === true) {
+                    $rows[] = $row;
                 }
             }
         }
 
-        return $payments;
+        return $rows;
     }
 
     /**
@@ -1080,56 +1150,18 @@ class QuickBooksClient
     {
         $fault = $row['Fault']['Error'][0] ?? null;
         if (is_array($fault) === true) {
-            $detail = trim((string) ($fault['Detail'] ?? $fault['Message'] ?? ''));
-            $status = 400;
-
-            return [
-                'ok'     => false,
-                'body'   => [],
-                'rows'   => [],
-                'error'  => $detail !== '' ? $detail : 'QuickBooks rejected this item.',
-                'status' => $status,
-                'halt'   => false,
-            ];
+            return $this->batchFaultResult($fault);
         }
 
         if (isset($row['QueryResponse']) === true && is_array($row['QueryResponse']) === true) {
-            $rows = [];
-            foreach ($row['QueryResponse'] as $value) {
-                if (is_array($value) === false) {
-                    continue;
-                }
-                if (isset($value['Id']) === true) {
-                    $rows[] = $value;
-                    continue;
-                }
-                if (array_is_list($value) === true) {
-                    foreach ($value as $entity) {
-                        if (is_array($entity) === true) {
-                            $rows[] = $entity;
-                        }
-                    }
-                }
-            }
-
-            return [
-                'ok'     => true,
-                'body'   => [],
-                'rows'   => $rows,
-                'error'  => null,
-                'status' => 200,
-                'halt'   => false,
-            ];
+            return $this->batchQueryResult($row['QueryResponse']);
         }
 
-        foreach ($row as $key => $value) {
-            if ($key === 'bId' || $key === 'Fault' || is_array($value) === false || array_is_list($value) === true) {
-                continue;
-            }
-
+        $body = $this->batchEntityBody($row);
+        if ($body !== null) {
             return [
                 'ok'     => true,
-                'body'   => $value,
+                'body'   => $body,
                 'rows'   => [],
                 'error'  => null,
                 'status' => 200,
@@ -1145,6 +1177,88 @@ class QuickBooksClient
             'status' => 400,
             'halt'   => false,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $fault
+     *
+     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}
+     */
+    private function batchFaultResult(array $fault): array
+    {
+        $detail = trim((string) ($fault['Detail'] ?? $fault['Message'] ?? ''));
+
+        return [
+            'ok'     => false,
+            'body'   => [],
+            'rows'   => [],
+            'error'  => $detail !== '' ? $detail : 'QuickBooks rejected this item.',
+            'status' => 400,
+            'halt'   => false,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $response
+     *
+     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}
+     */
+    private function batchQueryResult(array $response): array
+    {
+        return [
+            'ok'     => true,
+            'body'   => [],
+            'rows'   => $this->batchQueryRows($response),
+            'error'  => null,
+            'status' => 200,
+            'halt'   => false,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $response
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function batchQueryRows(array $response): array
+    {
+        $rows = [];
+        foreach ($response as $value) {
+            if (is_array($value) === false) {
+                continue;
+            }
+            if (isset($value['Id']) === true) {
+                $rows[] = $value;
+                continue;
+            }
+            if (array_is_list($value) === true) {
+                foreach ($value as $entity) {
+                    if (is_array($entity) === true) {
+                        $rows[] = $entity;
+                    }
+                }
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     *
+     * @return array<string, mixed>|null
+     */
+    private function batchEntityBody(array $row): ?array
+    {
+        foreach ($row as $key => $value) {
+            if ($key === 'bId' || $key === 'Fault' || is_array($value) === false || array_is_list($value) === true) {
+                continue;
+            }
+
+            return $value;
+        }
+
+        return null;
     }
 
     /**

@@ -58,6 +58,17 @@ class InvoiceMapper
             'Line'        => $lines,
         ];
 
+        return $this->withInvoiceFields($payload, $invoice, $pushClears);
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $invoice
+     *
+     * @return array<string, mixed>
+     */
+    private function withInvoiceFields(array $payload, array $invoice, bool $pushClears): array
+    {
         if (empty($invoice['number']) === false) {
             $payload['DocNumber'] = $invoice['number'];
         }
@@ -129,6 +140,22 @@ class InvoiceMapper
                 $itemId = $ref;
             }
         }
+        $payload['Line'] = $this->applyPairedLineIds($lines, $remote, $remoteSales, $salesAt, $wanted, $hasTax, $taxId, $itemId);
+
+        return $payload;
+    }
+
+    /**
+     * @param array<int, mixed>                $lines
+     * @param array<string, mixed>             $remote
+     * @param array<int, array<string, mixed>> $remoteSales
+     * @param array<int, int>                  $salesAt
+     * @param array<int, string>               $wanted
+     *
+     * @return array<int, mixed>
+     */
+    private function applyPairedLineIds(array $lines, array $remote, array $remoteSales, array $salesAt, array $wanted, bool $hasTax, ?string $taxId, string $itemId): array
+    {
         $pairedRemote = [];
         foreach ($this->pairSalesLines($wanted, $remoteSales) as $localIndex => $remoteIndex) {
             if ($remoteIndex === null) {
@@ -138,11 +165,11 @@ class InvoiceMapper
             if (isset($salesAt[$localIndex]) === false) {
                 continue;
             }
-            $id = trim((string) ($remoteSales[$remoteIndex]['Id'] ?? ''));
-            if ($id === '') {
+            $remoteLineId = trim((string) ($remoteSales[$remoteIndex]['Id'] ?? ''));
+            if ($remoteLineId === '') {
                 continue;
             }
-            $lines[$salesAt[$localIndex]]['Id'] = $id;
+            $lines[$salesAt[$localIndex]]['Id'] = $remoteLineId;
         }
         if ($hasTax === false && $taxId !== null) {
             $zero    = Amounts::centsToDecimal(0);
@@ -161,9 +188,8 @@ class InvoiceMapper
         foreach ($this->extraRemoteLines($remote, $pairedRemote) as $line) {
             $lines[] = $line;
         }
-        $payload['Line'] = $lines;
 
-        return $payload;
+        return $lines;
     }
 
     /**

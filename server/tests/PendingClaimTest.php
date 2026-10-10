@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
+use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
@@ -554,17 +555,17 @@ class ClaimRefreshDownQuickBooks extends ClaimProbeQuickBooks
     {
         $this->refreshes++;
 
-        throw new Fleetbase\Quickbooks\Support\QuickBooksException(503, 'unavailable');
+        throw new QuickBooksException(503, 'unavailable');
     }
 
     public function createCustomer(array $connection, array $payload): array
     {
-        throw new Fleetbase\Quickbooks\Support\QuickBooksException(401, 'QuickBooks request failed with status 401');
+        throw new QuickBooksException(401, 'QuickBooks request failed with status 401');
     }
 
     public function batch(array $connection, array $items): array
     {
-        throw new Fleetbase\Quickbooks\Support\QuickBooksException(401, 'QuickBooks request failed with status 401');
+        throw new QuickBooksException(401, 'QuickBooks request failed with status 401');
     }
 }
 
