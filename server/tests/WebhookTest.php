@@ -22,6 +22,7 @@ use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 use Fleetbase\Quickbooks\Support\WebhookSignature;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
+use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
@@ -816,7 +817,7 @@ test('saving a blank webhook verifier keeps the stored ciphertext and does not p
 
     session(['company' => 'company-uuid']);
     try {
-        $response = $controller->save(Request::create('/settings', 'POST', [
+        $response = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => [
                 'client_id'            => 'client-id',

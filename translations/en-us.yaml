@@ -80,6 +80,7 @@ quickbooks:
   settings:
     save: Save Changes
     saved: QuickBooks settings saved.
+    read-only-note: These settings apply to every organization on this Fleetbase install, so only an installation administrator can change them.
     authentication: Authentication
     credentials-title: Getting your QuickBooks credentials
     credentials-step-keys-before: "Sign in at "

@@ -33,6 +33,7 @@
                             id={{id}}
                             class="form-select form-input w-full {{if (get @errors field.key) 'border-red-500 dark:border-red-400'}}"
                             style={{if (get @errors field.key) "border-color:#dc2626"}}
+                            disabled={{@readOnly}}
                             data-test-field={{field.key}}
                             aria-invalid={{if (get @errors field.key) "true"}}
                             aria-describedby={{if (get @errors field.key) (concat field.key "-error")}}
@@ -55,6 +56,7 @@
                             class="w-full form-input {{if (get @errors field.key) 'border-red-500 dark:border-red-400'}}"
                             style={{if (get @errors field.key) "border-color:#dc2626"}}
                             autocomplete="off"
+                            disabled={{@readOnly}}
                             data-test-field={{field.key}}
                             aria-invalid={{if (get @errors field.key) "true"}}
                             aria-describedby={{if (get @errors field.key) (concat field.key "-error")}}
@@ -77,6 +79,7 @@
                 style={{if (get @errors "client_secret") "border-color:#dc2626"}}
                 autocomplete="new-password"
                 placeholder={{if @secret.set (t "quickbooks.settings.client-secret-placeholder") ""}}
+                disabled={{@readOnly}}
                 data-test-field="client_secret"
                 aria-invalid={{if (get @errors "client_secret") "true"}}
                 aria-describedby={{if (get @errors "client_secret") "client-secret-error"}}
@@ -101,6 +104,7 @@
                 style={{if (get @errors "webhook_verifier") "border-color:#dc2626"}}
                 autocomplete="new-password"
                 placeholder={{if @secret.verifier.set (t "quickbooks.settings.verifier-placeholder") ""}}
+                disabled={{@readOnly}}
                 data-test-field="webhook_verifier"
                 aria-invalid={{if (get @errors "webhook_verifier") "true"}}
                 aria-describedby={{if (get @errors "webhook_verifier") "webhook-verifier-error"}}
@@ -125,7 +129,15 @@
             <div data-test-sync-field={{url.key}}>
                 {{#if url.editable}}
                     <InputGroup @name={{url.label}} as |id|>
-                        <Input id={{id}} @type="text" @value={{url.value}} class="w-full form-input" data-test-field={{url.key}} {{on "input" (fn @onUpdate url.key)}} />
+                        <Input
+                            id={{id}}
+                            @type="text"
+                            @value={{url.value}}
+                            class="w-full form-input"
+                            disabled={{@readOnly}}
+                            data-test-field={{url.key}}
+                            {{on "input" (fn @onUpdate url.key)}}
+                        />
                         <p class="text-xs text-gray-400 mt-1" data-test-field-help={{url.key}}>{{url.hint}}</p>
                     </InputGroup>
                 {{else}}
@@ -148,6 +160,7 @@
                         @type={{field.type}}
                         @value={{field.value}}
                         min={{field.min}}
+                        disabled={{@readOnly}}
                         class="w-full form-input {{if (get @errors field.key) 'border-red-500 dark:border-red-400'}}"
                         style={{if (get @errors field.key) "border-color:#dc2626"}}
                         data-test-sync={{field.key}}
@@ -181,6 +194,7 @@
                             <Toggle
                                 @isToggled={{policy.enabled}}
                                 @onToggle={{fn @onSetEntityEnabled policy.entity}}
+                                @disabled={{@readOnly}}
                                 @label={{policy.label}}
                                 aria-label={{policy.label}}
                                 data-test-sync={{policy.enabledKey}}
@@ -192,7 +206,7 @@
                                 aria-label={{t "quickbooks.settings.entity-primary" entity=policy.label}}
                                 class="form-select form-input w-full {{if (or (get @errors policy.conflictKey) (get @errors policy.referenceKey)) 'border-red-500 dark:border-red-400'}}"
                                 style={{if (or (get @errors policy.conflictKey) (get @errors policy.referenceKey)) "border-color:#dc2626"}}
-                                disabled={{not policy.enabled}}
+                                disabled={{or @readOnly (not policy.enabled)}}
                                 data-test-sync={{policy.conflictKey}}
                                 aria-invalid={{if (or (get @errors policy.conflictKey) (get @errors policy.referenceKey)) "true"}}
                                 aria-describedby={{if
@@ -223,7 +237,7 @@
                                     aria-label={{t "quickbooks.settings.entity-sync-direction" entity=policy.label}}
                                     class="form-select form-input w-full {{if (get @errors policy.directionKey) 'border-red-500 dark:border-red-400'}}"
                                     style={{if (get @errors policy.directionKey) "border-color:#dc2626"}}
-                                    disabled={{not policy.enabled}}
+                                    disabled={{or @readOnly (not policy.enabled)}}
                                     data-test-sync={{policy.directionKey}}
                                     aria-invalid={{if (get @errors policy.directionKey) "true"}}
                                     aria-describedby={{if (get @errors policy.directionKey) (concat policy.directionKey "-error")}}

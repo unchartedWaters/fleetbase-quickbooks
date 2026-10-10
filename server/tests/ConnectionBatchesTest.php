@@ -320,6 +320,17 @@ test('connecting one organization leaves the other organization connection in pl
         $table->timestamp('last_batch_at')->nullable();
         $table->timestamps();
     });
+    $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
+        $table->char('uuid', 36)->primary();
+        $table->char('company_uuid', 36)->index();
+        $table->string('local_type');
+        $table->char('local_uuid', 36);
+        $table->string('reason')->nullable();
+        $table->string('status')->default('pending');
+        $table->unsignedInteger('attempts')->default(0);
+        $table->timestamp('next_attempt_at')->nullable();
+        $table->timestamps();
+    });
     $owner = new Connection();
     $owner->fill([
         'uuid'         => 'conn-owner',

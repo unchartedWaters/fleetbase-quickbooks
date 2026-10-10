@@ -220,11 +220,14 @@ test('an operator can sync now and an installation admin still can', function ()
     $permissionStatus = static function (Authorizer $authorizer): callable {
         return static function (string $permission, Request $request) use ($authorizer): int {
             $call = static function (string $permission, Request $request) use ($authorizer): void {
-                $authorizer->check($permission);
+                $authorizer->check($permission, $request);
             };
 
             return installStatus(static fn () => $call($permission, $request));
         };
+    };
+    $adminOnlyStatus = static function (Authorizer $authorizer, Request $request): int {
+        return installStatus(static fn () => $authorizer->checkInstallationAdmin($request));
     };
 
     $operator = $permissionStatus(operatorAuthorizer());
@@ -236,13 +239,13 @@ test('an operator can sync now and an installation admin still can', function ()
         ->and($operator('quickbooks reconcile sync', installRequest('/quickbooks/int/v1/sync', 'POST', false)))->toBe(200)
         ->and($operator('quickbooks connect connection', installRequest('/quickbooks/int/v1/oauth/start', 'POST', false)))->toBe(200)
         ->and($operator('quickbooks import-customers connection', installRequest('/quickbooks/int/v1/import', 'POST', false)))->toBe(200)
-        ->and($operator('quickbooks update settings', installRequest('/quickbooks/int/v1/settings', 'POST', false)))->toBe(200)
+        ->and($operator('quickbooks view settings', installRequest('/quickbooks/int/v1/settings', 'GET', false)))->toBe(200)
         ->and($operator('quickbooks view connection', installRequest('/quickbooks/int/v1/connection', 'GET', false)))->toBe(200)
-        ->and($operator('quickbooks view connection', installRequest('/quickbooks/int/v1/connection/test', 'POST', false)))->toBe(403)
         ->and($operator('quickbooks update sync', installRequest('/quickbooks/int/v1/sync', 'POST', false)))->toBe(403)
         ->and($admin('quickbooks reconcile sync', installRequest('/quickbooks/int/v1/sync', 'POST', true)))->toBe(200)
-        ->and($admin('quickbooks view connection', installRequest('/quickbooks/int/v1/connection/test', 'POST', true)))->toBe(200)
-        ->and($admin('quickbooks reconcile sync', installRequest('/quickbooks/int/v1/sync', 'POST', false)))->toBe(403);
+        ->and($admin('quickbooks reconcile sync', installRequest('/quickbooks/int/v1/sync', 'POST', false)))->toBe(403)
+        ->and($adminOnlyStatus(operatorAuthorizer(), installRequest('/quickbooks/int/v1/connection/test', 'POST', false)))->toBe(403)
+        ->and($adminOnlyStatus(deniedAuthorizer(), installRequest('/quickbooks/int/v1/connection/test', 'POST', true)))->toBe(200);
 });
 
 test('the redirect sent to intuit must be public https', function () {
