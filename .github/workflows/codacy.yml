@@ -54,6 +54,17 @@ jobs:
           # This will handover control about PR rejection to the GitHub side
           max-allowed-issues: 2147483647
 
+      # The CLI writes one SARIF run per tool, and code scanning refuses several runs that share a
+      # category. Give each run its own category, numbered within its tool so it stays stable.
+      - name: Give each SARIF run its own category
+        run: |
+          jq '.runs |= (reduce .[] as $run ({runs: [], seen: {}};
+                ($run.tool.driver.name // "tool") as $name
+                | (.seen[$name] // 0) as $n
+                | .runs += [$run + {automationDetails: {id: ("codacy/" + $name + "/" + ($n | tostring) + "/")}}]
+                | .seen[$name] = $n + 1) | .runs)' results.sarif > results.categorized.sarif
+          mv results.categorized.sarif results.sarif
+
       # Upload the SARIF file generated in the previous step
       - name: Upload SARIF results file
         uses: github/codeql-action/upload-sarif@v4
