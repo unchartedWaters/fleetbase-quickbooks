@@ -295,7 +295,7 @@ test('an invoice reports an error when its customer cannot be synced', function 
         ->and($client->calls)->not->toContain('createInvoice');
 });
 
-test('a foreign currency does not fail the invoice and is not sent', function () {
+test('a foreign currency fails the invoice instead of posting it in the home currency', function () {
     [$engine, $client]                                    = qbEngine();
     $ledger                                               = connectedLedger();
     $ledger->connections['company-uuid']['home_currency'] = 'USD';
@@ -305,11 +305,11 @@ test('a foreign currency does not fail the invoice and is not sent', function ()
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(1)
-        ->and($batch['failed'])->toBe(0)
-        ->and($ledger->attempts[0]['error'])->toBeNull()
-        ->and($client->calls)->toContain('createInvoice')
-        ->and($client->invoices['inv-1'])->not->toHaveKey('CurrencyRef');
+    expect($batch['created'])->toBe(0)
+        ->and($batch['failed'])->toBe(1)
+        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match QuickBooks home currency USD')
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and($client->invoices)->toBeEmpty();
 });
 
 test('use the quickbooks invoice copies the total and understood line items', function () {

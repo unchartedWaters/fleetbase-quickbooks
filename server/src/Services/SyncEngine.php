@@ -921,7 +921,6 @@ class SyncEngine
         }
 
         $payload    = $this->invoices->toQuickBooks($invoice, (string) $customerLink['qbo_id'], $itemId);
-        $this->stripRejectedInvoiceCurrency($payload, $ledger, $connection);
         $reference  = (string) ($settings['invoice_reference'] ?? 'fleetbase');
         $conflict   = (string) ($settings['invoice_conflict'] ?? 'fleetbase');
         $pushClears = $this->sendsClears($conflict, $push, $copy);
@@ -1007,6 +1006,9 @@ class SyncEngine
 
                 return 'skipped';
             }
+            if ($this->rejectInvoiceCurrency($payload, $ledger, $connection) === true) {
+                return 'failed';
+            }
             if ($reference === 'quickbooks' && $this->customTxnNumbers($connection) === true) {
                 $next = $this->reservedDocNumbers !== null
                     ? ($this->reservedDocNumbers[$uuid] ?? null)
@@ -1043,7 +1045,7 @@ class SyncEngine
         $invoice     = $ledger->invoices[$uuid];
         $remoteCents = $this->majorUnits($remote['TotalAmt'] ?? 0);
         $localCents  = (int) ($invoice['total'] ?? 0);
-        $currencyOk  = $this->currencyError($ledger, $connection, (string) ($invoice['currency'] ?? ''), 'Invoice') === null;
+        $currencyOk  = $this->invoiceCurrencyError($ledger, $connection, (string) ($invoice['currency'] ?? '')) === null;
         // QuickBooks replaces the Fleetbase line set only when this sync copies remote lines.
         // Otherwise extra QuickBooks sales lines are not a Fleetbase mismatch.
         $remoteSuppliesLines = ($conflict === 'quickbooks' && $copy === true) || ($push === false && $copy === true);
@@ -1080,7 +1082,6 @@ class SyncEngine
             }
 
             $payload = $this->invoices->toQuickBooks($ledger->invoices[$uuid], (string) $customerLink['qbo_id'], $itemId);
-            $this->stripRejectedInvoiceCurrency($payload, $ledger, $connection);
         }
 
         if ($push === false) {
@@ -1089,12 +1090,14 @@ class SyncEngine
 
         if ($pushClears === true) {
             $payload = $this->invoices->toQuickBooks($ledger->invoices[$uuid], (string) $customerLink['qbo_id'], $itemId, true);
-            $this->stripRejectedInvoiceCurrency($payload, $ledger, $connection);
             if ($reference === 'quickbooks') {
                 unset($payload['DocNumber']);
             }
         }
 
+        if ($this->rejectInvoiceCurrency($payload, $ledger, $connection) === true) {
+            return 'failed';
+        }
         $this->keepFleetbaseDocNumber($payload, $ledger->invoices[$uuid], $remote, $reference);
         $payload = $this->invoices->withExistingLineIds($payload, $remote);
         $this->rememberPushedLineIds($ledger, $uuid, $payload);
@@ -1330,6 +1333,22 @@ class SyncEngine
         }
 
         return $label . ' currency ' . $currency . ' does not match QuickBooks home currency ' . $home;
+    }
+
+    /**
+     * An invoice currency that differs from the home currency is accepted only when
+     * QuickBooks multi-currency is enabled.
+     *
+     * @param array<string, mixed> $connection
+     */
+    private function invoiceCurrencyError(SyncLedger $ledger, array $connection, string $currency): ?string
+    {
+        $error = $this->currencyError($ledger, $connection, $currency, 'Invoice');
+        if ($error === null || $this->client->multiCurrencyEnabled($connection) === true) {
+            return null;
+        }
+
+        return $error;
     }
 
     /**
@@ -4421,16 +4440,23 @@ class SyncEngine
     }
 
     /**
+     * A foreign-currency invoice is not posted in the home currency. Without multi-currency
+     * in QuickBooks the row fails with the currency message; the caller returns 'failed'.
+     *
      * @param array<string, mixed> $payload
      * @param array<string, mixed> $connection
      */
-    private function stripRejectedInvoiceCurrency(array &$payload, SyncLedger $ledger, array $connection): void
+    private function rejectInvoiceCurrency(array $payload, SyncLedger $ledger, array $connection): bool
     {
         $ref      = $payload['CurrencyRef'] ?? null;
         $currency = is_array($ref) === true ? (string) ($ref['value'] ?? '') : '';
-        if ($this->currencyError($ledger, $connection, $currency, 'Invoice') !== null) {
-            unset($payload['CurrencyRef']);
+        $error    = $this->invoiceCurrencyError($ledger, $connection, $currency);
+        if ($error === null) {
+            return false;
         }
+        $this->lastError = $error;
+
+        return true;
     }
 
     /**
@@ -4491,7 +4517,7 @@ class SyncEngine
             }
         }
         $currency = $this->remoteInvoiceCurrency($remote);
-        if ($currency !== '' && is_array($connection) === true && $this->currencyError($ledger, $connection, $currency, 'Invoice') === null) {
+        if ($currency !== '' && is_array($connection) === true && $this->invoiceCurrencyError($ledger, $connection, $currency) === null) {
             $current = strtoupper(trim((string) ($ledger->invoices[$uuid]['currency'] ?? '')));
             if ($current !== $currency) {
                 $ledger->invoices[$uuid]['currency'] = $currency;
@@ -4585,6 +4611,11 @@ class QuickBooksHttpGate extends QuickBooksClient
     public function customTxnNumbers(array $connection): bool
     {
         return $this->engine->runHttp(fn (): bool => $this->inner->customTxnNumbers($connection));
+    }
+
+    public function multiCurrencyEnabled(array $connection): bool
+    {
+        return $this->engine->runHttp(fn (): bool => $this->inner->multiCurrencyEnabled($connection));
     }
 
     public function createCustomer(array $connection, array $payload): array

@@ -50,6 +50,8 @@ class FakeQuickBooks extends QuickBooksClient
 
     public bool $customTxnNumbers = false;
 
+    public bool $multiCurrency = false;
+
     public string $serviceItemId = '';
 
     /** @var array<int, array<string, mixed>> */
@@ -169,6 +171,16 @@ class FakeQuickBooks extends QuickBooksClient
         $this->calls[] = 'customTxnNumbers';
 
         return $this->customTxnNumbers;
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     */
+    public function multiCurrencyEnabled(array $connection): bool
+    {
+        $this->calls[] = 'multiCurrencyEnabled';
+
+        return $this->multiCurrency;
     }
 
     private function autoDocNumber(): ?string

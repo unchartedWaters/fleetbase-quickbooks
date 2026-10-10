@@ -772,11 +772,10 @@ test('an unknown home currency is read from quickbooks before the currency check
     $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
     expect($ledger->connections['company-uuid']['home_currency'])->toBe('USD')
-        ->and($client->calls)->toContain('createInvoice')
+        ->and($client->calls)->not->toContain('createInvoice')
         ->and($client->calls)->toContain('homeCurrency')
-        ->and($ledger->pending[0]['status'])->toBe('done')
-        ->and($ledger->attempts[0]['error'])->toBeNull()
-        ->and($client->invoices['inv-1'] ?? null)->not->toHaveKey('CurrencyRef');
+        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match QuickBooks home currency USD')
+        ->and($client->invoices)->toBeEmpty();
 });
 
 test('the currency check is skipped when quickbooks does not report a home currency', function () {
@@ -2896,7 +2895,7 @@ test('quickbooks primary saves the invoice customer and home currency', function
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
-test('a non-home currency does not block the rest of the invoice', function () {
+test('a non-home currency fails the push instead of updating the invoice in the home currency', function () {
     [$engine, $client, $ledger] = engineLinkedInvoice(['currency' => 'EUR', 'notes' => 'Dock'], [
         'CurrencyRef' => ['value' => 'USD'],
     ]);
@@ -2904,17 +2903,12 @@ test('a non-home currency does not block the rest of the invoice', function () {
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
-        ->and($first['failed'])->toBe(0)
-        ->and($ledger->pending[0]['status'])->toBe('done')
-        ->and($client->invoices['qb-1']['PrivateNote'])->toBe('Dock')
-        ->and($client->invoices['qb-1']['CurrencyRef']['value'])->toBe('USD')
+    expect($first['updated'])->toBe(0)
+        ->and($first['failed'])->toBe(1)
+        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match QuickBooks home currency USD')
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and($client->invoices['qb-1'])->not->toHaveKey('PrivateNote')
         ->and($ledger->invoices['inv-1']['currency'])->toBe('EUR');
-
-    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
-
-    expect($second['aligned'])->toBe(1)
-        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
 });
 
 test('quickbooks primary does not copy a non-home invoice currency', function () {

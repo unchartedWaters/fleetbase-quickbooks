@@ -106,6 +106,18 @@ class QuickBooksClient
     }
 
     /**
+     * Only a company with multi-currency turned on accepts an invoice in a foreign currency.
+     *
+     * @param array<string, mixed> $connection
+     */
+    public function multiCurrencyEnabled(array $connection): bool
+    {
+        $value = $this->preferences($connection)['CurrencyPrefs']['MultiCurrencyEnabled'] ?? false;
+
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN) === true;
+    }
+
+    /**
      * When this is off, QuickBooks assigns the invoice DocNumber itself on create.
      *
      * @param array<string, mixed> $connection
