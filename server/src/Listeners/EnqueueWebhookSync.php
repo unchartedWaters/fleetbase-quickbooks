@@ -70,133 +70,263 @@ class EnqueueWebhookSync
         $this->queued = [];
 
         foreach ($queued as $companyUuid => $events) {
-            $this->deferredPayments = [];
-            $this->deferred         = [];
+            $this->flushCompany($store, (string) $companyUuid, $events);
+        }
+    }
 
-            $settings = $this->settings->resolveSync(
-                [],
-                $store->adminSync(),
-                $store->defaultSync()
-            );
-            $invoices = $this->knownInvoices($companyUuid, $events);
-            $payable  = [];
-            foreach ($events as $event) {
-                if ($event->operation === 'delete' || $event->entityType !== 'payment') {
-                    continue;
-                }
-                if ($this->allows($settings, $event->entityType) === true) {
-                    $payable[] = $event;
-                }
-            }
-            $payments = $this->paymentInvoices($companyUuid, $payable);
-            foreach ($payable as $event) {
-                if ($this->isDeferredPayment($event->realmId . '|' . $event->quickbooksId) === true) {
-                    $this->deferred[] = $event;
-                }
-            }
-            $records = [];
-            $inbound = [];
-            $deletes = [];
-            foreach ($events as $event) {
-                // Delete and void both arrive as operation "delete". A pending row would
-                // run the outbound sync and create the remote record again. Retire the
-                // local row here. Do not hand the delete to SyncEngine or to a pending create.
-                // A delete changes Fleetbase from QuickBooks, so it needs the same permission
-                // as an inbound update: the type is on, the direction takes QuickBooks changes,
-                // and QuickBooks is the side that wins. Otherwise Fleetbase keeps its record.
-                if ($event->operation === 'delete') {
-                    if ($this->quickbooksSupplies($settings, $event->entityType) === true) {
-                        $deletes[] = $event;
-                    }
-                    continue;
-                }
-                if ($this->allows($settings, $event->entityType) === false) {
-                    continue;
-                }
-                if ($event->entityType === 'payment') {
-                    $target = $payments[$event->realmId . '|' . $event->quickbooksId] ?? null;
-                    if (is_array($target) === false) {
-                        continue;
-                    }
-                    $invoiceUuids = is_array($target['invoices'] ?? null) === true ? $target['invoices'] : [];
-                    if ($invoiceUuids === [] && is_string($target['invoice'] ?? null) === true && $target['invoice'] !== '') {
-                        $invoiceUuids = [$target['invoice']];
-                    }
-                    foreach ($invoiceUuids as $invoiceUuid) {
-                        $invoiceUuid = (string) $invoiceUuid;
-                        if ($invoiceUuid === '') {
-                            continue;
-                        }
-                        $records['invoice|' . $invoiceUuid] = [
-                            'local_type' => 'invoice',
-                            'local_uuid' => $invoiceUuid,
-                        ];
-                    }
-                    if ($this->quickbooksSupplies($settings, 'payment') === true) {
-                        $inbound[] = [
-                            'entity'    => 'Payment',
-                            'id'        => $event->quickbooksId,
-                            'operation' => $event->operation,
-                        ];
-                        // A link stored under the QuickBooks payment id does not point loadLinked
-                        // at the invoice. Name the invoice too so the inbound job loads it.
-                        if ($target['keyed_by_payment'] === true) {
-                            foreach ($target['quickbooks_invoices'] as $invoiceId) {
-                                $inbound[] = [
-                                    'entity'    => 'Invoice',
-                                    'id'        => $invoiceId,
-                                    'operation' => 'update',
-                                ];
-                            }
-                        }
-                    }
-                    continue;
-                }
-                $localUuid = $event->localUuid;
-                if ($event->entityType === 'invoice') {
-                    $realmLinks = $invoices['qbo'][$event->realmId] ?? [];
-                    $fromLink   = $realmLinks[$event->quickbooksId] ?? null;
-                    if (is_string($fromLink) === true && $fromLink !== '') {
-                        $localUuid = $fromLink;
-                    }
-                    $linked = isset($realmLinks[$event->quickbooksId]) === true
-                        || (is_string($event->localUuid) === true && $event->localUuid !== '');
-                    $onFile = is_string($localUuid) === true && $localUuid !== '' && isset($invoices['local'][$localUuid]) === true;
-                    if ($linked === false && $onFile === false) {
-                        continue;
-                    }
-                }
-                if (is_string($localUuid) === false || $localUuid === '') {
-                    continue;
-                }
-                $records[$event->entityType . '|' . $localUuid] = [
-                    'local_type' => $event->entityType,
-                    'local_uuid' => $localUuid,
-                ];
-                $remote = $this->remoteEntity($event->entityType);
-                if ($remote !== null && $this->quickbooksSupplies($settings, $event->entityType) === true) {
-                    $inbound[] = [
-                        'entity'    => $remote,
-                        'id'        => $event->quickbooksId,
-                        'operation' => $event->operation,
-                    ];
-                }
-            }
-            if ($deletes !== []) {
-                $this->retireDeletes($companyUuid, $deletes);
-            }
-            if ($this->deferred !== []) {
-                ResolveWebhookPayments::dispatch($companyUuid, $this->deferredPayload());
-            }
-            $inbound = $this->uniqueInbound($inbound);
-            if ($inbound !== []) {
-                ApplyRemoteChange::dispatch($companyUuid, $inbound);
-            }
-            if ($records === []) {
+    /**
+     * @param array<int, QuickBooksEntityChanged> $events
+     */
+    private function flushCompany(SettingsStore $store, string $companyUuid, array $events): void
+    {
+        $this->deferredPayments = [];
+        $this->deferred         = [];
+
+        $settings = $this->settings->resolveSync(
+            [],
+            $store->adminSync(),
+            $store->defaultSync()
+        );
+        $invoices = $this->knownInvoices($companyUuid, $events);
+        $payable  = $this->payableEvents($settings, $events);
+        $payments = $this->paymentInvoices($companyUuid, $payable);
+        $this->rememberDeferredPayments($payable);
+        [$records, $inbound, $deletes] = $this->collectFlushEvents($settings, $events, $invoices, $payments);
+        $this->dispatchFlush($companyUuid, $records, $inbound, $deletes);
+    }
+
+    /**
+     * @param array<string, mixed>                $settings
+     * @param array<int, QuickBooksEntityChanged> $events
+     *
+     * @return array<int, QuickBooksEntityChanged>
+     */
+    private function payableEvents(array $settings, array $events): array
+    {
+        $payable = [];
+        foreach ($events as $event) {
+            if ($event->operation === 'delete' || $event->entityType !== 'payment') {
                 continue;
             }
-            SyncWebhookBatch::dispatch($companyUuid, array_values($records));
+            if ($this->allows($settings, $event->entityType) === true) {
+                $payable[] = $event;
+            }
         }
+
+        return $payable;
+    }
+
+    /**
+     * @param array<int, QuickBooksEntityChanged> $payable
+     */
+    private function rememberDeferredPayments(array $payable): void
+    {
+        foreach ($payable as $event) {
+            if ($this->isDeferredPayment($event->realmId . '|' . $event->quickbooksId) === true) {
+                $this->deferred[] = $event;
+            }
+        }
+    }
+
+    /**
+     * @param array<string, mixed>                                                                                                                 $settings
+     * @param array<int, QuickBooksEntityChanged>                                                                                                  $events
+     * @param array<string, mixed>                                                                                                                 $invoices
+     * @param array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}> $payments
+     *
+     * @return array{0: array<string, array{local_type: string, local_uuid: string}>, 1: array<int, array{entity: string, id: string, operation: string}>, 2: array<int, QuickBooksEntityChanged>}
+     */
+    private function collectFlushEvents(array $settings, array $events, array $invoices, array $payments): array
+    {
+        $records = [];
+        $inbound = [];
+        $deletes = [];
+        foreach ($events as $event) {
+            $this->collectFlushEvent($settings, $event, $invoices, $payments, $records, $inbound, $deletes);
+        }
+
+        return [$records, $inbound, $deletes];
+    }
+
+    /**
+     * Delete and void both arrive as operation "delete". A pending row would
+     * run the outbound sync and create the remote record again. Retire the
+     * local row here. Do not hand the delete to SyncEngine or to a pending create.
+     * A delete changes Fleetbase from QuickBooks, so it needs the same permission
+     * as an inbound update: the type is on, the direction takes QuickBooks changes,
+     * and QuickBooks is the side that wins. Otherwise Fleetbase keeps its record.
+     *
+     * @param array<string, mixed>                                                                                                                 $settings
+     * @param array<string, mixed>                                                                                                                 $invoices
+     * @param array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}> $payments
+     * @param array<string, array{local_type: string, local_uuid: string}>                                                                         $records
+     * @param array<int, array{entity: string, id: string, operation: string}>                                                                     $inbound
+     * @param array<int, QuickBooksEntityChanged>                                                                                                  $deletes
+     */
+    private function collectFlushEvent(array $settings, QuickBooksEntityChanged $event, array $invoices, array $payments, array &$records, array &$inbound, array &$deletes): void
+    {
+        if ($event->operation === 'delete') {
+            if ($this->quickbooksSupplies($settings, $event->entityType) === true) {
+                $deletes[] = $event;
+            }
+
+            return;
+        }
+        if ($this->allows($settings, $event->entityType) === false) {
+            return;
+        }
+        if ($event->entityType === 'payment') {
+            $this->collectPaymentEvent($settings, $event, $payments, $records, $inbound);
+
+            return;
+        }
+        $this->collectLocalEvent($settings, $event, $invoices, $records, $inbound);
+    }
+
+    /**
+     * @param array<string, mixed>                                                                                                                 $settings
+     * @param array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}> $payments
+     * @param array<string, array{local_type: string, local_uuid: string}>                                                                         $records
+     * @param array<int, array{entity: string, id: string, operation: string}>                                                                     $inbound
+     */
+    private function collectPaymentEvent(array $settings, QuickBooksEntityChanged $event, array $payments, array &$records, array &$inbound): void
+    {
+        $target = $payments[$event->realmId . '|' . $event->quickbooksId] ?? null;
+        if (is_array($target) === false) {
+            return;
+        }
+        $this->recordPaymentInvoices($records, $target);
+        if ($this->quickbooksSupplies($settings, 'payment') === false) {
+            return;
+        }
+        $inbound[] = [
+            'entity'    => 'Payment',
+            'id'        => $event->quickbooksId,
+            'operation' => $event->operation,
+        ];
+        // A link stored under the QuickBooks payment id does not point loadLinked
+        // at the invoice. Name the invoice too so the inbound job loads it.
+        if ($target['keyed_by_payment'] === true) {
+            foreach ($target['quickbooks_invoices'] as $invoiceId) {
+                $inbound[] = [
+                    'entity'    => 'Invoice',
+                    'id'        => $invoiceId,
+                    'operation' => 'update',
+                ];
+            }
+        }
+    }
+
+    /**
+     * @param array<string, array{local_type: string, local_uuid: string}>                                                          $records
+     * @param array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>} $target
+     */
+    private function recordPaymentInvoices(array &$records, array $target): void
+    {
+        $invoiceUuids = is_array($target['invoices'] ?? null) === true ? $target['invoices'] : [];
+        if ($invoiceUuids === [] && is_string($target['invoice'] ?? null) === true && $target['invoice'] !== '') {
+            $invoiceUuids = [$target['invoice']];
+        }
+        foreach ($invoiceUuids as $invoiceUuid) {
+            $invoiceUuid = (string) $invoiceUuid;
+            if ($invoiceUuid === '') {
+                continue;
+            }
+            $records['invoice|' . $invoiceUuid] = [
+                'local_type' => 'invoice',
+                'local_uuid' => $invoiceUuid,
+            ];
+        }
+    }
+
+    /**
+     * @param array<string, mixed>                                             $settings
+     * @param array<string, mixed>                                             $invoices
+     * @param array<string, array{local_type: string, local_uuid: string}>     $records
+     * @param array<int, array{entity: string, id: string, operation: string}> $inbound
+     */
+    private function collectLocalEvent(array $settings, QuickBooksEntityChanged $event, array $invoices, array &$records, array &$inbound): void
+    {
+        $localUuid = $this->localUuidForEvent($event, $invoices);
+        if ($localUuid === null) {
+            return;
+        }
+        $records[$event->entityType . '|' . $localUuid] = [
+            'local_type' => $event->entityType,
+            'local_uuid' => $localUuid,
+        ];
+        $remote = $this->remoteEntity($event->entityType);
+        if ($remote !== null && $this->quickbooksSupplies($settings, $event->entityType) === true) {
+            $inbound[] = [
+                'entity'    => $remote,
+                'id'        => $event->quickbooksId,
+                'operation' => $event->operation,
+            ];
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $invoices
+     */
+    private function localUuidForEvent(QuickBooksEntityChanged $event, array $invoices): ?string
+    {
+        $localUuid = $event->localUuid;
+        if ($event->entityType === 'invoice') {
+            $localUuid = $this->invoiceEventUuid($event, $invoices, $localUuid);
+            if ($localUuid === false) {
+                return null;
+            }
+        }
+        if (is_string($localUuid) === false || $localUuid === '') {
+            return null;
+        }
+
+        return $localUuid;
+    }
+
+    /**
+     * False when this invoice event should be ignored. Otherwise the local uuid to queue.
+     *
+     * @param array<string, mixed> $invoices
+     */
+    private function invoiceEventUuid(QuickBooksEntityChanged $event, array $invoices, mixed $localUuid): mixed
+    {
+        $realmLinks = $invoices['qbo'][$event->realmId] ?? [];
+        $fromLink   = $realmLinks[$event->quickbooksId] ?? null;
+        if (is_string($fromLink) === true && $fromLink !== '') {
+            $localUuid = $fromLink;
+        }
+        $linked = isset($realmLinks[$event->quickbooksId]) === true
+            || (is_string($event->localUuid) === true && $event->localUuid !== '');
+        $onFile = is_string($localUuid) === true && $localUuid !== '' && isset($invoices['local'][$localUuid]) === true;
+        if ($linked === false && $onFile === false) {
+            return false;
+        }
+
+        return $localUuid;
+    }
+
+    /**
+     * @param array<string, array{local_type: string, local_uuid: string}>     $records
+     * @param array<int, array{entity: string, id: string, operation: string}> $inbound
+     * @param array<int, QuickBooksEntityChanged>                              $deletes
+     */
+    private function dispatchFlush(string $companyUuid, array $records, array $inbound, array $deletes): void
+    {
+        if ($deletes !== []) {
+            $this->retireDeletes($companyUuid, $deletes);
+        }
+        if ($this->deferred !== []) {
+            ResolveWebhookPayments::dispatch($companyUuid, $this->deferredPayload());
+        }
+        $inbound = $this->uniqueInbound($inbound);
+        if ($inbound !== []) {
+            ApplyRemoteChange::dispatch($companyUuid, $inbound);
+        }
+        if ($records === []) {
+            return;
+        }
+        SyncWebhookBatch::dispatch($companyUuid, array_values($records));
     }
 
     /**
@@ -453,40 +583,78 @@ class EnqueueWebhookSync
     private function paymentInvoices(string $companyUuid, array $events, bool $allowDelete = false): array
     {
         $this->paymentReads = [];
-        $idsByRealm         = [];
+        $idsByRealm         = $this->paymentIdsByRealm($events, $allowDelete);
+        if ($idsByRealm === []) {
+            return [];
+        }
+
+        $byPayment                         = $this->paymentLinksByKey($companyUuid, $idsByRealm);
+        [$direct, $keyed]                  = $this->directAndKeyedPayments($idsByRealm, $byPayment);
+        [$remoteInvoices, $missingByRealm] = $this->remoteInvoicesForKeyed($companyUuid, $keyed, $allowDelete);
+        $storedInvoice                     = $allowDelete === true ? $this->storedPaymentInvoices($companyUuid, $missingByRealm) : [];
+        $linked                            = $this->invoiceLinkIndex($companyUuid, array_keys($idsByRealm), $direct, $storedInvoice, $remoteInvoices);
+        $onFile                            = $this->invoicesOnFile($companyUuid, $direct, $storedInvoice, $linked['by_uuid']);
+
+        return $this->resolvePaymentTargets($direct, $remoteInvoices, $storedInvoice, $linked, $onFile);
+    }
+
+    /**
+     * @param array<int, QuickBooksEntityChanged> $events
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function paymentIdsByRealm(array $events, bool $allowDelete): array
+    {
+        $idsByRealm = [];
         foreach ($events as $event) {
             if ($event->entityType !== 'payment' || ($allowDelete === false && $event->operation === 'delete')) {
                 continue;
             }
             $idsByRealm[$event->realmId][] = $event->quickbooksId;
         }
-        if ($idsByRealm === []) {
-            return [];
-        }
 
-        $realmIds   = array_keys($idsByRealm);
+        return $idsByRealm;
+    }
+
+    /**
+     * @param array<string, array<int, string>> $idsByRealm
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function paymentLinksByKey(string $companyUuid, array $idsByRealm): array
+    {
         $paymentIds = [];
         foreach ($idsByRealm as $ids) {
-            foreach ($ids as $id) {
-                $paymentIds[] = $id;
+            foreach ($ids as $paymentId) {
+                $paymentIds[] = $paymentId;
             }
         }
         $paymentIds = array_values(array_unique($paymentIds));
-
-        $byPayment = [];
+        $byPayment  = [];
         foreach (Link::query()
             ->where('company_uuid', $companyUuid)
             ->where('qbo_entity', 'Payment')
-            ->whereIn('realm_id', $realmIds)
+            ->whereIn('realm_id', array_keys($idsByRealm))
             ->whereIn('qbo_id', $paymentIds)
             ->get(['realm_id', 'qbo_id', 'local_uuid']) as $link) {
             if (is_object($link) === false) {
                 continue;
             }
-            $key                 = (string) $link->realm_id . '|' . (string) $link->qbo_id;
-            $byPayment[$key][]   = trim((string) $link->local_uuid);
+            $key               = (string) $link->realm_id . '|' . (string) $link->qbo_id;
+            $byPayment[$key][] = trim((string) $link->local_uuid);
         }
 
+        return $byPayment;
+    }
+
+    /**
+     * @param array<string, array<int, string>> $idsByRealm
+     * @param array<string, array<int, string>> $byPayment
+     *
+     * @return array{0: array<string, array<int, string>>, 1: array<string, array<int, string>>}
+     */
+    private function directAndKeyedPayments(array $idsByRealm, array $byPayment): array
+    {
         $direct = [];
         $keyed  = [];
         foreach ($idsByRealm as $realmId => $ids) {
@@ -507,38 +675,140 @@ class EnqueueWebhookSync
             }
         }
 
+        return [$direct, $keyed];
+    }
+
+    /**
+     * @param array<string, array<int, string>> $keyed
+     *
+     * @return array{0: array<string, array<int, string>>, 1: array<string, array<int, string>>}
+     */
+    private function remoteInvoicesForKeyed(string $companyUuid, array $keyed, bool $allowDelete): array
+    {
         $remoteInvoices = [];
         $missingByRealm = [];
         foreach ($keyed as $realmId => $ids) {
-            if ($this->readsQuickBooks === false) {
-                foreach (array_values(array_unique($ids)) as $paymentId) {
-                    $this->deferredPayments[$realmId . '|' . $paymentId] = true;
-                }
-                continue;
-            }
-            $found = $this->quickbooksInvoiceIdsForPayments($companyUuid, (string) $realmId, array_values(array_unique($ids)));
-            foreach (array_values(array_unique($ids)) as $paymentId) {
-                $key = $realmId . '|' . $paymentId;
-                if (array_key_exists($paymentId, $found) === false) {
-                    continue;
-                }
-                $invoiceIds = $found[$paymentId];
-                if ($invoiceIds === null) {
-                    $this->paymentReads[$key] = 'missing';
-                    if ($allowDelete === true) {
-                        $missingByRealm[$realmId][] = (string) $paymentId;
-                    }
-                    continue;
-                }
-                $this->paymentReads[$key] = 'found';
-                if (is_array($invoiceIds) === true && $invoiceIds !== []) {
-                    $remoteInvoices[$key] = $invoiceIds;
-                }
-            }
+            $this->readKeyedRealm($companyUuid, (string) $realmId, $ids, $allowDelete, $remoteInvoices, $missingByRealm);
         }
 
-        $storedInvoice = $allowDelete === true ? $this->storedPaymentInvoices($companyUuid, $missingByRealm) : [];
+        return [$remoteInvoices, $missingByRealm];
+    }
 
+    /**
+     * @param array<int, string>                $ids
+     * @param array<string, array<int, string>> $remoteInvoices
+     * @param array<string, array<int, string>> $missingByRealm
+     */
+    private function readKeyedRealm(string $companyUuid, string $realmId, array $ids, bool $allowDelete, array &$remoteInvoices, array &$missingByRealm): void
+    {
+        $ids = array_values(array_unique($ids));
+        if ($this->readsQuickBooks === false) {
+            foreach ($ids as $paymentId) {
+                $this->deferredPayments[$realmId . '|' . $paymentId] = true;
+            }
+
+            return;
+        }
+
+        $found = $this->quickbooksInvoiceIdsForPayments($companyUuid, $realmId, $ids);
+        foreach ($ids as $paymentId) {
+            $this->rememberKeyedPayment($realmId, (string) $paymentId, $found, $allowDelete, $remoteInvoices, $missingByRealm);
+        }
+    }
+
+    /**
+     * @param array<string, array<int, string>|null> $found
+     * @param array<string, array<int, string>>      $remoteInvoices
+     * @param array<string, array<int, string>>      $missingByRealm
+     */
+    private function rememberKeyedPayment(string $realmId, string $paymentId, array $found, bool $allowDelete, array &$remoteInvoices, array &$missingByRealm): void
+    {
+        $key = $realmId . '|' . $paymentId;
+        if (array_key_exists($paymentId, $found) === false) {
+            return;
+        }
+        $invoiceIds = $found[$paymentId];
+        if ($invoiceIds === null) {
+            $this->paymentReads[$key] = 'missing';
+            if ($allowDelete === true) {
+                $missingByRealm[$realmId][] = $paymentId;
+            }
+
+            return;
+        }
+        $this->paymentReads[$key] = 'found';
+        if (is_array($invoiceIds) === true && $invoiceIds !== []) {
+            $remoteInvoices[$key] = $invoiceIds;
+        }
+    }
+
+    /**
+     * @param array<int, string>                $realmIds
+     * @param array<string, array<int, string>> $direct
+     * @param array<string, array<int, string>> $storedInvoice
+     * @param array<string, array<int, string>> $remoteInvoices
+     *
+     * @return array{by_uuid: array<string, true>, by_qbo: array<string, string>}
+     */
+    private function invoiceLinkIndex(string $companyUuid, array $realmIds, array $direct, array $storedInvoice, array $remoteInvoices): array
+    {
+        $candidateUuids = $this->flattenedUuids($direct, $storedInvoice);
+        $qboInvoiceIds  = $this->flattenedInvoiceIds($remoteInvoices);
+        $linkedByUuid   = [];
+        $uuidByQbo      = [];
+        if ($candidateUuids === [] && $qboInvoiceIds === []) {
+            return ['by_uuid' => $linkedByUuid, 'by_qbo' => $uuidByQbo];
+        }
+
+        $invoiceLinks = Link::query()
+            ->where('company_uuid', $companyUuid)
+            ->whereIn('realm_id', $realmIds)
+            ->where('local_type', 'invoice')
+            ->where(function ($query) use ($candidateUuids, $qboInvoiceIds): void {
+                if ($candidateUuids !== []) {
+                    $query->whereIn('local_uuid', $candidateUuids);
+                }
+                if ($qboInvoiceIds !== []) {
+                    $method = $candidateUuids !== [] ? 'orWhereIn' : 'whereIn';
+                    $query->{$method}('qbo_id', $qboInvoiceIds);
+                }
+            })
+            ->get(['realm_id', 'local_uuid', 'qbo_id']);
+        foreach ($invoiceLinks as $link) {
+            $this->rememberInvoiceLink($link, $linkedByUuid, $uuidByQbo);
+        }
+
+        return ['by_uuid' => $linkedByUuid, 'by_qbo' => $uuidByQbo];
+    }
+
+    /**
+     * @param array<string, true>   $linkedByUuid
+     * @param array<string, string> $uuidByQbo
+     */
+    private function rememberInvoiceLink(mixed $link, array &$linkedByUuid, array &$uuidByQbo): void
+    {
+        if (is_object($link) === false) {
+            return;
+        }
+        $realm = (string) $link->realm_id;
+        $uuid  = trim((string) $link->local_uuid);
+        $qboId = trim((string) $link->qbo_id);
+        if ($uuid !== '') {
+            $linkedByUuid[$realm . '|' . $uuid] = true;
+        }
+        if ($realm !== '' && $qboId !== '' && $uuid !== '') {
+            $uuidByQbo[$realm . '|' . $qboId] = $uuid;
+        }
+    }
+
+    /**
+     * @param array<string, array<int, string>> $direct
+     * @param array<string, array<int, string>> $storedInvoice
+     *
+     * @return array<int, string>
+     */
+    private function flattenedUuids(array $direct, array $storedInvoice): array
+    {
         $candidateUuids = [];
         foreach ($direct as $uuids) {
             foreach ($uuids as $uuid) {
@@ -550,77 +820,89 @@ class EnqueueWebhookSync
                 $candidateUuids[] = $uuid;
             }
         }
+
+        return array_values(array_unique($candidateUuids));
+    }
+
+    /**
+     * @param array<string, array<int, string>> $remoteInvoices
+     *
+     * @return array<int, string>
+     */
+    private function flattenedInvoiceIds(array $remoteInvoices): array
+    {
         $qboInvoiceIds = [];
         foreach ($remoteInvoices as $invoiceIds) {
             foreach ($invoiceIds as $invoiceId) {
                 $qboInvoiceIds[] = $invoiceId;
             }
         }
-        $qboInvoiceIds  = array_values(array_unique($qboInvoiceIds));
-        $candidateUuids = array_values(array_unique($candidateUuids));
 
-        $linkedByUuid = [];
-        $uuidByQbo    = [];
-        if ($candidateUuids !== [] || $qboInvoiceIds !== []) {
-            $invoiceLinks = Link::query()
-                ->where('company_uuid', $companyUuid)
-                ->whereIn('realm_id', $realmIds)
-                ->where('local_type', 'invoice')
-                ->where(function ($query) use ($candidateUuids, $qboInvoiceIds): void {
-                    if ($candidateUuids !== []) {
-                        $query->whereIn('local_uuid', $candidateUuids);
-                    }
-                    if ($qboInvoiceIds !== []) {
-                        $method = $candidateUuids !== [] ? 'orWhereIn' : 'whereIn';
-                        $query->{$method}('qbo_id', $qboInvoiceIds);
-                    }
-                })
-                ->get(['realm_id', 'local_uuid', 'qbo_id']);
-            foreach ($invoiceLinks as $link) {
-                if (is_object($link) === false) {
-                    continue;
-                }
-                $realm = (string) $link->realm_id;
-                $uuid  = trim((string) $link->local_uuid);
-                $qboId = trim((string) $link->qbo_id);
-                if ($uuid !== '') {
-                    $linkedByUuid[$realm . '|' . $uuid] = true;
-                }
-                if ($realm !== '' && $qboId !== '' && $uuid !== '') {
-                    $uuidByQbo[$realm . '|' . $qboId] = $uuid;
-                }
-            }
-        }
+        return array_values(array_unique($qboInvoiceIds));
+    }
 
+    /**
+     * @param array<string, array<int, string>> $direct
+     * @param array<string, array<int, string>> $storedInvoice
+     * @param array<string, true>               $linkedByUuid
+     *
+     * @return array<string, true>
+     */
+    private function invoicesOnFile(string $companyUuid, array $direct, array $storedInvoice, array $linkedByUuid): array
+    {
         $needFile = [];
-        foreach ($direct as $key => $uuids) {
-            $realm = explode('|', $key, 2)[0];
-            foreach ($uuids as $uuid) {
-                if (isset($linkedByUuid[$realm . '|' . $uuid]) === false) {
-                    $needFile[] = $uuid;
-                }
-            }
-        }
-        foreach ($storedInvoice as $key => $uuids) {
-            $realm = explode('|', $key, 2)[0];
-            foreach ($uuids as $uuid) {
-                if (isset($linkedByUuid[$realm . '|' . $uuid]) === false) {
-                    $needFile[] = $uuid;
+        foreach ([$direct, $storedInvoice] as $groups) {
+            foreach ($groups as $key => $uuids) {
+                $realm = explode('|', $key, 2)[0];
+                foreach ($uuids as $uuid) {
+                    if (isset($linkedByUuid[$realm . '|' . $uuid]) === false) {
+                        $needFile[] = $uuid;
+                    }
                 }
             }
         }
         $onFile = [];
-        if ($needFile !== [] && class_exists(Invoice::class) === true) {
-            $found = Invoice::query()
-                ->where('company_uuid', $companyUuid)
-                ->whereIn('uuid', array_values(array_unique($needFile)))
-                ->pluck('uuid');
-            foreach ($found as $uuid) {
-                $onFile[(string) $uuid] = true;
-            }
+        if ($needFile === [] || class_exists(Invoice::class) === false) {
+            return $onFile;
+        }
+        $found = Invoice::query()
+            ->where('company_uuid', $companyUuid)
+            ->whereIn('uuid', array_values(array_unique($needFile)))
+            ->pluck('uuid');
+        foreach ($found as $uuid) {
+            $onFile[(string) $uuid] = true;
         }
 
+        return $onFile;
+    }
+
+    /**
+     * @param array<string, array<int, string>>                                  $direct
+     * @param array<string, array<int, string>>                                  $remoteInvoices
+     * @param array<string, array<int, string>>                                  $storedInvoice
+     * @param array{by_uuid: array<string, true>, by_qbo: array<string, string>} $linked
+     * @param array<string, true>                                                $onFile
+     *
+     * @return array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}>
+     */
+    private function resolvePaymentTargets(array $direct, array $remoteInvoices, array $storedInvoice, array $linked, array $onFile): array
+    {
         $resolved = [];
+        $this->resolveDirectTargets($direct, $linked['by_uuid'], $onFile, $resolved);
+        $this->resolveRemoteTargets($remoteInvoices, $linked['by_qbo'], $resolved);
+        $this->resolveStoredTargets($storedInvoice, $linked['by_uuid'], $onFile, $resolved);
+
+        return $resolved;
+    }
+
+    /**
+     * @param array<string, array<int, string>>                                                                                                    $direct
+     * @param array<string, true>                                                                                                                  $linkedByUuid
+     * @param array<string, true>                                                                                                                  $onFile
+     * @param array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}> $resolved
+     */
+    private function resolveDirectTargets(array $direct, array $linkedByUuid, array $onFile, array &$resolved): void
+    {
         foreach ($direct as $key => $uuids) {
             $realm = explode('|', $key, 2)[0];
             foreach ($uuids as $uuid) {
@@ -629,6 +911,15 @@ class EnqueueWebhookSync
                 }
             }
         }
+    }
+
+    /**
+     * @param array<string, array<int, string>>                                                                                                    $remoteInvoices
+     * @param array<string, string>                                                                                                                $uuidByQbo
+     * @param array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}> $resolved
+     */
+    private function resolveRemoteTargets(array $remoteInvoices, array $uuidByQbo, array &$resolved): void
+    {
         foreach ($remoteInvoices as $key => $invoiceIds) {
             $realm = explode('|', $key, 2)[0];
             foreach ($invoiceIds as $invoiceId) {
@@ -639,6 +930,16 @@ class EnqueueWebhookSync
                 $this->addResolvedInvoice($resolved, $key, $uuid, true, $invoiceIds);
             }
         }
+    }
+
+    /**
+     * @param array<string, array<int, string>>                                                                                                    $storedInvoice
+     * @param array<string, true>                                                                                                                  $linkedByUuid
+     * @param array<string, true>                                                                                                                  $onFile
+     * @param array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}> $resolved
+     */
+    private function resolveStoredTargets(array $storedInvoice, array $linkedByUuid, array $onFile, array &$resolved): void
+    {
         foreach ($storedInvoice as $key => $uuids) {
             if (isset($resolved[$key]) === true) {
                 continue;
@@ -650,8 +951,6 @@ class EnqueueWebhookSync
                 }
             }
         }
-
-        return $resolved;
     }
 
     /**
@@ -740,37 +1039,87 @@ class EnqueueWebhookSync
      */
     protected function quickbooksInvoiceIdsForPayments(string $companyUuid, string $realmId, array $paymentIds): array
     {
-        if ($paymentIds === [] || $realmId === '') {
+        $ready = $this->paymentReadContext($companyUuid, $realmId, $paymentIds);
+        if ($ready === null) {
             return [];
         }
 
-        try {
-            $directory = app(FleetbaseDirectory::class);
-            $client    = app(QuickBooksClient::class);
-        } catch (\Throwable) {
-            return [];
-        }
-        if ($directory instanceof FleetbaseDirectory === false || $client instanceof QuickBooksClient === false) {
-            return [];
-        }
-
-        try {
-            $connection = $directory->connection($companyUuid);
-        } catch (\Throwable) {
-            return [];
-        }
-        if (is_array($connection) === false || empty($connection['needs_reauth']) === false) {
-            return [];
-        }
-        if ((string) ($connection['realm_id'] ?? '') !== $realmId) {
-            return [];
-        }
-
-        $read = $this->readPaymentsRefreshingOnce($client, $connection, $paymentIds);
+        $read = $this->readPaymentsRefreshingOnce($ready['client'], $ready['connection'], $paymentIds);
         if ($read === null) {
             return [];
         }
 
+        return $this->mappedPaymentInvoices($read);
+    }
+
+    /**
+     * @param array<int, string> $paymentIds
+     *
+     * @return array{client: QuickBooksClient, connection: array<string, mixed>}|null
+     */
+    private function paymentReadContext(string $companyUuid, string $realmId, array $paymentIds): ?array
+    {
+        if ($paymentIds === [] || $realmId === '') {
+            return null;
+        }
+
+        $services = $this->paymentReadServices();
+        if ($services === null) {
+            return null;
+        }
+        $connection = $this->paymentReadConnection($services['directory'], $companyUuid, $realmId);
+        if ($connection === null) {
+            return null;
+        }
+
+        return ['client' => $services['client'], 'connection' => $connection];
+    }
+
+    /**
+     * @return array{directory: FleetbaseDirectory, client: QuickBooksClient}|null
+     */
+    private function paymentReadServices(): ?array
+    {
+        try {
+            $directory = app(FleetbaseDirectory::class);
+            $client    = app(QuickBooksClient::class);
+        } catch (\Throwable) {
+            return null;
+        }
+        if ($directory instanceof FleetbaseDirectory === false || $client instanceof QuickBooksClient === false) {
+            return null;
+        }
+
+        return ['directory' => $directory, 'client' => $client];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function paymentReadConnection(FleetbaseDirectory $directory, string $companyUuid, string $realmId): ?array
+    {
+        try {
+            $connection = $directory->connection($companyUuid);
+        } catch (\Throwable) {
+            return null;
+        }
+        if (is_array($connection) === false || empty($connection['needs_reauth']) === false) {
+            return null;
+        }
+        if ((string) ($connection['realm_id'] ?? '') !== $realmId) {
+            return null;
+        }
+
+        return $connection;
+    }
+
+    /**
+     * @param array{found: array<string, array<string, mixed>>, missing: array<string, true>} $read
+     *
+     * @return array<string, array<int, string>|null>
+     */
+    private function mappedPaymentInvoices(array $read): array
+    {
         $mapped = [];
         foreach ($read['found'] as $paymentId => $remote) {
             $mapped[(string) $paymentId] = $this->invoiceQboIdsOnPayment($remote);

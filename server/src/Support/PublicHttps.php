@@ -190,36 +190,55 @@ class PublicHttps
         return ($value & $mask) === ($base & $mask);
     }
 
-    private static function ipv6IsInternal(string $ip): bool
+    private static function ipv6IsInternal(string $address): bool
     {
-        $packed = inet_pton($ip);
+        $packed = inet_pton($address);
         if ($packed === false || strlen($packed) !== 16) {
             return true;
         }
+        $embedded = self::ipv6EmbeddedIpv4IsInternal($packed);
+        if ($embedded !== null) {
+            return $embedded;
+        }
+
+        return self::ipv6RangeIsInternal($packed);
+    }
+
+    /**
+     * IPv4-mapped, IPv4-compatible, 6to4 and NAT64 addresses are internal when
+     * the embedded IPv4 address is. Null means this is not one of those forms.
+     */
+    private static function ipv6EmbeddedIpv4IsInternal(string $packed): ?bool
+    {
         $mapped = str_repeat("\x00", 10) . "\xff\xff";
         if (str_starts_with($packed, $mapped) === true) {
-            $ipv4 = inet_ntop(substr($packed, 12));
-
-            return is_string($ipv4) === false || self::ipv4IsInternal($ipv4) === true;
+            return self::embeddedIpv4IsInternal(substr($packed, 12));
         }
         if (str_starts_with($packed, str_repeat("\x00", 12)) === true) {
-            $ipv4 = inet_ntop(substr($packed, 12));
-
-            return is_string($ipv4) === false || self::ipv4IsInternal($ipv4) === true;
+            return self::embeddedIpv4IsInternal(substr($packed, 12));
         }
         // 6to4 (2002::/16) stores the IPv4 address in bits 16-47.
         if ($packed[0] === "\x20" && $packed[1] === "\x02") {
-            $ipv4 = inet_ntop(substr($packed, 2, 4));
-
-            return is_string($ipv4) === false || self::ipv4IsInternal($ipv4) === true;
+            return self::embeddedIpv4IsInternal(substr($packed, 2, 4));
         }
         // NAT64 well-known prefix (64:ff9b::/96) stores the IPv4 address in the last 32 bits.
         $nat64 = "\x00\x64\xff\x9b" . str_repeat("\x00", 8);
         if (str_starts_with($packed, $nat64) === true) {
-            $ipv4 = inet_ntop(substr($packed, 12));
-
-            return is_string($ipv4) === false || self::ipv4IsInternal($ipv4) === true;
+            return self::embeddedIpv4IsInternal(substr($packed, 12));
         }
+
+        return null;
+    }
+
+    private static function embeddedIpv4IsInternal(string $bytes): bool
+    {
+        $ipv4 = inet_ntop($bytes);
+
+        return is_string($ipv4) === false || self::ipv4IsInternal($ipv4) === true;
+    }
+
+    private static function ipv6RangeIsInternal(string $packed): bool
+    {
         $first  = ord($packed[0]);
         $second = ord($packed[1]);
         if ($first === 0xFF) {
@@ -255,6 +274,8 @@ class PublicHttps
         if (strlen($host) > 253 || preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/', $host) !== 1) {
             return false;
         }
+        // dns_get_record warns when lookup fails. The @ keeps Laravel from turning
+        // that warning into an ErrorException; a non-array result is treated as failure.
         $records = @dns_get_record($host, DNS_A | DNS_AAAA);
         if (is_array($records) === false || $records === []) {
             return false;

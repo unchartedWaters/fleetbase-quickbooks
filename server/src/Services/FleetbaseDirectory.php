@@ -1099,6 +1099,25 @@ class FleetbaseDirectory
         if ($connection !== null) {
             $ledger->connections[$companyUuid] = $connection;
         }
+        [$customerIds, $invoiceIds, $walletIds, $flaggedInvoices] = $this->collectPendingIds($ledger, $companyUuid, $pendingLimit, $now);
+        if ($pendingLimit === null) {
+            $this->loadFullLedger($ledger, $companyUuid, $flaggedInvoices);
+        } else {
+            $this->loadLimitedLedger($ledger, $companyUuid, $customerIds, $invoiceIds, $walletIds, $flaggedInvoices);
+        }
+        $ledger->rebuildIndex();
+        $this->loaded['customers'] = $ledger->customers;
+        $this->loaded['invoices']  = $ledger->invoices;
+        $this->loaded['wallets']   = $ledger->wallets;
+
+        return $ledger;
+    }
+
+    /**
+     * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, string>, 3: array<int, string>}
+     */
+    private function collectPendingIds(SyncLedger $ledger, string $companyUuid, ?int $pendingLimit, ?int $now): array
+    {
         $customerIds     = [];
         $invoiceIds      = [];
         $walletIds       = [];
@@ -1120,34 +1139,44 @@ class FleetbaseDirectory
                 $flaggedInvoices[] = $localUuid;
             }
         }
-        if ($pendingLimit === null) {
-            foreach ((new Link())->newQuery()->where('company_uuid', $companyUuid)->get() as $link) {
-                if ($link instanceof Link) {
-                    $this->rememberLoadedLink($ledger, $link->toArray());
-                }
-            }
-            $ledger->customers = $this->readCustomers($companyUuid);
-            $ledger->invoices  = $this->readInvoices($companyUuid, null, $flaggedInvoices);
-            $ledger->wallets   = $this->readWallets($companyUuid);
-        } else {
-            $ledger->invoices = $this->readInvoices($companyUuid, $invoiceIds, $flaggedInvoices);
-            foreach ($ledger->invoices as $invoice) {
-                $customerId = (string) ($invoice['customer_uuid'] ?? '');
-                if ($customerId !== '') {
-                    $customerIds[] = $customerId;
-                }
-            }
-            $customerIds       = array_values(array_unique($customerIds));
-            $ledger->customers = $this->readCustomers($companyUuid, $customerIds);
-            $ledger->wallets   = $this->readWallets($companyUuid, $walletIds);
-            $this->readLinksFor($ledger, $companyUuid, $customerIds, $invoiceIds, $walletIds);
-        }
-        $ledger->rebuildIndex();
-        $this->loaded['customers'] = $ledger->customers;
-        $this->loaded['invoices']  = $ledger->invoices;
-        $this->loaded['wallets']   = $ledger->wallets;
 
-        return $ledger;
+        return [$customerIds, $invoiceIds, $walletIds, $flaggedInvoices];
+    }
+
+    /**
+     * @param array<int, string> $flaggedInvoices
+     */
+    private function loadFullLedger(SyncLedger $ledger, string $companyUuid, array $flaggedInvoices): void
+    {
+        foreach ((new Link())->newQuery()->where('company_uuid', $companyUuid)->get() as $link) {
+            if ($link instanceof Link) {
+                $this->rememberLoadedLink($ledger, $link->toArray());
+            }
+        }
+        $ledger->customers = $this->readCustomers($companyUuid);
+        $ledger->invoices  = $this->readInvoices($companyUuid, null, $flaggedInvoices);
+        $ledger->wallets   = $this->readWallets($companyUuid);
+    }
+
+    /**
+     * @param array<int, string> $customerIds
+     * @param array<int, string> $invoiceIds
+     * @param array<int, string> $walletIds
+     * @param array<int, string> $flaggedInvoices
+     */
+    private function loadLimitedLedger(SyncLedger $ledger, string $companyUuid, array $customerIds, array $invoiceIds, array $walletIds, array $flaggedInvoices): void
+    {
+        $ledger->invoices = $this->readInvoices($companyUuid, $invoiceIds, $flaggedInvoices);
+        foreach ($ledger->invoices as $invoice) {
+            $customerId = (string) ($invoice['customer_uuid'] ?? '');
+            if ($customerId !== '') {
+                $customerIds[] = $customerId;
+            }
+        }
+        $customerIds       = array_values(array_unique($customerIds));
+        $ledger->customers = $this->readCustomers($companyUuid, $customerIds);
+        $ledger->wallets   = $this->readWallets($companyUuid, $walletIds);
+        $this->readLinksFor($ledger, $companyUuid, $customerIds, $invoiceIds, $walletIds);
     }
 
     /**
@@ -1879,26 +1908,57 @@ class FleetbaseDirectory
             return;
         }
 
-        $fresh = [];
+        $present = $this->existingCustomerUuids($class, $this->customerUuidsToPersist($ledger, $skipped));
+        $this->insertCustomers($class, $this->saveExistingCustomers($class, $ledger, $skipped, $present));
+    }
+
+    /**
+     * @param array<string, true> $skipped
+     *
+     * @return array<int, string>
+     */
+    private function customerUuidsToPersist(SyncLedger $ledger, array $skipped): array
+    {
         $uuids = [];
         foreach ($ledger->customers as $customer) {
-            if (isset($skipped[(string) ($customer['company_uuid'] ?? '')]) === true) {
-                continue;
+            $uuid = $this->persistableCustomerUuid($customer, $skipped);
+            if ($uuid !== null) {
+                $uuids[] = $uuid;
             }
-            $uuid = (string) ($customer['uuid'] ?? '');
-            if ($uuid === '' || empty($customer['company_uuid']) === true) {
-                continue;
-            }
-            $uuids[] = $uuid;
         }
-        $present = $this->existingCustomerUuids($class, $uuids);
 
+        return $uuids;
+    }
+
+    /**
+     * @param array<string, mixed> $customer
+     * @param array<string, true>  $skipped
+     */
+    private function persistableCustomerUuid(array $customer, array $skipped): ?string
+    {
+        if (isset($skipped[(string) ($customer['company_uuid'] ?? '')]) === true) {
+            return null;
+        }
+        $uuid = (string) ($customer['uuid'] ?? '');
+        if ($uuid === '' || empty($customer['company_uuid']) === true) {
+            return null;
+        }
+
+        return $uuid;
+    }
+
+    /**
+     * @param array<string, true> $skipped
+     * @param array<string, true> $present
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function saveExistingCustomers(string $class, SyncLedger $ledger, array $skipped, array $present): array
+    {
+        $fresh = [];
         foreach ($ledger->customers as $customer) {
-            if (isset($skipped[(string) ($customer['company_uuid'] ?? '')]) === true) {
-                continue;
-            }
-            $uuid = (string) ($customer['uuid'] ?? '');
-            if ($uuid === '' || empty($customer['company_uuid']) === true) {
+            $uuid = $this->persistableCustomerUuid($customer, $skipped);
+            if ($uuid === null) {
                 continue;
             }
             // Only fields the engine changed are written, so an edit during the batch stays.
@@ -1907,26 +1967,9 @@ class FleetbaseDirectory
             $values  = self::changedColumns($customer, $loaded, self::CUSTOMER_FIELDS);
             $address = $this->changedBillingAddress($customer, $loaded);
             if (isset($present[$uuid]) === true) {
-                if ($values === [] && $address === null) {
-                    continue;
-                }
-                /** @var Model|null $model */
-                $model = $class::query()
-                    ->where('uuid', $uuid)
-                    ->where('company_uuid', $customer['company_uuid'])
-                    ->first();
-                if ($model === null) {
-                    $fresh[] = $customer;
-                    continue;
-                }
-                if ($values !== []) {
-                    $model->fill($values);
-                    if ($model->isDirty() === true) {
-                        $model->save();
-                    }
-                }
-                if ($address !== null) {
-                    $this->writeBillingAddress($model, $address);
+                $created = $this->updateExistingCustomer($class, $customer, $uuid, $values, $address);
+                if ($created !== null) {
+                    $fresh[] = $created;
                 }
                 continue;
             }
@@ -1936,7 +1979,40 @@ class FleetbaseDirectory
             $fresh[] = $customer;
         }
 
-        $this->insertCustomers($class, $fresh);
+        return $fresh;
+    }
+
+    /**
+     * @param array<string, mixed>      $customer
+     * @param array<string, mixed>      $values
+     * @param array<string, mixed>|null $address
+     *
+     * @return array<string, mixed>|null
+     */
+    private function updateExistingCustomer(string $class, array $customer, string $uuid, array $values, ?array $address): ?array
+    {
+        if ($values === [] && $address === null) {
+            return null;
+        }
+        /** @var Model|null $model */
+        $model = $class::query()
+            ->where('uuid', $uuid)
+            ->where('company_uuid', $customer['company_uuid'])
+            ->first();
+        if ($model === null) {
+            return $customer;
+        }
+        if ($values !== []) {
+            $model->fill($values);
+            if ($model->isDirty() === true) {
+                $model->save();
+            }
+        }
+        if ($address !== null) {
+            $this->writeBillingAddress($model, $address);
+        }
+
+        return null;
     }
 
     /**
@@ -1950,68 +2026,133 @@ class FleetbaseDirectory
         }
 
         foreach ($ledger->invoices as $invoice) {
-            if (isset($skipped[(string) ($invoice['company_uuid'] ?? '')]) === true) {
-                continue;
-            }
-            if (empty($invoice['uuid']) === true) {
-                continue;
-            }
-            $loaded = $this->loaded['invoices'][(string) $invoice['uuid']] ?? null;
-            if ($this->invoiceNeedsWrite($invoice, is_array($loaded) === true ? $loaded : null) === false) {
-                continue;
-            }
-            $companyUuid = (string) ($invoice['company_uuid'] ?? '');
-            $uuid        = (string) $invoice['uuid'];
-            $updates     = [];
-            foreach (self::changedColumns($invoice, is_array($loaded) === true ? $loaded : null, ['number', 'notes', 'date', 'due_date', 'customer_uuid', 'currency']) as $field => $value) {
-                if ($value === '' || $value === null) {
-                    continue;
-                }
-                $updates[$field] = $value;
-            }
-            if (empty($invoice['replace_from_quickbooks']) === false) {
-                $paid = array_key_exists('amount_paid', $invoice) === true
-                    ? (int) $invoice['amount_paid']
-                    : (int) (is_array($loaded) === true ? ($loaded['amount_paid'] ?? 0) : 0);
-                $amounts = self::invoiceAmounts((int) ($invoice['total'] ?? 0), (int) ($invoice['tax'] ?? 0), $paid);
-                foreach (['tax' => 'tax', 'total_amount' => 'total_amount', 'subtotal' => 'subtotal', 'balance' => 'balance'] as $column => $key) {
-                    $updates[$column] = $amounts[$key];
-                }
-                if (empty($invoice['status']) === false) {
-                    $updates['status'] = (string) $invoice['status'];
-                }
-                if (empty($invoice['items_from_quickbooks']) === false && is_array($invoice['items'] ?? null) === true) {
-                    $this->replaceInvoiceLines($uuid, $invoice['items']);
-                }
-            }
-            if (empty($invoice['payment_from_quickbooks']) === false) {
-                if (array_key_exists('amount_paid', $invoice) === true) {
-                    $updates['amount_paid'] = (int) $invoice['amount_paid'];
-                }
-                if (empty($invoice['paid_at']) === false) {
-                    $updates['paid_at'] = $invoice['paid_at'];
-                }
-                if (empty($invoice['status']) === false) {
-                    $updates['status'] = (string) $invoice['status'];
-                }
-                $total = array_key_exists('total_amount', $updates) === true
-                    ? (int) $updates['total_amount']
-                    : (int) ($invoice['total'] ?? (is_array($loaded) === true ? ($loaded['total'] ?? 0) : 0));
-                $tax = array_key_exists('tax', $updates) === true
-                    ? (int) $updates['tax']
-                    : (int) ($invoice['tax'] ?? (is_array($loaded) === true ? ($loaded['tax'] ?? 0) : 0));
-                $amountPaid = array_key_exists('amount_paid', $updates) === true
-                    ? (int) $updates['amount_paid']
-                    : (int) (is_array($loaded) === true ? ($loaded['amount_paid'] ?? 0) : 0);
-                $updates['balance'] = self::invoiceAmounts($total, $tax, $amountPaid)['balance'];
-            }
-            if ($updates === []) {
-                continue;
-            }
-            $updates['updated_at'] = Carbon::now()->toDateTimeString();
-            // The invoice model eager-loads customer, items, template, and order. A table update writes the integers as stored.
-            $this->invoiceTable($class, $companyUuid, $uuid)->update($updates);
+            $this->persistInvoice($class, $invoice, $skipped);
         }
+    }
+
+    /**
+     * @param array<string, mixed> $invoice
+     * @param array<string, true>  $skipped
+     */
+    /**
+     * @param class-string         $class
+     * @param array<string, mixed> $invoice
+     * @param array<string, true>  $skipped
+     */
+    private function persistInvoice(string $class, array $invoice, array $skipped): void
+    {
+        if (isset($skipped[(string) ($invoice['company_uuid'] ?? '')]) === true || empty($invoice['uuid']) === true) {
+            return;
+        }
+        $loaded = $this->loaded['invoices'][(string) $invoice['uuid']] ?? null;
+        $loaded = is_array($loaded) === true ? $loaded : null;
+        if ($this->invoiceNeedsWrite($invoice, $loaded) === false) {
+            return;
+        }
+        $companyUuid = (string) ($invoice['company_uuid'] ?? '');
+        $uuid        = (string) $invoice['uuid'];
+        $updates     = $this->invoiceColumnUpdates($invoice, $loaded);
+        if (empty($invoice['replace_from_quickbooks']) === false) {
+            $updates = $this->applyQuickBooksInvoiceReplacement($invoice, $loaded, $uuid, $updates);
+        }
+        if (empty($invoice['payment_from_quickbooks']) === false) {
+            $updates = $this->applyQuickBooksPayment($invoice, $loaded, $updates);
+        }
+        if ($updates === []) {
+            return;
+        }
+        $updates['updated_at'] = Carbon::now()->toDateTimeString();
+        // The invoice model eager-loads customer, items, template, and order. A table update writes the integers as stored.
+        $this->invoiceTable($class, $companyUuid, $uuid)->update($updates);
+    }
+
+    /**
+     * @param array<string, mixed>      $invoice
+     * @param array<string, mixed>|null $loaded
+     *
+     * @return array<string, mixed>
+     */
+    private function invoiceColumnUpdates(array $invoice, ?array $loaded): array
+    {
+        $updates = [];
+        foreach (self::changedColumns($invoice, $loaded, ['number', 'notes', 'date', 'due_date', 'customer_uuid', 'currency']) as $field => $value) {
+            if ($value === '' || $value === null) {
+                continue;
+            }
+            $updates[$field] = $value;
+        }
+
+        return $updates;
+    }
+
+    /**
+     * @param array<string, mixed>      $invoice
+     * @param array<string, mixed>|null $loaded
+     * @param array<string, mixed>      $updates
+     *
+     * @return array<string, mixed>
+     */
+    private function applyQuickBooksInvoiceReplacement(array $invoice, ?array $loaded, string $uuid, array $updates): array
+    {
+        $paid = array_key_exists('amount_paid', $invoice) === true
+            ? (int) $invoice['amount_paid']
+            : (int) (is_array($loaded) === true ? ($loaded['amount_paid'] ?? 0) : 0);
+        $amounts = self::invoiceAmounts((int) ($invoice['total'] ?? 0), (int) ($invoice['tax'] ?? 0), $paid);
+        foreach (['tax' => 'tax', 'total_amount' => 'total_amount', 'subtotal' => 'subtotal', 'balance' => 'balance'] as $column => $key) {
+            $updates[$column] = $amounts[$key];
+        }
+        if (empty($invoice['status']) === false) {
+            $updates['status'] = (string) $invoice['status'];
+        }
+        if (empty($invoice['items_from_quickbooks']) === false && is_array($invoice['items'] ?? null) === true) {
+            $this->replaceInvoiceLines($uuid, $invoice['items']);
+        }
+
+        return $updates;
+    }
+
+    /**
+     * @param array<string, mixed>      $invoice
+     * @param array<string, mixed>|null $loaded
+     * @param array<string, mixed>      $updates
+     *
+     * @return array<string, mixed>
+     */
+    private function applyQuickBooksPayment(array $invoice, ?array $loaded, array $updates): array
+    {
+        if (array_key_exists('amount_paid', $invoice) === true) {
+            $updates['amount_paid'] = (int) $invoice['amount_paid'];
+        }
+        if (empty($invoice['paid_at']) === false) {
+            $updates['paid_at'] = $invoice['paid_at'];
+        }
+        if (empty($invoice['status']) === false) {
+            $updates['status'] = (string) $invoice['status'];
+        }
+        $updates['balance'] = self::invoiceAmounts(
+            $this->storedInvoiceAmount($updates, $invoice, $loaded, 'total_amount', 'total'),
+            $this->storedInvoiceAmount($updates, $invoice, $loaded, 'tax', 'tax'),
+            $this->storedInvoiceAmount($updates, $invoice, $loaded, 'amount_paid', 'amount_paid')
+        )['balance'];
+
+        return $updates;
+    }
+
+    /**
+     * @param array<string, mixed>      $updates
+     * @param array<string, mixed>      $invoice
+     * @param array<string, mixed>|null $loaded
+     */
+    private function storedInvoiceAmount(array $updates, array $invoice, ?array $loaded, string $updateKey, string $invoiceKey): int
+    {
+        if (array_key_exists($updateKey, $updates) === true) {
+            return (int) $updates[$updateKey];
+        }
+        if ($invoiceKey === 'amount_paid') {
+            return (int) (is_array($loaded) === true ? ($loaded['amount_paid'] ?? 0) : 0);
+        }
+
+        return (int) ($invoice[$invoiceKey] ?? (is_array($loaded) === true ? ($loaded[$invoiceKey] ?? 0) : 0));
     }
 
     /**
@@ -2489,34 +2630,72 @@ class FleetbaseDirectory
      */
     private function rememberPaymentInvoices(SyncLedger $ledger, array $skipped): void
     {
+        $rows = $this->paymentInvoiceRows($ledger, $skipped, $this->invoiceUuidByPaymentLink($skipped));
+        if ($rows === []) {
+            return;
+        }
+        $this->storePaymentInvoiceRows($rows);
+    }
+
+    /**
+     * @param array<string, true> $skipped
+     *
+     * @return array<string, string>
+     */
+    private function invoiceUuidByPaymentLink(array $skipped): array
+    {
         $invoiceByPayment = [];
         foreach ($this->loaded['links'] as $loaded) {
-            if (is_array($loaded) === false || (string) ($loaded['local_type'] ?? '') !== 'payment') {
+            $parts = $this->usablePaymentLink($loaded, $skipped, false);
+            if ($parts === null) {
                 continue;
             }
-            $local   = (string) ($loaded['local_uuid'] ?? '');
-            $qboId   = (string) ($loaded['qbo_id'] ?? '');
-            $company = (string) ($loaded['company_uuid'] ?? '');
-            $realm   = (string) ($loaded['realm_id'] ?? '');
-            if ($local === '' || $qboId === '' || $local === $qboId || $company === '' || $realm === '' || isset($skipped[$company]) === true) {
-                continue;
-            }
+            [$local, $qboId, $company, $realm]                        = $parts;
             $invoiceByPayment[$company . '|' . $realm . '|' . $qboId] = $local;
         }
 
+        return $invoiceByPayment;
+    }
+
+    /**
+     * @param array<string, mixed>|mixed $link
+     * @param array<string, true>        $skipped
+     *
+     * @return array{0: string, 1: string, 2: string, 3: string}|null
+     */
+    private function usablePaymentLink(mixed $link, array $skipped, bool $localMatchesRemote): ?array
+    {
+        if (is_array($link) === false || (string) ($link['local_type'] ?? '') !== 'payment') {
+            return null;
+        }
+        $local   = (string) ($link['local_uuid'] ?? '');
+        $qboId   = (string) ($link['qbo_id'] ?? '');
+        $company = (string) ($link['company_uuid'] ?? '');
+        $realm   = (string) ($link['realm_id'] ?? '');
+        $same    = $local === $qboId;
+        if ($local === '' || $qboId === '' || $same !== $localMatchesRemote || $company === '' || $realm === '' || isset($skipped[$company]) === true) {
+            return null;
+        }
+
+        return [$local, $qboId, $company, $realm];
+    }
+
+    /**
+     * @param array<string, true>   $skipped
+     * @param array<string, string> $invoiceByPayment
+     *
+     * @return array<string, array{company_uuid: string, realm_id: string, local_uuid: string, qbo_id: string}>
+     */
+    private function paymentInvoiceRows(SyncLedger $ledger, array $skipped, array $invoiceByPayment): array
+    {
         $rows = [];
         foreach ($ledger->links as $link) {
-            if (is_array($link) === false || (string) ($link['local_type'] ?? '') !== 'payment') {
+            $parts = $this->usablePaymentLink($link, $skipped, true);
+            if ($parts === null) {
                 continue;
             }
-            $local   = (string) ($link['local_uuid'] ?? '');
-            $qboId   = (string) ($link['qbo_id'] ?? '');
-            $company = (string) ($link['company_uuid'] ?? '');
-            $realm   = (string) ($link['realm_id'] ?? '');
-            if ($local === '' || $qboId === '' || $local !== $qboId || $company === '' || $realm === '' || isset($skipped[$company]) === true) {
-                continue;
-            }
-            $invoice = trim((string) ($link['invoice_uuid'] ?? ''));
+            [, $qboId, $company, $realm] = $parts;
+            $invoice                     = trim((string) ($link['invoice_uuid'] ?? ''));
             if ($invoice === '' || $invoice === $qboId) {
                 $invoice = $invoiceByPayment[$company . '|' . $realm . '|' . $qboId] ?? '';
             }
@@ -2530,10 +2709,15 @@ class FleetbaseDirectory
                 'qbo_id'       => $invoice,
             ];
         }
-        if ($rows === []) {
-            return;
-        }
 
+        return $rows;
+    }
+
+    /**
+     * @param array<string, array{company_uuid: string, realm_id: string, local_uuid: string, qbo_id: string}> $rows
+     */
+    private function storePaymentInvoiceRows(array $rows): void
+    {
         $now      = Carbon::now()->toDateTimeString();
         $existing = [];
         foreach (array_chunk(array_column($rows, 'local_uuid'), 200) as $chunk) {
@@ -2850,16 +3034,27 @@ class FleetbaseDirectory
      */
     private function retireDeleteBatch(string $companyUuid, array $deletions): void
     {
-        $links         = $this->linksForDeletions($companyUuid, $deletions);
-        $voidInvoices  = [];
-        $sentInvoices  = [];
-        $customers     = [];
-        $wallets       = [];
-        $linkUuids     = [];
-        $walletLinks   = [];
-        $voidRealms    = [];
-        $namedPayments = [];
+        $state = [
+            'void_invoices'  => [],
+            'sent_invoices'  => [],
+            'customers'      => [],
+            'wallets'        => [],
+            'link_uuids'     => [],
+            'wallet_links'   => [],
+            'void_realms'    => [],
+            'named_payments' => [],
+        ];
+        $this->collectDeletionRecords($deletions, $state);
+        $this->collectDeletionLinks($this->linksForDeletions($companyUuid, $deletions), $deletions, $state);
+        $this->applyDeletionBatch($companyUuid, $state);
+    }
 
+    /**
+     * @param array<int, array<string, mixed>> $deletions
+     * @param array<string, mixed>             $state
+     */
+    private function collectDeletionRecords(array $deletions, array &$state): void
+    {
         foreach ($deletions as $deletion) {
             if (is_array($deletion) === false) {
                 continue;
@@ -2869,35 +3064,53 @@ class FleetbaseDirectory
             $qbo   = (string) ($deletion['qbo_id'] ?? '');
             $local = (string) ($deletion['local_uuid'] ?? '');
             if ($type === 'invoice' && $local !== '') {
-                $voidInvoices[]             = $local;
-                $voidRealms[$realm][$local] = true;
+                $state['void_invoices'][]             = $local;
+                $state['void_realms'][$realm][$local] = true;
             }
             if ($type === 'customer' && $local !== '') {
-                $customers[] = $local;
+                $state['customers'][] = $local;
             }
             if ($type === 'wallet' && $local !== '') {
-                $wallets[] = $local;
+                $state['wallets'][] = $local;
             }
             if ($type === 'payment') {
-                if (empty($deletion['invoices_from_payment']) === false && $qbo !== '') {
-                    // The payment was read. Its lines name every invoice to unmark.
-                    // A stored fallback for a different invoice must not be applied.
-                    $namedPayments[$realm . '|' . $qbo] = true;
-                }
-                if ($local !== '' && $local !== $qbo) {
-                    $sentInvoices[] = $local;
-                } else {
-                    $named = is_array($deletion['invoice_uuids'] ?? null) === true ? $deletion['invoice_uuids'] : [];
-                    foreach ($named as $invoiceUuid) {
-                        $invoiceUuid = (string) $invoiceUuid;
-                        if ($invoiceUuid !== '' && $invoiceUuid !== $qbo) {
-                            $sentInvoices[] = $invoiceUuid;
-                        }
-                    }
-                }
+                $this->collectPaymentDeletion($deletion, $realm, $qbo, $local, $state);
             }
         }
+    }
 
+    /**
+     * @param array<string, mixed> $deletion
+     * @param array<string, mixed> $state
+     */
+    private function collectPaymentDeletion(array $deletion, string $realm, string $qbo, string $local, array &$state): void
+    {
+        if (empty($deletion['invoices_from_payment']) === false && $qbo !== '') {
+            // The payment was read. Its lines name every invoice to unmark.
+            // A stored fallback for a different invoice must not be applied.
+            $state['named_payments'][$realm . '|' . $qbo] = true;
+        }
+        if ($local !== '' && $local !== $qbo) {
+            $state['sent_invoices'][] = $local;
+
+            return;
+        }
+        $named = is_array($deletion['invoice_uuids'] ?? null) === true ? $deletion['invoice_uuids'] : [];
+        foreach ($named as $invoiceUuid) {
+            $invoiceUuid = (string) $invoiceUuid;
+            if ($invoiceUuid !== '' && $invoiceUuid !== $qbo) {
+                $state['sent_invoices'][] = $invoiceUuid;
+            }
+        }
+    }
+
+    /**
+     * @param array<int, array<string, mixed>>                                                                                                         $links
+     * @param array<int, array{realm_id?: string, local_type?: string, qbo_id?: string, local_uuid?: string|null, invoice_uuids?: array<int, string>}> $deletions
+     * @param array<string, mixed>                                                                                                                     $state
+     */
+    private function collectDeletionLinks(array $links, array $deletions, array &$state): void
+    {
         foreach ($links as $link) {
             $type  = (string) ($link['local_type'] ?? '');
             $local = (string) ($link['local_uuid'] ?? '');
@@ -2905,50 +3118,99 @@ class FleetbaseDirectory
             $realm = (string) ($link['realm_id'] ?? '');
             $uuid  = (string) ($link['uuid'] ?? '');
             if ($type === 'payment-invoice') {
-                if ($uuid !== '') {
-                    $linkUuids[] = $uuid;
-                }
-                if (isset($namedPayments[$realm . '|' . $local]) === false && $qbo !== '' && $qbo !== $local) {
-                    $sentInvoices[] = $qbo;
-                }
+                $this->collectPaymentInvoiceLink($uuid, $realm, $local, $qbo, $state);
                 continue;
             }
             if ($this->deletionMatchesLink($deletions, $type, $realm, $qbo, $local) === false) {
                 continue;
             }
-            if ($uuid !== '' && $type === 'wallet' && $local !== '') {
-                // Dropped below only when the wallet is really closed.
-                $walletLinks[$local][] = $uuid;
-            } elseif ($uuid !== '') {
-                $linkUuids[] = $uuid;
-            }
-            if ($local === '') {
-                continue;
-            }
-            if ($type === 'invoice') {
-                $voidInvoices[]             = $local;
-                $voidRealms[$realm][$local] = true;
-            } elseif ($type === 'payment' && $local !== $qbo) {
-                $sentInvoices[] = $local;
-            } elseif ($type === 'customer') {
-                $customers[] = $local;
-            } elseif ($type === 'wallet') {
-                $wallets[] = $local;
-            }
+            $this->collectMatchedDeletionLink($type, $realm, $qbo, $local, $uuid, $state);
         }
+    }
 
-        $voidInvoices = array_values(array_unique($voidInvoices));
+    /**
+     * @param array<string, mixed> $state
+     */
+    private function collectPaymentInvoiceLink(string $uuid, string $realm, string $local, string $qbo, array &$state): void
+    {
+        if ($uuid !== '') {
+            $state['link_uuids'][] = $uuid;
+        }
+        if (isset($state['named_payments'][$realm . '|' . $local]) === false && $qbo !== '' && $qbo !== $local) {
+            $state['sent_invoices'][] = $qbo;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $state
+     */
+    private function collectMatchedDeletionLink(string $type, string $realm, string $qbo, string $local, string $uuid, array &$state): void
+    {
+        if ($uuid !== '' && $type === 'wallet' && $local !== '') {
+            // Dropped below only when the wallet is really closed.
+            $state['wallet_links'][$local][] = $uuid;
+        } elseif ($uuid !== '') {
+            $state['link_uuids'][] = $uuid;
+        }
+        if ($local === '') {
+            return;
+        }
+        $this->recordDeletionTarget($type, $realm, $qbo, $local, $state);
+    }
+
+    /**
+     * @param array<string, mixed> $state
+     */
+    private function recordDeletionTarget(string $type, string $realm, string $qbo, string $local, array &$state): void
+    {
+        if ($type === 'invoice') {
+            $state['void_invoices'][]             = $local;
+            $state['void_realms'][$realm][$local] = true;
+
+            return;
+        }
+        if ($type === 'payment' && $local !== $qbo) {
+            $state['sent_invoices'][] = $local;
+
+            return;
+        }
+        if ($type === 'customer') {
+            $state['customers'][] = $local;
+
+            return;
+        }
+        if ($type === 'wallet') {
+            $state['wallets'][] = $local;
+        }
+    }
+
+    /**
+     * @param array{
+     *     void_invoices: array<int, string>,
+     *     sent_invoices: array<int, string>,
+     *     customers: array<int, string>,
+     *     wallets: array<int, string>,
+     *     link_uuids: array<int, string>,
+     *     wallet_links: array<string, array<int, string>>,
+     *     void_realms: array<string, array<string, true>>,
+     *     named_payments: array<string, true>
+     * } $state
+     */
+    private function applyDeletionBatch(string $companyUuid, array $state): void
+    {
+        $voidInvoices = array_values(array_unique($state['void_invoices']));
         $sentInvoices = array_values(array_unique(array_filter(
-            $sentInvoices,
+            $state['sent_invoices'],
             static fn (string $uuid): bool => $uuid !== '' && in_array($uuid, $voidInvoices, true) === false
         )));
-        $customers = array_values(array_unique($customers));
+        $customers = array_values(array_unique($state['customers']));
         // Every deleted wallet's pending row is finished, held or not: pushing a held wallet
         // would reactivate the account that was deleted in QuickBooks.
-        $settled = array_values(array_unique($wallets));
-        $wallets = array_values(array_diff($settled, $this->walletsHoldingBalance($companyUuid, $settled)));
+        $settled   = array_values(array_unique($state['wallets']));
+        $wallets   = array_values(array_diff($settled, $this->walletsHoldingBalance($companyUuid, $settled)));
+        $linkUuids = $state['link_uuids'];
         foreach ($wallets as $wallet) {
-            foreach ($walletLinks[$wallet] ?? [] as $walletLink) {
+            foreach ($state['wallet_links'][$wallet] ?? [] as $walletLink) {
                 $linkUuids[] = $walletLink;
             }
         }
@@ -2957,7 +3219,7 @@ class FleetbaseDirectory
         $this->updateInvoiceStatuses($companyUuid, $voidInvoices, $sentInvoices);
         $this->retireMany('Fleetbase\\FleetOps\\Models\\Customer', $companyUuid, $customers, []);
         $this->retireMany('Fleetbase\\Ledger\\Models\\Wallet', $companyUuid, $wallets, ['status' => 'closed']);
-        $this->deleteRetiredLinks($companyUuid, $linkUuids, $voidRealms);
+        $this->deleteRetiredLinks($companyUuid, $linkUuids, $state['void_realms']);
         $this->finishPendingMany($companyUuid, [
             'invoice'  => array_values(array_unique(array_merge($voidInvoices, $sentInvoices))),
             'customer' => $customers,
@@ -2998,6 +3260,31 @@ class FleetbaseDirectory
      */
     private function linksForDeletions(string $companyUuid, array $deletions): array
     {
+        [$clauses, $paymentIds] = $this->deletionLookup($deletions);
+        if ($clauses === [] && $paymentIds === []) {
+            return [];
+        }
+
+        try {
+            $links = $this->queryDeletionLinks($companyUuid, $clauses, $paymentIds);
+        } catch (\Illuminate\Database\QueryException $exception) {
+            if ($this->isMissingTable($exception) === true) {
+                return [];
+            }
+
+            throw $exception;
+        }
+
+        return $this->deletionLinkRows($links);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $deletions
+     *
+     * @return array{0: array<int, array{type: string, realm: string, qbo: string, local: string}>, 1: array<int, string>}
+     */
+    private function deletionLookup(array $deletions): array
+    {
         $paymentIds = [];
         $clauses    = [];
         foreach ($deletions as $deletion) {
@@ -3016,53 +3303,85 @@ class FleetbaseDirectory
             }
             $clauses[] = ['type' => $type, 'realm' => $realm, 'qbo' => $qbo, 'local' => $local];
         }
-        $paymentIds = array_values(array_unique($paymentIds));
-        if ($clauses === [] && $paymentIds === []) {
-            return [];
+
+        return [$clauses, array_values(array_unique($paymentIds))];
+    }
+
+    /**
+     * @param array<int, array{type: string, realm: string, qbo: string, local: string}> $clauses
+     * @param array<int, string>                                                         $paymentIds
+     *
+     * @return iterable<Model|\Illuminate\Database\Eloquent\Builder>
+     */
+    private function queryDeletionLinks(string $companyUuid, array $clauses, array $paymentIds): iterable
+    {
+        return Link::query()
+            ->where('company_uuid', $companyUuid)
+            ->where(function ($scope) use ($clauses, $paymentIds): void {
+                $this->constrainDeletionScope($scope, $clauses, $paymentIds);
+            })
+            ->get(['uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_id']);
+    }
+
+    /**
+     * @param array<int, array{type: string, realm: string, qbo: string, local: string}> $clauses
+     * @param array<int, string>                                                         $paymentIds
+     */
+    private function constrainDeletionScope(\Illuminate\Database\Eloquent\Builder $scope, array $clauses, array $paymentIds): void
+    {
+        $started = false;
+        foreach ($clauses as $clause) {
+            $method = $started === true ? 'orWhere' : 'where';
+            $scope->{$method}(function ($inner) use ($clause): void {
+                $this->constrainDeletionClause($inner, $clause);
+            });
+            $started = true;
         }
-
-        try {
-            $links = Link::query()
-                ->where('company_uuid', $companyUuid)
-                ->where(function ($scope) use ($clauses, $paymentIds): void {
-                    $started = false;
-                    foreach ($clauses as $clause) {
-                        $method = $started === true ? 'orWhere' : 'where';
-                        $scope->{$method}(function ($inner) use ($clause): void {
-                            $inner->where('local_type', $clause['type']);
-                            if ($clause['realm'] !== '') {
-                                $inner->where('realm_id', $clause['realm']);
-                            }
-                            $inner->where(function ($match) use ($clause): void {
-                                $open = false;
-                                if ($clause['qbo'] !== '') {
-                                    $match->where('qbo_id', $clause['qbo']);
-                                    $open = true;
-                                }
-                                if ($clause['local'] !== '') {
-                                    $way = $open === true ? 'orWhere' : 'where';
-                                    $match->{$way}('local_uuid', $clause['local']);
-                                }
-                            });
-                        });
-                        $started = true;
-                    }
-                    if ($paymentIds !== []) {
-                        $method = $started === true ? 'orWhere' : 'where';
-                        $scope->{$method}(function ($inner) use ($paymentIds): void {
-                            $inner->where('local_type', 'payment-invoice')->whereIn('local_uuid', $paymentIds);
-                        });
-                    }
-                })
-                ->get(['uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_id']);
-        } catch (\Illuminate\Database\QueryException $exception) {
-            if ($this->isMissingTable($exception) === true) {
-                return [];
-            }
-
-            throw $exception;
+        if ($paymentIds !== []) {
+            $method = $started === true ? 'orWhere' : 'where';
+            $scope->{$method}(function ($inner) use ($paymentIds): void {
+                $inner->where('local_type', 'payment-invoice')->whereIn('local_uuid', $paymentIds);
+            });
         }
+    }
 
+    /**
+     * @param array{type: string, realm: string, qbo: string, local: string} $clause
+     */
+    private function constrainDeletionClause(\Illuminate\Database\Eloquent\Builder $inner, array $clause): void
+    {
+        $inner->where('local_type', $clause['type']);
+        if ($clause['realm'] !== '') {
+            $inner->where('realm_id', $clause['realm']);
+        }
+        $inner->where(function ($match) use ($clause): void {
+            $this->constrainDeletionMatch($match, $clause);
+        });
+    }
+
+    /**
+     * @param array{type: string, realm: string, qbo: string, local: string} $clause
+     */
+    private function constrainDeletionMatch(\Illuminate\Database\Eloquent\Builder $match, array $clause): void
+    {
+        $open = false;
+        if ($clause['qbo'] !== '') {
+            $match->where('qbo_id', $clause['qbo']);
+            $open = true;
+        }
+        if ($clause['local'] !== '') {
+            $way = $open === true ? 'orWhere' : 'where';
+            $match->{$way}('local_uuid', $clause['local']);
+        }
+    }
+
+    /**
+     * @param iterable<Model|\Illuminate\Database\Eloquent\Builder> $links
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function deletionLinkRows(iterable $links): array
+    {
         $rows = [];
         foreach ($links as $link) {
             if (is_object($link) === true) {
@@ -3103,8 +3422,19 @@ class FleetbaseDirectory
 
             throw $exception;
         }
-        $grammar    = $connection->getQueryGrammar();
-        $table      = $grammar->wrapTable($model->getTable());
+        $grammar                      = $connection->getQueryGrammar();
+        [$cases, $filters, $bindings] = $this->invoiceStatusCases($grammar, $voidUuids, $sentUuids);
+        $this->runInvoiceStatusUpdate($connection, $grammar, $model->getTable(), $companyUuid, $voidUuids, $sentUuids, $cases, $filters, $bindings);
+    }
+
+    /**
+     * @param array<int, string> $voidUuids
+     * @param array<int, string> $sentUuids
+     *
+     * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, mixed>}
+     */
+    private function invoiceStatusCases(\Illuminate\Database\Grammar $grammar, array $voidUuids, array $sentUuids): array
+    {
         $uuidColumn = $grammar->wrap('uuid');
         $status     = $grammar->wrap('status');
         $cases      = [];
@@ -3126,6 +3456,22 @@ class FleetbaseDirectory
                 $bindings[] = $uuid;
             }
         }
+
+        return [$cases, $filters, $bindings];
+    }
+
+    /**
+     * @param array<int, string> $voidUuids
+     * @param array<int, string> $sentUuids
+     * @param array<int, string> $cases
+     * @param array<int, string> $filters
+     * @param array<int, mixed>  $bindings
+     */
+    private function runInvoiceStatusUpdate(\Illuminate\Database\Connection $connection, \Illuminate\Database\Grammar $grammar, string $tableName, string $companyUuid, array $voidUuids, array $sentUuids, array $cases, array $filters, array $bindings): void
+    {
+        $table           = $grammar->wrapTable($tableName);
+        $uuidColumn      = $grammar->wrap('uuid');
+        $status          = $grammar->wrap('status');
         $whereBindings   = $bindings;
         $bindings[]      = Carbon::now()->toDateTimeString();
         $bindings[]      = $companyUuid;
@@ -3485,49 +3831,64 @@ class FleetbaseDirectory
      */
     private function releaseMemoryRemoteDelete(string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid, array $relatedInvoiceUuids = []): void
     {
-        if ($this->memory === null) {
+        $memory = $this->memory;
+        if ($memory === null) {
             return;
         }
 
+        $mappedInvoices = $this->mappedMemoryInvoices($companyUuid, $realmId, $localType, $quickbooksId);
+        [$uuids, $kept] = $this->droppedMemoryLinks($companyUuid, $realmId, $localType, $quickbooksId, $localUuid);
+        $memory->links  = $kept;
+        foreach (array_values(array_unique($uuids)) as $uuid) {
+            $this->applyMemoryRemoteDelete($companyUuid, $realmId, $localType, $quickbooksId, $uuid, $relatedInvoiceUuids, $mappedInvoices);
+        }
+        $memory->rebuildIndex();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function mappedMemoryInvoices(string $companyUuid, string $realmId, string $localType, string $quickbooksId): array
+    {
         $mappedInvoices = [];
-        if ($localType === 'payment' && $quickbooksId !== '') {
-            foreach ($this->memory->links as $link) {
-                if (is_array($link) === false) {
-                    continue;
-                }
-                $mapped = (string) ($link['local_type'] ?? '') === 'payment-invoice'
-                    && (string) ($link['company_uuid'] ?? '') === $companyUuid
-                    && ($realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId)
-                    && (string) ($link['local_uuid'] ?? '') === $quickbooksId;
-                if ($mapped === true) {
-                    $invoiceUuid = (string) ($link['qbo_id'] ?? '');
-                    if ($invoiceUuid !== '' && $invoiceUuid !== $quickbooksId) {
-                        $mappedInvoices[] = $invoiceUuid;
-                    }
-                }
+        $memory         = $this->memory;
+        if ($localType !== 'payment' || $quickbooksId === '' || $memory === null) {
+            return $mappedInvoices;
+        }
+        foreach ($memory->links as $link) {
+            if ($this->memoryPaymentInvoiceLink($link, $companyUuid, $realmId, $quickbooksId) === false) {
+                continue;
+            }
+            $invoiceUuid = (string) ($link['qbo_id'] ?? '');
+            if ($invoiceUuid !== '' && $invoiceUuid !== $quickbooksId) {
+                $mappedInvoices[] = $invoiceUuid;
             }
         }
 
-        $uuids = [];
-        $kept  = [];
-        foreach ($this->memory->links as $link) {
+        return $mappedInvoices;
+    }
+
+    /**
+     * @return array{0: array<int, string>, 1: array<int, array<string, mixed>>}
+     */
+    private function droppedMemoryLinks(string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid): array
+    {
+        $uuids  = [];
+        $kept   = [];
+        $memory = $this->memory;
+        if ($memory === null) {
+            return [$uuids, $kept];
+        }
+        foreach ($memory->links as $link) {
             if (is_array($link) === false) {
                 continue;
             }
-            $sameCompany = (string) ($link['company_uuid'] ?? '') === $companyUuid;
-            $sameRealm   = $realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId;
-            $sameType    = (string) ($link['local_type'] ?? '') === $localType;
-            $sameRemote  = $quickbooksId !== '' && (string) ($link['qbo_id'] ?? '') === $quickbooksId;
-            $sameLocal   = is_string($localUuid) === true && $localUuid !== '' && (string) ($link['local_uuid'] ?? '') === $localUuid;
-            $paymentMap  = $localType === 'payment'
-                && (string) ($link['local_type'] ?? '') === 'payment-invoice'
-                && $sameCompany === true
-                && $sameRealm === true
-                && (string) ($link['local_uuid'] ?? '') === $quickbooksId;
-            if ($paymentMap === true || ($sameCompany === true && $sameRealm === true && $sameType === true && ($sameRemote === true || $sameLocal === true))) {
-                $id = (string) ($link['local_uuid'] ?? '');
-                if ($id !== '' && $paymentMap === false) {
-                    $uuids[] = $id;
+            $paymentMap = $this->memoryPaymentInvoiceLink($link, $companyUuid, $realmId, $quickbooksId);
+            $matched    = $paymentMap === true || $this->memoryLinkMatches($link, $companyUuid, $realmId, $localType, $quickbooksId, $localUuid) === true;
+            if ($matched === true) {
+                $localId = (string) ($link['local_uuid'] ?? '');
+                if ($localId !== '' && $paymentMap === false) {
+                    $uuids[] = $localId;
                 }
                 continue;
             }
@@ -3536,59 +3897,147 @@ class FleetbaseDirectory
         if (is_string($localUuid) === true && $localUuid !== '') {
             $uuids[] = $localUuid;
         }
-        $this->memory->links = $kept;
-        foreach (array_values(array_unique($uuids)) as $uuid) {
-            $pendingUuids = [$uuid];
-            if ($localType === 'invoice') {
-                if (isset($this->memory->invoices[$uuid]) === true && is_array($this->memory->invoices[$uuid]) === true) {
-                    $this->memory->invoices[$uuid]['status'] = 'void';
-                }
-                $this->memory->links = array_values(array_filter(
-                    $this->memory->links,
-                    static function ($link) use ($companyUuid, $realmId, $uuid): bool {
-                        if (is_array($link) === false) {
-                            return false;
-                        }
-                        $payment = (string) ($link['local_type'] ?? '') === 'payment'
-                            && (string) ($link['company_uuid'] ?? '') === $companyUuid
-                            && ($realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId)
-                            && (string) ($link['local_uuid'] ?? '') === $uuid;
 
-                        return $payment === false;
-                    }
-                ));
-            } elseif ($localType === 'payment') {
-                $pendingUuids = $this->paymentInvoiceTargets($companyUuid, $realmId, $quickbooksId, $uuid, array_merge($relatedInvoiceUuids, $mappedInvoices));
-                foreach ($pendingUuids as $invoiceUuid) {
-                    if (isset($this->memory->invoices[$invoiceUuid]) === false || is_array($this->memory->invoices[$invoiceUuid]) === false) {
-                        continue;
-                    }
-                    $status = strtolower((string) ($this->memory->invoices[$invoiceUuid]['status'] ?? ''));
-                    if (in_array($status, ['paid', 'partial'], true) === true) {
-                        $this->memory->invoices[$invoiceUuid]['status'] = 'sent';
-                    }
-                }
-            } elseif ($localType === 'customer') {
-                unset($this->memory->customers[$uuid]);
-            } elseif ($localType === 'wallet') {
-                unset($this->memory->wallets[$uuid]);
+        return [$uuids, $kept];
+    }
+
+    /**
+     * @param array<int, string> $relatedInvoiceUuids
+     * @param array<int, string> $mappedInvoices
+     */
+    private function applyMemoryRemoteDelete(string $companyUuid, string $realmId, string $localType, string $quickbooksId, string $uuid, array $relatedInvoiceUuids, array $mappedInvoices): void
+    {
+        $memory = $this->memory;
+        if ($memory === null) {
+            return;
+        }
+        $pendingUuids = [$uuid];
+        if ($localType === 'invoice') {
+            $this->voidMemoryInvoice($companyUuid, $realmId, $uuid);
+        } elseif ($localType === 'payment') {
+            $pendingUuids = $this->unpayMemoryInvoices($companyUuid, $realmId, $quickbooksId, $uuid, $relatedInvoiceUuids, $mappedInvoices);
+        } elseif ($localType === 'customer') {
+            unset($memory->customers[$uuid]);
+        } elseif ($localType === 'wallet') {
+            unset($memory->wallets[$uuid]);
+        }
+        $this->finishMemoryPending($companyUuid, $localType, $quickbooksId, $pendingUuids);
+    }
+
+    private function memoryPaymentInvoiceLink(mixed $link, string $companyUuid, string $realmId, string $quickbooksId): bool
+    {
+        if (is_array($link) === false) {
+            return false;
+        }
+
+        return (string) ($link['local_type'] ?? '') === 'payment-invoice'
+            && (string) ($link['company_uuid'] ?? '') === $companyUuid
+            && ($realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId)
+            && (string) ($link['local_uuid'] ?? '') === $quickbooksId;
+    }
+
+    /**
+     * @param array<string, mixed> $link
+     */
+    private function memoryLinkMatches(array $link, string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid): bool
+    {
+        $sameCompany = (string) ($link['company_uuid'] ?? '') === $companyUuid;
+        $sameRealm   = $realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId;
+        $sameType    = (string) ($link['local_type'] ?? '') === $localType;
+        $sameRemote  = $quickbooksId !== '' && (string) ($link['qbo_id'] ?? '') === $quickbooksId;
+        $sameLocal   = is_string($localUuid) === true && $localUuid !== '' && (string) ($link['local_uuid'] ?? '') === $localUuid;
+
+        return $sameCompany === true && $sameRealm === true && $sameType === true && ($sameRemote === true || $sameLocal === true);
+    }
+
+    private function voidMemoryInvoice(string $companyUuid, string $realmId, string $uuid): void
+    {
+        $memory = $this->memory;
+        if ($memory === null) {
+            return;
+        }
+        if (isset($memory->invoices[$uuid]) === true && is_array($memory->invoices[$uuid]) === true) {
+            $memory->invoices[$uuid]['status'] = 'void';
+        }
+        $memory->links = array_values(array_filter(
+            $memory->links,
+            function ($link) use ($companyUuid, $realmId, $uuid): bool {
+                return $this->keepMemoryLink($link, $companyUuid, $realmId, $uuid);
             }
-            $pendingType = $localType === 'payment' ? 'invoice' : $localType;
-            foreach ($pendingUuids as $pendingUuid) {
-                if ($localType === 'payment' && $pendingUuid === $quickbooksId) {
-                    continue;
-                }
-                foreach ($this->memory->pending as $index => $row) {
-                    if (is_array($row) === false) {
-                        continue;
-                    }
-                    if ((string) ($row['company_uuid'] ?? '') === $companyUuid && (string) ($row['local_type'] ?? '') === $pendingType && (string) ($row['local_uuid'] ?? '') === $pendingUuid && (string) ($row['status'] ?? '') === 'pending') {
-                        $this->memory->pending[$index]['status'] = 'done';
-                    }
+        ));
+    }
+
+    private function keepMemoryLink(mixed $link, string $companyUuid, string $realmId, string $uuid): bool
+    {
+        if (is_array($link) === false) {
+            return false;
+        }
+        $payment = (string) ($link['local_type'] ?? '') === 'payment'
+            && (string) ($link['company_uuid'] ?? '') === $companyUuid
+            && ($realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId)
+            && (string) ($link['local_uuid'] ?? '') === $uuid;
+
+        return $payment === false;
+    }
+
+    /**
+     * @param array<int, string> $relatedInvoiceUuids
+     * @param array<int, string> $mappedInvoices
+     *
+     * @return array<int, string>
+     */
+    private function unpayMemoryInvoices(string $companyUuid, string $realmId, string $quickbooksId, string $uuid, array $relatedInvoiceUuids, array $mappedInvoices): array
+    {
+        $pendingUuids = $this->paymentInvoiceTargets($companyUuid, $realmId, $quickbooksId, $uuid, array_merge($relatedInvoiceUuids, $mappedInvoices));
+        $memory       = $this->memory;
+        if ($memory === null) {
+            return $pendingUuids;
+        }
+        foreach ($pendingUuids as $invoiceUuid) {
+            if (isset($memory->invoices[$invoiceUuid]) === false || is_array($memory->invoices[$invoiceUuid]) === false) {
+                continue;
+            }
+            $status = strtolower((string) ($memory->invoices[$invoiceUuid]['status'] ?? ''));
+            if (in_array($status, ['paid', 'partial'], true) === true) {
+                $memory->invoices[$invoiceUuid]['status'] = 'sent';
+            }
+        }
+
+        return $pendingUuids;
+    }
+
+    /**
+     * @param array<int, string> $pendingUuids
+     */
+    private function finishMemoryPending(string $companyUuid, string $localType, string $quickbooksId, array $pendingUuids): void
+    {
+        $memory = $this->memory;
+        if ($memory === null) {
+            return;
+        }
+        $pendingType = $localType === 'payment' ? 'invoice' : $localType;
+        foreach ($pendingUuids as $pendingUuid) {
+            if ($localType === 'payment' && $pendingUuid === $quickbooksId) {
+                continue;
+            }
+            foreach ($memory->pending as $index => $row) {
+                if ($this->pendingRowMatches($row, $companyUuid, $pendingType, $pendingUuid) === true) {
+                    $memory->pending[$index]['status'] = 'done';
                 }
             }
         }
-        $this->memory->rebuildIndex();
+    }
+
+    private function pendingRowMatches(mixed $row, string $companyUuid, string $pendingType, string $pendingUuid): bool
+    {
+        if (is_array($row) === false) {
+            return false;
+        }
+
+        return (string) ($row['company_uuid'] ?? '') === $companyUuid
+            && (string) ($row['local_type'] ?? '') === $pendingType
+            && (string) ($row['local_uuid'] ?? '') === $pendingUuid
+            && (string) ($row['status'] ?? '') === 'pending';
     }
 
     /**
@@ -3605,6 +4054,19 @@ class FleetbaseDirectory
             return ['releases' => [], 'updates' => []];
         }
 
+        $rows     = $this->linkRows($links);
+        $existing = $this->existingLinkUuids($rows);
+
+        return $this->partitionLinkRows($rows, $existing);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $links
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function linkRows(array $links): array
+    {
         $now  = Carbon::now()->toDateTimeString();
         $rows = [];
         foreach ($links as $link) {
@@ -3621,12 +4083,35 @@ class FleetbaseDirectory
                 'updated_at'   => $now,
             ];
         }
+
+        return $rows;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     *
+     * @return array<string, true>
+     */
+    private function existingLinkUuids(array $rows): array
+    {
         $existing = [];
         foreach (array_chunk(array_column($rows, 'uuid'), 200) as $chunk) {
             foreach (Link::query()->whereIn('uuid', $chunk)->pluck('uuid') as $uuid) {
                 $existing[(string) $uuid] = true;
             }
         }
+
+        return $existing;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     * @param array<string, true>              $existing
+     *
+     * @return array{releases: array<int, array{link: array<string, mixed>, keep: string}>, updates: array<int, array{uuid: string, columns: array<string, mixed>}>}
+     */
+    private function partitionLinkRows(array $rows, array $existing): array
+    {
         $inserts  = [];
         $updates  = [];
         $releases = [];
@@ -3635,9 +4120,9 @@ class FleetbaseDirectory
                 $inserts[] = $row;
                 continue;
             }
-            $releases[] = ['link' => $row, 'keep' => $row['uuid']];
+            $releases[] = ['link' => $row, 'keep' => (string) $row['uuid']];
             $updates[]  = [
-                'uuid'    => $row['uuid'],
+                'uuid'    => (string) $row['uuid'],
                 'columns' => [
                     'company_uuid' => $row['company_uuid'],
                     'realm_id'     => $row['realm_id'],
@@ -3920,47 +4405,96 @@ class FleetbaseDirectory
             return;
         }
 
+        $rows = $this->customerInsertRows($class, $customers);
+        $this->fillMissingPlaceUuids($rows);
+        foreach (array_chunk($rows, 200) as $chunk) {
+            $class::query()->insert($chunk);
+        }
+    }
+
+    /**
+     * @param class-string                     $class
+     * @param array<int, array<string, mixed>> $customers
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function customerInsertRows(string $class, array $customers): array
+    {
         $now      = Carbon::now()->toDateTimeString();
         $rows     = [];
         $store    = $this->placeTable();
         $canPlace = $store !== null && $this->customerColumnExists($class, 'place_uuid') === true;
         foreach ($customers as $customer) {
-            $uuid = (string) ($customer['uuid'] ?? '');
-            if ($uuid === '') {
-                continue;
+            $row = $this->customerInsertRow($customer, $now, $canPlace, $store);
+            if ($row !== null) {
+                $rows[] = $row;
             }
-            $name = (string) ($customer['name'] ?? '');
-            $slug = $name === '' ? null : Str::slug($name);
-            $meta = $customer['meta'] ?? null;
-            if (is_array($meta) === true) {
-                $encoded = json_encode($meta);
-                $meta    = $encoded === false ? null : $encoded;
-            }
-            $publicId = 'contact_' . strtolower(Str::random(10));
-            $row      = [
-                'uuid'         => $uuid,
-                'public_id'    => $publicId,
-                'internal_id'  => (string) random_int(100000, 999999),
-                'company_uuid' => $customer['company_uuid'],
-                'name'         => $name !== '' ? $name : null,
-                'email'        => $customer['email'] ?? null,
-                'phone'        => $customer['phone'] ?? null,
-                'type'         => 'customer',
-                'notes'        => $customer['notes'] ?? null,
-                'meta'         => $meta,
-                'slug'         => $slug === '' ? null : $slug,
-                'created_at'   => $now,
-                'updated_at'   => $now,
-            ];
-            $address = $customer['address'] ?? null;
-            if ($canPlace === true && $store !== null && is_array($address) === true && $this->billingAddressHasContent($address) === true) {
-                $placeUuid = $this->insertCustomerPlace($store, (string) $customer['company_uuid'], $uuid, $address);
-                if ($placeUuid !== null) {
-                    $row['place_uuid'] = $placeUuid;
-                }
-            }
-            $rows[] = $row;
         }
+
+        return $rows;
+    }
+
+    /**
+     * @param array<string, mixed>                                                   $customer
+     * @param array{connection: \Illuminate\Database\Connection, table: string}|null $store
+     *
+     * @return array<string, mixed>|null
+     */
+    private function customerInsertRow(array $customer, string $now, bool $canPlace, ?array $store): ?array
+    {
+        $uuid = (string) ($customer['uuid'] ?? '');
+        if ($uuid === '') {
+            return null;
+        }
+        $name = (string) ($customer['name'] ?? '');
+        $slug = $name === '' ? null : Str::slug($name);
+        $meta = $customer['meta'] ?? null;
+        if (is_array($meta) === true) {
+            $encoded = json_encode($meta);
+            $meta    = $encoded === false ? null : $encoded;
+        }
+        $row = [
+            'uuid'         => $uuid,
+            'public_id'    => 'contact_' . strtolower(Str::random(10)),
+            'internal_id'  => (string) random_int(100000, 999999),
+            'company_uuid' => $customer['company_uuid'],
+            'name'         => $name !== '' ? $name : null,
+            'email'        => $customer['email'] ?? null,
+            'phone'        => $customer['phone'] ?? null,
+            'type'         => 'customer',
+            'notes'        => $customer['notes'] ?? null,
+            'meta'         => $meta,
+            'slug'         => $slug === '' ? null : $slug,
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ];
+        $placeUuid = $this->customerPlaceUuid($store, $canPlace, $customer, $uuid);
+        if ($placeUuid !== null) {
+            $row['place_uuid'] = $placeUuid;
+        }
+
+        return $row;
+    }
+
+    /**
+     * @param array{connection: \Illuminate\Database\Connection, table: string}|null $store
+     * @param array<string, mixed>                                                   $customer
+     */
+    private function customerPlaceUuid(?array $store, bool $canPlace, array $customer, string $uuid): ?string
+    {
+        $address = $customer['address'] ?? null;
+        if ($canPlace === false || $store === null || is_array($address) === false || $this->billingAddressHasContent($address) === false) {
+            return null;
+        }
+
+        return $this->insertCustomerPlace($store, (string) $customer['company_uuid'], $uuid, $address);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     */
+    private function fillMissingPlaceUuids(array &$rows): void
+    {
         $withPlace = false;
         foreach ($rows as $row) {
             if (array_key_exists('place_uuid', $row) === true) {
@@ -3968,15 +4502,13 @@ class FleetbaseDirectory
                 break;
             }
         }
-        if ($withPlace === true) {
-            foreach ($rows as $index => $row) {
-                if (array_key_exists('place_uuid', $row) === false) {
-                    $rows[$index]['place_uuid'] = null;
-                }
-            }
+        if ($withPlace === false) {
+            return;
         }
-        foreach (array_chunk($rows, 200) as $chunk) {
-            $class::query()->insert($chunk);
+        foreach ($rows as $index => $row) {
+            if (array_key_exists('place_uuid', $row) === false) {
+                $rows[$index]['place_uuid'] = null;
+            }
         }
     }
 

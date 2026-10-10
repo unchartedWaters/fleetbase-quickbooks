@@ -7,6 +7,15 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
+        $this->createConnections();
+        $this->createLinks();
+        $this->createPendingSyncs();
+        $this->createSyncBatches();
+        $this->createSyncAttempts();
+    }
+
+    private function createConnections(): void
+    {
         if (Schema::hasTable('quickbooks_connections') === false) {
             Schema::create('quickbooks_connections', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
@@ -26,6 +35,10 @@ return new class extends Migration {
             });
         }
 
+    }
+
+    private function createLinks(): void
+    {
         if (Schema::hasTable('quickbooks_links') === false) {
             Schema::create('quickbooks_links', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
@@ -41,6 +54,10 @@ return new class extends Migration {
             });
         }
 
+    }
+
+    private function createPendingSyncs(): void
+    {
         if (Schema::hasTable('quickbooks_pending_syncs') === false) {
             Schema::create('quickbooks_pending_syncs', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
@@ -56,6 +73,10 @@ return new class extends Migration {
             });
         }
 
+    }
+
+    private function createSyncBatches(): void
+    {
         if (Schema::hasTable('quickbooks_sync_batches') === false) {
             Schema::create('quickbooks_sync_batches', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
@@ -77,6 +98,10 @@ return new class extends Migration {
             });
         }
 
+    }
+
+    private function createSyncAttempts(): void
+    {
         if (Schema::hasTable('quickbooks_sync_attempts') === false) {
             Schema::create('quickbooks_sync_attempts', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();

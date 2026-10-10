@@ -85,6 +85,8 @@ class SecretCipher
             return false;
         }
 
+        // openssl_decrypt warns when the blob is not valid ciphertext. The @ keeps
+        // Laravel from turning that warning into an ErrorException; a non-string is not legacy.
         $plain = @openssl_decrypt(substr($raw, 16), 'AES-256-CBC', $this->legacyKey(), OPENSSL_RAW_DATA, substr($raw, 0, 16));
 
         return is_string($plain);
