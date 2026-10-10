@@ -36,5 +36,8 @@ return [
         'invoice_enabled'         => true,
         'payment_enabled'         => true,
         'wallet_enabled'          => true,
+        // How long a running sync leases the pending rows it loaded. A lease left by a
+        // killed worker expires after this many seconds. Keep it above the job timeout.
+        'claim_seconds'           => 900,
     ],
 ];

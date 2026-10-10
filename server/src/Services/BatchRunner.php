@@ -151,6 +151,10 @@ class BatchRunner
                     $this->ensureLock($lock, $companyUuid);
                     $this->directory->save($ledger);
                 }
+                // The rows are saved (done, failed, or back to pending with a backoff), so the
+                // lease can go. When save() throws this line is skipped and the lease expires
+                // by itself, which keeps another run from re-sending rows whose links were lost.
+                $this->directory->releaseClaims();
                 if ($followUp === true && Cache::get($this->reconcileOpenKey($companyUuid)) === true) {
                     $this->ensureLock($lock, $companyUuid);
                     $this->claimReconcilePage($companyUuid, (int) ($resolved['batch_size'] ?? 100));
@@ -237,11 +241,35 @@ class BatchRunner
     }
 
     /**
+     * One catalog page at a time per company. The company lock is released around
+     * QuickBooks HTTP, so a second catalog run could otherwise read the same cursor
+     * and send the same page. The lease is dropped when the page ends and expires
+     * on its own if the worker dies.
+     *
      * @param array<string, mixed> $settings
      *
      * @return array<string, mixed>
      */
     private function runCustomerCatalog(string $companyUuid, array $settings, string $trigger, bool &$continueCatalog, ?SyncLedger &$ledger, bool &$save, Lock $lock): array
+    {
+        $leaseKey = $this->catalogLeaseKey($companyUuid);
+        if (Cache::add($leaseKey, true, max(60, (int) config('quickbooks.sync.claim_seconds', 900))) === false) {
+            return ['trigger' => 'catalog', 'status' => 'skipped', 'reason' => 'busy'];
+        }
+
+        try {
+            return $this->runCustomerCatalogPage($companyUuid, $settings, $trigger, $continueCatalog, $ledger, $save, $lock);
+        } finally {
+            Cache::forget($leaseKey);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     *
+     * @return array<string, mixed>
+     */
+    private function runCustomerCatalogPage(string $companyUuid, array $settings, string $trigger, bool &$continueCatalog, ?SyncLedger &$ledger, bool &$save, Lock $lock): array
     {
         $now   = time();
         $after = (string) Cache::get($this->catalogCursorKey($companyUuid), '');
@@ -254,6 +282,14 @@ class BatchRunner
             $this->directory->rememberCustomerCatalogStamp($companyUuid, $now);
 
             return ['trigger' => 'catalog', 'status' => 'finished', 'created' => 0, 'updated' => 0, 'aligned' => 0, 'failed' => 0, 'skipped' => 0];
+        }
+
+        // A customer whose pending row another run holds is that run's work. The cursor
+        // still moves past it, since that run is sending it now.
+        $page = $ids;
+        $ids  = array_values(array_diff($ids, $this->directory->claimedLocalUuids($companyUuid, 'customer', $ids, $now)));
+        if ($ids === []) {
+            return ['trigger' => 'catalog', 'status' => 'skipped'];
         }
 
         $loaded = $this->directory->loadCustomerBlock($companyUuid, $ids);
@@ -294,7 +330,7 @@ class BatchRunner
             return $batch;
         }
         if ($more === true) {
-            Cache::put($this->catalogCursorKey($companyUuid), (string) $ids[array_key_last($ids)], 3600);
+            Cache::put($this->catalogCursorKey($companyUuid), (string) $page[array_key_last($page)], 3600);
             // run() dispatches this after it releases the company lock.
             $continueCatalog = true;
         } else {
@@ -341,6 +377,11 @@ class BatchRunner
     private function catalogCursorKey(string $companyUuid): string
     {
         return 'quickbooks.customer-catalog-after.' . $companyUuid;
+    }
+
+    private function catalogLeaseKey(string $companyUuid): string
+    {
+        return 'quickbooks.customer-catalog-lease.' . $companyUuid;
     }
 
     /**

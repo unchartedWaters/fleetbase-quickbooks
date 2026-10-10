@@ -12,6 +12,7 @@ use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
+use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
@@ -39,6 +40,16 @@ class FleetbaseDirectory
     public const CUSTOMER_FIELDS = ['name', 'email', 'phone', 'notes'];
 
     public ?SyncLedger $memory = null;
+
+    /** @var \WeakMap<object, bool>|null */
+    private static ?\WeakMap $claimSupport = null;
+
+    /**
+     * Lease tokens this directory took in loadPending(), given back by releaseClaims().
+     *
+     * @var array<int, string>
+     */
+    private array $claimTokens = [];
 
     /**
      * Rows as loadLedger() read them, so save() writes only what the engine changed.
@@ -665,13 +676,18 @@ class FleetbaseDirectory
             return $count;
         }
 
-        return (int) PendingSync::query()
+        $query = PendingSync::query()
             ->where('company_uuid', $companyUuid)
             ->where('status', 'pending')
             ->where(function ($query) use ($now): void {
                 $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', Carbon::createFromTimestamp($now));
-            })
-            ->count();
+            });
+        // A row another run holds is not due work for this one.
+        if ($this->claimsSupported() === true) {
+            $this->excludeClaimed($query, Carbon::createFromTimestamp($now));
+        }
+
+        return (int) $query->count();
     }
 
     /**
@@ -722,6 +738,141 @@ class FleetbaseDirectory
             && preg_match('/(?:UNIQUE|PRIMARY KEY) constraint failed/i', $message) === 1;
     }
 
+    /**
+     * Whether quickbooks_pending_syncs has the lease columns. A deploy that has not run
+     * the migration yet keeps working, unclaimed. Only a positive answer is remembered,
+     * per connection object, so a purged connection is asked again.
+     */
+    private function claimsSupported(): bool
+    {
+        $model      = new PendingSync();
+        $connection = $model->getConnection();
+        self::$claimSupport ??= new \WeakMap();
+        if ((self::$claimSupport[$connection] ?? false) === true) {
+            return true;
+        }
+
+        try {
+            $schema = $connection->getSchemaBuilder();
+            $has    = $schema->hasColumn($model->getTable(), 'claimed_until') === true && $schema->hasColumn($model->getTable(), 'claimed_by') === true;
+        } catch (\Throwable) {
+            return false;
+        }
+        if ($has === true) {
+            self::$claimSupport[$connection] = true;
+        }
+
+        return $has;
+    }
+
+    private function claimSeconds(): int
+    {
+        return max(60, (int) config('quickbooks.sync.claim_seconds', 900));
+    }
+
+    /**
+     * Rows with no lease, or a lease that has run out.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder<PendingSync> $query
+     */
+    private function excludeClaimed($query, Carbon $moment): void
+    {
+        $query->where(function ($claim) use ($moment): void {
+            $claim->whereNull('claimed_until')->orWhere('claimed_until', '<=', $moment);
+        });
+    }
+
+    /**
+     * Lease the loaded rows to this run. The update repeats the lease check, so a row
+     * another run took since the read is not taken twice; only rows this run really
+     * holds are returned. The rows stay status 'pending', so the open-identity index
+     * and the flag upsert behave as before.
+     *
+     * @param iterable<mixed> $rows
+     *
+     * @return array<int, mixed>
+     */
+    private function claimPending(iterable $rows, int $now): array
+    {
+        $rows  = is_array($rows) === true ? $rows : iterator_to_array($rows, false);
+        $uuids = [];
+        foreach ($rows as $row) {
+            if ($row instanceof PendingSync) {
+                $uuids[] = (string) $row->uuid;
+            }
+        }
+        if ($uuids === []) {
+            return $rows;
+        }
+
+        $token  = (string) Str::uuid();
+        $moment = Carbon::createFromTimestamp($now);
+        $until  = Carbon::createFromTimestamp($now + $this->claimSeconds());
+        foreach (array_chunk($uuids, 500) as $chunk) {
+            $query = PendingSync::query()->whereIn('uuid', $chunk)->where('status', 'pending');
+            $this->excludeClaimed($query, $moment);
+            $query->update(['claimed_by' => $token, 'claimed_until' => $until]);
+        }
+        $this->claimTokens[] = $token;
+
+        $mine = array_flip(array_map('strval', PendingSync::query()->where('claimed_by', $token)->pluck('uuid')->all()));
+
+        return array_values(array_filter(
+            $rows,
+            static fn ($row): bool => $row instanceof PendingSync && isset($mine[(string) $row->uuid]) === true
+        ));
+    }
+
+    /**
+     * Give back the rows this directory leased. Call it after the batch is saved; a
+     * lease that could not be given back expires on its own after claim_seconds.
+     */
+    public function releaseClaims(): void
+    {
+        $tokens            = $this->claimTokens;
+        $this->claimTokens = [];
+        if ($tokens === [] || $this->memory !== null) {
+            return;
+        }
+
+        try {
+            PendingSync::query()->whereIn('claimed_by', $tokens)->update(['claimed_by' => null, 'claimed_until' => null]);
+        } catch (\Throwable $exception) {
+            SafeLog::warning('QuickBooks could not release its pending-row lease; it will expire on its own.', ['error' => $exception->getMessage()]);
+        }
+    }
+
+    /**
+     * Local ids of the given type whose pending row another run holds right now.
+     * The customer catalog leaves these to that run.
+     *
+     * @param array<int, string> $uuids
+     *
+     * @return array<int, string>
+     */
+    public function claimedLocalUuids(string $companyUuid, string $localType, array $uuids, int $now): array
+    {
+        if ($uuids === [] || $this->memory !== null || $this->claimsSupported() === false) {
+            return [];
+        }
+
+        $held = [];
+        foreach (array_chunk($uuids, 500) as $chunk) {
+            $rows = PendingSync::query()
+                ->where('company_uuid', $companyUuid)
+                ->where('local_type', $localType)
+                ->where('status', 'pending')
+                ->whereIn('local_uuid', $chunk)
+                ->where('claimed_until', '>', Carbon::createFromTimestamp($now))
+                ->pluck('local_uuid');
+            foreach ($rows as $uuid) {
+                $held[] = (string) $uuid;
+            }
+        }
+
+        return $held;
+    }
+
     private function loadLedger(string $companyUuid, ?int $pendingLimit = null, ?int $now = null): SyncLedger
     {
         $ledger     = new SyncLedger();
@@ -730,17 +881,28 @@ class FleetbaseDirectory
             $ledger->connections[$companyUuid] = $connection;
         }
         $pendingQuery = (new PendingSync())->newQuery()->where('company_uuid', $companyUuid)->where('status', 'pending');
+        $claims       = false;
         if ($pendingLimit !== null) {
             $moment = Carbon::createFromTimestamp($now ?? time());
             $pendingQuery->where(function ($query) use ($moment): void {
                 $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', $moment);
             })->orderBy('next_attempt_at')->orderBy('uuid')->limit($pendingLimit);
+            // A batch skips rows another run holds and leases the rows it takes, in the
+            // same lock-protected read, so the company lock can be released for HTTP.
+            $claims = $this->claimsSupported();
+            if ($claims === true) {
+                $this->excludeClaimed($pendingQuery, $moment);
+            }
         }
         $customerIds     = [];
         $invoiceIds      = [];
         $walletIds       = [];
         $flaggedInvoices = [];
-        foreach ($pendingQuery->get() as $row) {
+        $pendingRows     = $pendingQuery->get();
+        if ($claims === true) {
+            $pendingRows = $this->claimPending($pendingRows, $now ?? time());
+        }
+        foreach ($pendingRows as $row) {
             if ($row instanceof PendingSync === false) {
                 continue;
             }
