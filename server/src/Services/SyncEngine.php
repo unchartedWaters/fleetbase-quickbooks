@@ -4701,7 +4701,7 @@ class QuickBooksHttpGate extends QuickBooksClient
 
     public function multiCurrencyEnabled(array $connection): bool
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): bool => $this->inner->multiCurrencyEnabled($connection));
+        return $this->engine->runAuthorized($connection, fn (array $connection): bool => $this->inner->multiCurrencyEnabled($connection)) === true;
     }
 
     public function createCustomer(array $connection, array $payload): array

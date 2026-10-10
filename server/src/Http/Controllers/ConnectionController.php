@@ -364,7 +364,12 @@ class ConnectionController extends QuickbooksController
 
     private function client(): QuickBooksClient
     {
-        return $this->client ??= app(QuickBooksClient::class);
+        if ($this->client === null) {
+            $client       = app(QuickBooksClient::class);
+            $this->client = $client instanceof QuickBooksClient ? $client : new QuickBooksClient();
+        }
+
+        return $this->client;
     }
 
     /**

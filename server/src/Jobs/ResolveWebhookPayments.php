@@ -43,7 +43,9 @@ class ResolveWebhookPayments implements ShouldQueue
     public const RETRY_DELAY_SECONDS = 5;
 
     /**
-     * @param array<int, array{realm_id: string, entity_type: string, id: string, operation: string, local_uuid: string|null}> $events
+     * The events come back from the queue payload, so handle() checks each one again.
+     *
+     * @param array<int, mixed> $events
      */
     public function __construct(
         public string $companyUuid,

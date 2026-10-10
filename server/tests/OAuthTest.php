@@ -862,6 +862,14 @@ test('the oauth callback only keeps the code and the user who started the flow c
             'Item'          => ['Id' => '7'],
             'QueryResponse' => ['Item' => [], 'Account' => [['Id' => '79', 'AccountType' => 'Income']]],
         ], 200),
+        // complete() reads credentials from the empty store, so it uses the production default.
+        // Without this, the test calls the real API, and a 401 there now fails the connection.
+        'quickbooks.api.intuit.com/*' => Http::response([
+            'CompanyInfo'   => ['CompanyName' => 'unchartedWaters', 'Country' => 'US'],
+            'Preferences'   => ['CurrencyPrefs' => ['HomeCurrency' => ['value' => 'USD']]],
+            'Item'          => ['Id' => '7'],
+            'QueryResponse' => ['Item' => [], 'Account' => [['Id' => '79', 'AccountType' => 'Income']]],
+        ], 200),
     ]);
 
     $flow  = new OAuthFlow(new QuickBooksClient());

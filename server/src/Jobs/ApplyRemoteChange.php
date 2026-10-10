@@ -150,7 +150,8 @@ class ApplyRemoteChange implements ShouldQueue
         }
 
         $now        = time();
-        $connection = $engine->runHttp(fn () => $tokens->refreshIfDue($connection, $now));
+        $refreshed  = $engine->runHttp(fn () => $tokens->refreshIfDue($connection, $now));
+        $connection = is_array($refreshed) === true ? $refreshed : $connection;
         $blocked    = ConnectionTokens::blockedMessage($connection, $now);
         if ($blocked === null) {
             $ledger->connections[$this->companyUuid] = $connection;

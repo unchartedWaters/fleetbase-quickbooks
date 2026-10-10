@@ -90,7 +90,7 @@ class EnqueueWebhookSync
             }
             $payments = $this->paymentInvoices($companyUuid, $payable);
             foreach ($payable as $event) {
-                if (isset($this->deferredPayments[$event->realmId . '|' . $event->quickbooksId]) === true) {
+                if ($this->isDeferredPayment($event->realmId . '|' . $event->quickbooksId) === true) {
                     $this->deferred[] = $event;
                 }
             }
@@ -197,6 +197,14 @@ class EnqueueWebhookSync
             }
             SyncWebhookBatch::dispatch($companyUuid, array_values($records));
         }
+    }
+
+    /**
+     * paymentInvoices() marks the payments it leaves to ResolveWebhookPayments.
+     */
+    private function isDeferredPayment(string $key): bool
+    {
+        return isset($this->deferredPayments[$key]);
     }
 
     /**

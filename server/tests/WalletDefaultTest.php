@@ -13,13 +13,22 @@ use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 
 /**
+ * The shipped entity switches, read from the config source. Requiring the file would call env(),
+ * which needs phpoption/phpoption, a package this test environment does not install.
+ *
  * @return array<string, mixed>
  */
 function walletConfigDefaults(): array
 {
-    $config = require __DIR__ . '/../config/quickbooks.php';
+    $source   = (string) file_get_contents(__DIR__ . '/../config/quickbooks.php');
+    $defaults = qbSettings();
+    foreach (['customer', 'invoice', 'payment', 'wallet'] as $entity) {
+        $key = $entity . '_enabled';
+        expect(preg_match("/'" . $key . "'\\s*=>\\s*(true|false)\\b/", $source, $match))->toBe(1);
+        $defaults[$key] = $match[1] === 'true';
+    }
 
-    return $config['sync'];
+    return $defaults;
 }
 
 function walletQueueDirectory(): FleetbaseDirectory

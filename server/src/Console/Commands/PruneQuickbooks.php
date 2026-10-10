@@ -6,6 +6,7 @@ use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Illuminate\Console\Command;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 
@@ -22,7 +23,7 @@ class PruneQuickbooks extends Command
     {
         $now      = Carbon::now();
         $attempts = $this->prune(SyncAttempt::class, $this->cutoff('attempt_days', 90, $now), null);
-        $batches  = $this->prune(SyncBatch::class, $this->cutoff('batch_days', 180, $now), function ($query): void {
+        $batches  = $this->prune(SyncBatch::class, $this->cutoff('batch_days', 180, $now), function (Builder $query): void {
             $query->whereIn('status', ['finished', 'skipped'])
                 ->whereNotExists(function ($attempts): void {
                     $attempts->selectRaw('1')
@@ -30,7 +31,7 @@ class PruneQuickbooks extends Command
                         ->whereColumn((new SyncAttempt())->getTable() . '.batch_uuid', (new SyncBatch())->getTable() . '.uuid');
                 });
         });
-        $pending = $this->prune(PendingSync::class, $this->cutoff('pending_days', 30, $now), function ($query): void {
+        $pending = $this->prune(PendingSync::class, $this->cutoff('pending_days', 30, $now), function (Builder $query): void {
             $query->where('status', 'done');
         }, 'updated_at');
 
@@ -51,8 +52,8 @@ class PruneQuickbooks extends Command
     }
 
     /**
-     * @param class-string<Model>          $class
-     * @param (callable(mixed): void)|null $scope
+     * @param class-string<Model>            $class
+     * @param (callable(Builder): void)|null $scope
      */
     private function prune(string $class, ?Carbon $cutoff, ?callable $scope, string $column = 'created_at'): int
     {

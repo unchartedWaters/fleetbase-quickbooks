@@ -493,7 +493,7 @@ class FleetbaseDirectory
             . ($kept === '' ? '' : ' This invoice keeps ' . $kept . '.');
         $noted = false;
         foreach ($ledger->attempts as $index => $attempt) {
-            if (is_array($attempt) === false || empty($attempt['uuid']) === false
+            if (empty($attempt['uuid']) === false
                 || (string) ($attempt['local_type'] ?? '') !== 'invoice' || (string) ($attempt['local_uuid'] ?? '') !== $uuid) {
                 continue;
             }
@@ -864,10 +864,11 @@ class FleetbaseDirectory
      */
     private function claimsSupported(): bool
     {
-        $model      = new PendingSync();
-        $connection = $model->getConnection();
-        self::$claimSupport ??= new \WeakMap();
-        if ((self::$claimSupport[$connection] ?? false) === true) {
+        $model              = new PendingSync();
+        $connection         = $model->getConnection();
+        $supported          = self::$claimSupport ?? new \WeakMap();
+        self::$claimSupport = $supported;
+        if (($supported[$connection] ?? false) === true) {
             return true;
         }
 
@@ -878,7 +879,7 @@ class FleetbaseDirectory
             return false;
         }
         if ($has === true) {
-            self::$claimSupport[$connection] = true;
+            $supported[$connection] = true;
         }
 
         return $has;
@@ -892,7 +893,7 @@ class FleetbaseDirectory
     /**
      * Rows with no lease, or a lease that has run out.
      *
-     * @param \Illuminate\Database\Eloquent\Builder<PendingSync> $query
+     * @param \Illuminate\Database\Eloquent\Builder|\Illuminate\Database\Query\Builder $query
      */
     private function excludeClaimed($query, Carbon $moment): void
     {
@@ -934,7 +935,7 @@ class FleetbaseDirectory
         }
         $this->claimTokens[] = $token;
 
-        $mine = array_flip(array_map('strval', PendingSync::query()->where('claimed_by', $token)->pluck('uuid')->all()));
+        $mine = array_flip(array_map(static fn (mixed $uuid): string => (string) $uuid, PendingSync::query()->where('claimed_by', $token)->pluck('uuid')->all()));
 
         return array_values(array_filter(
             $rows,
