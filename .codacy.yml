@@ -1,0 +1,11 @@
+---
+# JSHint cannot parse the Ember code here (decorators, class fields), so every file it
+# reads is a false report. ESLint with the Ember plugin checks this JavaScript instead.
+engines:
+  jshint:
+    exclude_paths:
+      - "addon/**"
+      - "app/**"
+      - "tests/**"
+      - "config/**"
+      - "*.js"
