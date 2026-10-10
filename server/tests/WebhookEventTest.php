@@ -396,6 +396,7 @@ test('the sync listener treats a stored off direction as both and skips outbound
         'payment_direction'  => 'outbound',
         'invoice_direction'  => 'both',
         'invoice_conflict'   => 'quickbooks',
+        'wallet_enabled'     => true,
         'wallet_direction'   => 'both',
         'wallet_conflict'    => 'quickbooks',
     ];

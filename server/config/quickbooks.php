@@ -35,7 +35,8 @@ return [
         'customer_enabled'        => true,
         'invoice_enabled'         => true,
         'payment_enabled'         => true,
-        'wallet_enabled'          => true,
+        // Off for a fresh install: a wallet per driver or customer can flood the QuickBooks chart of accounts.
+        'wallet_enabled'          => false,
     ],
     // Days to keep sync history. quickbooks:prune runs daily; 0 keeps that history forever.
     'retention' => [

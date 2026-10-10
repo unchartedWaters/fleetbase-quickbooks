@@ -663,7 +663,12 @@ class SettingController extends QuickbooksController
      */
     private function entitySwitchOn(array $sync, string $key): bool
     {
-        return array_key_exists($key, $sync) === false || $sync[$key] !== false;
+        // A wallet switch that was never stored is off; the other entities default to on.
+        if (array_key_exists($key, $sync) === false) {
+            return $key !== 'wallet_enabled';
+        }
+
+        return $sync[$key] !== false;
     }
 
     private function directory(): FleetbaseDirectory
