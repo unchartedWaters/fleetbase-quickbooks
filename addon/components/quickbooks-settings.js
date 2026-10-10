@@ -149,8 +149,14 @@ export default class QuickbooksSettingsComponent extends Component {
     @tracked errors = {};
     @tracked saving = false;
 
+    // The server sends can_edit false when the caller is not an installation administrator.
+    // A missing value (a host that does not pass it) leaves the form editable and the server decides.
+    get readOnly() {
+        return this.args.canEdit === false;
+    }
+
     get saveDisabled() {
-        return this.args.settingsLoadFailed === true || this.saving || !canUpdateSettings(this.abilities);
+        return this.args.settingsLoadFailed === true || this.saving || this.readOnly || !canUpdateSettings(this.abilities);
     }
 
     primaryTouched = new Set();

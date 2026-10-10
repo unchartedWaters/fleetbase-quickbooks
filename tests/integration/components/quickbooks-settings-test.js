@@ -591,6 +591,47 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.deepEqual(this.notifications.messages, []);
     });
 
+    test('save and every field are disabled with a note when the server says the caller cannot edit', async function (assert) {
+        this.set('settings', {
+            client_id: 'id',
+            environment: 'sandbox',
+            client_secret_set: true,
+        });
+        this.set('sync', { interval_minutes: 5 });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`
+            <QuickbooksSettings
+                @scope="company"
+                @settings={{this.settings}}
+                @sync={{this.sync}}
+                @settingsLoaded={{true}}
+                @canEdit={{false}}
+                @onSave={{this.onSave}}
+            />
+        `);
+
+        assert.dom('[data-test-settings-read-only]').exists();
+        assert.dom('[data-test-save]', document).isDisabled();
+        assert.dom('[data-test-field="client_id"]').isDisabled();
+        assert.dom('[data-test-sync="retry_limit"]').isDisabled();
+        assert.dom('[data-test-sync="wallet_conflict"]').isDisabled();
+
+        await click(saveButton());
+        assert.strictEqual(this.saved, null);
+    });
+
+    test('the form stays editable when the host does not pass can edit', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', { interval_minutes: 5 });
+
+        await render(hbs`<QuickbooksSettings @scope="company" @settings={{this.settings}} @sync={{this.sync}} @settingsLoaded={{true}} />`);
+
+        assert.dom('[data-test-settings-read-only]').doesNotExist();
+        assert.dom('[data-test-field="client_id"]').isNotDisabled();
+    });
+
     test('a blank webhook verifier stays out of the save and direction is independent of Primary', async function (assert) {
         this.set('settings', {
             client_id: 'id',
