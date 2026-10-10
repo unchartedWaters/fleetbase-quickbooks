@@ -796,14 +796,18 @@ test('oauth complete skips customer import when customers are turned off', funct
     }
 });
 
-test('the oauth callback route stays a public get', function () {
+test('the oauth callback route stays a public get and is the only throttled route', function () {
     $routes      = (string) file_get_contents(dirname(__DIR__) . '/src/routes.php');
-    $callbackAt  = strpos($routes, "\$router->get('v1/oauth/callback', [ConnectionController::class, 'callback']);");
+    $callbackAt  = strpos($routes, "\$router->get('v1/oauth/callback', [ConnectionController::class, 'callback'])->middleware('throttle:30,1');");
+    $webhookAt   = strpos($routes, "\$router->post('v1/webhooks', [WebhookController::class, 'handle']);");
     $protectedAt = strpos($routes, "'middleware' => ['fleetbase.protected']");
 
     expect($callbackAt)->not->toBeFalse()
+        ->and($webhookAt)->not->toBeFalse()
         ->and($protectedAt)->not->toBeFalse()
-        ->and($callbackAt)->toBeLessThan($protectedAt);
+        ->and($callbackAt)->toBeLessThan($protectedAt)
+        // Intuit may burst webhook notifications, so only the callback is throttled.
+        ->and(substr_count($routes, 'throttle'))->toBe(1);
 });
 
 test('oauth start rejects missing client id or redirect uri', function () {
