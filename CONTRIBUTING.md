@@ -7,7 +7,7 @@ The package git remote is still https://github.com/fleetbase/starter-extension.
 ## Setup
 
 - PHP 8.2. This is the supported version, it matches Fleetbase, and CI runs it
-- Node.js 18 or newer
+- Node.js 22 or newer (CI runs the current Node.js LTS)
 - Composer dependencies: `composer install` in this package
 - Node dependencies: `pnpm install --frozen-lockfile` in this package
 

@@ -158,7 +158,7 @@ A company with no QuickBooks connection is looked up at most once per 30 seconds
 
 ## Requirements and install
 
-This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`, `fleetbase/fleetops-api` `0.6.71`, and `fleetbase/ledger-api` `0.0.12`. The Ember engine needs Node `>= 18`.
+This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`, `fleetbase/fleetops-api` `0.6.71`, and `fleetbase/ledger-api` `0.0.12`. The Ember engine needs Node `>= 22`.
 
 From the Fleetbase directory, install the extension from the Fleetbase registry:
 
