@@ -403,7 +403,8 @@ test('disconnect deletes only the signed-in company connection and does not call
             ->and($checked)->toBe(['quickbooks disconnect connection', 'quickbooks disconnect connection'])
             ->and($connection->deletes)->toHaveCount(1)
             ->and($connection->deletes[0]['query'])->toContain('quickbooks_connections')
-            ->and($connection->deletes[0]['bindings'])->toBe([])
+            ->and($connection->deletes[0]['query'])->toContain('company_uuid')
+            ->and($connection->deletes[0]['bindings'])->toBe(['company-uuid'])
             ->and(Http::recorded())->toHaveCount(0);
     } finally {
         if ($previous === null) {
@@ -1299,7 +1300,7 @@ test('summary last sync is the latest finished batch and stays empty when every 
     $previous = Model::getConnectionResolver();
     Model::setConnectionResolver($resolver);
 
-    $store = new MemorySettingsStore();
+    $store      = new MemorySettingsStore();
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
         new OAuthFlow(new QuickBooksClient()),

@@ -53,24 +53,14 @@ class SyncWebhookBatch implements ShouldQueue
     }
 
     /**
-     * This organization can sync when it has its own usable connection, or when
-     * the install has exactly one usable connection and this organization shares it.
-     * A second connection row is not borrowed.
+     * This organization can sync only when it has its own usable connection.
+     * Another organization's row is not borrowed.
      */
     private function organizationIsConnected(): bool
     {
         $own = Connection::query()->where('company_uuid', $this->companyUuid)->first();
-        if ($own instanceof Connection === true) {
-            return $this->connectionIsUsable($own);
-        }
 
-        $rows = Connection::query()->limit(2)->get();
-        if ($rows->count() !== 1) {
-            return false;
-        }
-        $shared = $rows->first();
-
-        return $shared instanceof Connection === true && $this->connectionIsUsable($shared) === true;
+        return $own instanceof Connection === true && $this->connectionIsUsable($own) === true;
     }
 
     private function connectionIsUsable(Connection $connection): bool

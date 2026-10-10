@@ -4,6 +4,7 @@ use Fleetbase\Quickbooks\Events\QuickBooksEntityChanged;
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
 use Fleetbase\Quickbooks\Http\Controllers\WebhookController;
 use Fleetbase\Quickbooks\Jobs\ApplyRemoteChange;
+use Fleetbase\Quickbooks\Jobs\SyncCompanyBatch;
 use Fleetbase\Quickbooks\Jobs\SyncWebhookBatch;
 use Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync;
 use Fleetbase\Quickbooks\Models\Connection;
@@ -1895,7 +1896,7 @@ test('a payment stored under its quickbooks id queues the fleetbase invoice', fu
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
-test('a shared connection queues another organization invoice on that realm', function () {
+test('a connection is not shared with another organization on the same realm', function () {
     $defaultConnection = config('database.default');
     $sqliteConnection  = config('database.connections.sqlite');
     $ledgerConnection  = config('fleetbase.connection.db');
@@ -2016,12 +2017,16 @@ test('a shared connection queues another organization invoice on that realm', fu
                         ]);
 
                     $batch->handle();
-                    $pending = DB::table('quickbooks_pending_syncs')->get(['company_uuid', 'local_type', 'local_uuid']);
+                    $pending = DB::table('quickbooks_pending_syncs')->count();
+                    $synced  = false;
+                    foreach ($dispatcher->jobs as $job) {
+                        if ($job instanceof SyncCompanyBatch === true) {
+                            $synced = true;
+                        }
+                    }
 
-                    expect($pending)->toHaveCount(1)
-                        ->and($pending[0]->company_uuid)->toBe('company-b')
-                        ->and($pending[0]->local_type)->toBe('invoice')
-                        ->and($pending[0]->local_uuid)->toBe('inv-b');
+                    expect($pending)->toBe(0)
+                        ->and($synced)->toBeFalse();
                 } finally {
                     qboChangedRestoreEvents();
                 }

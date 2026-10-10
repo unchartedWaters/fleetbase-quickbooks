@@ -2755,61 +2755,28 @@ test('an invoice line update sends the existing sales line id', function () {
 });
 
 test('extra quickbooks sales lines stay and one update aligns the invoice', function () {
-    $client = new class extends FakeQuickBooks {
-        public function updateInvoice(array $connection, string $id, string $syncToken, array $payload): array
-        {
-            $existing = is_array($this->invoices[$id]['Line'] ?? null) === true ? $this->invoices[$id]['Line'] : [];
-            $incoming = is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [];
-            $byId     = [];
-            $append   = [];
-            foreach ($incoming as $line) {
-                if (is_array($line) === false) {
-                    continue;
-                }
-                $lineId = trim((string) ($line['Id'] ?? ''));
-                if ($lineId === '') {
-                    $append[] = $line;
-                    continue;
-                }
-                $byId[$lineId] = $line;
-            }
-            $merged = [];
-            $seen   = [];
-            foreach ($existing as $line) {
-                if (is_array($line) === false) {
-                    $merged[] = $line;
-                    continue;
-                }
-                $lineId = trim((string) ($line['Id'] ?? ''));
-                if ($lineId !== '' && isset($byId[$lineId]) === true) {
-                    $merged[]      = array_merge($line, $byId[$lineId]);
-                    $seen[$lineId] = true;
-                    continue;
-                }
-                $merged[] = $line;
-            }
-            foreach ($byId as $lineId => $line) {
-                if (isset($seen[$lineId]) === true) {
-                    continue;
-                }
-                $merged[] = $line;
-            }
-            foreach ($append as $line) {
-                $merged[] = $line;
-            }
-            $payload['Line'] = $merged;
-
-            return parent::updateInvoice($connection, $id, $syncToken, $payload);
-        }
-    };
-    [$engine, $client]           = qbEngine($client);
-    $ledger                      = engineLedger();
-    $ledger->customers['cust-1'] = engineCustomer('cust-1');
-    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
-    $ledger->invoices['inv-1']   = engineInvoice('inv-1', [
+    $warehouse = [
+        'Id'                  => '10',
+        'Amount'              => '4.00',
+        'DetailType'          => 'SalesItemLineDetail',
+        'Description'         => 'Warehouse fee',
+        'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '4.00', 'ItemRef' => ['value' => 'item-1']],
+    ];
+    $subtotal = [
+        'Amount'              => '14.00',
+        'DetailType'          => 'SubTotalLineDetail',
+        'Description'         => 'Subtotal',
+        'SubTotalLineDetail'  => [],
+    ];
+    $discount = [
+        'Amount'             => '0.00',
+        'DetailType'         => 'DiscountLineDetail',
+        'Description'        => 'Discount',
+        'DiscountLineDetail' => ['PercentBased' => false],
+    ];
+    [$engine, $client, $ledger] = engineLinkedInvoice([
         'items' => [['description' => 'Evening delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000]],
-    ]);
-    $client->invoices['qb-1'] = engineRemoteInvoice('qb-1', [
+    ], [
         'TotalAmt' => '14.00',
         'Line'     => [[
             'Id'                  => '9',
@@ -2817,32 +2784,20 @@ test('extra quickbooks sales lines stay and one update aligns the invoice', func
             'DetailType'          => 'SalesItemLineDetail',
             'Description'         => 'Delivery',
             'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00', 'ItemRef' => ['value' => 'item-1']],
-        ], [
-            'Id'                  => '10',
-            'Amount'              => '4.00',
-            'DetailType'          => 'SalesItemLineDetail',
-            'Description'         => 'Warehouse fee',
-            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '4.00', 'ItemRef' => ['value' => 'item-1']],
-        ], [
-            'Amount'             => '0.00',
-            'DetailType'         => 'DiscountLineDetail',
-            'Description'        => 'Discount',
-            'DiscountLineDetail' => ['PercentBased' => false],
-        ]],
+        ], $warehouse, $subtotal, $discount],
     ]);
-    $ledger->links[]   = engineLink('invoice', 'inv-1', 'qb-1');
-    $ledger->pending[] = enginePending('invoice', 'inv-1');
-    $settings          = qbSettings(['interval_minutes' => 1]);
+    $settings = qbSettings(['interval_minutes' => 1]);
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
     expect($first['updated'])->toBe(1)
         ->and($first['aligned'])->toBe(0)
+        ->and($client->invoices['qb-1']['Line'])->toHaveCount(4)
         ->and($client->invoices['qb-1']['Line'][0]['Id'])->toBe('9')
         ->and($client->invoices['qb-1']['Line'][0]['Description'])->toBe('Evening delivery')
-        ->and($client->invoices['qb-1']['Line'][1]['Id'])->toBe('10')
-        ->and($client->invoices['qb-1']['Line'][1]['Description'])->toBe('Warehouse fee')
-        ->and($client->invoices['qb-1']['Line'][2]['DetailType'])->toBe('DiscountLineDetail')
+        ->and($client->invoices['qb-1']['Line'][1])->toBe($warehouse)
+        ->and($client->invoices['qb-1']['Line'][2])->toBe($subtotal)
+        ->and($client->invoices['qb-1']['Line'][3])->toBe($discount)
         ->and($ledger->invoices['inv-1']['items'][0]['qbo_line_id'])->toBe('9');
 
     unset($ledger->invoices['inv-1']['items'][0]['qbo_line_id']);
@@ -2851,8 +2806,9 @@ test('extra quickbooks sales lines stay and one update aligns the invoice', func
     expect($second['aligned'])->toBe(1)
         ->and($second['updated'])->toBe(0)
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1)
-        ->and($client->invoices['qb-1']['Line'][1]['Description'])->toBe('Warehouse fee')
-        ->and($client->invoices['qb-1']['Line'][2]['DetailType'])->toBe('DiscountLineDetail');
+        ->and($client->invoices['qb-1']['Line'][1])->toBe($warehouse)
+        ->and($client->invoices['qb-1']['Line'][2])->toBe($subtotal)
+        ->and($client->invoices['qb-1']['Line'][3])->toBe($discount);
 });
 
 test('clearing invoice tax updates the existing tax line instead of leaving it', function () {
