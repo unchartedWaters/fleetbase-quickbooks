@@ -63,8 +63,13 @@ class EnqueueWebhookSync
                 // Delete and void both arrive as operation "delete". A pending row would
                 // run the outbound sync and create the remote record again. Retire the
                 // local row here. Do not hand the delete to SyncEngine or to a pending create.
+                // A delete changes Fleetbase from QuickBooks, so it needs the same permission
+                // as an inbound update: the type is on, the direction takes QuickBooks changes,
+                // and QuickBooks is the side that wins. Otherwise Fleetbase keeps its record.
                 if ($event->operation === 'delete') {
-                    $deletes[] = $event;
+                    if ($this->quickbooksSupplies($settings, $event->entityType) === true) {
+                        $deletes[] = $event;
+                    }
                     continue;
                 }
                 if ($this->allows($settings, $event->entityType) === false) {
