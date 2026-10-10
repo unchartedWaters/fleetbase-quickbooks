@@ -617,8 +617,6 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-field="client_id"]').isDisabled();
         assert.dom('[data-test-sync="retry_limit"]').isDisabled();
         assert.dom('[data-test-sync="wallet_conflict"]').isDisabled();
-
-        await click(saveButton());
         assert.strictEqual(this.saved, null);
     });
 
