@@ -37,4 +37,10 @@ return [
         'payment_enabled'         => true,
         'wallet_enabled'          => true,
     ],
+    // Days to keep sync history. quickbooks:prune runs daily; 0 keeps that history forever.
+    'retention' => [
+        'attempt_days' => 90,
+        'batch_days'   => 180,
+        'pending_days' => 30,
+    ],
 ];

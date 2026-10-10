@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Providers;
 
 use Fleetbase\Providers\CoreServiceProvider;
+use Fleetbase\Quickbooks\Console\Commands\PruneQuickbooks;
 use Fleetbase\Quickbooks\Console\Commands\SyncQuickbooks;
 use Fleetbase\Quickbooks\Events\QuickBooksEntityChanged;
 use Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync;
@@ -38,6 +39,7 @@ class QuickbooksServiceProvider extends CoreServiceProvider
      */
     public $commands = [
         SyncQuickbooks::class,
+        PruneQuickbooks::class,
     ];
 
     /**
@@ -69,6 +71,12 @@ class QuickbooksServiceProvider extends CoreServiceProvider
                 ->withoutOverlapping()
                 ->name('quickbooks-sync')
                 ->when(static fn (): bool => SyncSchedule::shouldRun(time(), ConnectionGate::hasActiveConnection()));
+            // History is trimmed whether or not a connection is active, so a disconnected install does not keep growing.
+            $schedule
+                ->command('quickbooks:prune')
+                ->daily()
+                ->withoutOverlapping()
+                ->name('quickbooks-prune');
         });
         $this->registerObservers();
         $this->loadRoutesFrom(__DIR__ . '/../routes.php');
