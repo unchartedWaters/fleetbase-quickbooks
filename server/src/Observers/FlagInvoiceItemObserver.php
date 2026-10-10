@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Observers;
 
 use Fleetbase\Quickbooks\Listeners\FlagInvoiceListener;
+use Fleetbase\Quickbooks\Support\FlagGuard;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -62,24 +63,27 @@ class FlagInvoiceItemObserver
             return;
         }
 
-        self::listenForEndOfScope();
+        // A failure here (the parent lookup included) must never fail the line-item save.
+        FlagGuard::run(function () use ($item): void {
+            self::listenForEndOfScope();
 
-        $invoiceUuid = (string) ($item->invoice_uuid ?? '');
-        if ($invoiceUuid === '' || isset(self::$flaggedInvoices[$invoiceUuid]) === true) {
-            return;
-        }
+            $invoiceUuid = (string) ($item->invoice_uuid ?? '');
+            if ($invoiceUuid === '' || isset(self::$flaggedInvoices[$invoiceUuid]) === true) {
+                return;
+            }
 
-        $invoice = $this->loadParent($invoiceUuid);
-        if (is_object($invoice) === false) {
-            return;
-        }
+            $invoice = $this->loadParent($invoiceUuid);
+            if (is_object($invoice) === false) {
+                return;
+            }
 
-        self::$flaggedInvoices[$invoiceUuid] = true;
+            self::$flaggedInvoices[$invoiceUuid] = true;
 
-        $listener = Container::getInstance()->make(FlagInvoiceListener::class);
-        if ($listener instanceof FlagInvoiceListener === true) {
-            $listener->handle((object) ['invoice' => $invoice]);
-        }
+            $listener = Container::getInstance()->make(FlagInvoiceListener::class);
+            if ($listener instanceof FlagInvoiceListener === true) {
+                $listener->handle((object) ['invoice' => $invoice]);
+            }
+        }, 'invoice line item', ['invoice_uuid' => (string) ($item->invoice_uuid ?? '')]);
     }
 
     /**

@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Observers;
 
 use Fleetbase\Quickbooks\Listeners\FlagInvoiceListener;
+use Fleetbase\Quickbooks\Support\FlagGuard;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Container\Container;
 
@@ -36,9 +37,12 @@ class FlagInvoiceObserver
             return;
         }
 
-        $listener = Container::getInstance()->make(FlagInvoiceListener::class);
-        if ($listener instanceof FlagInvoiceListener === true) {
-            $listener->handle((object) ['invoice' => $invoice]);
-        }
+        // A failure here must never fail the invoice save or delete.
+        FlagGuard::run(static function () use ($invoice): void {
+            $listener = Container::getInstance()->make(FlagInvoiceListener::class);
+            if ($listener instanceof FlagInvoiceListener === true) {
+                $listener->handle((object) ['invoice' => $invoice]);
+            }
+        }, 'invoice', ['company_uuid' => (string) ($invoice->company_uuid ?? ''), 'uuid' => (string) ($invoice->uuid ?? '')]);
     }
 }

@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Observers;
 
 use Fleetbase\Quickbooks\Listeners\FlagCustomerListener;
+use Fleetbase\Quickbooks\Support\FlagGuard;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Container\Container;
 
@@ -20,14 +21,23 @@ class FlagPlaceObserver
             return;
         }
 
-        $listener = Container::getInstance()->make(FlagCustomerListener::class);
-        if ($listener instanceof FlagCustomerListener === false) {
-            return;
-        }
+        // A failure here must never fail the place save.
+        FlagGuard::run(function () use ($place): void {
+            $listener = Container::getInstance()->make(FlagCustomerListener::class);
+            if ($listener instanceof FlagCustomerListener === false) {
+                return;
+            }
 
-        foreach ($this->customers($place) as $customer) {
-            $listener->handle((object) ['customer' => $customer]);
-        }
+            // The customer lookup is skipped for an organization without a QuickBooks connection.
+            $companyUuid = trim((string) ($place->company_uuid ?? ''));
+            if ($companyUuid !== '' && $listener->tracks($companyUuid) === false) {
+                return;
+            }
+
+            foreach ($this->customers($place) as $customer) {
+                $listener->handle((object) ['customer' => $customer]);
+            }
+        }, 'place', ['company_uuid' => (string) ($place->company_uuid ?? ''), 'uuid' => (string) ($place->uuid ?? '')]);
     }
 
     /**

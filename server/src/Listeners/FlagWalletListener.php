@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Listeners;
 
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
+use Fleetbase\Quickbooks\Support\FlagGuard;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 
 class FlagWalletListener
@@ -24,8 +25,11 @@ class FlagWalletListener
         }
 
         $companyUuid = (string) ($wallet->company_uuid ?? '');
-        $this->directory->flag(function ($ledger) use ($wallet): void {
-            $this->flagger->fromWalletEvent($ledger, $wallet);
-        }, $companyUuid);
+        // The listener also runs from ledger events: a failure must not reach the code that raised them.
+        FlagGuard::run(function () use ($wallet, $companyUuid): void {
+            $this->directory->flag(function ($ledger) use ($wallet): void {
+                $this->flagger->fromWalletEvent($ledger, $wallet);
+            }, $companyUuid);
+        }, 'wallet', ['company_uuid' => $companyUuid]);
     }
 }

@@ -41,8 +41,18 @@ class FleetbaseDirectory
 
     public ?SyncLedger $memory = null;
 
+    /** How long a company without a connection is remembered by flag(). */
+    public const UNTRACKED_SECONDS = 30;
+
     /** @var \WeakMap<object, bool>|null */
     private static ?\WeakMap $claimSupport = null;
+
+    /**
+     * Companies flag() found without a connection, mapped to the time the answer expires.
+     *
+     * @var array<string, int>
+     */
+    private array $untracked = [];
 
     /**
      * Lease tokens this directory took in loadPending(), given back by releaseClaims().
@@ -470,8 +480,8 @@ class FleetbaseDirectory
             return;
         }
 
-        $connection = $this->connection($companyUuid);
-        if (ConnectionGate::hasRealm($connection) === false) {
+        $connection = $this->trackedConnection($companyUuid);
+        if ($connection === null) {
             return;
         }
 
@@ -481,6 +491,41 @@ class FleetbaseDirectory
         foreach ($ledger->pending as $row) {
             $this->writePending($row);
         }
+    }
+
+    /**
+     * Whether saves for this organization should be flagged at all: it has a connection
+     * with a realm. The observers on Fleetbase's own models ask this before any other work.
+     */
+    public function tracks(string $companyUuid): bool
+    {
+        return $this->memory !== null || $this->trackedConnection($companyUuid) !== null;
+    }
+
+    /**
+     * The company's connection when it has a realm. A company without one is remembered
+     * for UNTRACKED_SECONDS, so the many saves of an organization that does not use
+     * QuickBooks cost one lookup now and then, not one per save. A company that connects
+     * is picked up within that time, and connecting queues its existing records anyway.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function trackedConnection(string $companyUuid): ?array
+    {
+        $now = time();
+        if (($this->untracked[$companyUuid] ?? 0) > $now) {
+            return null;
+        }
+
+        $connection = $this->connection($companyUuid);
+        if (ConnectionGate::hasRealm($connection) === false) {
+            $this->untracked[$companyUuid] = $now + self::UNTRACKED_SECONDS;
+
+            return null;
+        }
+        unset($this->untracked[$companyUuid]);
+
+        return $connection;
     }
 
     /**
