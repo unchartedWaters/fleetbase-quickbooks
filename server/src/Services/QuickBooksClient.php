@@ -1032,7 +1032,7 @@ class QuickBooksClient
     /**
      * BatchItemRequest entries: a query, or an entity write with its operation and payload.
      *
-     * @param array<int, array{bId?: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
      *
      * @return array<int, array<string, mixed>>
      */
@@ -1040,7 +1040,7 @@ class QuickBooksClient
     {
         $requests = [];
         foreach ($items as $item) {
-            $entry = ['bId' => (string) ($item['bId'] ?? '')];
+            $entry = ['bId' => (string) $item['bId']];
             if (isset($item['query']) === true && is_string($item['query']) === true && $item['query'] !== '') {
                 $entry['Query'] = $item['query'];
             } else {

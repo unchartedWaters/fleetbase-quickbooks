@@ -571,7 +571,7 @@ class SyncEngine
                 continue;
             }
             if (($counts[$type] ?? 0) > 1) {
-                $halt       = $this->runBlock($ledger, $connection, $this->blockOfType($rows, $type, $handled), $type, $settings, $batch, $now, $trigger);
+                $halt       = $this->runBlock($ledger, $connection, $this->blockOfType($rows, $type, $handled), $type, $settings, $batch, $now, $trigger, $companyUuid);
                 $connection = $ledger->connection($companyUuid) ?? $connection;
                 if ($halt === true || isset($this->refreshFailed[$companyUuid]) === true) {
                     break;
@@ -648,7 +648,7 @@ class SyncEngine
      * @param array<string, mixed>             $settings
      * @param array<string, mixed>             $batch
      */
-    private function runBlock(SyncLedger $ledger, array &$connection, array $block, string $type, array $settings, array &$batch, int $now, string $trigger): bool
+    private function runBlock(SyncLedger $ledger, array &$connection, array $block, string $type, array $settings, array &$batch, int $now, string $trigger, string $companyUuid): bool
     {
         try {
             return match ($type) {
@@ -659,7 +659,7 @@ class SyncEngine
         } catch (QuickBooksException $exception) {
             // The token could not be refreshed for now. Keep what this run already did and
             // leave the rest pending; the next run refreshes again.
-            if (isset($this->refreshFailed[(string) ($connection['company_uuid'] ?? '')]) === false) {
+            if (isset($this->refreshFailed[$companyUuid]) === false) {
                 throw $exception;
             }
 
