@@ -5,12 +5,15 @@ namespace Fleetbase\Quickbooks\Listeners;
 use Fleetbase\Ledger\Models\Invoice;
 use Fleetbase\Quickbooks\Events\QuickBooksEntityChanged;
 use Fleetbase\Quickbooks\Jobs\ApplyRemoteChange;
+use Fleetbase\Quickbooks\Jobs\ResolveWebhookPayments;
 use Fleetbase\Quickbooks\Jobs\SyncWebhookBatch;
 use Fleetbase\Quickbooks\Models\Link;
+use Fleetbase\Quickbooks\Services\ConnectionTokens;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
+use Fleetbase\Quickbooks\Support\QuickBooksException;
 
 class EnqueueWebhookSync
 {
@@ -25,8 +28,35 @@ class EnqueueWebhookSync
      */
     private array $paymentReads = [];
 
+    /**
+     * True only in the queued job that resolves payments. The webhook request itself never
+     * calls QuickBooks: it cannot wait on Intuit, and its stored access token may have expired.
+     */
+    private bool $readsQuickBooks = false;
+
+    /**
+     * realm|payment id => true for a payment whose invoices can only be known by reading it
+     * from QuickBooks. This request leaves it to ResolveWebhookPayments.
+     *
+     * @var array<string, true>
+     */
+    private array $deferredPayments = [];
+
+    /** @var array<int, QuickBooksEntityChanged> */
+    private array $deferred = [];
+
     public function __construct(private SettingsService $settings)
     {
+    }
+
+    /**
+     * Let this run read payments from QuickBooks. Used by the queued job, never by the request.
+     */
+    public function readingQuickBooks(): static
+    {
+        $this->readsQuickBooks = true;
+
+        return $this;
     }
 
     public function handle(QuickBooksEntityChanged $event): void
@@ -40,6 +70,9 @@ class EnqueueWebhookSync
         $this->queued = [];
 
         foreach ($queued as $companyUuid => $events) {
+            $this->deferredPayments = [];
+            $this->deferred         = [];
+
             $settings = $this->settings->resolveSync(
                 [],
                 $store->adminSync(),
@@ -56,9 +89,14 @@ class EnqueueWebhookSync
                 }
             }
             $payments = $this->paymentInvoices($companyUuid, $payable);
-            $records  = [];
-            $inbound  = [];
-            $deletes  = [];
+            foreach ($payable as $event) {
+                if (isset($this->deferredPayments[$event->realmId . '|' . $event->quickbooksId]) === true) {
+                    $this->deferred[] = $event;
+                }
+            }
+            $records = [];
+            $inbound = [];
+            $deletes = [];
             foreach ($events as $event) {
                 // Delete and void both arrive as operation "delete". A pending row would
                 // run the outbound sync and create the remote record again. Retire the
@@ -147,6 +185,9 @@ class EnqueueWebhookSync
             if ($deletes !== []) {
                 $this->retireDeletes($companyUuid, $deletes);
             }
+            if ($this->deferred !== []) {
+                ResolveWebhookPayments::dispatch($companyUuid, $this->deferredPayload());
+            }
             $inbound = $this->uniqueInbound($inbound);
             if ($inbound !== []) {
                 ApplyRemoteChange::dispatch($companyUuid, $inbound);
@@ -156,6 +197,25 @@ class EnqueueWebhookSync
             }
             SyncWebhookBatch::dispatch($companyUuid, array_values($records));
         }
+    }
+
+    /**
+     * @return array<int, array{realm_id: string, entity_type: string, id: string, operation: string, local_uuid: string|null}>
+     */
+    private function deferredPayload(): array
+    {
+        $payload = [];
+        foreach ($this->deferred as $event) {
+            $payload[] = [
+                'realm_id'    => $event->realmId,
+                'entity_type' => $event->entityType,
+                'id'          => $event->quickbooksId,
+                'operation'   => $event->operation,
+                'local_uuid'  => $event->localUuid,
+            ];
+        }
+
+        return $payload;
     }
 
     /**
@@ -186,7 +246,11 @@ class EnqueueWebhookSync
             $invoiceUuids = [];
             $fromPayment  = true;
             if ($event->entityType === 'payment') {
-                $key    = $event->realmId . '|' . $event->quickbooksId;
+                $key = $event->realmId . '|' . $event->quickbooksId;
+                if (isset($this->deferredPayments[$key]) === true) {
+                    $this->deferred[] = $event;
+                    continue;
+                }
                 $target = $resolved[$key] ?? null;
                 if (is_array($target) === true) {
                     $named = is_array($target['invoices'] ?? null) === true ? $target['invoices'] : [];
@@ -418,6 +482,12 @@ class EnqueueWebhookSync
         $remoteInvoices = [];
         $missingByRealm = [];
         foreach ($keyed as $realmId => $ids) {
+            if ($this->readsQuickBooks === false) {
+                foreach (array_values(array_unique($ids)) as $paymentId) {
+                    $this->deferredPayments[$realmId . '|' . $paymentId] = true;
+                }
+                continue;
+            }
             $found = $this->quickbooksInvoiceIdsForPayments($companyUuid, (string) $realmId, array_values(array_unique($ids)));
             foreach (array_values(array_unique($ids)) as $paymentId) {
                 $key = $realmId . '|' . $paymentId;
@@ -670,6 +740,17 @@ class EnqueueWebhookSync
 
         try {
             $read = $this->readPayments($client, $connection, $paymentIds);
+        } catch (QuickBooksException $exception) {
+            // The access token can expire between the refresh and this read. Refresh and read once more.
+            $fresh = $exception->isUnauthorized() === true ? $this->rotatedConnection($connection) : null;
+            if ($fresh === null) {
+                return [];
+            }
+            try {
+                $read = $this->readPayments($client, $fresh, $paymentIds);
+            } catch (\Throwable) {
+                return [];
+            }
         } catch (\Throwable) {
             return [];
         }
@@ -685,6 +766,33 @@ class EnqueueWebhookSync
         }
 
         return $mapped;
+    }
+
+    /**
+     * The connection with a new access token after QuickBooks refused the old one, or null
+     * when it cannot be refreshed. Intuit refusing the refresh token is recorded on the
+     * connection by the refresh itself.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    private function rotatedConnection(array $connection): ?array
+    {
+        try {
+            $tokens = app(ConnectionTokens::class);
+            if ($tokens instanceof ConnectionTokens === false) {
+                return null;
+            }
+            $fresh = $tokens->refreshNow($connection);
+        } catch (\Throwable) {
+            return null;
+        }
+        if (empty($fresh['needs_reauth']) === false || empty($fresh['refresh_error']) === false) {
+            return null;
+        }
+
+        return (string) ($fresh['access_token'] ?? '') === (string) ($connection['access_token'] ?? '') ? null : $fresh;
     }
 
     /**
