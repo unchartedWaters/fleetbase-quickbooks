@@ -33,7 +33,7 @@ jobs:
         version: ${{ env.PNPM_VERSION }}
 
     - name: Install Dependencies
-      run: pnpm install
+      run: pnpm install --frozen-lockfile
 
     - name: Test
       run: pnpm test
@@ -60,7 +60,7 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Install Dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build
         run: pnpm run build
