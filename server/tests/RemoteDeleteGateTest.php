@@ -133,7 +133,8 @@ function rdgSync(string $direction, string $conflict, array $extra = []): array
         $sync[$type . '_conflict']  = $conflict;
     }
 
-    return array_merge($sync, $extra);
+    // Wallets default to off for a fresh install, so these tests switch them on explicitly.
+    return array_merge($sync, ['wallet_enabled' => true], $extra);
 }
 
 test('a quickbooks delete is applied when quickbooks is primary and the direction takes quickbooks changes', function () {

@@ -9,6 +9,7 @@ use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
+use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Http\Request;
 
@@ -88,7 +89,7 @@ test('turning wallet sync on for the first time queues the wallets', function ()
     );
 
     try {
-        $saved = $controller->save(Request::create('/settings', 'POST', [
+        $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => validAuth(),
             'sync'  => qbSettings(['wallet_enabled' => true]),

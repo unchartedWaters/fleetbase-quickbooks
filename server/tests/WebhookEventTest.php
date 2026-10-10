@@ -766,6 +766,7 @@ test('a quickbooks delete voids the invoice and retires customers and wallets wi
             'invoice_conflict'   => 'quickbooks',
             'wallet_direction'   => 'both',
             'wallet_conflict'    => 'quickbooks',
+            'wallet_enabled'     => true,
             'payment_direction'  => 'both',
             'payment_conflict'   => 'quickbooks',
         ];
