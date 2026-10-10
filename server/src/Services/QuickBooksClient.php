@@ -986,20 +986,7 @@ class QuickBooksClient
      */
     private function postBatch(array $connection, array $items): array
     {
-        $requests = [];
-        foreach ($items as $item) {
-            $entry = ['bId' => (string) $item['bId']];
-            if (isset($item['query']) === true && is_string($item['query']) === true && $item['query'] !== '') {
-                $entry['Query'] = $item['query'];
-            } else {
-                $entity             = (string) ($item['entity'] ?? 'Customer');
-                $entry['operation'] = (string) ($item['operation'] ?? 'create');
-                $entry[$entity]     = is_array($item['payload'] ?? null) === true ? $item['payload'] : [];
-            }
-            $requests[] = $entry;
-        }
-
-        $response = $this->accounting($connection, 'post', 'batch', ['BatchItemRequest' => $requests]);
+        $response = $this->accounting($connection, 'post', 'batch', ['BatchItemRequest' => self::batchRequests($items)]);
         $body     = $this->decodeBody($response);
         $rows     = $body['BatchItemResponse'] ?? [];
         if (is_array($rows) === false) {
@@ -1040,6 +1027,31 @@ class QuickBooksClient
         }
 
         return $results;
+    }
+
+    /**
+     * BatchItemRequest entries: a query, or an entity write with its operation and payload.
+     *
+     * @param array<int, array{bId?: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private static function batchRequests(array $items): array
+    {
+        $requests = [];
+        foreach ($items as $item) {
+            $entry = ['bId' => (string) ($item['bId'] ?? '')];
+            if (isset($item['query']) === true && is_string($item['query']) === true && $item['query'] !== '') {
+                $entry['Query'] = $item['query'];
+            } else {
+                $entity             = (string) ($item['entity'] ?? 'Customer');
+                $entry['operation'] = (string) ($item['operation'] ?? 'create');
+                $entry[$entity]     = is_array($item['payload'] ?? null) === true ? $item['payload'] : [];
+            }
+            $requests[] = $entry;
+        }
+
+        return $requests;
     }
 
     /**

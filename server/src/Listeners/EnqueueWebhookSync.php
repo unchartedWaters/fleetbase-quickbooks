@@ -233,12 +233,8 @@ class EnqueueWebhookSync
      */
     private function retireDeletes(string $companyUuid, array $events): void
     {
-        try {
-            $directory = app(FleetbaseDirectory::class);
-        } catch (\Throwable) {
-            return;
-        }
-        if ($directory instanceof FleetbaseDirectory === false) {
+        $directory = $this->deleteDirectory();
+        if ($directory === null) {
             return;
         }
 
@@ -259,19 +255,7 @@ class EnqueueWebhookSync
                     $this->deferred[] = $event;
                     continue;
                 }
-                $target = $resolved[$key] ?? null;
-                if (is_array($target) === true) {
-                    $named = is_array($target['invoices'] ?? null) === true ? $target['invoices'] : [];
-                    if ($named === [] && is_string($target['invoice'] ?? null) === true && $target['invoice'] !== '') {
-                        $named = [$target['invoice']];
-                    }
-                    foreach ($named as $invoiceUuid) {
-                        $invoiceUuid = (string) $invoiceUuid;
-                        if ($invoiceUuid !== '') {
-                            $invoiceUuids[] = $invoiceUuid;
-                        }
-                    }
-                }
+                $invoiceUuids = $this->resolvedInvoiceUuids($resolved[$key] ?? null);
                 // The body counts as read only when QuickBooks returned that payment.
                 // Null, a throw, reauth, a realm mismatch, and a batch fault keep the stored invoice.
                 $fromPayment = ($this->paymentReads[$key] ?? '') === 'found';
@@ -286,6 +270,42 @@ class EnqueueWebhookSync
             ];
         }
         $directory->releaseRemoteDeletes($companyUuid, $deletions);
+    }
+
+    private function deleteDirectory(): ?FleetbaseDirectory
+    {
+        try {
+            $directory = app(FleetbaseDirectory::class);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return $directory instanceof FleetbaseDirectory === true ? $directory : null;
+    }
+
+    /**
+     * The Fleetbase invoices a resolved payment applied to: its invoice list, or its one invoice.
+     *
+     * @return array<int, string>
+     */
+    private function resolvedInvoiceUuids(mixed $target): array
+    {
+        if (is_array($target) === false) {
+            return [];
+        }
+        $named = is_array($target['invoices'] ?? null) === true ? $target['invoices'] : [];
+        if ($named === [] && is_string($target['invoice'] ?? null) === true && $target['invoice'] !== '') {
+            $named = [$target['invoice']];
+        }
+        $invoiceUuids = [];
+        foreach ($named as $invoiceUuid) {
+            $invoiceUuid = (string) $invoiceUuid;
+            if ($invoiceUuid !== '') {
+                $invoiceUuids[] = $invoiceUuid;
+            }
+        }
+
+        return $invoiceUuids;
     }
 
     private function remoteEntity(string $entityType): ?string

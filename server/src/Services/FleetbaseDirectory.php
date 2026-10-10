@@ -1061,29 +1061,11 @@ class FleetbaseDirectory
         if ($connection !== null) {
             $ledger->connections[$companyUuid] = $connection;
         }
-        $pendingQuery = (new PendingSync())->newQuery()->where('company_uuid', $companyUuid)->where('status', 'pending');
-        $claims       = false;
-        if ($pendingLimit !== null) {
-            $moment = Carbon::createFromTimestamp($now ?? time());
-            $pendingQuery->where(function ($query) use ($moment): void {
-                $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', $moment);
-            })->orderBy('next_attempt_at')->orderBy('uuid')->limit($pendingLimit);
-            // A batch skips rows another run holds and leases the rows it takes, in the
-            // same lock-protected read, so the company lock can be released for HTTP.
-            $claims = $this->claimsSupported();
-            if ($claims === true) {
-                $this->excludeClaimed($pendingQuery, $moment);
-            }
-        }
         $customerIds     = [];
         $invoiceIds      = [];
         $walletIds       = [];
         $flaggedInvoices = [];
-        $pendingRows     = $pendingQuery->get();
-        if ($claims === true) {
-            $pendingRows = $this->claimPending($pendingRows, $now ?? time());
-        }
-        foreach ($pendingRows as $row) {
+        foreach ($this->loadPendingRows($companyUuid, $pendingLimit, $now) as $row) {
             if ($row instanceof PendingSync === false) {
                 continue;
             }
@@ -1128,6 +1110,32 @@ class FleetbaseDirectory
         $this->loaded['wallets']   = $ledger->wallets;
 
         return $ledger;
+    }
+
+    /**
+     * The company's pending rows. A batch (a limit is given) takes only due rows, skips rows
+     * another run holds and leases the rows it takes, in the same lock-protected read, so the
+     * company lock can be released for HTTP. Without a limit every pending row is read.
+     *
+     * @return iterable<mixed>
+     */
+    private function loadPendingRows(string $companyUuid, ?int $pendingLimit, ?int $now): iterable
+    {
+        $pendingQuery = (new PendingSync())->newQuery()->where('company_uuid', $companyUuid)->where('status', 'pending');
+        if ($pendingLimit === null) {
+            return $pendingQuery->get();
+        }
+
+        $moment = Carbon::createFromTimestamp($now ?? time());
+        $pendingQuery->where(function ($query) use ($moment): void {
+            $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', $moment);
+        })->orderBy('next_attempt_at')->orderBy('uuid')->limit($pendingLimit);
+        if ($this->claimsSupported() === false) {
+            return $pendingQuery->get();
+        }
+        $this->excludeClaimed($pendingQuery, $moment);
+
+        return $this->claimPending($pendingQuery->get(), $now ?? time());
     }
 
     /**
@@ -3674,57 +3682,81 @@ class FleetbaseDirectory
         }
 
         $connection = $model->getConnection();
-        $grammar    = $connection->getQueryGrammar();
-        $table      = $grammar->wrapTable($model->getTable());
-        $uuidColumn = $grammar->wrap('uuid');
         foreach (array_chunk($rows, 200) as $chunk) {
-            $names = [];
-            foreach ($chunk as $row) {
-                foreach (array_keys($row['columns']) as $column) {
-                    if (in_array($column, $allowed, true) === true) {
-                        $names[$column] = true;
-                    }
-                }
+            $statement = $this->chunkUpdate($connection->getQueryGrammar(), $model->getTable(), $chunk, $allowed, $guard);
+            if ($statement !== null) {
+                $connection->update($statement[0], $statement[1]);
             }
-            if ($names === []) {
-                continue;
-            }
+        }
+    }
 
-            $assignments = [];
-            $bindings    = [];
-            foreach (array_keys($names) as $column) {
-                $cases = [];
-                foreach ($chunk as $row) {
-                    if (array_key_exists($column, $row['columns']) === false || in_array($column, $allowed, true) === false) {
-                        continue;
-                    }
-                    $cases[]    = 'WHEN ? THEN ?';
-                    $bindings[] = $row['uuid'];
-                    $bindings[] = $this->sqlValue($row['columns'][$column]);
-                }
-                if ($cases === []) {
+    /**
+     * One UPDATE for a chunk: each changed, allowed column is set with a CASE on the uuid.
+     * Null when no row in the chunk changes an allowed column.
+     *
+     * @param array<int, array{uuid: string, columns: array<string, mixed>}> $chunk
+     * @param array<int, string>                                             $allowed
+     * @param array{0: string, 1: array<int, mixed>}|null                    $guard
+     *
+     * @return array{0: string, 1: array<int, mixed>}|null
+     */
+    private function chunkUpdate(\Illuminate\Database\Grammar $grammar, string $tableName, array $chunk, array $allowed, ?array $guard): ?array
+    {
+        $uuidColumn  = $grammar->wrap('uuid');
+        $assignments = [];
+        $bindings    = [];
+        foreach ($this->chunkColumns($chunk, $allowed) as $column) {
+            $cases = [];
+            foreach ($chunk as $row) {
+                if (array_key_exists($column, $row['columns']) === false) {
                     continue;
                 }
-                $assignments[] = $grammar->wrap($column) . ' = CASE ' . $uuidColumn . ' ' . implode(' ', $cases) . ' ELSE ' . $grammar->wrap($column) . ' END';
-            }
-            if ($assignments === []) {
-                continue;
-            }
-            $assignments[] = $grammar->wrap('updated_at') . ' = ?';
-            $bindings[]    = Carbon::now()->toDateTimeString();
-            $placeholders  = implode(', ', array_fill(0, count($chunk), '?'));
-            foreach ($chunk as $row) {
+                $cases[]    = 'WHEN ? THEN ?';
                 $bindings[] = $row['uuid'];
+                $bindings[] = $this->sqlValue($row['columns'][$column]);
             }
-            $sql = 'UPDATE ' . $table . ' SET ' . implode(', ', $assignments) . ' WHERE ' . $uuidColumn . ' IN (' . $placeholders . ')';
-            if ($guard !== null) {
-                $sql .= ' AND ' . $guard[0];
-                foreach ($guard[1] as $binding) {
-                    $bindings[] = $binding;
+            $assignments[] = $grammar->wrap($column) . ' = CASE ' . $uuidColumn . ' ' . implode(' ', $cases) . ' ELSE ' . $grammar->wrap($column) . ' END';
+        }
+        if ($assignments === []) {
+            return null;
+        }
+        $assignments[] = $grammar->wrap('updated_at') . ' = ?';
+        $bindings[]    = Carbon::now()->toDateTimeString();
+        foreach ($chunk as $row) {
+            $bindings[] = $row['uuid'];
+        }
+        $sql = 'UPDATE ' . $grammar->wrapTable($tableName) . ' SET ' . implode(', ', $assignments)
+            . ' WHERE ' . $uuidColumn . ' IN (' . implode(', ', array_fill(0, count($chunk), '?')) . ')';
+        if ($guard !== null) {
+            $sql .= ' AND ' . $guard[0];
+            foreach ($guard[1] as $binding) {
+                $bindings[] = $binding;
+            }
+        }
+
+        return [$sql, $bindings];
+    }
+
+    /**
+     * The allowed columns that at least one row of the chunk changes, in first-seen order.
+     *
+     * @param array<int, array{uuid: string, columns: array<string, mixed>}> $chunk
+     * @param array<int, string>                                             $allowed
+     *
+     * @return array<int, string>
+     */
+    private function chunkColumns(array $chunk, array $allowed): array
+    {
+        $names = [];
+        foreach ($chunk as $row) {
+            foreach (array_keys($row['columns']) as $column) {
+                if (in_array($column, $allowed, true) === true) {
+                    $names[$column] = true;
                 }
             }
-            $connection->update($sql, $bindings);
         }
+
+        return array_map(static fn (int|string $column): string => (string) $column, array_keys($names));
     }
 
     private function sqlValue(mixed $value): mixed

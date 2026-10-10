@@ -559,11 +559,7 @@ class SyncEngine
         // A worker can reuse this engine, so a refresh that failed in an earlier run is tried again.
         unset($this->refreshFailed[$companyUuid]);
         $ledger->rebuildIndex();
-        $counts = [];
-        foreach ($rows as $row) {
-            $type          = (string) ($row['local_type'] ?? 'invoice');
-            $counts[$type] = ($counts[$type] ?? 0) + 1;
-        }
+        $counts  = $this->rowTypeCounts($rows);
         $handled = [];
         foreach ($rows as $row) {
             if ($this->isRateLimited($connection, $now) === true) {
@@ -575,28 +571,7 @@ class SyncEngine
                 continue;
             }
             if (($counts[$type] ?? 0) > 1) {
-                $block = [];
-                foreach ($rows as $candidate) {
-                    if ((string) ($candidate['local_type'] ?? 'invoice') !== $type) {
-                        continue;
-                    }
-                    $block[]                                                                                                     = $candidate;
-                    $handled[(string) ($candidate['local_type'] ?? 'invoice') . '|' . (string) ($candidate['local_uuid'] ?? '')] = true;
-                }
-                try {
-                    $halt = match ($type) {
-                        'customer' => $this->syncCustomerBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger, true),
-                        'wallet'   => $this->syncWalletBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger),
-                        default    => $this->syncInvoiceBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger),
-                    };
-                } catch (QuickBooksException $exception) {
-                    // The token could not be refreshed for now. Keep what this run already did and
-                    // leave the rest pending; the next run refreshes again.
-                    if (isset($this->refreshFailed[$companyUuid]) === false) {
-                        throw $exception;
-                    }
-                    $halt = true;
-                }
+                $halt       = $this->runBlock($ledger, $connection, $this->blockOfType($rows, $type, $handled), $type, $settings, $batch, $now, $trigger);
                 $connection = $ledger->connection($companyUuid) ?? $connection;
                 if ($halt === true || isset($this->refreshFailed[$companyUuid]) === true) {
                     break;
@@ -625,6 +600,71 @@ class SyncEngine
         $ledger->batches[]    = $batch;
 
         return $batch;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     *
+     * @return array<string, int>
+     */
+    private function rowTypeCounts(array $rows): array
+    {
+        $counts = [];
+        foreach ($rows as $row) {
+            $type          = (string) ($row['local_type'] ?? 'invoice');
+            $counts[$type] = ($counts[$type] ?? 0) + 1;
+        }
+
+        return $counts;
+    }
+
+    /**
+     * Every row of one type, in order, marked as handled so the loop does not send it again.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     * @param array<string, true>              $handled
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function blockOfType(array $rows, string $type, array &$handled): array
+    {
+        $block = [];
+        foreach ($rows as $candidate) {
+            if ((string) ($candidate['local_type'] ?? 'invoice') !== $type) {
+                continue;
+            }
+            $block[]                                                                                                     = $candidate;
+            $handled[(string) ($candidate['local_type'] ?? 'invoice') . '|' . (string) ($candidate['local_uuid'] ?? '')] = true;
+        }
+
+        return $block;
+    }
+
+    /**
+     * Send one block of rows of the same type. True when the run must stop.
+     *
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $block
+     * @param array<string, mixed>             $settings
+     * @param array<string, mixed>             $batch
+     */
+    private function runBlock(SyncLedger $ledger, array &$connection, array $block, string $type, array $settings, array &$batch, int $now, string $trigger): bool
+    {
+        try {
+            return match ($type) {
+                'customer' => $this->syncCustomerBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger, true),
+                'wallet'   => $this->syncWalletBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger),
+                default    => $this->syncInvoiceBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger),
+            };
+        } catch (QuickBooksException $exception) {
+            // The token could not be refreshed for now. Keep what this run already did and
+            // leave the rest pending; the next run refreshes again.
+            if (isset($this->refreshFailed[(string) ($connection['company_uuid'] ?? '')]) === false) {
+                throw $exception;
+            }
+
+            return true;
+        }
     }
 
     /**
