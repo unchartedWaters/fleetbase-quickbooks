@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
+use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -154,21 +155,13 @@ class CustomerImporter
         }
 
         try {
+            // Only this company's own row. When it is gone (disconnected mid-import) the
+            // cursor is dropped; another organization's connection is never written.
             $updated = (new Connection())->newQuery()->where('company_uuid', $companyUuid)->update([
                 self::CURSOR_COLUMN => $start,
             ]);
-            if ($updated > 0) {
-                return;
-            }
-            $rows = (new Connection())->newQuery()->limit(2)->get();
-            if ($rows->count() !== 1) {
-                return;
-            }
-            $only = $rows->first();
-            if ($only instanceof Connection) {
-                (new Connection())->newQuery()->whereKey($only->getKey())->update([
-                    self::CURSOR_COLUMN => $start,
-                ]);
+            if ($updated === 0) {
+                SafeLog::debug('QuickBooks customer import cursor not stored: the company has no connection.', ['company_uuid' => $companyUuid]);
             }
         } catch (\Throwable $exception) {
             // Unit tests keep the cursor on the ledger when the connections table is absent.

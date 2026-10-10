@@ -1390,16 +1390,17 @@ class FleetbaseDirectory
             return;
         }
 
+        // Only this company's own row. When it is gone (disconnected mid-batch) nothing is
+        // written; another organization's row on the same realm is never used.
         $existing = (new Connection())->newQuery()->where('company_uuid', $companyUuid)->first();
         if ($existing instanceof Connection === false) {
-            $realm = trim((string) ($connection['realm_id'] ?? ''));
-            if ($realm !== '') {
-                $existing = $this->soleStoredConnection($realm);
-            }
+            SafeLog::debug('QuickBooks connection update skipped: the company has no connection.', ['company_uuid' => $companyUuid]);
+
+            return;
         }
-        $storedRealm = $existing instanceof Connection ? (string) ($existing->realm_id ?? '') : null;
+        $storedRealm = (string) ($existing->realm_id ?? '');
         $columns     = self::connectionColumns($connection, $storedRealm, $fields);
-        if ($columns === null || $existing instanceof Connection === false) {
+        if ($columns === null) {
             return;
         }
 
@@ -2081,20 +2082,6 @@ class FleetbaseDirectory
         }
 
         return 0;
-    }
-
-    /**
-     * The one stored connection for this realm, when the working company has no row of its own.
-     */
-    private function soleStoredConnection(string $realm): ?Connection
-    {
-        $rows = (new Connection())->newQuery()->where('realm_id', $realm)->limit(2)->get();
-        if ($rows->count() !== 1) {
-            return null;
-        }
-        $connection = $rows->first();
-
-        return $connection instanceof Connection ? $connection : null;
     }
 
     private function stampOwnedCompanies(SyncLedger $ledger): void
