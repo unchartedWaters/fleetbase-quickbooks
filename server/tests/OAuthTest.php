@@ -343,7 +343,7 @@ test('disconnect without quickbooks disconnect connection returns 403', function
     }
 });
 
-test('disconnect deletes only the signed-in company connection and does not call Intuit', function () {
+test('disconnect deletes only the signed-in company connection and its pending rows and skips Intuit when there is nothing to revoke', function () {
     $routes       = (string) file_get_contents(dirname(__DIR__) . '/src/routes.php');
     $protectedAt  = strpos($routes, "'middleware' => ['fleetbase.protected']");
     $disconnectAt = strpos($routes, "\$router->post('disconnect', [ConnectionController::class, 'disconnect']);");
@@ -402,10 +402,12 @@ test('disconnect deletes only the signed-in company connection and does not call
         expect($response->getStatusCode())->toBe(200)
             ->and($response->getData(true))->toBe(['disconnected' => true])
             ->and($checked)->toBe(['quickbooks disconnect connection', 'quickbooks disconnect connection'])
-            ->and($connection->deletes)->toHaveCount(1)
+            ->and($connection->deletes)->toHaveCount(2)
             ->and($connection->deletes[0]['query'])->toContain('quickbooks_connections')
             ->and($connection->deletes[0]['query'])->toContain('company_uuid')
             ->and($connection->deletes[0]['bindings'])->toBe(['company-uuid'])
+            ->and($connection->deletes[1]['query'])->toContain('quickbooks_pending_syncs')
+            ->and($connection->deletes[1]['bindings'])->toBe(['company-uuid', 'pending'])
             ->and(Http::recorded())->toHaveCount(0);
     } finally {
         if ($previous === null) {

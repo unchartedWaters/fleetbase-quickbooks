@@ -81,6 +81,27 @@ class QuickBooksClient
     }
 
     /**
+     * Revoke a refresh token at Intuit, which also ends the access token issued with it.
+     * The caller decides what a failure means; the token is never part of an error message.
+     *
+     * @param array{client_id: string, client_secret: string, redirect_uri: string, environment: string} $credentials
+     */
+    public function revoke(array $credentials, string $refreshToken): void
+    {
+        try {
+            $response = Http::asJson()
+                ->acceptJson()
+                ->timeout(10)
+                ->withBasicAuth($credentials['client_id'], $credentials['client_secret'])
+                ->post('https://developer.api.intuit.com/v2/oauth2/tokens/revoke', ['token' => $refreshToken]);
+        } catch (ConnectionException) {
+            throw new QuickBooksException(0, self::TRANSPORT_MESSAGE);
+        }
+
+        $this->throwIfFailed($response);
+    }
+
+    /**
      * @param array<string, mixed> $connection
      *
      * @return array<string, mixed>
