@@ -97,27 +97,17 @@ parameters:
 
 		-
 			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
-			count: 5
+			count: 2
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
 		-
 			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
-			count: 4
-			path: server/src/Listeners/EnqueueWebhookSync.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$realm_id\\.$#"
-			count: 3
+			count: 1
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
 		-
 			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
 			count: 1
-			path: server/src/Listeners/EnqueueWebhookSync.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 2
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
 		-
@@ -127,11 +117,6 @@ parameters:
 
 		-
 			message: "#^Offset 'invoices' on array\\{invoice\\: string, invoices\\: array\\<int, string\\>, keyed_by_payment\\: bool, quickbooks_invoices\\: array\\<int, string\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Listeners/EnqueueWebhookSync.php
-
-		-
-			message: "#^Offset 'rows' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
 			count: 1
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
@@ -569,6 +554,31 @@ parameters:
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
 			count: 1
 			path: server/src/Support/PublicHttps.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
+			count: 3
+			path: server/src/Support/WebhookPaymentInvoices.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
+			count: 3
+			path: server/src/Support/WebhookPaymentInvoices.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$realm_id\\.$#"
+			count: 3
+			path: server/src/Support/WebhookPaymentInvoices.php
+
+		-
+			message: "#^Offset 'rows' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Support/QuickBooksPaymentReader.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			count: 2
+			path: server/src/Support/QuickBooksPaymentReader.php
 
 		-
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
