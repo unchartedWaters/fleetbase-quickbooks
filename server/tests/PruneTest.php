@@ -92,24 +92,24 @@ function pruneRows(): void
 {
     foreach ([['att-old', 'batch-old', 100], ['att-new', 'batch-new', 10], ['att-keeps-old-batch', 'batch-old-kept', 5]] as [$uuid, $batch, $age]) {
         DB::table('quickbooks_sync_attempts')->insert([
-            'uuid' => $uuid, 'batch_uuid' => $batch, 'company_uuid' => 'company-uuid', 'local_type' => 'invoice', 'local_uuid' => 'inv-1',
+            'uuid'    => $uuid, 'batch_uuid' => $batch, 'company_uuid' => 'company-uuid', 'local_type' => 'invoice', 'local_uuid' => 'inv-1',
             'outcome' => 'aligned', 'created_at' => pruneDaysAgo($age), 'updated_at' => pruneDaysAgo($age),
         ]);
     }
     foreach ([['batch-old', 'finished', 200], ['batch-old-kept', 'finished', 200], ['batch-old-running', 'running', 200], ['batch-mid', 'finished', 120], ['batch-new', 'finished', 10], ['batch-no-attempts', 'finished', 200]] as [$uuid, $status, $age]) {
         DB::table('quickbooks_sync_batches')->insert([
-            'uuid' => $uuid, 'company_uuid' => 'company-uuid', 'trigger' => 'scheduled', 'status' => $status,
+            'uuid'       => $uuid, 'company_uuid' => 'company-uuid', 'trigger' => 'scheduled', 'status' => $status,
             'created_at' => pruneDaysAgo($age), 'updated_at' => pruneDaysAgo($age),
         ]);
     }
     foreach ([['pend-done-old', 'done', 40], ['pend-done-new', 'done', 5], ['pend-pending-old', 'pending', 400], ['pend-failed-old', 'failed', 400]] as [$uuid, $status, $age]) {
         DB::table('quickbooks_pending_syncs')->insert([
-            'uuid' => $uuid, 'company_uuid' => 'company-uuid', 'local_type' => 'invoice', 'local_uuid' => $uuid, 'status' => $status,
+            'uuid'       => $uuid, 'company_uuid' => 'company-uuid', 'local_type' => 'invoice', 'local_uuid' => $uuid, 'status' => $status,
             'created_at' => pruneDaysAgo($age), 'updated_at' => pruneDaysAgo($age),
         ]);
     }
     DB::table('quickbooks_links')->insert([
-        'uuid' => 'link-old', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-1',
+        'uuid'       => 'link-old', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-1',
         'qbo_entity' => 'Invoice', 'qbo_id' => '8', 'created_at' => pruneDaysAgo(900), 'updated_at' => pruneDaysAgo(900),
     ]);
 }
@@ -181,7 +181,7 @@ test('prune works through more rows than one chunk', function () {
         $rows = [];
         for ($index = 0; $index < 2500; $index++) {
             $rows[] = [
-                'uuid' => 'att-' . $index, 'batch_uuid' => null, 'company_uuid' => 'company-uuid', 'local_type' => 'invoice', 'local_uuid' => 'inv-1',
+                'uuid'    => 'att-' . $index, 'batch_uuid' => null, 'company_uuid' => 'company-uuid', 'local_type' => 'invoice', 'local_uuid' => 'inv-1',
                 'outcome' => 'aligned', 'created_at' => pruneDaysAgo(120), 'updated_at' => pruneDaysAgo(120),
             ];
         }

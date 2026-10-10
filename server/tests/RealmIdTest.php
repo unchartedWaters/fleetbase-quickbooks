@@ -29,12 +29,12 @@ function realmCredentials(): array
  * An OAuth client with no network. $firstCall is thrown by the first Intuit call for the realm,
  * $secondCall by the service item call.
  */
-function realmClient(?\Throwable $firstCall = null, ?\Throwable $secondCall = null): QuickBooksClient
+function realmClient(?Throwable $firstCall = null, ?Throwable $secondCall = null): QuickBooksClient
 {
     return new class($firstCall, $secondCall) extends QuickBooksClient {
         public int $exchanges = 0;
 
-        public function __construct(private ?\Throwable $firstCall, private ?\Throwable $secondCall)
+        public function __construct(private ?Throwable $firstCall, private ?Throwable $secondCall)
         {
         }
 

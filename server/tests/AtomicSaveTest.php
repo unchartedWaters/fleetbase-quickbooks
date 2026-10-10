@@ -118,9 +118,9 @@ test('a failure while saving an invoice rolls back links pending rows and attemp
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('an in-memory directory still saves without a database transaction', function () {
-    $directory         = new FleetbaseDirectory();
-    $directory->memory = new SyncLedger();
-    $ledger            = new SyncLedger();
+    $directory                 = new FleetbaseDirectory();
+    $directory->memory         = new SyncLedger();
+    $ledger                    = new SyncLedger();
     $ledger->invoices['inv-1'] = ['uuid' => 'inv-1', 'company_uuid' => 'company-uuid', 'number' => 'INV-1'];
 
     $directory->save($ledger);

@@ -1,6 +1,5 @@
 <?php
 
-use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Services\BatchRunner;
 use Fleetbase\Quickbooks\Services\ConnectionTokens;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;

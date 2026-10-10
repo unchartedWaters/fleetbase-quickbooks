@@ -248,7 +248,7 @@ test('a cleared invoice due date is pushed once and then stays aligned', functio
 
 test('an empty quickbooks note or due date does not wipe the fleetbase invoice', function () {
     [$engine, $client, $ledger] = engineLinkedInvoice(
-        ['notes' => 'Keep', 'due_date' => '2026-10-01'],
+        ['notes'       => 'Keep', 'due_date' => '2026-10-01'],
         ['PrivateNote' => '', 'DueDate' => '']
     );
 
