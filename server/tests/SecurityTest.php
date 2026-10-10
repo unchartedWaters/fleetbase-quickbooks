@@ -17,6 +17,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
+use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -94,7 +95,8 @@ test('install settings are the admin scope and an organization scope is not a se
     try {
         expect($operatorPermissions)->toContain('quickbooks update settings')
             ->and(securityStatus(fn () => $operator->show(securityRequest('GET', ['scope' => 'company'], true))))->toBe(404)
-            ->and(securityStatus(fn () => $operator->save(securityRequest('POST', $companySave, false))))->toBe(404)
+            ->and(securityStatus(fn () => $operator->save(securityRequest('POST', $companySave, false))))->toBe(403)
+            ->and(securityStatus(fn () => $operator->save(securityRequest('POST', $companySave, true))))->toBe(404)
             ->and(securityStatus(fn () => $denied->save(securityRequest('POST', $companySave, false))))->toBe(403)
             ->and($store->rows)->toBe([])
             ->and($store->adminAuth())->toBe([])
@@ -124,7 +126,7 @@ test('saving settings keeps stored auth fields that were not sent', function () 
     ];
 
     try {
-        $response = securitySettingController($store)->save(Request::create('/settings', 'POST', [
+        $response = securitySettingController($store)->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => ['client_id' => 'new-id', 'client_secret' => ''],
             'sync'  => qbSettings(['override' => true]),

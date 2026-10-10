@@ -38,7 +38,7 @@ class ConnectionController extends QuickbooksController
 
     public function show(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks view connection');
+        $this->authorizeQuickbooks('quickbooks view connection', $request);
         $connection = $this->latestConnection($this->companyUuid($request));
 
         return response()->json([
@@ -48,7 +48,7 @@ class ConnectionController extends QuickbooksController
 
     public function batches(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks view sync');
+        $this->authorizeQuickbooks('quickbooks view sync', $request);
         $perPage   = $this->pageArgument($request->input('per_page', 25), 25, 25);
         $page      = $this->pageArgument($request->input('page', 1), 1, PHP_INT_MAX);
         $paginator = SyncBatch::query()
@@ -145,7 +145,7 @@ class ConnectionController extends QuickbooksController
 
     public function start(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks connect connection');
+        $this->authorizeQuickbooks('quickbooks connect connection', $request);
         $companyUuid = $this->companyUuid($request);
         $credentials = $this->credentials($companyUuid);
         if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '' || $this->isAbsoluteHttpUrl($credentials['redirect_uri']) === false) {
@@ -193,7 +193,7 @@ class ConnectionController extends QuickbooksController
      */
     public function complete(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks connect connection');
+        $this->authorizeQuickbooks('quickbooks connect connection', $request);
         $companyUuid = $this->companyUuid($request);
 
         try {
@@ -233,7 +233,7 @@ class ConnectionController extends QuickbooksController
 
     public function disconnect(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks disconnect connection');
+        $this->authorizeQuickbooks('quickbooks disconnect connection', $request);
         // Intuit has no webhook unsubscribe API. This deletes this organization's connection only.
         Connection::query()->where('company_uuid', $this->companyUuid($request))->delete();
 
@@ -242,7 +242,7 @@ class ConnectionController extends QuickbooksController
 
     public function import(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks import-customers connection');
+        $this->authorizeQuickbooks('quickbooks import-customers connection', $request);
         $companyUuid = $this->companyUuid($request);
         $blocked     = $this->blockedConnection($companyUuid, 'import', 'inbound');
         if ($blocked !== null) {
@@ -255,7 +255,7 @@ class ConnectionController extends QuickbooksController
 
     public function reconcile(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks reconcile sync');
+        $this->authorizeQuickbooks('quickbooks reconcile sync', $request);
         $companyUuid = $this->companyUuid($request);
         $blocked     = $this->blockedConnection($companyUuid, 'manual');
         if ($blocked !== null) {
@@ -268,7 +268,7 @@ class ConnectionController extends QuickbooksController
 
     public function sync(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks reconcile sync');
+        $this->authorizeQuickbooks('quickbooks reconcile sync', $request);
         $companyUuid = $this->companyUuid($request);
         $blocked     = $this->blockedConnection($companyUuid, 'now');
         if ($blocked !== null) {
@@ -281,7 +281,7 @@ class ConnectionController extends QuickbooksController
 
     public function test(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks view connection');
+        $this->authorizeInstallationAdmin($request);
         $row = $this->latestConnection($this->companyUuid($request));
 
         return response()->json($this->probe->probe(
@@ -291,7 +291,7 @@ class ConnectionController extends QuickbooksController
 
     public function summary(Request $request): JsonResponse
     {
-        $this->authorizeQuickbooks('quickbooks view sync');
+        $this->authorizeQuickbooks('quickbooks view sync', $request);
         $companyUuid = $this->companyUuid($request);
         $connection  = $this->latestConnection($companyUuid);
         // Refused imports and not-connected syncs are stored as skipped, with finished_at set.

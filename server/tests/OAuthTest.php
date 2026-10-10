@@ -17,6 +17,7 @@ use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
+use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
@@ -214,7 +215,7 @@ test('an unrecognized token is not a live secret and plaintext is encrypted on t
 
     session(['company' => 'company-uuid']);
     try {
-        $response = $controller->save(Request::create('/settings', 'POST', [
+        $response = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => [
                 'client_id'        => 'id',
