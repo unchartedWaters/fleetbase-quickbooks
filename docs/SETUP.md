@@ -54,7 +54,9 @@ Sync Frequency is the schedule. It is separate from each entity switch. There is
 
 ### Environments
 
-New setups use production. `QUICKBOOKS_ENVIRONMENT` defaults to `production`, and a blank environment on the form is saved as production. A stored `sandbox` value stays sandbox when settings are saved without changing it.
+New setups use production. The settings default is `production`: `server/config/quickbooks.php` reads `QUICKBOOKS_ENVIRONMENT` with a default of `production`, and a blank environment on the form is saved as production. A stored `sandbox` value stays sandbox when settings are saved without changing it.
+
+The `quickbooks_connections.environment` column is a different thing. Its migration default is `sandbox`, but connect always writes the environment from settings onto the connection row, so that default is only a fallback for a row created some other way. API calls use the environment stored on the connection, not the current setting, and a connection with no environment is treated as sandbox. After you switch the environment in settings, connect again.
 
 - Sandbox uses the Development keys, a sandbox QuickBooks organization, and `https://sandbox-quickbooks.api.intuit.com`.
 - Production uses the Production keys, the live QuickBooks organization, and `https://quickbooks.api.intuit.com`.
@@ -132,6 +134,15 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 
 `Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync` queues one job per organization for the entities it will sync.
 
+## Known limitations
+
+- **Tax.** Invoice tax is sent as an ordinary sales line whose description is `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No `TxnTaxDetail` or tax code is sent. A QuickBooks company that uses automated sales tax can show different tax and totals than Fleetbase. On the way back, only that synthetic line is read as tax.
+- **Partial payments.** An invoice has at most one QuickBooks Payment from this package. Partial and later payments are not created as separate Payments. The one Payment is created with the amount recorded as paid on the Fleetbase invoice (its total when the invoice is paid and no amount is recorded) and is updated when that amount changes (`SyncEngine::syncPayment`). If an invoice has more than one QuickBooks payment, or the payment also applies to other invoices, Fleetbase leaves them unchanged and the row is skipped.
+- **Wallets.** Each Fleetbase wallet becomes one QuickBooks chart-of-accounts entry (`Other Current Asset`).
+- **Shared QuickBooks company.** Several Fleetbase organizations can connect to the same QuickBooks company (realm). `quickbooks_connections` is unique per organization, not per realm, and a webhook for a realm is applied to every organization connected to it (`WebhookController`). Intuit app credentials, the redirect, and the webhook verifier are install-wide, so every organization on the install uses the same Intuit app.
+- **Links.** `quickbooks_links` holds links for customers, invoices, and wallets, and also for payments. A payment link is keyed by the Fleetbase invoice uuid, or by the QuickBooks payment id when the payment was found in QuickBooks.
+- **Customer matching.** A Fleetbase customer is matched to an existing QuickBooks customer by email first, then by display name. When Primary is Fleetbase, a name match is rejected if both sides have an email and the emails differ, so that customer is not matched. Names are the only key when there is no email, so two different customers with the same name are treated as one.
+
 ## Requirements and install
 
 This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`, `fleetbase/fleetops-api` `0.6.71`, and `fleetbase/ledger-api` `0.0.12`. The Ember engine needs Node `>= 18`.
@@ -159,11 +170,19 @@ On this machine the repository is checked out at `/opt/fleetbase-quickbooks` on 
 5. On start, that script exits with an error if `/fleetbase/packages/quickbooks` is missing. It Composer-requires `unchartedwaters/quickbooks-api:0.0.2` when the provider is not installed, or when the mounted `composer.json` version or `require` entries differ from the installed package. Only `application` runs `php artisan migrate --force`. `queue` and `scheduler` do not migrate on startup. A later application start skips the require when the installed package still matches, and migrate applies only pending migrations.
 6. Install console dependencies from `console/`. `console/package.json` links `@unchartedwaters/quickbooks-engine` to `../../fleetbase-quickbooks`. `console/fleetbase.config.json` lists `@unchartedwaters/quickbooks-engine` in `EXTENSIONS`. The running console bakes the engine into the image at `/usr/share/nginx/html/engines-dist/@unchartedwaters/quickbooks-engine`, from the BuildKit context named `quickbooks`. That container's bind is `console/fleetbase.config.json`.
 
+### Developing locally
+
+Starting OAuth needs a public https redirect URL. The redirect that Intuit receives is the `public_oauth_redirect_url` setting (Public OAuth Redirect URL on Quickbooks Setup) when it is set, otherwise the computed callback on the API host. Either one must pass `Support/PublicHttps`: it has to be `https://`, and localhost, loopback, private, link-local, and other internal addresses are rejected, as is a hostname that does not resolve to a public address. A dev server on a private IP such as `10.30.0.34` therefore cannot connect as it is. Put a public https tunnel or reverse proxy in front of the API, save its callback URL (`https://<public host>/quickbooks/int/v1/oauth/callback`) as Public OAuth Redirect URL, and list the same URL under Redirect URIs in the Intuit app. Without a usable redirect, connect returns HTTP 422 and does not open Intuit.
+
+Set `CONSOLE_HOST` (or `QUICKBOOKS_CONSOLE_HOST`) on the API to the console origin. The OAuth callback redirects the browser there, and returns HTTP 500 without it. Sync now and the schedule do not need the public redirect once a connection exists.
+
 `api/composer.json` requires `unchartedwaters/quickbooks-api` and has a path repository at `../../fleetbase-quickbooks`. The running `application`, `queue`, and `scheduler` containers get the package from the ensure script and the read-only mount. The console UI is the copy baked into the console image.
 
 `QuickbooksServiceProvider` loads `server/src/routes.php`, `server/migrations`, and registers `quickbooks:sync` on the Laravel scheduler. The system cron invokes that scheduler every minute. The command does not read a stored `enabled` flag. It does not start when no connection can be synced, or while a schedule hold is still in the future. The Sync section is when an organization is queued.
 
 ## Tests
+
+PHP 8.2 is the supported version. It matches Fleetbase and is the version CI runs (`.github/workflows/server.yml`).
 
 From `packages/quickbooks`:
 

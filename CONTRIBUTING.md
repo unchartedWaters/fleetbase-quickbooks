@@ -6,10 +6,10 @@ The package git remote is still https://github.com/fleetbase/starter-extension.
 
 ## Setup
 
-- PHP 8.2 or newer
+- PHP 8.2. This is the supported version, it matches Fleetbase, and CI runs it
 - Node.js 18 or newer
 - Composer dependencies: `composer install` in this package
-- Node dependencies: `pnpm install` in this package
+- Node dependencies: `pnpm install --frozen-lockfile` in this package
 
 ## Behavior
 
@@ -30,6 +30,10 @@ The package git remote is still https://github.com/fleetbase/starter-extension.
 
 ## Tests
 
+PHP 8.2 is the supported and CI version, matching Fleetbase.
+
+Back end: run `composer install`, then `composer test`. `composer test` runs lint, PHPStan, and Pest. The parts can run alone:
+
 ```bash
 composer test:unit
 composer test:types
@@ -37,7 +41,7 @@ composer test:types
 
 `composer test:unit` runs Pest from `server/tests`. `composer test:types` runs PHPStan on `server/src`.
 
-Ember tests (`pnpm test:ember`) need Chrome. Skip them when Chrome is not installed.
+Front end: run `pnpm install --frozen-lockfile`, then `pnpm lint` and `pnpm test:ember`. Ember tests need Chrome. Skip them when Chrome is not installed.
 
 ## Lint
 
