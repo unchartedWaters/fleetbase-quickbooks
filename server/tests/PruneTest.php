@@ -96,7 +96,7 @@ function pruneRows(): void
             'outcome' => 'aligned', 'created_at' => pruneDaysAgo($age), 'updated_at' => pruneDaysAgo($age),
         ]);
     }
-    foreach ([['batch-old', 'finished', 200], ['batch-old-kept', 'finished', 200], ['batch-old-running', 'running', 200], ['batch-mid', 'finished', 120], ['batch-new', 'finished', 10], ['batch-no-attempts', 'finished', 200]] as [$uuid, $status, $age]) {
+    foreach ([['batch-old', 'finished', 200], ['batch-old-kept', 'finished', 200], ['batch-old-running', 'running', 200], ['batch-mid', 'finished', 120], ['batch-new', 'finished', 10], ['batch-no-attempts', 'finished', 200], ['batch-skipped-old', 'skipped', 200], ['batch-skipped-new', 'skipped', 10]] as [$uuid, $status, $age]) {
         DB::table('quickbooks_sync_batches')->insert([
             'uuid'       => $uuid, 'company_uuid' => 'company-uuid', 'trigger' => 'scheduled', 'status' => $status,
             'created_at' => pruneDaysAgo($age), 'updated_at' => pruneDaysAgo($age),
@@ -128,7 +128,7 @@ test('prune deletes attempts older than the retention and keeps newer ones', fun
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
-test('prune deletes only finished batches past the retention that have no attempts left', function () {
+test('prune deletes only finished or skipped batches past the retention that have no attempts left', function () {
     [$restore, $output] = pruneSetup();
     try {
         pruneRows();
@@ -136,7 +136,7 @@ test('prune deletes only finished batches past the retention that have no attemp
         pruneRun($output);
 
         $batches = DB::table('quickbooks_sync_batches')->orderBy('uuid')->pluck('uuid')->all();
-        expect($batches)->toBe(['batch-mid', 'batch-new', 'batch-old-kept', 'batch-old-running']);
+        expect($batches)->toBe(['batch-mid', 'batch-new', 'batch-old-kept', 'batch-old-running', 'batch-skipped-new']);
     } finally {
         $restore();
     }
@@ -153,7 +153,7 @@ test('prune deletes only done pending rows and never touches links', function ()
         expect($status)->toBe(0)
             ->and($pending)->toBe(['pend-done-new', 'pend-failed-old', 'pend-pending-old'])
             ->and(DB::table('quickbooks_links')->where('uuid', 'link-old')->exists())->toBeTrue()
-            ->and($output->fetch())->toContain('Pruned 1 attempts, 2 batches, and 1 done pending rows.');
+            ->and($output->fetch())->toContain('Pruned 1 attempts, 3 batches, and 1 done pending rows.');
     } finally {
         $restore();
     }
@@ -168,7 +168,7 @@ test('prune follows the configured retention and zero keeps history forever', fu
         pruneRun($output);
 
         expect(DB::table('quickbooks_sync_attempts')->pluck('uuid')->all())->toBe(['att-keeps-old-batch'])
-            ->and(DB::table('quickbooks_sync_batches')->count())->toBe(6)
+            ->and(DB::table('quickbooks_sync_batches')->count())->toBe(8)
             ->and(DB::table('quickbooks_pending_syncs')->orderBy('uuid')->pluck('uuid')->all())->toBe(['pend-failed-old', 'pend-pending-old']);
     } finally {
         $restore();

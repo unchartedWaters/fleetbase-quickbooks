@@ -259,6 +259,19 @@ test('a token that is refused again after a refresh asks the user to reconnect',
         ->and($ledger->connections['company-uuid']['needs_reauth'])->toBeTrue();
 });
 
+test('the reauth flag is compared against the rotated tokens so it survives the save', function () {
+    $client                 = new TokenRecoveryClient();
+    $client->refuseNewToken = true;
+    [$tokens]               = trcTokens($client);
+    $engine                 = trcEngine($client, $tokens);
+    $ledger                 = trcLedger();
+
+    $engine->syncEntities($ledger, 'company-uuid', trcRows(), trcSync(), time());
+
+    expect($ledger->connections['company-uuid']['access_token'])->toBe('new-access')
+        ->and($ledger->connections['company-uuid']['needs_reauth'])->toBeTrue();
+});
+
 test('a refresh that fails for another reason does not ask the user to reconnect', function () {
     $client               = new TokenRecoveryClient();
     $client->refreshError = new QuickBooksException(503, 'unavailable');

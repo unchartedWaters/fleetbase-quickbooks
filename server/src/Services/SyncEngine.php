@@ -1367,6 +1367,11 @@ class SyncEngine
      */
     private function tokenRejected(SyncLedger $ledger, string $companyUuid): void
     {
+        // A refresh during this run already stored newer tokens. Compare against those, or the
+        // save would see a stale copy and drop the flag, and the refresh would repeat every run.
+        if (isset($this->rotated[$companyUuid]) === true && isset($ledger->connections[$companyUuid]) === true) {
+            $ledger->connections[$companyUuid] = array_merge($ledger->connections[$companyUuid], $this->rotated[$companyUuid]['tokens']);
+        }
         $ledger->connections[$companyUuid]['needs_reauth'] = true;
         $ledger->attempts[]                                = [
             'company_uuid' => $companyUuid,
@@ -4696,7 +4701,7 @@ class QuickBooksHttpGate extends QuickBooksClient
 
     public function multiCurrencyEnabled(array $connection): bool
     {
-        return $this->engine->runHttp(fn (): bool => $this->inner->multiCurrencyEnabled($connection));
+        return $this->engine->runAuthorized($connection, fn (array $connection): bool => $this->inner->multiCurrencyEnabled($connection));
     }
 
     public function createCustomer(array $connection, array $payload): array

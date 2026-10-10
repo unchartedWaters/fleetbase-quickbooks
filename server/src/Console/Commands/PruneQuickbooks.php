@@ -16,14 +16,14 @@ class PruneQuickbooks extends Command
 
     protected $signature = 'quickbooks:prune';
 
-    protected $description = 'Delete old QuickBooks sync history: attempts, finished batches without attempts, and done pending rows.';
+    protected $description = 'Delete old QuickBooks sync history: attempts, finished or skipped batches without attempts, and done pending rows.';
 
     public function handle(): int
     {
         $now      = Carbon::now();
         $attempts = $this->prune(SyncAttempt::class, $this->cutoff('attempt_days', 90, $now), null);
         $batches  = $this->prune(SyncBatch::class, $this->cutoff('batch_days', 180, $now), function ($query): void {
-            $query->where('status', 'finished')
+            $query->whereIn('status', ['finished', 'skipped'])
                 ->whereNotExists(function ($attempts): void {
                     $attempts->selectRaw('1')
                         ->from((new SyncAttempt())->getTable())
