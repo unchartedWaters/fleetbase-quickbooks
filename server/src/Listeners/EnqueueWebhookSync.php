@@ -766,20 +766,8 @@ class EnqueueWebhookSync
             return [];
         }
 
-        try {
-            $read = $this->readPayments($client, $connection, $paymentIds);
-        } catch (QuickBooksException $exception) {
-            // The access token can expire between the refresh and this read. Refresh and read once more.
-            $fresh = $exception->isUnauthorized() === true ? $this->rotatedConnection($connection) : null;
-            if ($fresh === null) {
-                return [];
-            }
-            try {
-                $read = $this->readPayments($client, $fresh, $paymentIds);
-            } catch (\Throwable) {
-                return [];
-            }
-        } catch (\Throwable) {
+        $read = $this->readPaymentsRefreshingOnce($client, $connection, $paymentIds);
+        if ($read === null) {
             return [];
         }
 
@@ -794,6 +782,35 @@ class EnqueueWebhookSync
         }
 
         return $mapped;
+    }
+
+    /**
+     * The payment read, retried once with a new access token when QuickBooks refuses the old one.
+     * Null when the read fails.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<int, string>   $paymentIds
+     *
+     * @return array{found: array<string, array<string, mixed>>, missing: array<string, true>}|null
+     */
+    private function readPaymentsRefreshingOnce(QuickBooksClient $client, array $connection, array $paymentIds): ?array
+    {
+        try {
+            return $this->readPayments($client, $connection, $paymentIds);
+        } catch (QuickBooksException $exception) {
+            // The access token can expire between the refresh and this read. Refresh and read once more.
+            $fresh = $exception->isUnauthorized() === true ? $this->rotatedConnection($connection) : null;
+            if ($fresh === null) {
+                return null;
+            }
+            try {
+                return $this->readPayments($client, $fresh, $paymentIds);
+            } catch (\Throwable) {
+                return null;
+            }
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

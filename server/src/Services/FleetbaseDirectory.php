@@ -357,16 +357,7 @@ class FleetbaseDirectory
      */
     private function writeLinks(SyncLedger $ledger, array $skipped): void
     {
-        $loadedByUuid = [];
-        foreach ($this->loaded['links'] as $loadedLink) {
-            if (is_array($loadedLink) === false) {
-                continue;
-            }
-            $loadedUuid = (string) ($loadedLink['uuid'] ?? '');
-            if ($loadedUuid !== '') {
-                $loadedByUuid[$loadedUuid] = $loadedLink;
-            }
-        }
+        $loadedByUuid     = $this->loadedLinksByUuid();
         $linkFields       = ['company_uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_entity', 'qbo_id', 'sync_token'];
         $freshLinks       = [];
         $changedLinks     = [];
@@ -389,16 +380,7 @@ class FleetbaseDirectory
                     $identityReleases[] = ['link' => $link, 'keep' => $uuid];
                 }
                 if ($uuid === '') {
-                    $payload = $link;
-                    unset($payload['invoice_uuid']);
-                    Link::query()->updateOrCreate(
-                        [
-                            'company_uuid' => $link['company_uuid'],
-                            'local_type'   => $link['local_type'],
-                            'local_uuid'   => $link['local_uuid'],
-                        ],
-                        $payload
-                    );
+                    $this->upsertLinkByLocalKey($link);
                     continue;
                 }
                 $changedLinks[] = ['uuid' => $uuid, 'columns' => $changed];
@@ -412,6 +394,46 @@ class FleetbaseDirectory
         $this->updateByUuid(new Link(), $inserted['updates'], $linkFields);
         $this->dropStaleInvoicePaymentLinks($ledger, $skipped);
         $this->rememberPaymentInvoices($ledger, $skipped);
+    }
+
+    /**
+     * The links loaded for this batch, keyed by their uuid.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function loadedLinksByUuid(): array
+    {
+        $loadedByUuid = [];
+        foreach ($this->loaded['links'] as $loadedLink) {
+            if (is_array($loadedLink) === false) {
+                continue;
+            }
+            $loadedUuid = (string) ($loadedLink['uuid'] ?? '');
+            if ($loadedUuid !== '') {
+                $loadedByUuid[$loadedUuid] = $loadedLink;
+            }
+        }
+
+        return $loadedByUuid;
+    }
+
+    /**
+     * Saves a link that was loaded without a uuid, matched on its local identity.
+     *
+     * @param array<string, mixed> $link
+     */
+    private function upsertLinkByLocalKey(array $link): void
+    {
+        $payload = $link;
+        unset($payload['invoice_uuid']);
+        Link::query()->updateOrCreate(
+            [
+                'company_uuid' => $link['company_uuid'],
+                'local_type'   => $link['local_type'],
+                'local_uuid'   => $link['local_uuid'],
+            ],
+            $payload
+        );
     }
 
     /**
@@ -437,6 +459,19 @@ class FleetbaseDirectory
             }
             $changedPending[] = ['uuid' => (string) $row['uuid'], 'columns' => $columns];
         }
+        $this->updatePendingRows($changedPending);
+        $this->writePendingMany($freshPending);
+        $this->insertBatchAttempts($ledger);
+        $this->persistCustomers($ledger, $skipped);
+        $this->persistInvoices($ledger, $skipped);
+        $this->persistWallets($ledger, $skipped);
+    }
+
+    /**
+     * @param array<int, array{uuid: string, columns: array<string, mixed>}> $changedPending
+     */
+    private function updatePendingRows(array $changedPending): void
+    {
         $pendingColumns = ['company_uuid', 'local_type', 'local_uuid', 'reason', 'status', 'attempts', 'next_attempt_at'];
         if ($this->claimsSupported() === true) {
             // A row flagged again during this run stays pending for the next run, but still records
@@ -455,7 +490,13 @@ class FleetbaseDirectory
         } else {
             $this->updateByUuid(new PendingSync(), $changedPending, $pendingColumns);
         }
-        $this->writePendingMany($freshPending);
+    }
+
+    /**
+     * Saves this run's batch record and its attempts, pointing new attempts at the batch.
+     */
+    private function insertBatchAttempts(SyncLedger $ledger): void
+    {
         $batchUuid = null;
         foreach ($ledger->batches as $batch) {
             if (empty($batch['uuid']) === false) {
@@ -476,9 +517,6 @@ class FleetbaseDirectory
             }
         }
         $this->insertAttempts($ledger->attempts);
-        $this->persistCustomers($ledger, $skipped);
-        $this->persistInvoices($ledger, $skipped);
-        $this->persistWallets($ledger, $skipped);
     }
 
     /**
