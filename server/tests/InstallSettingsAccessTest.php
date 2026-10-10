@@ -27,7 +27,7 @@ function accessStatus(callable $action): int
     return 200;
 }
 
-/** The organization operator role holds update settings but is not an installation administrator. */
+/** The organization operator role can view settings but is not an installation administrator. */
 function accessOrganizationOperator(): Authorizer
 {
     $permissions = [];
@@ -63,7 +63,7 @@ function accessSavePayload(): array
     ];
 }
 
-test('an organization operator with update settings cannot save the install-wide settings', function () {
+test('an organization operator cannot save the install-wide settings', function () {
     session(['company' => 'company-uuid']);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = ['client_id' => 'install-id', 'client_secret' => 'sealed', 'environment' => 'production'];
@@ -196,4 +196,22 @@ test('connect disconnect and sync stay on the per organization permissions', fun
     expect(accessStatus(fn () => $operator->check('quickbooks connect connection', $member)))->toBe(200)
         ->and(accessStatus(fn () => $operator->check('quickbooks disconnect connection', $member)))->toBe(200)
         ->and(accessStatus(fn () => $operator->check('quickbooks reconcile sync', $member)))->toBe(200);
+});
+
+test('the permission schema no longer offers update settings, which nothing checks', function () {
+    $schema   = new Quickbooks();
+    $settings = [];
+    foreach ($schema->resources as $resource) {
+        if ($resource['name'] === 'settings') {
+            $settings = $resource;
+        }
+    }
+    $granted = [];
+    foreach ($schema->policies as $policy) {
+        $granted = array_merge($granted, $policy['permissions']);
+    }
+
+    expect($settings['remove_actions'])->toContain('update')
+        ->and($granted)->not->toContain('quickbooks update settings')
+        ->and($granted)->toContain('quickbooks view settings');
 });

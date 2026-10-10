@@ -92,7 +92,7 @@ test('two invoices in one batch cannot take the same quickbooks number', functio
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
-test('a failure while saving an invoice rolls back links pending rows and attempts', function () {
+test('a failure while saving an invoice keeps the links but rolls back pending rows and attempts', function () {
     [$restore, $directory, $ledger] = atomicSaveSetup();
     try {
         DB::statement("CREATE TRIGGER fail_invoice_write BEFORE UPDATE ON ledger_invoices BEGIN SELECT RAISE(ABORT, 'invoice write failed'); END;");
@@ -108,8 +108,10 @@ test('a failure while saving an invoice rolls back links pending rows and attemp
             $threw = true;
         }
 
+        // The QuickBooks record already exists, so its link is kept: the retry updates it
+        // instead of creating a second one. The rows stay pending so the change is retried.
         expect($threw)->toBeTrue()
-            ->and(DB::table('quickbooks_links')->where('qbo_id', '700')->exists())->toBeFalse()
+            ->and(DB::table('quickbooks_links')->where('qbo_id', '700')->exists())->toBeTrue()
             ->and(DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-1')->value('status'))->toBe('pending')
             ->and(DB::table('quickbooks_sync_attempts')->count())->toBe(0);
     } finally {

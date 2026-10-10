@@ -12,9 +12,13 @@ Route::prefix($prefix)->group(function ($router) use ($internalPrefix) {
     $router->prefix($internalPrefix)->group(function ($router) {
         // Intuit redirects the user's browser here without a Fleetbase session. It only keeps
         // the code; the signed-in console finishes the connection through oauth/complete.
-        // The route is open, so it is rate limited per client. The webhook route below is not,
-        // because Intuit can send bursts of notifications.
-        $router->get('v1/oauth/callback', [ConnectionController::class, 'callback'])->middleware('throttle:30,1');
+        // The route is open, so it is rate limited per client IP (quickbooks.oauth.callback_per_minute).
+        // The webhook route below is not, because Intuit can send bursts of notifications.
+        $callback = $router->get('v1/oauth/callback', [ConnectionController::class, 'callback']);
+        $throttle = ConnectionController::callbackThrottle();
+        if ($throttle !== null) {
+            $callback->middleware($throttle);
+        }
 
         // Intuit posts event notifications here with no Fleetbase session. This file is loaded
         // by loadRoutesFrom, outside the web middleware group, so session CSRF does not apply.

@@ -2,7 +2,6 @@
 export const SYNC_NOW_PERMISSION = 'quickbooks reconcile sync';
 export const CONNECT_PERMISSION = 'quickbooks connect connection';
 export const DISCONNECT_PERMISSION = 'quickbooks disconnect connection';
-export const UPDATE_SETTINGS_PERMISSION = 'quickbooks update settings';
 
 function allows(abilities, permission) {
     return abilities?.can?.(permission) === true;
@@ -18,10 +17,6 @@ export function canConnect(abilities) {
 
 export function canDisconnect(abilities) {
     return allows(abilities, DISCONNECT_PERMISSION);
-}
-
-export function canUpdateSettings(abilities) {
-    return allows(abilities, UPDATE_SETTINGS_PERMISSION);
 }
 
 // Sync now needs the saved Client ID and Client secret.

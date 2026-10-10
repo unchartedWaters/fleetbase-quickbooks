@@ -304,7 +304,7 @@ test('a failed decrypt or unrecognized secret is missing and legacy ciphertext s
         ->and($connection->refresh_token)->toBe('old-secret');
 });
 
-test('a controller action without quickbooks update settings returns 403', function () {
+test('saving settings without an installation administrator returns 403', function () {
     $request    = Request::create('/settings', 'POST', []);
     $controller = new SettingController(
         new Authorizer(static fn () => false),
@@ -798,7 +798,7 @@ test('oauth complete skips customer import when customers are turned off', funct
 
 test('the oauth callback route stays a public get and is the only throttled route', function () {
     $routes      = (string) file_get_contents(dirname(__DIR__) . '/src/routes.php');
-    $callbackAt  = strpos($routes, "\$router->get('v1/oauth/callback', [ConnectionController::class, 'callback'])->middleware('throttle:30,1');");
+    $callbackAt  = strpos($routes, "\$router->get('v1/oauth/callback', [ConnectionController::class, 'callback'])");
     $webhookAt   = strpos($routes, "\$router->post('v1/webhooks', [WebhookController::class, 'handle']);");
     $protectedAt = strpos($routes, "'middleware' => ['fleetbase.protected']");
 
@@ -806,8 +806,36 @@ test('the oauth callback route stays a public get and is the only throttled rout
         ->and($webhookAt)->not->toBeFalse()
         ->and($protectedAt)->not->toBeFalse()
         ->and($callbackAt)->toBeLessThan($protectedAt)
-        // Intuit may burst webhook notifications, so only the callback is throttled.
-        ->and(substr_count($routes, 'throttle'))->toBe(1);
+        // Intuit may burst webhook notifications, so only the callback is throttled: the webhook
+        // statement above carries no middleware.
+        ->and(substr_count($routes, 'ConnectionController::callbackThrottle()'))->toBe(1)
+        ->and(substr_count($routes, '->middleware('))->toBe(1);
+});
+
+test('the oauth callback limit comes from config and zero turns it off', function () {
+    $previous = config('quickbooks.oauth.callback_per_minute');
+
+    try {
+        config()->set('quickbooks.oauth.callback_per_minute', null);
+        expect(ConnectionController::callbackThrottle())->toBe('throttle:30,1');
+
+        config()->set('quickbooks.oauth.callback_per_minute', 120);
+        expect(ConnectionController::callbackThrottle())->toBe('throttle:120,1');
+
+        config()->set('quickbooks.oauth.callback_per_minute', '45');
+        expect(ConnectionController::callbackThrottle())->toBe('throttle:45,1');
+
+        foreach ([0, '0', -5] as $off) {
+            config()->set('quickbooks.oauth.callback_per_minute', $off);
+            expect(ConnectionController::callbackThrottle())->toBeNull();
+        }
+
+        // A value that is not a number keeps the default limit rather than turning it off.
+        config()->set('quickbooks.oauth.callback_per_minute', 'abc');
+        expect(ConnectionController::callbackThrottle())->toBe('throttle:30,1');
+    } finally {
+        config()->set('quickbooks.oauth.callback_per_minute', $previous);
+    }
 });
 
 test('oauth start rejects missing client id or redirect uri', function () {

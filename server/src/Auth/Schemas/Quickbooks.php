@@ -28,9 +28,11 @@ class Quickbooks
             'actions' => ['connect', 'disconnect', 'import-customers'],
         ],
         [
+            // Saving the install-wide settings is checked as installation administrator, not as a
+            // permission, so the schema offers view only.
             'name'           => 'settings',
             'actions'        => [],
-            'remove_actions' => ['create', 'delete', 'list'],
+            'remove_actions' => ['create', 'update', 'delete', 'list'],
         ],
         [
             'name'           => 'sync',
@@ -55,7 +57,7 @@ class Quickbooks
         ],
         [
             'name'        => 'QuickbooksOperator',
-            'description' => 'Connect QuickBooks, import customers, update settings, and run Sync now.',
+            'description' => 'Connect QuickBooks, import customers, view settings, and run Sync now.',
             'permissions' => [
                 'quickbooks see extension',
                 'quickbooks view connection',
@@ -63,7 +65,6 @@ class Quickbooks
                 'quickbooks disconnect connection',
                 'quickbooks import-customers connection',
                 'quickbooks view settings',
-                'quickbooks update settings',
                 'quickbooks view sync',
                 // Sync now and reconcile both authorize as this permission.
                 'quickbooks reconcile sync',

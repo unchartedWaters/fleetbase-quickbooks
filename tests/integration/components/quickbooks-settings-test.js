@@ -558,7 +558,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
     });
 
-    test('save stays disabled without permission to update settings', async function (assert) {
+    test('save follows the server can edit answer and not an organization permission', async function (assert) {
         class DeniedSettingsAbilitiesStubService extends Service {
             can() {
                 return false;
@@ -572,6 +572,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             client_secret_set: true,
         });
         this.set('sync', { interval_minutes: 5 });
+        this.set('canEdit', true);
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
 
@@ -581,14 +582,16 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
                 @settings={{this.settings}}
                 @sync={{this.sync}}
                 @settingsLoaded={{true}}
+                @canEdit={{this.canEdit}}
                 @onSave={{this.onSave}}
             />
         `);
 
-        assert.dom('[data-test-settings-unavailable]').doesNotExist();
+        assert.dom('[data-test-save]', document).isNotDisabled();
+
+        this.set('canEdit', false);
         assert.dom('[data-test-save]', document).isDisabled();
         assert.strictEqual(this.saved, null);
-        assert.deepEqual(this.notifications.messages, []);
     });
 
     test('save and every field are disabled with a note when the server says the caller cannot edit', async function (assert) {

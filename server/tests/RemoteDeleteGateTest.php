@@ -14,11 +14,12 @@ use Illuminate\Support\Facades\DB;
  * Runs one webhook delivery that deletes a linked customer, invoice, wallet and payment in
  * QuickBooks against an in-memory database, and returns what is left in Fleetbase.
  *
- * @param array<string, mixed> $sync admin sync settings for the delivery
+ * @param array<string, mixed> $sync          admin sync settings for the delivery
+ * @param int                  $walletBalance minor units held in the linked wallet
  *
  * @return array<string, bool>
  */
-function rdgDeliver(array $sync): array
+function rdgDeliver(array $sync, int $walletBalance = 0): array
 {
     $defaultConnection = config('database.default');
     $sqliteConnection  = config('database.connections.sqlite');
@@ -80,6 +81,7 @@ function rdgDeliver(array $sync): array
             $table->char('company_uuid', 36)->nullable();
             $table->string('name')->nullable();
             $table->string('status')->nullable();
+            $table->integer('balance')->default(0);
             $table->timestamps();
             $table->softDeletes();
         });
@@ -89,7 +91,7 @@ function rdgDeliver(array $sync): array
             ['uuid' => 'inv-1', 'company_uuid' => 'company-a', 'total_amount' => 1000, 'amount_paid' => 0, 'tax' => 0, 'status' => 'sent', 'created_at' => $now, 'updated_at' => $now],
             ['uuid' => 'inv-paid', 'company_uuid' => 'company-a', 'total_amount' => 2500, 'amount_paid' => 2500, 'tax' => 0, 'status' => 'paid', 'created_at' => $now, 'updated_at' => $now],
         ]);
-        DB::table('ledger_wallets')->insert(['uuid' => 'wal-1', 'company_uuid' => 'company-a', 'name' => 'Operating', 'status' => 'active', 'created_at' => $now, 'updated_at' => $now]);
+        DB::table('ledger_wallets')->insert(['uuid' => 'wal-1', 'company_uuid' => 'company-a', 'name' => 'Operating', 'status' => 'active', 'balance' => $walletBalance, 'created_at' => $now, 'updated_at' => $now]);
         DB::table('quickbooks_links')->insert([
             ['uuid' => 'link-cust', 'company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'customer', 'local_uuid' => 'cust-1', 'qbo_entity' => 'Customer', 'qbo_id' => '1', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
             ['uuid' => 'link-inv', 'company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-1', 'qbo_entity' => 'Invoice', 'qbo_id' => '8', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now],
@@ -113,6 +115,7 @@ function rdgDeliver(array $sync): array
             'payment_unmarked' => (string) DB::table('ledger_invoices')->where('uuid', 'inv-paid')->value('status') === 'sent',
             'wallet_closed'    => DB::table('ledger_wallets')->where('uuid', 'wal-1')->whereNotNull('deleted_at')->exists(),
             'links_kept'       => DB::table('quickbooks_links')->count() === 5,
+            'wallet_link_kept' => DB::table('quickbooks_links')->where('uuid', 'link-wal')->exists(),
         ];
     } finally {
         DB::purge('sqlite');
@@ -159,6 +162,7 @@ test('a quickbooks delete is ignored for a type that only syncs to quickbooks', 
         'payment_unmarked' => false,
         'wallet_closed'    => false,
         'links_kept'       => true,
+        'wallet_link_kept' => true,
     ]);
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
@@ -171,6 +175,7 @@ test('a quickbooks delete is ignored for a type that is switched off', function 
         'payment_unmarked' => false,
         'wallet_closed'    => false,
         'links_kept'       => true,
+        'wallet_link_kept' => true,
     ]);
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
@@ -181,6 +186,7 @@ test('a quickbooks delete is ignored when fleetbase is primary', function () {
         'payment_unmarked' => false,
         'wallet_closed'    => false,
         'links_kept'       => true,
+        'wallet_link_kept' => true,
     ]);
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
@@ -203,4 +209,24 @@ test('each type is gated on its own settings', function () {
         ->and($result['customer_removed'])->toBeFalse()
         ->and($result['invoice_voided'])->toBeTrue()
         ->and($result['payment_unmarked'])->toBeTrue();
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a quickbooks delete does not close a wallet that still holds a balance', function () {
+    $result = rdgDeliver(rdgSync('both', 'quickbooks'), 2500);
+
+    expect($result['wallet_closed'])->toBeFalse()
+        ->and($result['wallet_link_kept'])->toBeTrue()
+        ->and($result['invoice_voided'])->toBeTrue()
+        ->and($result['customer_removed'])->toBeTrue();
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a quickbooks delete closes a wallet whose balance is zero and drops its link', function () {
+    $result = rdgDeliver(rdgSync('both', 'quickbooks'), 0);
+
+    expect($result['wallet_closed'])->toBeTrue()
+        ->and($result['wallet_link_kept'])->toBeFalse();
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a quickbooks delete does not close a wallet with a negative balance', function () {
+    expect(rdgDeliver(rdgSync('both', 'quickbooks'), -300)['wallet_closed'])->toBeFalse();
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');

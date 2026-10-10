@@ -38,6 +38,12 @@ class WebhookController extends Controller
      */
     private const DEFAULT_MAX_AGE_SECONDS = 600;
 
+    /**
+     * How long a body is remembered while it is being processed, before it is committed for
+     * the full maximum age. It only has to outlast the request.
+     */
+    private const PROCESSING_SECONDS = 120;
+
     public function __construct(
         private SettingsService $settings,
         private SettingsStore $store,
@@ -71,17 +77,17 @@ class WebhookController extends Controller
         if ($matched === null) {
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
+        // HMAC already matched. A captured body is not accepted once its
+        // entity timestamps are older than the configured maximum age.
+        if ($this->staleTimestamp($rawBody, time()) === true) {
+            return response()->json(['message' => 'Invalid signature.'], 401);
+        }
+
         // The signature is genuine, but no organization is connected to these realms
         // (for example after a disconnect). There is nothing to apply. Answer 200 so
         // Intuit does not keep retrying a delivery that can never be used.
         if ($matched === []) {
             return response()->json(['ok' => true]);
-        }
-
-        // HMAC already matched. A captured body is not accepted once its
-        // entity timestamps are older than the configured maximum age.
-        if ($this->staleTimestamp($rawBody, time()) === true) {
-            return response()->json(['message' => 'Invalid signature.'], 401);
         }
 
         // Remember this exact body for a short time and reject a second delivery
@@ -95,9 +101,9 @@ class WebhookController extends Controller
             return response()->json(['message' => 'Webhook delivery could not be recorded.'], 503);
         }
 
-        // The body is remembered before it is processed. A failure here must not
-        // leave it remembered, or Intuit's retry of the identical body would be
-        // rejected as a replay and the events would be lost.
+        // The body is remembered only briefly while it is processed. A failure forgets it,
+        // and a worker that dies here leaves a key that expires within PROCESSING_SECONDS,
+        // so Intuit's retry of the identical body is processed and the events are not lost.
         try {
             $this->dispatchEntities($this->entitiesByRealm($rawBody), $matched);
             app(EnqueueWebhookSync::class)->flush($this->store);
@@ -106,6 +112,7 @@ class WebhookController extends Controller
 
             throw $exception;
         }
+        $this->keepSignedBody($rawBody);
 
         return response()->json(['ok' => true]);
     }
@@ -178,12 +185,25 @@ class WebhookController extends Controller
     private function rememberSignedBody(string $rawBody): string
     {
         try {
-            $added = Cache::add($this->replayKey($rawBody), 1, $this->maxAgeSeconds());
+            $added = Cache::add($this->replayKey($rawBody), 1, self::PROCESSING_SECONDS);
         } catch (\Throwable) {
             return 'unavailable';
         }
 
         return $added === true ? 'ok' : 'replay';
+    }
+
+    /**
+     * The body was processed: remember it for the full maximum age. If the store cannot be
+     * written, the short processing key still blocks an immediate repeat.
+     */
+    private function keepSignedBody(string $rawBody): void
+    {
+        try {
+            Cache::put($this->replayKey($rawBody), 1, $this->maxAgeSeconds());
+        } catch (\Throwable) {
+            // The work is queued; only the replay window is shorter.
+        }
     }
 
     /**

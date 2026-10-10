@@ -93,7 +93,8 @@ test('install settings are the admin scope and an organization scope is not a se
     ];
 
     try {
-        expect($operatorPermissions)->toContain('quickbooks update settings')
+        // Saving is for installation administrators, so no organization role carries update settings.
+        expect($operatorPermissions)->not->toContain('quickbooks update settings')
             ->and(securityStatus(fn () => $operator->show(securityRequest('GET', ['scope' => 'company'], true))))->toBe(404)
             ->and(securityStatus(fn () => $operator->save(securityRequest('POST', $companySave, false))))->toBe(403)
             ->and(securityStatus(fn () => $operator->save(securityRequest('POST', $companySave, true))))->toBe(404)

@@ -485,3 +485,60 @@ test('a second customer catalog run for the same company waits while the first p
         $restore();
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a change flagged while its row is leased is kept pending for the next run', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        $running = new FleetbaseDirectory();
+        $loaded  = $running->loadPending('company-1', 50, time());
+        $ledger  = $loaded['ledger'];
+
+        // A Fleetbase save flags cust-1 again while the run is sending it.
+        $flagger = new class extends FleetbaseDirectory {
+            public function flagRow(array $row): void
+            {
+                $this->writePending($row);
+            }
+        };
+        $flagger->flagRow(['company_uuid' => 'company-1', 'local_type' => 'customer', 'local_uuid' => 'cust-1', 'status' => 'pending', 'attempts' => 0]);
+
+        foreach (['cust-1', 'cust-2'] as $uuid) {
+            $ledger->updatePending('company-1', 'customer', $uuid, ['status' => 'done']);
+        }
+        $ledger->updatePending('company-1', 'invoice', 'inv-1', ['status' => 'done']);
+        $running->save($ledger);
+        $running->releaseClaims();
+
+        $rows = DB::table('quickbooks_pending_syncs')->orderBy('uuid')->get(['uuid', 'status', 'claimed_by', 'claimed_until'])->keyBy('uuid');
+        expect($rows['pend-cust-1']->status)->toBe('pending')
+            ->and($rows['pend-cust-1']->claimed_by)->toBeNull()
+            ->and($rows['pend-cust-1']->claimed_until)->toBeNull()
+            ->and($rows['pend-cust-2']->status)->toBe('done')
+            ->and($rows['pend-inv-1']->status)->toBe('done')
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'cust-1')->count())->toBe(1);
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a flag on a row nobody holds does not change its lease', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        $flagger = new class extends FleetbaseDirectory {
+            public function flagRow(array $row): void
+            {
+                $this->writePending($row);
+            }
+        };
+        $flagger->flagRow(['company_uuid' => 'company-1', 'local_type' => 'customer', 'local_uuid' => 'cust-1', 'status' => 'pending', 'attempts' => 0]);
+
+        expect(DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-cust-1')->value('claimed_by'))->toBeNull()
+            ->and(DB::table('quickbooks_pending_syncs')->where('local_uuid', 'cust-1')->count())->toBe(1);
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');

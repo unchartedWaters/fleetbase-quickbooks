@@ -95,6 +95,13 @@ class TokenRecoveryClient extends FakeQuickBooks
         }
     }
 
+    public function createAccount(array $connection, array $payload): array
+    {
+        $this->rejectStaleToken($connection);
+
+        return parent::createAccount($connection, $payload);
+    }
+
     public function getPayment(array $connection, string $id): ?array
     {
         $token                 = (string) ($connection['access_token'] ?? '');
@@ -736,4 +743,57 @@ test('the queued job records a skipped sync and reads nothing when the refresh t
     expect($client->paymentTokens)->toBe([])
         ->and($directory->messages)->toBe([ConnectionTokens::REAUTH_MESSAGE])
         ->and($jobs)->toBe([]);
+});
+
+test('a refresh that fails for a temporary reason is tried once per run, not once per row', function () {
+    $client               = new TokenRecoveryClient();
+    $client->refreshError = new QuickBooksException(503, 'unavailable');
+    [$tokens]             = trcTokens($client);
+    $engine               = trcEngine($client, $tokens);
+    $ledger               = trcLedger();
+    // One customer and one wallet: each is sent on its own, so each would otherwise refresh.
+    $ledger->wallets['wal-1'] = engineWallet('wal-1');
+    $rows                     = [
+        trcRows()[0],
+        ['company_uuid' => 'company-uuid', 'local_type' => 'wallet', 'local_uuid' => 'wal-1', 'status' => 'pending', 'attempts' => 0],
+    ];
+    $ledger->pending = $rows;
+
+    $batch = $engine->syncEntities($ledger, 'company-uuid', $rows, trcSync(), time());
+
+    expect($client->refreshes)->toBe(1)
+        ->and($batch['created'])->toBe(0)
+        ->and(empty($ledger->connections['company-uuid']['needs_reauth']))->toBeTrue()
+        ->and(array_unique(array_column($ledger->pending, 'status')))->toBe(['pending'])
+        // The wallet row was never sent, so it keeps its attempts.
+        ->and($ledger->pending[1]['attempts'])->toBe(0);
+});
+
+test('a single row whose refresh failed for a temporary reason stops the run without failing it', function () {
+    $client               = new TokenRecoveryClient();
+    $client->refreshError = new QuickBooksException(503, 'unavailable');
+    [$tokens]             = trcTokens($client);
+    $engine               = trcEngine($client, $tokens);
+    $ledger               = trcLedger();
+    $rows                 = [trcRows()[0]];
+
+    $batch = $engine->syncEntities($ledger, 'company-uuid', $rows, trcSync(), time());
+
+    expect($client->refreshes)->toBe(1)
+        ->and($batch['status'])->toBe('finished')
+        ->and(empty($ledger->connections['company-uuid']['needs_reauth']))->toBeTrue();
+});
+
+test('the next run tries the refresh again after a temporary failure', function () {
+    $client               = new TokenRecoveryClient();
+    $client->refreshError = new QuickBooksException(503, 'unavailable');
+    [$tokens]             = trcTokens($client);
+    $engine               = trcEngine($client, $tokens);
+
+    $engine->syncEntities(trcLedger(), 'company-uuid', trcRows(), trcSync(), time());
+    $client->refreshError = null;
+    $second               = $engine->syncEntities(trcLedger(), 'company-uuid', trcRows(), trcSync(), time());
+
+    expect($client->refreshes)->toBe(2)
+        ->and($second['created'])->toBe(2);
 });

@@ -152,8 +152,9 @@ class BatchRunner
                     $this->directory->save($ledger);
                 }
                 // The rows are saved (done, failed, or back to pending with a backoff), so the
-                // lease can go. When save() throws this line is skipped and the lease expires
-                // by itself, which keeps another run from re-sending rows whose links were lost.
+                // lease can go. When save() throws this line is skipped and the lease expires by
+                // itself. The links were committed before the failing part, so the retry updates
+                // the QuickBooks records instead of creating them again.
                 $this->directory->releaseClaims();
                 if ($followUp === true && Cache::get($this->reconcileOpenKey($companyUuid)) === true) {
                     $this->ensureLock($lock, $companyUuid);
@@ -309,7 +310,28 @@ class BatchRunner
         $ledger                            = $loaded['ledger'];
         $ledger->connections[$companyUuid] = $connection;
         $save                              = true;
-        $rows                              = [];
+        try {
+            $batch = $this->engine->syncEntities($ledger, $companyUuid, $this->catalogRows($companyUuid, $ids), $settings, $now);
+        } finally {
+            $this->ensureLock($lock, $companyUuid);
+            $this->directory->save($ledger);
+            $save = false;
+        }
+        if ($this->catalogPageSucceeded($batch, $ledger, $companyUuid, count($ids), $now) === true) {
+            $continueCatalog = $this->commitCatalogPage($companyUuid, $page, $more, $now);
+        }
+
+        return $batch;
+    }
+
+    /**
+     * @param array<int, string> $ids
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function catalogRows(string $companyUuid, array $ids): array
+    {
+        $rows = [];
         foreach ($ids as $uuid) {
             $rows[] = [
                 'company_uuid' => $companyUuid,
@@ -319,26 +341,27 @@ class BatchRunner
                 'attempts'     => 0,
             ];
         }
-        try {
-            $batch = $this->engine->syncEntities($ledger, $companyUuid, $rows, $settings, $now);
-        } finally {
-            $this->ensureLock($lock, $companyUuid);
-            $this->directory->save($ledger);
-            $save = false;
-        }
-        if ($this->catalogPageSucceeded($batch, $ledger, $companyUuid, count($ids), $now) === false) {
-            return $batch;
-        }
+
+        return $rows;
+    }
+
+    /**
+     * Move the cursor past a page that fully succeeded. True when another page follows;
+     * run() dispatches it after it releases the company lock.
+     *
+     * @param array<int, string> $page
+     */
+    private function commitCatalogPage(string $companyUuid, array $page, bool $more, int $now): bool
+    {
         if ($more === true) {
             Cache::put($this->catalogCursorKey($companyUuid), (string) $page[array_key_last($page)], 3600);
-            // run() dispatches this after it releases the company lock.
-            $continueCatalog = true;
-        } else {
-            Cache::forget($this->catalogCursorKey($companyUuid));
-            $this->directory->rememberCustomerCatalogStamp($companyUuid, $now);
-        }
 
-        return $batch;
+            return true;
+        }
+        Cache::forget($this->catalogCursorKey($companyUuid));
+        $this->directory->rememberCustomerCatalogStamp($companyUuid, $now);
+
+        return false;
     }
 
     /**

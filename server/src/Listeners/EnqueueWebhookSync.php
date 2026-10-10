@@ -800,7 +800,9 @@ class EnqueueWebhookSync
             return null;
         }
 
-        return (string) ($fresh['access_token'] ?? '') === (string) ($connection['access_token'] ?? '') ? null : $fresh;
+        $unchanged = (string) ($fresh['access_token'] ?? '') === (string) ($connection['access_token'] ?? '');
+
+        return $unchanged === true ? null : $fresh;
     }
 
     /**

@@ -28,6 +28,8 @@ use Illuminate\Support\Facades\Log;
 
 class ConnectionController extends QuickbooksController
 {
+    private const CALLBACK_PER_MINUTE = 30;
+
     public function __construct(
         Authorizer $authorizer,
         private OAuthFlow $oauth,
@@ -362,11 +364,27 @@ class ConnectionController extends QuickbooksController
         }
     }
 
+    /**
+     * Rate limit for the public OAuth callback, per client IP. Behind a proxy that the host does
+     * not trust, every user shares the proxy's IP and so one limit; raise the value, or set 0 to
+     * turn it off. A value that is not a number keeps the default.
+     */
+    public static function callbackThrottle(): ?string
+    {
+        $configured = config('quickbooks.oauth.callback_per_minute', self::CALLBACK_PER_MINUTE);
+        $perMinute  = is_numeric($configured) === true ? (int) $configured : self::CALLBACK_PER_MINUTE;
+        if ($perMinute < 1) {
+            return null;
+        }
+
+        return 'throttle:' . $perMinute . ',1';
+    }
+
     private function client(): QuickBooksClient
     {
         if ($this->client === null) {
             $client       = app(QuickBooksClient::class);
-            $this->client = $client instanceof QuickBooksClient ? $client : new QuickBooksClient();
+            $this->client = $client instanceof QuickBooksClient === true ? $client : new QuickBooksClient();
         }
 
         return $this->client;

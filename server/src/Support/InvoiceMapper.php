@@ -412,7 +412,9 @@ class InvoiceMapper
             return $quantity;
         }
         if (is_float($quantity) === true) {
-            return $quantity === floor($quantity) ? (int) $quantity : null;
+            $whole = $quantity === floor($quantity);
+
+            return $whole === true ? (int) $quantity : null;
         }
         if (is_string($quantity) === true && preg_match('/^\s*(-?\d+)(?:\.(\d+))?\s*$/', $quantity, $parts) === 1) {
             return trim($parts[2] ?? '', '0') === '' ? (int) $parts[1] : null;

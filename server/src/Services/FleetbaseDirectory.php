@@ -42,6 +42,9 @@ class FleetbaseDirectory
 
     public ?SyncLedger $memory = null;
 
+    /** Marks a lease whose row was flagged again while the holding run was sending it. */
+    private const REFLAG_PREFIX = 'reflag:';
+
     /** How long a company without a connection is remembered by flag(). */
     public const UNTRACKED_SECONDS = 30;
 
@@ -335,21 +338,25 @@ class FleetbaseDirectory
         // writeConnection already no-ops in those cases; these rows do not.
         $skipped = $this->companiesSkippingLedgerWrites($ledger);
 
-        // Links, pending rows, attempts, and the Fleetbase rows land together or not at all.
-        // A failure part way through must not leave links and done rows without the invoice change.
+        // Links are committed first, on their own. They record QuickBooks records that already
+        // exist, so losing them would make the next run create those records a second time.
+        // Pending rows, attempts and the Fleetbase rows then land together or not at all: a
+        // failure leaves the rows pending, and the retry updates through the kept links.
         // Connection rows above stay outside: tokens and rate-limit state are saved either way.
-        (new Link())->getConnection()->transaction(function () use ($ledger, $skipped): void {
-            $this->writeLedger($ledger, $skipped);
+        $database = (new Link())->getConnection();
+        $database->transaction(function () use ($ledger, $skipped): void {
+            $this->writeLinks($ledger, $skipped);
+        });
+        $database->transaction(function () use ($ledger, $skipped): void {
+            $this->writeRecords($ledger, $skipped);
         });
     }
 
     /**
      * @param array<string, true> $skipped
      */
-    private function writeLedger(SyncLedger $ledger, array $skipped): void
+    private function writeLinks(SyncLedger $ledger, array $skipped): void
     {
-        $this->keepUnclaimedInvoiceNumbers($ledger, $skipped);
-
         $loadedByUuid = [];
         foreach ($this->loaded['links'] as $loadedLink) {
             if (is_array($loadedLink) === false) {
@@ -405,6 +412,15 @@ class FleetbaseDirectory
         $this->updateByUuid(new Link(), $inserted['updates'], $linkFields);
         $this->dropStaleInvoicePaymentLinks($ledger, $skipped);
         $this->rememberPaymentInvoices($ledger, $skipped);
+    }
+
+    /**
+     * @param array<string, true> $skipped
+     */
+    private function writeRecords(SyncLedger $ledger, array $skipped): void
+    {
+        $this->keepUnclaimedInvoiceNumbers($ledger, $skipped);
+
         $freshPending   = [];
         $changedPending = [];
         foreach ($ledger->pending as $row) {
@@ -421,7 +437,9 @@ class FleetbaseDirectory
             }
             $changedPending[] = ['uuid' => (string) $row['uuid'], 'columns' => $columns];
         }
-        $this->updateByUuid(new PendingSync(), $changedPending, ['company_uuid', 'local_type', 'local_uuid', 'reason', 'status', 'attempts', 'next_attempt_at']);
+        // A row flagged again during this run keeps its pending state for the next run.
+        $guard = $this->claimsSupported() === true ? ['(claimed_by IS NULL OR claimed_by NOT LIKE ?)', [self::REFLAG_PREFIX . '%']] : null;
+        $this->updateByUuid(new PendingSync(), $changedPending, ['company_uuid', 'local_type', 'local_uuid', 'reason', 'status', 'attempts', 'next_attempt_at'], $guard);
         $this->writePendingMany($freshPending);
         $batchUuid = null;
         foreach ($ledger->batches as $batch) {
@@ -815,7 +833,7 @@ class FleetbaseDirectory
     protected function writePending(array $row): void
     {
         try {
-            PendingSync::query()->firstOrCreate(
+            $pending = PendingSync::query()->firstOrCreate(
                 [
                     'company_uuid' => $row['company_uuid'],
                     'local_type'   => $row['local_type'],
@@ -828,7 +846,31 @@ class FleetbaseDirectory
             if (self::isDuplicatePendingWrite($exception) === false) {
                 throw $exception;
             }
+
+            return;
         }
+        if ($pending instanceof PendingSync === true && $pending->wasRecentlyCreated === false) {
+            $this->markReflagged($pending);
+        }
+    }
+
+    /**
+     * A running sync holds this row and may already have read the record. Mark the lease
+     * so that run leaves the row pending instead of marking it done; the lease itself is
+     * unchanged, so no other run takes the row meanwhile.
+     */
+    private function markReflagged(PendingSync $pending): void
+    {
+        $holder = (string) ($pending->claimed_by ?? '');
+        if ($holder === '' || str_starts_with($holder, self::REFLAG_PREFIX) === true || $this->claimsSupported() === false) {
+            return;
+        }
+
+        PendingSync::query()
+            ->where('uuid', (string) $pending->uuid)
+            ->where('claimed_by', $holder)
+            ->where('claimed_until', '>', Carbon::now())
+            ->update(['claimed_by' => self::REFLAG_PREFIX . $holder]);
     }
 
     /**
@@ -956,7 +998,11 @@ class FleetbaseDirectory
         }
 
         try {
-            PendingSync::query()->whereIn('claimed_by', $tokens)->update(['claimed_by' => null, 'claimed_until' => null]);
+            $held = $tokens;
+            foreach ($tokens as $token) {
+                $held[] = self::REFLAG_PREFIX . $token;
+            }
+            PendingSync::query()->whereIn('claimed_by', $held)->update(['claimed_by' => null, 'claimed_until' => null]);
         } catch (\Throwable $exception) {
             SafeLog::warning('QuickBooks could not release its pending-row lease; it will expire on its own.', ['error' => $exception->getMessage()]);
         }
@@ -2625,6 +2671,9 @@ class FleetbaseDirectory
             return;
         }
         if ($localType === 'wallet') {
+            if ($this->walletsHoldingBalance($companyUuid, [$localUuid]) !== []) {
+                return;
+            }
             $this->retireLocal('Fleetbase\\Ledger\\Models\\Wallet', $companyUuid, $localUuid, ['status' => 'closed']);
             $this->dropLocalLinks($companyUuid, $realmId, 'wallet', $localUuid);
             $this->finishPending($companyUuid, 'wallet', $localUuid);
@@ -2742,6 +2791,7 @@ class FleetbaseDirectory
         $customers     = [];
         $wallets       = [];
         $linkUuids     = [];
+        $walletLinks   = [];
         $voidRealms    = [];
         $namedPayments = [];
 
@@ -2801,7 +2851,10 @@ class FleetbaseDirectory
             if ($this->deletionMatchesLink($deletions, $type, $realm, $qbo, $local) === false) {
                 continue;
             }
-            if ($uuid !== '') {
+            if ($uuid !== '' && $type === 'wallet' && $local !== '') {
+                // Dropped below only when the wallet is really closed.
+                $walletLinks[$local][] = $uuid;
+            } elseif ($uuid !== '') {
                 $linkUuids[] = $uuid;
             }
             if ($local === '') {
@@ -2825,7 +2878,12 @@ class FleetbaseDirectory
             static fn (string $uuid): bool => $uuid !== '' && in_array($uuid, $voidInvoices, true) === false
         )));
         $customers = array_values(array_unique($customers));
-        $wallets   = array_values(array_unique($wallets));
+        $wallets   = array_values(array_diff(array_unique($wallets), $this->walletsHoldingBalance($companyUuid, array_values(array_unique($wallets)))));
+        foreach ($wallets as $wallet) {
+            foreach ($walletLinks[$wallet] ?? [] as $walletLink) {
+                $linkUuids[] = $walletLink;
+            }
+        }
         $linkUuids = array_values(array_unique($linkUuids));
 
         $this->updateInvoiceStatuses($companyUuid, $voidInvoices, $sentInvoices);
@@ -3026,6 +3084,47 @@ class FleetbaseDirectory
 
             throw $exception;
         }
+    }
+
+    /**
+     * Wallets that still hold money are not closed when QuickBooks deletes their account:
+     * closing them would hide a balance. They stay open and linked, and the log says why.
+     * When the balance cannot be read, every wallet is kept.
+     *
+     * @param array<int, string> $uuids
+     *
+     * @return array<int, string>
+     */
+    private function walletsHoldingBalance(string $companyUuid, array $uuids): array
+    {
+        $class = 'Fleetbase\\Ledger\\Models\\Wallet';
+        $uuids = array_values(array_filter($uuids, static fn (string $uuid): bool => $uuid !== ''));
+        if ($uuids === [] || $companyUuid === '' || class_exists($class) === false) {
+            return [];
+        }
+
+        try {
+            $held = array_map(
+                static fn (mixed $uuid): string => (string) $uuid,
+                $class::query()->where('company_uuid', $companyUuid)->whereIn('uuid', $uuids)->where('balance', '!=', 0)->pluck('uuid')->all()
+            );
+        } catch (\Throwable $exception) {
+            SafeLog::warning('QuickBooks deleted a wallet account, but the wallet balance could not be read, so the wallet stays open.', [
+                'company_uuid' => $companyUuid,
+                'wallet_uuids' => $uuids,
+                'exception'    => $exception::class,
+            ]);
+
+            return $uuids;
+        }
+        if ($held !== []) {
+            SafeLog::warning('QuickBooks deleted a wallet account, but the wallet still holds a balance, so it stays open and linked.', [
+                'company_uuid' => $companyUuid,
+                'wallet_uuids' => $held,
+            ]);
+        }
+
+        return $held;
     }
 
     /**
@@ -3540,8 +3639,9 @@ class FleetbaseDirectory
      *
      * @param array<int, array{uuid: string, columns: array<string, mixed>}> $rows
      * @param array<int, string>                                             $allowed
+     * @param array{0: string, 1: array<int, mixed>}|null                    $guard   an extra WHERE condition and its bindings
      */
-    private function updateByUuid(Model $model, array $rows, array $allowed): void
+    private function updateByUuid(Model $model, array $rows, array $allowed, ?array $guard = null): void
     {
         $rows = array_values(array_filter(
             $rows,
@@ -3558,7 +3658,7 @@ class FleetbaseDirectory
         foreach (array_chunk($rows, 200) as $chunk) {
             $names = [];
             foreach ($chunk as $row) {
-                foreach ($row['columns'] as $column => $value) {
+                foreach (array_keys($row['columns']) as $column) {
                     if (in_array($column, $allowed, true) === true) {
                         $names[$column] = true;
                     }
@@ -3595,6 +3695,12 @@ class FleetbaseDirectory
                 $bindings[] = $row['uuid'];
             }
             $sql = 'UPDATE ' . $table . ' SET ' . implode(', ', $assignments) . ' WHERE ' . $uuidColumn . ' IN (' . $placeholders . ')';
+            if ($guard !== null) {
+                $sql .= ' AND ' . $guard[0];
+                foreach ($guard[1] as $binding) {
+                    $bindings[] = $binding;
+                }
+            }
             $connection->update($sql, $bindings);
         }
     }

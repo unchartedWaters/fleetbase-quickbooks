@@ -261,7 +261,7 @@ test('the maximum delivery age is configurable and drives the replay cache lifet
     }
 });
 
-test('the replay key is stored for the configured maximum age', function () {
+test('the replay key is held briefly while processing and for the configured maximum age once processed', function () {
     $body       = whrBody();
     $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
     $previous   = config('quickbooks.webhook.max_age_seconds');
@@ -278,9 +278,16 @@ test('the replay key is stored for the configured maximum age', function () {
 
                 public function add(string $key, mixed $value, mixed $ttl = null): bool
                 {
-                    $this->ttls[] = $ttl;
+                    $this->ttls[] = ['add', $ttl];
 
                     return $this->inner->add($key, $value, $ttl);
+                }
+
+                public function put(string $key, mixed $value, mixed $ttl = null): bool
+                {
+                    $this->ttls[] = ['put', $ttl];
+
+                    return $this->inner->put($key, $value, $ttl);
                 }
 
                 public function forget(string $key): bool
@@ -303,5 +310,36 @@ test('the replay key is stored for the configured maximum age', function () {
         config()->set('quickbooks.webhook.max_age_seconds', $previous);
     }
 
-    expect($ttls)->toBe([1234]);
+    // A worker that dies mid-request leaves only the short key, so Intuit's retry is processed.
+    expect($ttls)->toBe([['add', 120], ['put', 1234]]);
+});
+
+test('a stale delivery for a realm with no connection is refused like any stale delivery', function () {
+    $stale      = whrBody(whrStamp(700));
+    $controller = whrController(whrSettings(), whrStore(), []);
+
+    whrWithEvents(function (array &$seen) use ($controller, $stale) {
+        $response = $controller->handle(whrRequest($stale, whrSign($stale, 'verifier-token')));
+
+        expect($response->getStatusCode())->toBe(401)
+            ->and($seen)->toBe([]);
+    });
+});
+
+test('a delivery that is still being processed is refused as a replay', function () {
+    $body       = whrBody();
+    $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+
+    whrWithEvents(function (array &$seen, Closure $setListener) use ($controller, $body) {
+        $during = null;
+        $setListener(function () use ($controller, $body, &$during): void {
+            $during = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')))->getStatusCode();
+        });
+
+        $first = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+
+        expect($first->getStatusCode())->toBe(200)
+            ->and($during)->toBe(401)
+            ->and($seen)->toHaveCount(1);
+    });
 });

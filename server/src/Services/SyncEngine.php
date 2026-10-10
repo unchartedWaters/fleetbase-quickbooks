@@ -201,6 +201,14 @@ class SyncEngine
     private array $rotated = [];
 
     /**
+     * Companies whose token refresh failed for a temporary reason in this run, with the message.
+     * Later 401s in the run fail at once instead of calling Intuit again for every row.
+     *
+     * @var array<string, string>
+     */
+    private array $refreshFailed = [];
+
+    /**
      * @param callable|null $boundary function(callable $call): mixed
      */
     public function setHttpBoundary(?callable $boundary): void
@@ -268,13 +276,18 @@ class SyncEngine
     private function rotateTokens(array $connection): ?array
     {
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
-        $sent        = (string) ($connection['access_token'] ?? '');
-        $fresh       = $this->tokens?->refreshNow($connection);
+        if (isset($this->refreshFailed[$companyUuid]) === true) {
+            throw new QuickBooksException(503, $this->refreshFailed[$companyUuid]);
+        }
+        $sent  = (string) ($connection['access_token'] ?? '');
+        $fresh = $this->tokens?->refreshNow($connection);
         if ($fresh === null || empty($fresh['needs_reauth']) === false) {
             return null;
         }
         if (empty($fresh['refresh_error']) === false) {
-            throw new QuickBooksException(503, (string) $fresh['refresh_error']);
+            $this->refreshFailed[$companyUuid] = (string) $fresh['refresh_error'];
+
+            throw new QuickBooksException(503, $this->refreshFailed[$companyUuid]);
         }
         if ((string) ($fresh['access_token'] ?? '') === $sent) {
             return null;
@@ -534,6 +547,8 @@ class SyncEngine
         ];
 
         $companyUuid = (string) $connection['company_uuid'];
+        // A worker can reuse this engine, so a refresh that failed in an earlier run is tried again.
+        unset($this->refreshFailed[$companyUuid]);
         $ledger->rebuildIndex();
         $counts = [];
         foreach ($rows as $row) {
@@ -559,13 +574,22 @@ class SyncEngine
                     $block[]                                                                                                     = $candidate;
                     $handled[(string) ($candidate['local_type'] ?? 'invoice') . '|' . (string) ($candidate['local_uuid'] ?? '')] = true;
                 }
-                $halt = match ($type) {
-                    'customer' => $this->syncCustomerBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger, true),
-                    'wallet'   => $this->syncWalletBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger),
-                    default    => $this->syncInvoiceBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger),
-                };
+                try {
+                    $halt = match ($type) {
+                        'customer' => $this->syncCustomerBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger, true),
+                        'wallet'   => $this->syncWalletBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger),
+                        default    => $this->syncInvoiceBlock($ledger, $connection, $block, $settings, $batch, $now, $trigger),
+                    };
+                } catch (QuickBooksException $exception) {
+                    // The token could not be refreshed for now. Keep what this run already did and
+                    // leave the rest pending; the next run refreshes again.
+                    if (isset($this->refreshFailed[$companyUuid]) === false) {
+                        throw $exception;
+                    }
+                    $halt = true;
+                }
                 $connection = $ledger->connection($companyUuid) ?? $connection;
-                if ($halt === true) {
+                if ($halt === true || isset($this->refreshFailed[$companyUuid]) === true) {
                     break;
                 }
                 continue;
@@ -574,7 +598,7 @@ class SyncEngine
             $handled[$key] = true;
             $this->runOne($ledger, $connection, $row, $settings, $batch, $now, $trigger);
             $connection = $ledger->connection($companyUuid) ?? $connection;
-            if (empty($ledger->connections[$companyUuid]['needs_reauth']) === false) {
+            if (empty($ledger->connections[$companyUuid]['needs_reauth']) === false || isset($this->refreshFailed[$companyUuid]) === true) {
                 break;
             }
         }
@@ -3356,7 +3380,7 @@ class SyncEngine
      */
     private function firstQueuedUuid(array $finished, array $queued): ?string
     {
-        foreach ($finished as $uuid => $item) {
+        foreach (array_keys($finished) as $uuid) {
             if (isset($queued[(string) $uuid]) === true) {
                 return (string) $uuid;
             }

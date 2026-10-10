@@ -978,6 +978,7 @@ class QuickBooksClient
                 'halt'   => false,
             ];
         }
+        $unauthorized = [];
         foreach ($rows as $row) {
             if (is_array($row) === false) {
                 continue;
@@ -987,9 +988,36 @@ class QuickBooksClient
                 continue;
             }
             $results[$bId] = $this->batchItemResult($row);
+            if (self::isAuthenticationFault($row) === true) {
+                $unauthorized[$bId] = true;
+            }
+        }
+        // QuickBooks can answer 200 with an authentication fault on each item instead of HTTP 401.
+        // When every item was refused nothing was written, so this is the same as a 401: the
+        // caller refreshes the token and sends the batch again. A partly refused batch is not
+        // repeated, because the items that were accepted would be written twice.
+        if ($unauthorized !== [] && count($unauthorized) === count($results)) {
+            throw new QuickBooksException(401, 'QuickBooks request failed with status 401: the access token was refused.');
         }
 
         return $results;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private static function isAuthenticationFault(array $row): bool
+    {
+        $fault = $row['Fault'] ?? null;
+        if (is_array($fault) === false) {
+            return false;
+        }
+        if (strtoupper((string) ($fault['type'] ?? '')) === 'AUTHENTICATION') {
+            return true;
+        }
+        $code = (string) ($fault['Error'][0]['code'] ?? '');
+
+        return $code === '3200';
     }
 
     /**

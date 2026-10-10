@@ -724,6 +724,7 @@ test('a quickbooks delete voids the invoice and retires customers and wallets wi
             $table->char('company_uuid', 36)->nullable();
             $table->string('name')->nullable();
             $table->string('status')->nullable();
+            $table->integer('balance')->default(0);
             $table->timestamps();
             $table->softDeletes();
         });

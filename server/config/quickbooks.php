@@ -13,6 +13,11 @@ return [
     'redirect_uri'  => env('QUICKBOOKS_REDIRECT_URI'),
     'environment'   => env('QUICKBOOKS_ENVIRONMENT', 'production'),
     'console_host'  => env('QUICKBOOKS_CONSOLE_HOST', env('CONSOLE_HOST')),
+    'oauth'         => [
+        // Requests per minute per client IP on the public OAuth callback. Behind a proxy the
+        // host does not trust, all users share the proxy IP and this one limit. 0 turns it off.
+        'callback_per_minute' => 30,
+    ],
     'webhook'       => [
         // The oldest signed webhook delivery that is accepted, in seconds. A delivery whose
         // entity timestamps are older than this is rejected. The same number is how long a
