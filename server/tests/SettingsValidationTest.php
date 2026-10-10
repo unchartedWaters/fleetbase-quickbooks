@@ -143,7 +143,7 @@ test('a missing or off direction resolves to both and an organization row is unu
         ->and($off['sources']['periodic_interval_hours'])->toBe('admin');
 });
 
-test('a missing entity enable flag resolves to true from the default', function () {
+test('a missing entity enable flag resolves from the default and wallets default to off', function () {
     $resolver = new SyncSettingsResolver();
     $company  = qbSettings();
     $defaults = qbSettings();
@@ -159,7 +159,7 @@ test('a missing entity enable flag resolves to true from the default', function 
         ->and($resolved['sources']['invoice_enabled'])->toBe('default')
         ->and($resolved['payment_enabled'])->toBeTrue()
         ->and($resolved['sources']['payment_enabled'])->toBe('default')
-        ->and($resolved['wallet_enabled'])->toBeTrue()
+        ->and($resolved['wallet_enabled'])->toBeFalse()
         ->and($resolved['sources']['wallet_enabled'])->toBe('default');
 });
 

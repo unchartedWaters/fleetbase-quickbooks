@@ -40,7 +40,7 @@ class SyncSettingsResolver
             'customer_enabled'   => $this->pickBool('customer_enabled', $admin, (bool) ($defaults['customer_enabled'] ?? true)),
             'invoice_enabled'    => $this->pickBool('invoice_enabled', $admin, (bool) ($defaults['invoice_enabled'] ?? true)),
             'payment_enabled'    => $this->pickBool('payment_enabled', $admin, (bool) ($defaults['payment_enabled'] ?? true)),
-            'wallet_enabled'     => $this->pickBool('wallet_enabled', $admin, (bool) ($defaults['wallet_enabled'] ?? true)),
+            'wallet_enabled'     => $this->pickBool('wallet_enabled', $admin, (bool) ($defaults['wallet_enabled'] ?? false)),
         ];
 
         $resolved = [
