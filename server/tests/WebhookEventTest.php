@@ -901,13 +901,14 @@ test('a deleted payment stored under its quickbooks id unmarks the invoice and d
 
         $settings                               = qboChangedSettings();
         $store                                  = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'invoice_direction' => 'both'];
+        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'payment_conflict' => 'quickbooks', 'invoice_direction' => 'both'];
         $listener                               = new class($settings) extends EnqueueWebhookSync {
             protected function quickbooksInvoiceIdsForPayments(string $companyUuid, string $realmId, array $paymentIds): array
             {
                 return ['4' => ['10']];
             }
         };
+        $listener->readingQuickBooks();
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'delete', '4'));
 
         qboChangedBus(function ($dispatcher) use ($listener, $store) {
@@ -1009,13 +1010,14 @@ test('a deleted or voided payment quickbooks no longer returns unmarks only the 
 
         $settings                               = qboChangedSettings();
         $store                                  = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'invoice_direction' => 'both'];
+        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'payment_conflict' => 'quickbooks', 'invoice_direction' => 'both'];
         $listener                               = new class($settings) extends EnqueueWebhookSync {
             protected function quickbooksInvoiceIdsForPayments(string $companyUuid, string $realmId, array $paymentIds): array
             {
                 return ['4' => null];
             }
         };
+        $listener->readingQuickBooks();
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'delete', '4'));
 
         qboChangedBus(function ($dispatcher) use ($listener, $store) {
@@ -1111,13 +1113,14 @@ test('a payment read does not unmark an invoice that payment did not pay', funct
 
         $settings                               = qboChangedSettings();
         $store                                  = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'invoice_direction' => 'both'];
+        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'payment_conflict' => 'quickbooks', 'invoice_direction' => 'both'];
         $listener                               = new class($settings) extends EnqueueWebhookSync {
             protected function quickbooksInvoiceIdsForPayments(string $companyUuid, string $realmId, array $paymentIds): array
             {
                 return ['4' => ['10']];
             }
         };
+        $listener->readingQuickBooks();
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'delete', '4'));
 
         qboChangedBus(function ($dispatcher) use ($listener, $store) {
@@ -1213,13 +1216,14 @@ test('a deleted payment unmarks every invoice it paid and leaves the others', fu
 
         $settings                               = qboChangedSettings();
         $store                                  = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'invoice_direction' => 'both'];
+        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'payment_conflict' => 'quickbooks', 'invoice_direction' => 'both'];
         $listener                               = new class($settings) extends EnqueueWebhookSync {
             protected function quickbooksInvoiceIdsForPayments(string $companyUuid, string $realmId, array $paymentIds): array
             {
                 return ['4' => ['10', '12']];
             }
         };
+        $listener->readingQuickBooks();
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'delete', '4'));
 
         qboChangedBus(function ($dispatcher) use ($listener, $store) {
@@ -1318,13 +1322,14 @@ test('a missing payment read unmarks every stored invoice on that payment', func
 
         $settings                               = qboChangedSettings();
         $store                                  = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'invoice_direction' => 'both'];
+        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'payment_conflict' => 'quickbooks', 'invoice_direction' => 'both'];
         $listener                               = new class($settings) extends EnqueueWebhookSync {
             protected function quickbooksInvoiceIdsForPayments(string $companyUuid, string $realmId, array $paymentIds): array
             {
                 return ['4' => null];
             }
         };
+        $listener->readingQuickBooks();
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'delete', '4'));
 
         qboChangedBus(function ($dispatcher) use ($listener, $store) {
@@ -1494,8 +1499,9 @@ function qboChangedUnreadPaymentDelete(string $failure): void
 
         $settings                               = qboChangedSettings();
         $store                                  = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'invoice_direction' => 'both'];
+        $store->rows[SettingsKeys::adminSync()] = ['payment_direction' => 'both', 'payment_conflict' => 'quickbooks', 'invoice_direction' => 'both'];
         $listener                               = new EnqueueWebhookSync($settings);
+        $listener->readingQuickBooks();
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'delete', '4'));
         if ($failure === 'batch') {
             $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '5', 'delete', '5'));
@@ -1862,6 +1868,7 @@ test('a payment stored under its quickbooks id queues the fleetbase invoice', fu
                 return ['4' => ['8'], '5' => ['missing-invoice']];
             }
         };
+        $listener->readingQuickBooks();
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'update', null));
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '5', 'create', null));
 

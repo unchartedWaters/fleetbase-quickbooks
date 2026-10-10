@@ -34,6 +34,35 @@ class ConnectionTokens
             return $connection;
         }
 
+        return $this->refreshLocked($connection);
+    }
+
+    /**
+     * Refresh the tokens now, whatever the stored expiry says. QuickBooks answered 401 to
+     * the access token, so it is no longer usable even when it looked valid. The result
+     * has needs_reauth set only when Intuit refused the refresh token itself (invalid_grant).
+     * Another failure sets refresh_error and leaves the tokens unchanged.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>
+     */
+    public function refreshNow(array $connection): array
+    {
+        if (empty($connection['needs_reauth']) === false) {
+            return $connection;
+        }
+
+        return $this->refreshLocked($connection);
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>
+     */
+    private function refreshLocked(array $connection): array
+    {
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
         // A batch or import already holds this company's lock. Refresh inside it.
         $heldAlready = $companyUuid !== '' && BatchRunner::holds($companyUuid) === true;

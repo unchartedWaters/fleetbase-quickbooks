@@ -34,9 +34,9 @@ class WebhookController extends Controller
     ];
 
     /**
-     * How long a signed body stays remembered so the same delivery cannot be replayed.
+     * Used when quickbooks.webhook.max_age_seconds is missing or not a positive number.
      */
-    private const REPLAY_TTL_SECONDS = 600;
+    private const DEFAULT_MAX_AGE_SECONDS = 600;
 
     public function __construct(
         private SettingsService $settings,
@@ -68,12 +68,18 @@ class WebhookController extends Controller
         }
 
         $matched = $this->matchingConnections($rawBody, $signature, $realmIds);
-        if ($matched === []) {
+        if ($matched === null) {
             return response()->json(['message' => 'Invalid signature.'], 401);
+        }
+        // The signature is genuine, but no organization is connected to these realms
+        // (for example after a disconnect). There is nothing to apply. Answer 200 so
+        // Intuit does not keep retrying a delivery that can never be used.
+        if ($matched === []) {
+            return response()->json(['ok' => true]);
         }
 
         // HMAC already matched. A captured body is not accepted once its
-        // entity timestamps are older than the replay window.
+        // entity timestamps are older than the configured maximum age.
         if ($this->staleTimestamp($rawBody, time()) === true) {
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
@@ -89,8 +95,17 @@ class WebhookController extends Controller
             return response()->json(['message' => 'Webhook delivery could not be recorded.'], 503);
         }
 
-        $this->dispatchEntities($this->entitiesByRealm($rawBody), $matched);
-        app(EnqueueWebhookSync::class)->flush($this->store);
+        // The body is remembered before it is processed. A failure here must not
+        // leave it remembered, or Intuit's retry of the identical body would be
+        // rejected as a replay and the events would be lost.
+        try {
+            $this->dispatchEntities($this->entitiesByRealm($rawBody), $matched);
+            app(EnqueueWebhookSync::class)->flush($this->store);
+        } catch (\Throwable $exception) {
+            $this->forgetSignedBody($rawBody);
+
+            throw $exception;
+        }
 
         return response()->json(['ok' => true]);
     }
@@ -129,17 +144,18 @@ class WebhookController extends Controller
     /**
      * Connections on the named realms when the install-wide verifier matches.
      * An organization verifier is not consulted, and a second organization's
-     * secret is not a fallback.
+     * secret is not a fallback. Null means the signature did not match. An empty
+     * array means it matched but no organization is connected to those realms.
      *
      * @param array<int, string> $realmIds
      *
-     * @return array<string, array<int, Connection>>
+     * @return array<string, array<int, Connection>>|null
      */
-    private function matchingConnections(string $rawBody, string $signature, array $realmIds): array
+    private function matchingConnections(string $rawBody, string $signature, array $realmIds): ?array
     {
         $verifiers = $this->settings->webhookVerifiersFor($this->store, '');
         if ($this->signatures->accepts($rawBody, $signature, $verifiers) === false) {
-            return [];
+            return null;
         }
 
         $matched = [];
@@ -162,7 +178,7 @@ class WebhookController extends Controller
     private function rememberSignedBody(string $rawBody): string
     {
         try {
-            $added = Cache::add('quickbooks.webhook.replay.' . hash('sha256', $rawBody), 1, self::REPLAY_TTL_SECONDS);
+            $added = Cache::add($this->replayKey($rawBody), 1, $this->maxAgeSeconds());
         } catch (\Throwable) {
             return 'unavailable';
         }
@@ -171,7 +187,39 @@ class WebhookController extends Controller
     }
 
     /**
-     * True when a signed entity timestamp is older than the replay window.
+     * Forget a remembered body so a retry of it is processed again.
+     * A store that cannot be reached leaves the key to expire on its own.
+     */
+    private function forgetSignedBody(string $rawBody): void
+    {
+        try {
+            Cache::forget($this->replayKey($rawBody));
+        } catch (\Throwable) {
+            // The original error is the one to report.
+        }
+    }
+
+    private function replayKey(string $rawBody): string
+    {
+        return 'quickbooks.webhook.replay.' . hash('sha256', $rawBody);
+    }
+
+    /**
+     * The oldest signed delivery that is accepted. The same value is how long a body is
+     * remembered for replay protection, so the age check and the replay store agree.
+     */
+    private function maxAgeSeconds(): int
+    {
+        $configured = config('quickbooks.webhook.max_age_seconds', self::DEFAULT_MAX_AGE_SECONDS);
+        if (is_numeric($configured) === false || (int) $configured < 1) {
+            return self::DEFAULT_MAX_AGE_SECONDS;
+        }
+
+        return (int) $configured;
+    }
+
+    /**
+     * True when a signed entity timestamp is older than the maximum delivery age.
      * A body with no timestamp is left to the replay store.
      */
     private function staleTimestamp(string $rawBody, int $now): bool
@@ -185,6 +233,7 @@ class WebhookController extends Controller
             return false;
         }
 
+        $maxAge = $this->maxAgeSeconds();
         foreach ($notifications as $notification) {
             if (is_array($notification) === false) {
                 continue;
@@ -199,7 +248,7 @@ class WebhookController extends Controller
                     continue;
                 }
                 $timestamp = $this->webhookTimestamp($entity['lastUpdated']);
-                if ($timestamp === null || ($now - $timestamp) > self::REPLAY_TTL_SECONDS) {
+                if ($timestamp === null || ($now - $timestamp) > $maxAge) {
                     return true;
                 }
             }

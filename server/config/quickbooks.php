@@ -13,6 +13,13 @@ return [
     'redirect_uri'  => env('QUICKBOOKS_REDIRECT_URI'),
     'environment'   => env('QUICKBOOKS_ENVIRONMENT', 'production'),
     'console_host'  => env('QUICKBOOKS_CONSOLE_HOST', env('CONSOLE_HOST')),
+    'webhook'       => [
+        // The oldest signed webhook delivery that is accepted, in seconds. A delivery whose
+        // entity timestamps are older than this is rejected. The same number is how long a
+        // delivered body is remembered to stop a replay, so the two checks stay consistent.
+        // Raise it if Intuit retries a failed delivery after more than ten minutes.
+        'max_age_seconds' => 600,
+    ],
     'sync'          => [
         'enabled'                 => true,
         'interval_minutes'        => 5,

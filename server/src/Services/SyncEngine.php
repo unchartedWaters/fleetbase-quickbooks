@@ -186,10 +186,19 @@ class SyncEngine
         private InvoiceMapper $invoices,
         private WalletMapper $wallets,
         private BackoffPolicy $backoff,
+        private ?ConnectionTokens $tokens = null,
     ) {
         $this->httpBoundary = null;
         $this->client       = new QuickBooksHttpGate($client, $this);
     }
+
+    /**
+     * Rotated tokens by company, keyed to the access token they replaced. A call that still holds
+     * the replaced connection uses the rotated one instead of being rejected and refreshing again.
+     *
+     * @var array<string, array{from: string, tokens: array<string, mixed>}>
+     */
+    private array $rotated = [];
 
     /**
      * @param callable|null $boundary function(callable $call): mixed
@@ -211,6 +220,74 @@ class SyncEngine
         }
 
         return $boundary($call);
+    }
+
+    /**
+     * One QuickBooks HTTP call that gets one refresh-and-retry when QuickBooks answers 401.
+     * The access token can expire in the middle of a long batch, while the refresh token is
+     * still good, so a 401 alone does not mean the user must reconnect. The call is repeated
+     * once with the rotated token. A 401 is only passed on, for tokenRejected() to flag, when
+     * Intuit refused the refresh token or the freshly issued token was refused as well. A
+     * refresh that failed for any other reason is temporary and is not a 401.
+     *
+     * @param array<string, mixed> $connection
+     * @param callable             $call       function(array $connection): mixed
+     */
+    public function runAuthorized(array $connection, callable $call): mixed
+    {
+        $companyUuid = (string) ($connection['company_uuid'] ?? '');
+        $rotated     = $this->rotated[$companyUuid] ?? null;
+        if ($rotated !== null && (string) ($connection['access_token'] ?? '') === $rotated['from']) {
+            $connection = array_merge($connection, $rotated['tokens']);
+        }
+
+        return $this->runHttp(function () use ($connection, $call, $companyUuid) {
+            try {
+                return $call($connection);
+            } catch (QuickBooksException $exception) {
+                if ($exception->isUnauthorized() === false || $this->tokens === null || $companyUuid === '') {
+                    throw $exception;
+                }
+                $fresh = $this->rotateTokens($connection);
+                if ($fresh === null) {
+                    throw $exception;
+                }
+
+                return $call($fresh);
+            }
+        });
+    }
+
+    /**
+     * The connection to retry a rejected call with, or null when the 401 stands.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    private function rotateTokens(array $connection): ?array
+    {
+        $companyUuid = (string) ($connection['company_uuid'] ?? '');
+        $sent        = (string) ($connection['access_token'] ?? '');
+        $fresh       = $this->tokens?->refreshNow($connection);
+        if ($fresh === null || empty($fresh['needs_reauth']) === false) {
+            return null;
+        }
+        if (empty($fresh['refresh_error']) === false) {
+            throw new QuickBooksException(503, (string) $fresh['refresh_error']);
+        }
+        if ((string) ($fresh['access_token'] ?? '') === $sent) {
+            return null;
+        }
+        $tokens = [];
+        foreach (FleetbaseDirectory::CONNECTION_TOKEN_FIELDS as $field) {
+            if (array_key_exists($field, $fresh) === true) {
+                $tokens[$field] = $fresh[$field];
+            }
+        }
+        $this->rotated[$companyUuid] = ['from' => $sent, 'tokens' => $tokens];
+
+        return array_merge($connection, $tokens);
     }
 
     /**
@@ -1283,7 +1360,10 @@ class SyncEngine
     }
 
     /**
-     * A 401 means every remaining call will fail too, so rows keep their attempts and stay pending.
+     * A 401 that reaches here is final: runAuthorized() already refreshed the access token and
+     * repeated the call, and Intuit refused the refresh token (invalid_grant) or the new token.
+     * With no token service wired in, a 401 is final at once. Every remaining call will fail
+     * too, so rows keep their attempts and stay pending until the user connects again.
      */
     private function tokenRejected(SyncLedger $ledger, string $companyUuid): void
     {
@@ -4594,8 +4674,9 @@ class SyncEngine
 }
 
 /**
- * Sends SyncEngine's QuickBooks calls through SyncEngine::runHttp.
- * The inner client stays the real or fake client; this only brackets HTTP.
+ * Sends SyncEngine's QuickBooks calls through SyncEngine::runAuthorized.
+ * The inner client stays the real or fake client; this brackets HTTP and repeats a call
+ * once with a refreshed access token when QuickBooks answers 401.
  */
 class QuickBooksHttpGate extends QuickBooksClient
 {
@@ -4605,12 +4686,12 @@ class QuickBooksHttpGate extends QuickBooksClient
 
     public function homeCurrency(array $connection): ?string
     {
-        return $this->engine->runHttp(fn (): ?string => $this->inner->homeCurrency($connection));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?string => $this->inner->homeCurrency($connection));
     }
 
     public function customTxnNumbers(array $connection): bool
     {
-        return $this->engine->runHttp(fn (): bool => $this->inner->customTxnNumbers($connection));
+        return $this->engine->runAuthorized($connection, fn (array $connection): bool => $this->inner->customTxnNumbers($connection));
     }
 
     public function multiCurrencyEnabled(array $connection): bool
@@ -4620,121 +4701,121 @@ class QuickBooksHttpGate extends QuickBooksClient
 
     public function createCustomer(array $connection, array $payload): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->createCustomer($connection, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createCustomer($connection, $payload));
     }
 
     public function updateCustomer(array $connection, string $id, string $syncToken, array $payload): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->updateCustomer($connection, $id, $syncToken, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateCustomer($connection, $id, $syncToken, $payload));
     }
 
     public function getCustomer(array $connection, string $id): ?array
     {
-        return $this->engine->runHttp(fn (): ?array => $this->inner->getCustomer($connection, $id));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getCustomer($connection, $id));
     }
 
     public function createInvoice(array $connection, array $payload): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->createInvoice($connection, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createInvoice($connection, $payload));
     }
 
     public function updateInvoice(array $connection, string $id, string $syncToken, array $payload): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->updateInvoice($connection, $id, $syncToken, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateInvoice($connection, $id, $syncToken, $payload));
     }
 
     public function nextInvoiceDocNumber(array $connection): ?string
     {
-        return $this->engine->runHttp(fn (): ?string => $this->inner->nextInvoiceDocNumber($connection));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?string => $this->inner->nextInvoiceDocNumber($connection));
     }
 
     public function nextInvoiceDocNumbers(array $connection, int $count): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->nextInvoiceDocNumbers($connection, $count));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->nextInvoiceDocNumbers($connection, $count));
     }
 
     public function findInvoiceByDocNumber(array $connection, string $docNumber): ?array
     {
-        return $this->engine->runHttp(fn (): ?array => $this->inner->findInvoiceByDocNumber($connection, $docNumber));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->findInvoiceByDocNumber($connection, $docNumber));
     }
 
     public function getInvoice(array $connection, string $id): ?array
     {
-        return $this->engine->runHttp(fn (): ?array => $this->inner->getInvoice($connection, $id));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getInvoice($connection, $id));
     }
 
     public function voidInvoice(array $connection, string $id, string $syncToken): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->voidInvoice($connection, $id, $syncToken));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->voidInvoice($connection, $id, $syncToken));
     }
 
     public function createPayment(array $connection, array $payload): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->createPayment($connection, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createPayment($connection, $payload));
     }
 
     public function updatePayment(array $connection, string $id, string $syncToken, array $payload): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->updatePayment($connection, $id, $syncToken, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updatePayment($connection, $id, $syncToken, $payload));
     }
 
     public function getPayment(array $connection, string $id): ?array
     {
-        return $this->engine->runHttp(fn (): ?array => $this->inner->getPayment($connection, $id));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getPayment($connection, $id));
     }
 
     public function findPaymentForInvoice(array $connection, string $customerId, string $invoiceId): ?array
     {
-        return $this->engine->runHttp(fn (): ?array => $this->inner->findPaymentForInvoice($connection, $customerId, $invoiceId));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->findPaymentForInvoice($connection, $customerId, $invoiceId));
     }
 
     public function findPaymentsForCustomers(array $connection, array $customerIds, bool $asBatch = false): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->findPaymentsForCustomers($connection, $customerIds, $asBatch));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->findPaymentsForCustomers($connection, $customerIds, $asBatch));
     }
 
     public function findCustomerByDisplayName(array $connection, string $name): ?array
     {
-        return $this->engine->runHttp(fn (): ?array => $this->inner->findCustomerByDisplayName($connection, $name));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->findCustomerByDisplayName($connection, $name));
     }
 
     public function findCustomerByEmail(array $connection, string $email): ?array
     {
-        return $this->engine->runHttp(fn (): ?array => $this->inner->findCustomerByEmail($connection, $email));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->findCustomerByEmail($connection, $email));
     }
 
     public function createAccount(array $connection, array $payload): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->createAccount($connection, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createAccount($connection, $payload));
     }
 
     public function updateAccount(array $connection, string $id, string $syncToken, array $payload): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->updateAccount($connection, $id, $syncToken, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateAccount($connection, $id, $syncToken, $payload));
     }
 
     public function getAccount(array $connection, string $id): ?array
     {
-        return $this->engine->runHttp(fn (): ?array => $this->inner->getAccount($connection, $id));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getAccount($connection, $id));
     }
 
     public function findAccountByAcctNum(array $connection, string $acctNum): ?array
     {
-        return $this->engine->runHttp(fn (): ?array => $this->inner->findAccountByAcctNum($connection, $acctNum));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->findAccountByAcctNum($connection, $acctNum));
     }
 
     public function findAccountsByName(array $connection, string $name): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->findAccountsByName($connection, $name));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->findAccountsByName($connection, $name));
     }
 
     public function batch(array $connection, array $items): array
     {
-        return $this->engine->runHttp(fn (): array => $this->inner->batch($connection, $items));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->batch($connection, $items));
     }
 
     public function ensureServiceItem(array $connection): string
     {
-        return $this->engine->runHttp(fn (): string => $this->inner->ensureServiceItem($connection));
+        return $this->engine->runAuthorized($connection, fn (array $connection): string => $this->inner->ensureServiceItem($connection));
     }
 }
