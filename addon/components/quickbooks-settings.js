@@ -223,7 +223,7 @@ export default class QuickbooksSettingsComponent extends Component {
     }
 
     displayedUrl(key) {
-        if (Object.prototype.hasOwnProperty.call(this.draft, key)) {
+        if (Object.hasOwn(this.draft, key)) {
             const drafted = this.draft[key];
 
             return typeof drafted === 'string' ? drafted : '';
@@ -272,12 +272,12 @@ export default class QuickbooksSettingsComponent extends Component {
         const entity = primaryEntity(key);
         if (entity) {
             // Dropdown edits live in the draft. Otherwise show the loaded Primary.
-            const drafted = this.primaryTouched.has(entity) && Object.prototype.hasOwnProperty.call(this.draft, key);
+            const drafted = this.primaryTouched.has(entity) && Object.hasOwn(this.draft, key);
             state.value = drafted ? this.draft[key] : displayedPrimary(this.args.sync?.[`${entity}_conflict`]);
 
             return;
         }
-        if (Object.prototype.hasOwnProperty.call(this.draft, key)) {
+        if (Object.hasOwn(this.draft, key)) {
             state.value = this.draft[key];
         }
     }
@@ -435,7 +435,7 @@ export default class QuickbooksSettingsComponent extends Component {
 
     entityEnabled(entity) {
         const key = `${entity}_enabled`;
-        const stored = Object.prototype.hasOwnProperty.call(this.draft, key) ? this.draft[key] : this.args.sync?.[key];
+        const stored = Object.hasOwn(this.draft, key) ? this.draft[key] : this.args.sync?.[key];
         if (stored === false || stored === 'false' || stored === 0 || stored === '0') {
             return false;
         }
@@ -445,7 +445,7 @@ export default class QuickbooksSettingsComponent extends Component {
 
     entityDirection(entity) {
         const directionKey = `${entity}_direction`;
-        const stored = Object.prototype.hasOwnProperty.call(this.draft, directionKey) ? this.draft[directionKey] : this.args.sync?.[directionKey];
+        const stored = Object.hasOwn(this.draft, directionKey) ? this.draft[directionKey] : this.args.sync?.[directionKey];
 
         return {
             direction: normalizeSyncDirection(stored),
