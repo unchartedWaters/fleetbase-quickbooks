@@ -94,11 +94,11 @@ class BatchRunner
     private function performLockedRun(string $companyUuid, string $trigger, array $resolved, bool $catalogDue, array $skipped, Lock $lock): array
     {
         $state = [
-            'ledger'          => null,
-            'save'            => false,
-            'follow_up'       => false,
-            'ran_catalog'     => false,
-            'continue_catalog'=> false,
+            'ledger'           => null,
+            'save'             => false,
+            'follow_up'        => false,
+            'ran_catalog'      => false,
+            'continue_catalog' => false,
         ];
         $this->engine->setHttpBoundary(function (callable $call) use ($lock, $companyUuid) {
             if (self::holds($companyUuid) === true) {
