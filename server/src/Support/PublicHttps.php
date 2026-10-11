@@ -250,23 +250,29 @@ class PublicHttps
         if (($first & 0xFE) === 0xFC) {
             return true;
         }
-        // Prefixes that are not public unicast targets and can carry a private IPv4
-        // address: NAT64 local-use 64:ff9b:1::/48, SIIT ::ffff:0:0:0/96 and Teredo 2001::/32.
+        // Hex prefixes of ranges that are not public unicast targets: NAT64 64:ff9b::/32 outside
+        // the /96 checked above (including local-use 64:ff9b:1::/48), SIIT ::ffff:0:0:0/96,
+        // Teredo 2001::/32, benchmarking 2001:2::/48, ORCHID 2001:10::/28, documentation
+        // 2001:db8::/32 and 3fff::/20, discard 100::/64 and SRv6 SIDs 5f00::/16.
+        $hex      = bin2hex($packed);
         $prefixes = [
-            "\x00\x64\xff\x9b\x00\x01",
-            str_repeat("\x00", 8) . "\xff\xff\x00\x00",
-            "\x20\x01\x00\x00",
+            '0064ff9b',
+            '0000000000000000ffff0000',
+            '20010000',
+            '200100020000',
+            '2001001',
+            '20010db8',
+            '3fff0',
+            '0100000000000000',
+            '5f00',
         ];
         foreach ($prefixes as $prefix) {
-            if (str_starts_with($packed, $prefix) === true) {
+            if (str_starts_with($hex, $prefix) === true) {
                 return true;
             }
         }
 
-        return $packed[0] === "\x20"
-            && $packed[1] === "\x01"
-            && $packed[2] === "\x0d"
-            && $packed[3] === "\xb8";
+        return false;
     }
 
     private static function addressIsInternal(string $ip): bool
