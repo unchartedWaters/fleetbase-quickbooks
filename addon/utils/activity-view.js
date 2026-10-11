@@ -12,21 +12,56 @@ function formatWhen(value) {
 }
 
 export function activityRows(batches = []) {
-    return batches.map((batch, index) => ({
-        id: batch.uuid || `${batch.trigger}-${batch.started_at || batch.finished_at || ''}`,
+    return batches.map((batch, index) => activityRow(batch, index));
+}
+
+function activityRow(batch, index) {
+    return {
+        id: activityId(batch),
         headerId: `quickbooks-activity-${index}`,
         trigger: batch.trigger,
         direction: batch.direction || 'outbound',
         status: batch.status || '',
-        created: batch.created ?? batch.created_count ?? 0,
-        aligned: batch.aligned ?? batch.aligned_count ?? 0,
-        linked: batch.linked ?? batch.linked_count ?? 0,
-        skipped: batch.skipped ?? batch.skipped_count ?? 0,
-        updated: batch.updated ?? batch.updated_count ?? 0,
-        unmatched: batch.unmatched ?? batch.unmatched_count ?? 0,
-        voided: batch.voided ?? batch.voided_count ?? 0,
-        failed: batch.failed ?? batch.failed_count ?? 0,
-        error: typeof batch.error === 'string' && batch.error !== '' ? batch.error : batch.error || null,
+        created: countField(batch, 'created'),
+        aligned: countField(batch, 'aligned'),
+        linked: countField(batch, 'linked'),
+        skipped: countField(batch, 'skipped'),
+        updated: countField(batch, 'updated'),
+        unmatched: countField(batch, 'unmatched'),
+        voided: countField(batch, 'voided'),
+        failed: countField(batch, 'failed'),
+        error: activityError(batch),
         when: formatWhen(batch.finished_at || batch.created_at),
-    }));
+    };
+}
+
+function activityId(batch) {
+    if (batch.uuid) {
+        return batch.uuid;
+    }
+
+    const stamp = batch.started_at || batch.finished_at || '';
+
+    return `${batch.trigger}-${stamp}`;
+}
+
+function countField(batch, name) {
+    if (batch[name] !== undefined && batch[name] !== null) {
+        return batch[name];
+    }
+
+    const counted = batch[`${name}_count`];
+    if (counted !== undefined && counted !== null) {
+        return counted;
+    }
+
+    return 0;
+}
+
+function activityError(batch) {
+    if (typeof batch.error === 'string' && batch.error !== '') {
+        return batch.error;
+    }
+
+    return batch.error || null;
 }

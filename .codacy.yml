@@ -11,6 +11,14 @@ engines:
       - "*.js"
   # Lizard's function-length rule (50 lines) flags test setup helpers, which build whole
   # fixtures in one place by design. Production code under server/src is still checked.
+  # Ember component tests are the same kind of fixture, so tests/ is excluded too.
   lizard:
     exclude_paths:
       - "server/tests/**"
+      - "tests/**"
+  # PHPMD on the whole engine, so test fixtures and the upstream constructor stub
+  # in scripts/test-support are not refactored to satisfy complexity rules.
+  phpmd:
+    exclude_paths:
+      - "server/tests/**"
+      - "scripts/test-support/**"

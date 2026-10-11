@@ -2,6 +2,7 @@
 
 use Fleetbase\Quickbooks\Events\QuickBooksEntityChanged;
 use Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync;
+use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
@@ -105,7 +106,7 @@ function rdgDeliver(array $sync, int $walletBalance = 0): array
 
         $store                                  = new MemorySettingsStore();
         $store->rows[SettingsKeys::adminSync()] = $sync;
-        $listener                               = new EnqueueWebhookSync(new Fleetbase\Quickbooks\Services\SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()));
+        $listener                               = new EnqueueWebhookSync(new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()));
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '1', 'delete', 'cust-1'));
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'invoice', '8', 'delete', 'inv-1'));
         $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'wallet', '7', 'delete', 'wal-1'));

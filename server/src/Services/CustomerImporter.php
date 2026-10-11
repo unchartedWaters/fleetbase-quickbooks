@@ -63,11 +63,7 @@ class CustomerImporter
         $pageSize                = max(1, min(self::MAX_PAGE_SIZE, $pageSize));
         $this->companyCandidates = null;
         $ledger->ensureIndex();
-        foreach ($fleetbaseCustomers as $customer) {
-            if (is_array($customer) === true && (string) ($customer['uuid'] ?? '') !== '') {
-                $ledger->rememberCustomer((string) $customer['uuid'], $customer);
-            }
-        }
+        $this->rememberFleetbaseCustomers($ledger, $fleetbaseCustomers);
 
         $start = $this->cursor($connection);
         while (true) {
@@ -76,43 +72,91 @@ class CustomerImporter
                 $this->failPage($ledger, $connection, $page, $batch);
                 break;
             }
-            $failedAt = null;
-            $position = 0;
-            foreach ($page as $remote) {
-                if (is_array($remote) === false) {
-                    $position++;
-                    continue;
-                }
-                $outcome         = $this->importOne($ledger, $connection, $fleetbaseCustomers, $remote);
-                $batch[$outcome] = ($batch[$outcome] ?? 0) + 1;
-                if ($outcome === 'failed' && $failedAt === null) {
-                    $failedAt = $position;
-                }
-                $position++;
-            }
-            if ($failedAt !== null) {
-                $next = $start + $failedAt;
-                if ($next > 1) {
-                    $this->writeCursor($ledger, $connection, $next);
-                }
+            $next = $this->importFetchedPage($ledger, $connection, $page, $batch, $fleetbaseCustomers, $start, $pageSize, $deadline);
+            if ($next === null) {
                 break;
             }
-            if (count($page) < $pageSize) {
-                $this->writeCursor($ledger, $connection, 1);
-                break;
-            }
-            $start += $pageSize;
-            $this->writeCursor($ledger, $connection, $start);
-            if ($deadline !== null && time() >= $deadline) {
-                $batch['continue'] = true;
-                break;
-            }
+            $start = $next;
         }
 
         $batch['finished_at'] = time();
         $ledger->batches[]    = $batch;
 
         return $batch;
+    }
+
+    /**
+     * @param array<int, mixed> $fleetbaseCustomers
+     */
+    private function rememberFleetbaseCustomers(SyncLedger $ledger, array $fleetbaseCustomers): void
+    {
+        foreach ($fleetbaseCustomers as $customer) {
+            if (is_array($customer) === true && (string) ($customer['uuid'] ?? '') !== '') {
+                $ledger->rememberCustomer((string) $customer['uuid'], $customer);
+            }
+        }
+    }
+
+    /**
+     * Records one fetched page and returns the next start position, or null when the import should stop.
+     *
+     * @param array<string, mixed>             $connection
+     * @param array<int, mixed>                $page
+     * @param array<string, mixed>             $batch
+     * @param array<int, array<string, mixed>> $fleetbaseCustomers
+     */
+    private function importFetchedPage(SyncLedger $ledger, array &$connection, array $page, array &$batch, array &$fleetbaseCustomers, int $start, int $pageSize, ?int $deadline): ?int
+    {
+        $failedAt = $this->tallyImportedPage($ledger, $connection, $page, $batch, $fleetbaseCustomers);
+        if ($failedAt !== null) {
+            $next = $start + $failedAt;
+            if ($next > 1) {
+                $this->writeCursor($ledger, $connection, $next);
+            }
+
+            return null;
+        }
+        if (count($page) < $pageSize) {
+            $this->writeCursor($ledger, $connection, 1);
+
+            return null;
+        }
+
+        $start += $pageSize;
+        $this->writeCursor($ledger, $connection, $start);
+        if ($deadline !== null && time() >= $deadline) {
+            $batch['continue'] = true;
+
+            return null;
+        }
+
+        return $start;
+    }
+
+    /**
+     * @param array<string, mixed>             $connection
+     * @param array<int, mixed>                $page
+     * @param array<string, mixed>             $batch
+     * @param array<int, array<string, mixed>> $fleetbaseCustomers
+     */
+    private function tallyImportedPage(SyncLedger $ledger, array $connection, array $page, array &$batch, array &$fleetbaseCustomers): ?int
+    {
+        $failedAt = null;
+        $position = 0;
+        foreach ($page as $remote) {
+            if (is_array($remote) === false) {
+                $position++;
+                continue;
+            }
+            $outcome         = $this->importOne($ledger, $connection, $fleetbaseCustomers, $remote);
+            $batch[$outcome] = ($batch[$outcome] ?? 0) + 1;
+            if ($outcome === 'failed' && $failedAt === null) {
+                $failedAt = $position;
+            }
+            $position++;
+        }
+
+        return $failedAt;
     }
 
     /**
@@ -217,30 +261,7 @@ class CustomerImporter
      */
     private function rememberCandidates(SyncLedger $ledger, array $connection, array $page): bool
     {
-        $emails = [];
-        $phones = [];
-        $names  = [];
-        foreach ($page as $remote) {
-            if (is_array($remote) === false) {
-                continue;
-            }
-            $email    = strtolower(trim((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')));
-            $phone    = $this->digits(trim((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')));
-            $name     = $this->displayName($remote);
-            if ($email !== '') {
-                $emails[] = $email;
-            }
-            if ($phone !== '') {
-                $phones[] = $phone;
-            }
-            if ($name !== '') {
-                $names[] = $name;
-            }
-        }
-
-        $emails = array_values(array_unique($emails));
-        $phones = array_values(array_unique($phones));
-        $names  = array_values(array_unique($names));
+        [$emails, $phones, $names] = $this->candidateKeys($page);
         if ($emails === [] && $phones === [] && $names === []) {
             return true;
         }
@@ -257,21 +278,63 @@ class CustomerImporter
             return false;
         }
 
+        $this->rememberMatchingCandidates($ledger, $candidates, $companyUuid, $emails, $phones, $names);
+
+        return true;
+    }
+
+    /**
+     * @param array<int, mixed> $page
+     *
+     * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, string>}
+     */
+    private function candidateKeys(array $page): array
+    {
+        $emails = [];
+        $phones = [];
+        $names  = [];
+        foreach ($page as $remote) {
+            if (is_array($remote) === false) {
+                continue;
+            }
+            $email = strtolower(trim((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')));
+            $phone = $this->digits(trim((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')));
+            $name  = $this->displayName($remote);
+            if ($email !== '') {
+                $emails[] = $email;
+            }
+            if ($phone !== '') {
+                $phones[] = $phone;
+            }
+            if ($name !== '') {
+                $names[] = $name;
+            }
+        }
+
+        return [
+            array_values(array_unique($emails)),
+            array_values(array_unique($phones)),
+            array_values(array_unique($names)),
+        ];
+    }
+
+    /**
+     * @param iterable<mixed>    $candidates
+     * @param array<int, string> $emails
+     * @param array<int, string> $phones
+     * @param array<int, string> $names
+     */
+    private function rememberMatchingCandidates(SyncLedger $ledger, iterable $candidates, string $companyUuid, array $emails, array $phones, array $names): void
+    {
         $emailSet = array_fill_keys($emails, true);
         $phoneSet = array_fill_keys($phones, true);
         $nameSet  = array_fill_keys($names, true);
         foreach ($candidates as $customer) {
-            $uuid = (string) ($customer->uuid ?? '');
-            if ($uuid === '') {
+            if (is_object($customer) === false) {
                 continue;
             }
-            $email = strtolower(trim((string) ($customer->email ?? '')));
-            $phone = $this->digits(trim((string) ($customer->phone ?? '')));
-            $name  = (string) ($customer->name ?? '');
-            $hit   = ($email !== '' && isset($emailSet[$email]) === true)
-                || ($phone !== '' && isset($phoneSet[$phone]) === true)
-                || ($name !== '' && isset($nameSet[$name]) === true);
-            if ($hit === false) {
+            $uuid = (string) ($customer->uuid ?? '');
+            if ($uuid === '' || $this->candidateMatches($customer, $emailSet, $phoneSet, $nameSet) === false) {
                 continue;
             }
             $row = [
@@ -285,8 +348,22 @@ class CustomerImporter
             $ledger->customers[$uuid] = $row;
             $ledger->rememberCustomer($uuid, $row);
         }
+    }
 
-        return true;
+    /**
+     * @param array<string, true> $emailSet
+     * @param array<string, true> $phoneSet
+     * @param array<string, true> $nameSet
+     */
+    private function candidateMatches(object $customer, array $emailSet, array $phoneSet, array $nameSet): bool
+    {
+        $email = strtolower(trim((string) ($customer->email ?? '')));
+        $phone = $this->digits(trim((string) ($customer->phone ?? '')));
+        $name  = (string) ($customer->name ?? '');
+
+        return ($email !== '' && isset($emailSet[$email]) === true)
+            || ($phone !== '' && isset($phoneSet[$phone]) === true)
+            || ($name !== '' && isset($nameSet[$name]) === true);
     }
 
     /**
@@ -306,33 +383,55 @@ class CustomerImporter
         if ($remoteId !== '' && $ledger->linkForRemote($realm, 'Customer', $remoteId) !== null) {
             return 'linked';
         }
+        if ($this->linkMatchedCustomer($ledger, $remote, $remoteId, $company, $realm) === true) {
+            return 'linked';
+        }
 
+        return $this->createImportedCustomer($ledger, $connection, $fleetbaseCustomers, $remote);
+    }
+
+    /**
+     * @param array<string, mixed> $remote
+     */
+    private function linkMatchedCustomer(SyncLedger $ledger, array $remote, string $remoteId, string $company, string $realm): bool
+    {
         $match = $ledger->matchCustomer(
             strtolower((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')),
             $this->digits((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')),
             $this->displayName($remote)
         );
-        if ($match !== null) {
-            $matchCompany = (string) ($match['company_uuid'] ?? $company);
-            $link         = $ledger->link($matchCompany, $realm, 'customer', (string) $match['uuid']);
-            $storedId     = is_array($link) === true ? (string) ($link['qbo_id'] ?? '') : '';
-            if ($link === null || $storedId === '' || $storedId === $remoteId) {
-                if ($remoteId !== '') {
-                    $ledger->putLink([
-                        'company_uuid' => $matchCompany,
-                        'realm_id'     => $realm,
-                        'local_type'   => 'customer',
-                        'local_uuid'   => $match['uuid'],
-                        'qbo_entity'   => 'Customer',
-                        'qbo_id'       => $remoteId,
-                        'sync_token'   => (string) ($remote['SyncToken'] ?? '0'),
-                    ]);
-                }
-
-                return 'linked';
-            }
+        if ($match === null) {
+            return false;
         }
 
+        $matchCompany = (string) ($match['company_uuid'] ?? $company);
+        $link         = $ledger->link($matchCompany, $realm, 'customer', (string) $match['uuid']);
+        $storedId     = is_array($link) === true ? (string) ($link['qbo_id'] ?? '') : '';
+        if ($link !== null && $storedId !== '' && $storedId !== $remoteId) {
+            return false;
+        }
+        if ($remoteId !== '') {
+            $ledger->putLink([
+                'company_uuid' => $matchCompany,
+                'realm_id'     => $realm,
+                'local_type'   => 'customer',
+                'local_uuid'   => $match['uuid'],
+                'qbo_entity'   => 'Customer',
+                'qbo_id'       => $remoteId,
+                'sync_token'   => (string) ($remote['SyncToken'] ?? '0'),
+            ]);
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $fleetbaseCustomers
+     * @param array<string, mixed>             $remote
+     */
+    private function createImportedCustomer(SyncLedger $ledger, array $connection, array &$fleetbaseCustomers, array $remote): string
+    {
         try {
             SyncSuppressor::pause();
             $created = $this->creator !== null

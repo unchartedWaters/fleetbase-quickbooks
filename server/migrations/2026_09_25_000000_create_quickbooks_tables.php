@@ -7,6 +7,15 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
+        $this->createConnections();
+        $this->createLinks();
+        $this->createPendingSyncs();
+        $this->createSyncBatches();
+        $this->createSyncAttempts();
+    }
+
+    private function createConnections(): void
+    {
         if (Schema::hasTable('quickbooks_connections') === false) {
             Schema::create('quickbooks_connections', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
@@ -25,7 +34,10 @@ return new class extends Migration {
                 $table->timestamps();
             });
         }
+    }
 
+    private function createLinks(): void
+    {
         if (Schema::hasTable('quickbooks_links') === false) {
             Schema::create('quickbooks_links', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
@@ -40,7 +52,10 @@ return new class extends Migration {
                 $table->unique(['company_uuid', 'local_type', 'local_uuid'], 'quickbooks_links_local_unique');
             });
         }
+    }
 
+    private function createPendingSyncs(): void
+    {
         if (Schema::hasTable('quickbooks_pending_syncs') === false) {
             Schema::create('quickbooks_pending_syncs', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
@@ -55,7 +70,10 @@ return new class extends Migration {
                 $table->index(['company_uuid', 'status'], 'quickbooks_pending_company_status');
             });
         }
+    }
 
+    private function createSyncBatches(): void
+    {
         if (Schema::hasTable('quickbooks_sync_batches') === false) {
             Schema::create('quickbooks_sync_batches', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();
@@ -76,7 +94,10 @@ return new class extends Migration {
                 $table->timestamps();
             });
         }
+    }
 
+    private function createSyncAttempts(): void
+    {
         if (Schema::hasTable('quickbooks_sync_attempts') === false) {
             Schema::create('quickbooks_sync_attempts', function (Blueprint $table) {
                 $table->char('uuid', 36)->primary();

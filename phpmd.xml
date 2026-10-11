@@ -17,7 +17,24 @@
     Applied threshold: minimum 100. Requested medium threshold, not applied: 70.
   </description>
 
-  <rule ref="rulesets/cleancode.xml"/>
+  <!--
+    StaticAccess, ElseExpression and BooleanArgumentFlag describe the extension's
+    static helpers, Laravel facades and existing flags. Excluding them keeps
+    PHPMD on the clean-code issues that can be fixed without a redesign.
+    MissingImport is re-enabled below with ignore-global, because php-cs-fixer
+    rewrites imported global classes back to a leading backslash.
+  -->
+  <rule ref="rulesets/cleancode.xml">
+    <exclude name="StaticAccess"/>
+    <exclude name="ElseExpression"/>
+    <exclude name="BooleanArgumentFlag"/>
+    <exclude name="MissingImport"/>
+  </rule>
+  <rule ref="rulesets/cleancode.xml/MissingImport">
+    <properties>
+      <property name="ignore-global" value="true"/>
+    </properties>
+  </rule>
   <rule ref="rulesets/controversial.xml"/>
   <rule ref="rulesets/design.xml"/>
   <rule ref="rulesets/naming.xml"/>

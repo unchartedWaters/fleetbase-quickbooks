@@ -73,19 +73,44 @@ class ApplyRemoteChange implements ShouldQueue
             return;
         }
 
+        $lock = $this->acquiredWebhookLock($directory);
+        if ($lock === null) {
+            return;
+        }
+
+        $this->acceptWebhookChanges($engine, $directory, $settings, $store, $tokens, $lock, $entities);
+    }
+
+    private function acquiredWebhookLock(FleetbaseDirectory $directory): ?Lock
+    {
         $lock = BatchRunner::lock($this->companyUuid);
         if ($lock === null) {
             $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', BatchRunner::LOCK_UNAVAILABLE);
 
-            return;
+            return null;
         }
         if ($lock->get() === false) {
             $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', 'Another QuickBooks sync is already running.');
             $this->retryBusyLock();
 
-            return;
+            return null;
         }
 
+        return $lock;
+    }
+
+    /**
+     * @param array<int, array{entity: string, id: string, operation: string}> $entities
+     */
+    private function acceptWebhookChanges(
+        SyncEngine $engine,
+        FleetbaseDirectory $directory,
+        SettingsService $settings,
+        SettingsStore $store,
+        ?ConnectionTokens $tokens,
+        Lock $lock,
+        array $entities,
+    ): void {
         // Same boundary as a company batch: the lock covers the local read and the
         // local save. QuickBooks queries, including payments on an invoice, run
         // after this releases it. The lock is not held for the job timeout.
@@ -99,38 +124,62 @@ class ApplyRemoteChange implements ShouldQueue
         $ledger = null;
         $save   = false;
         try {
-            // Links for these QuickBooks ids, and the local rows those links need.
-            // Direction filtering happens inside acceptRemoteChanges. This does not reconcile the catalog.
-            $loaded = $directory->loadLinked($this->companyUuid, $entities);
-            if (is_array($loaded) === false) {
-                return;
-            }
-
-            $syncSettings = $settings->resolveSync(
-                [],
-                $store->adminSync(),
-                $store->defaultSync()
-            );
-            $ledger = $loaded['ledger'];
-            if ($ledger instanceof SyncLedger === false) {
-                return;
-            }
-            if ($tokens !== null && $this->tokenUnusable($engine, $directory, $tokens, $ledger, $lock) === true) {
-                return;
-            }
-            $engine->acceptRemoteChanges($ledger, $this->companyUuid, $entities, $syncSettings, time());
-            $save = true;
+            [$ledger, $save] = $this->loadedWebhookChanges($engine, $directory, $settings, $store, $tokens, $lock, $entities);
         } finally {
-            $engine->setHttpBoundary(null);
-            try {
-                if ($save === true && $ledger instanceof SyncLedger === true) {
-                    $this->reacquireCompanyLock($lock);
-                    $directory->save($ledger);
-                }
-            } finally {
-                if (BatchRunner::holds($this->companyUuid) === true) {
-                    $lock->release();
-                }
+            $this->finishWebhook($engine, $directory, $lock, $save, $ledger);
+        }
+    }
+
+    /**
+     * Links for these QuickBooks ids, and the local rows those links need.
+     * Direction filtering happens inside acceptRemoteChanges. This does not reconcile the catalog.
+     *
+     * @param array<int, array{entity: string, id: string, operation: string}> $entities
+     *
+     * @return array{0: mixed, 1: bool}
+     */
+    private function loadedWebhookChanges(
+        SyncEngine $engine,
+        FleetbaseDirectory $directory,
+        SettingsService $settings,
+        SettingsStore $store,
+        ?ConnectionTokens $tokens,
+        Lock $lock,
+        array $entities,
+    ): array {
+        $loaded = $directory->loadLinked($this->companyUuid, $entities);
+        if (is_array($loaded) === false) {
+            return [null, false];
+        }
+
+        $syncSettings = $settings->resolveSync(
+            [],
+            $store->adminSync(),
+            $store->defaultSync()
+        );
+        $ledger = $loaded['ledger'];
+        if ($ledger instanceof SyncLedger === false) {
+            return [$ledger, false];
+        }
+        if ($tokens !== null && $this->tokenUnusable($engine, $directory, $tokens, $ledger, $lock) === true) {
+            return [$ledger, false];
+        }
+        $engine->acceptRemoteChanges($ledger, $this->companyUuid, $entities, $syncSettings, time());
+
+        return [$ledger, true];
+    }
+
+    private function finishWebhook(SyncEngine $engine, FleetbaseDirectory $directory, Lock $lock, bool $save, mixed $ledger): void
+    {
+        $engine->setHttpBoundary(null);
+        try {
+            if ($save === true && $ledger instanceof SyncLedger === true) {
+                $this->reacquireCompanyLock($lock);
+                $directory->save($ledger);
+            }
+        } finally {
+            if (BatchRunner::holds($this->companyUuid) === true) {
+                $lock->release();
             }
         }
     }

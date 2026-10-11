@@ -97,27 +97,17 @@ parameters:
 
 		-
 			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
-			count: 5
+			count: 2
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
 		-
 			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
-			count: 4
-			path: server/src/Listeners/EnqueueWebhookSync.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$realm_id\\.$#"
-			count: 3
+			count: 1
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
 		-
 			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
 			count: 1
-			path: server/src/Listeners/EnqueueWebhookSync.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 2
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
 		-
@@ -127,16 +117,6 @@ parameters:
 
 		-
 			message: "#^Offset 'invoices' on array\\{invoice\\: string, invoices\\: array\\<int, string\\>, keyed_by_payment\\: bool, quickbooks_invoices\\: array\\<int, string\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Listeners/EnqueueWebhookSync.php
-
-		-
-			message: "#^Offset 'rows' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Listeners/EnqueueWebhookSync.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between non\\-empty\\-string and '' will always evaluate to false\\.$#"
 			count: 1
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
@@ -203,11 +183,6 @@ parameters:
 		-
 			message: "#^Property Fleetbase\\\\Quickbooks\\\\Services\\\\CustomerImporter\\:\\:\\$companyCandidates \\(array\\{company\\: string, rows\\: array\\<int, object\\>\\}\\|null\\) does not accept array\\{company\\: string, rows\\: array\\<int\\<0, max\\>, mixed\\>\\}\\.$#"
 			count: 1
-			path: server/src/Services/CustomerImporter.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 2
 			path: server/src/Services/CustomerImporter.php
 
 		-
@@ -287,7 +262,7 @@ parameters:
 
 		-
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 21
+			count: 16
 			path: server/src/Services/FleetbaseDirectory.php
 
 		-
@@ -327,12 +302,12 @@ parameters:
 
 		-
 			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
-			count: 6
+			count: 4
 			path: server/src/Services/QuickBooksClient.php
 
 		-
 			message: "#^Offset 'status' on array\\{ok\\: bool, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 4
+			count: 3
 			path: server/src/Services/QuickBooksClient.php
 
 		-
@@ -347,7 +322,7 @@ parameters:
 
 		-
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 4
+			count: 3
 			path: server/src/Services/QuickBooksClient.php
 
 		-
@@ -362,7 +337,7 @@ parameters:
 
 		-
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 14
+			count: 13
 			path: server/src/Services/SyncEngine.php
 
 		-
@@ -551,21 +526,6 @@ parameters:
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Offset 'entity' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: "#^Offset 'id' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: "#^Offset 'operation' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
 			message: "#^Offset 'rows' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
 			count: 2
 			path: server/src/Services/SyncEngine.php
@@ -594,6 +554,31 @@ parameters:
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
 			count: 1
 			path: server/src/Support/PublicHttps.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
+			count: 3
+			path: server/src/Support/WebhookPaymentInvoices.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
+			count: 3
+			path: server/src/Support/WebhookPaymentInvoices.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$realm_id\\.$#"
+			count: 3
+			path: server/src/Support/WebhookPaymentInvoices.php
+
+		-
+			message: "#^Offset 'rows' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Support/QuickBooksPaymentReader.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			count: 2
+			path: server/src/Support/QuickBooksPaymentReader.php
 
 		-
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"

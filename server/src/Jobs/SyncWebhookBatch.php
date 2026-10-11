@@ -72,6 +72,24 @@ class SyncWebhookBatch implements ShouldQueue
 
     private function insertPending(): void
     {
+        $wanted = $this->pendingWanted();
+        if ($wanted === []) {
+            return;
+        }
+
+        $wanted = $this->withoutExistingPending($wanted);
+        if ($wanted === []) {
+            return;
+        }
+
+        $this->insertPendingRows($this->pendingRows($wanted));
+    }
+
+    /**
+     * @return array<string, array{local_type: string, local_uuid: string}>
+     */
+    private function pendingWanted(): array
+    {
         $wanted = [];
         foreach ($this->records as $record) {
             $type = $record['local_type'] ?? '';
@@ -81,10 +99,17 @@ class SyncWebhookBatch implements ShouldQueue
             }
             $wanted[$type . '|' . $uuid] = ['local_type' => $type, 'local_uuid' => $uuid];
         }
-        if ($wanted === []) {
-            return;
-        }
 
+        return $wanted;
+    }
+
+    /**
+     * @param array<string, array{local_type: string, local_uuid: string}> $wanted
+     *
+     * @return array<string, array{local_type: string, local_uuid: string}>
+     */
+    private function withoutExistingPending(array $wanted): array
+    {
         $existing = PendingSync::query()
             ->where('company_uuid', $this->companyUuid)
             ->where('status', 'pending')
@@ -94,10 +119,17 @@ class SyncWebhookBatch implements ShouldQueue
         foreach ($existing as $row) {
             unset($wanted[(string) $row->local_type . '|' . (string) $row->local_uuid]);
         }
-        if ($wanted === []) {
-            return;
-        }
 
+        return $wanted;
+    }
+
+    /**
+     * @param array<string, array{local_type: string, local_uuid: string}> $wanted
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function pendingRows(array $wanted): array
+    {
         $now  = now();
         $rows = [];
         foreach ($wanted as $record) {
@@ -115,6 +147,14 @@ class SyncWebhookBatch implements ShouldQueue
             ];
         }
 
+        return $rows;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     */
+    private function insertPendingRows(array $rows): void
+    {
         try {
             PendingSync::query()->insert($rows);
         } catch (QueryException $exception) {

@@ -110,6 +110,10 @@ function displayedPrimary(conflict) {
     return conflict === 'quickbooks' ? 'quickbooks' : 'fleetbase';
 }
 
+function isBlank(value) {
+    return value === '' || value === null || value === undefined;
+}
+
 function primaryEntity(key) {
     return PRIMARY_ENTITIES.find((entity) => key === `${entity}_conflict` || key === `${entity}_reference`) ?? null;
 }
@@ -219,7 +223,7 @@ export default class QuickbooksSettingsComponent extends Component {
     }
 
     displayedUrl(key) {
-        if (Object.prototype.hasOwnProperty.call(this.draft, key)) {
+        if (Object.hasOwn(this.draft, key)) {
             const drafted = this.draft[key];
 
             return typeof drafted === 'string' ? drafted : '';
@@ -243,27 +247,42 @@ export default class QuickbooksSettingsComponent extends Component {
     present(key) {
         const source = AUTH_FIELDS.includes(key) ? this.args.settings : this.args.sync;
         const state = fieldState({ ...source, sources: source?.sources, scope: 'company' }, key);
-        if (key === 'interval_minutes' && (state.value === '' || state.value === null || state.value === undefined)) {
+        this.applyPresentDefault(state, key);
+        this.applyPresentDraft(state, key);
+
+        return this.presentField(key, state);
+    }
+
+    applyPresentDefault(state, key) {
+        if (isBlank(state.value) === false) {
+            return;
+        }
+        if (key === 'interval_minutes') {
             state.value = 5;
-        }
-        if (key === 'periodic_interval_hours' && (state.value === '' || state.value === null || state.value === undefined)) {
+        } else if (key === 'periodic_interval_hours') {
             state.value = 24;
-        }
-        if (key === 'environment' && (state.value === '' || state.value === null || state.value === undefined)) {
+        } else if (key === 'environment') {
             state.value = DEFAULT_ENVIRONMENT;
-        }
-        if (CHOICE_DEFAULTS[key] && (state.value === '' || state.value === null || state.value === undefined)) {
+        } else if (CHOICE_DEFAULTS[key]) {
             state.value = CHOICE_DEFAULTS[key];
         }
+    }
+
+    applyPresentDraft(state, key) {
         const entity = primaryEntity(key);
         if (entity) {
             // Dropdown edits live in the draft. Otherwise show the loaded Primary.
-            state.value =
-                this.primaryTouched.has(entity) && Object.prototype.hasOwnProperty.call(this.draft, key) ? this.draft[key] : displayedPrimary(this.args.sync?.[`${entity}_conflict`]);
-        } else if (Object.prototype.hasOwnProperty.call(this.draft, key)) {
+            const drafted = this.primaryTouched.has(entity) && Object.hasOwn(this.draft, key);
+            state.value = drafted ? this.draft[key] : displayedPrimary(this.args.sync?.[`${entity}_conflict`]);
+
+            return;
+        }
+        if (Object.hasOwn(this.draft, key)) {
             state.value = this.draft[key];
         }
+    }
 
+    presentField(key, state) {
         return {
             key,
             label: LABEL_KEYS[key] ? this.intl.t(LABEL_KEYS[key]) : key,
@@ -416,7 +435,7 @@ export default class QuickbooksSettingsComponent extends Component {
 
     entityEnabled(entity) {
         const key = `${entity}_enabled`;
-        const stored = Object.prototype.hasOwnProperty.call(this.draft, key) ? this.draft[key] : this.args.sync?.[key];
+        const stored = Object.hasOwn(this.draft, key) ? this.draft[key] : this.args.sync?.[key];
         if (stored === false || stored === 'false' || stored === 0 || stored === '0') {
             return false;
         }
@@ -426,7 +445,7 @@ export default class QuickbooksSettingsComponent extends Component {
 
     entityDirection(entity) {
         const directionKey = `${entity}_direction`;
-        const stored = Object.prototype.hasOwnProperty.call(this.draft, directionKey) ? this.draft[directionKey] : this.args.sync?.[directionKey];
+        const stored = Object.hasOwn(this.draft, directionKey) ? this.draft[directionKey] : this.args.sync?.[directionKey];
 
         return {
             direction: normalizeSyncDirection(stored),

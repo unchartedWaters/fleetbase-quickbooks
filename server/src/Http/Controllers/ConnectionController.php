@@ -77,7 +77,28 @@ class ConnectionController extends QuickbooksController
                 'created_at',
             ], 'page', $page);
         [$batches, $meta] = $this->batchPage($paginator);
+        $errors           = $this->errorsByBatch($this->batchUuids($batches));
+        $payload          = [];
+        foreach ($batches as $batch) {
+            if ($batch instanceof SyncBatch === false) {
+                continue;
+            }
+            $payload[] = $this->presentBatch($batch, $errors);
+        }
 
+        return response()->json([
+            'batches' => $payload,
+            'meta'    => $meta,
+        ]);
+    }
+
+    /**
+     * @param array<int, mixed> $batches
+     *
+     * @return array<int, string>
+     */
+    private function batchUuids(array $batches): array
+    {
         $batchUuids = [];
         foreach ($batches as $batch) {
             if ($batch instanceof SyncBatch === true) {
@@ -85,6 +106,16 @@ class ConnectionController extends QuickbooksController
             }
         }
 
+        return $batchUuids;
+    }
+
+    /**
+     * @param array<int, string> $batchUuids
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function errorsByBatch(array $batchUuids): array
+    {
         $errors   = [];
         $attempts = SyncAttempt::query()
             ->whereIn('batch_uuid', $batchUuids)
@@ -103,49 +134,48 @@ class ConnectionController extends QuickbooksController
             $errors[$batchUuid][] = $message;
         }
 
-        $payload = [];
-        foreach ($batches as $batch) {
-            if ($batch instanceof SyncBatch === false) {
-                continue;
-            }
-            $messages = array_values(array_unique($errors[(string) $batch->uuid] ?? []));
-            $error    = $messages === [] ? null : implode('; ', array_slice($messages, 0, 3));
-            if ($error === null && (int) $batch->failed_count > 0) {
-                $error = (int) $batch->failed_count . ' failed.';
-            }
+        return $errors;
+    }
 
-            $payload[] = [
-                'uuid'            => $batch->uuid,
-                'trigger'         => $batch->trigger,
-                'direction'       => $batch->direction,
-                'status'          => $batch->status,
-                'created'         => (int) $batch->created_count,
-                'created_count'   => (int) $batch->created_count,
-                'updated'         => (int) $batch->updated_count,
-                'updated_count'   => (int) $batch->updated_count,
-                'aligned'         => (int) $batch->aligned_count,
-                'aligned_count'   => (int) $batch->aligned_count,
-                'voided'          => (int) $batch->voided_count,
-                'voided_count'    => (int) $batch->voided_count,
-                'unmatched'       => (int) $batch->unmatched_count,
-                'unmatched_count' => (int) $batch->unmatched_count,
-                'failed'          => (int) $batch->failed_count,
-                'failed_count'    => (int) $batch->failed_count,
-                'linked'          => (int) $batch->linked_count,
-                'linked_count'    => (int) $batch->linked_count,
-                'skipped'         => (int) $batch->skipped_count,
-                'skipped_count'   => (int) $batch->skipped_count,
-                'error'           => $error,
-                'started_at'      => $batch->started_at?->toIso8601String(),
-                'finished_at'     => $batch->finished_at?->toIso8601String(),
-                'created_at'      => $batch->created_at?->toIso8601String(),
-            ];
+    /**
+     * @param array<string, array<int, string>> $errors
+     *
+     * @return array<string, mixed>
+     */
+    private function presentBatch(SyncBatch $batch, array $errors): array
+    {
+        $messages = array_values(array_unique($errors[(string) $batch->uuid] ?? []));
+        $error    = $messages === [] ? null : implode('; ', array_slice($messages, 0, 3));
+        if ($error === null && (int) $batch->failed_count > 0) {
+            $error = (int) $batch->failed_count . ' failed.';
         }
 
-        return response()->json([
-            'batches' => $payload,
-            'meta'    => $meta,
-        ]);
+        return [
+            'uuid'            => $batch->uuid,
+            'trigger'         => $batch->trigger,
+            'direction'       => $batch->direction,
+            'status'          => $batch->status,
+            'created'         => (int) $batch->created_count,
+            'created_count'   => (int) $batch->created_count,
+            'updated'         => (int) $batch->updated_count,
+            'updated_count'   => (int) $batch->updated_count,
+            'aligned'         => (int) $batch->aligned_count,
+            'aligned_count'   => (int) $batch->aligned_count,
+            'voided'          => (int) $batch->voided_count,
+            'voided_count'    => (int) $batch->voided_count,
+            'unmatched'       => (int) $batch->unmatched_count,
+            'unmatched_count' => (int) $batch->unmatched_count,
+            'failed'          => (int) $batch->failed_count,
+            'failed_count'    => (int) $batch->failed_count,
+            'linked'          => (int) $batch->linked_count,
+            'linked_count'    => (int) $batch->linked_count,
+            'skipped'         => (int) $batch->skipped_count,
+            'skipped_count'   => (int) $batch->skipped_count,
+            'error'           => $error,
+            'started_at'      => $batch->started_at?->toIso8601String(),
+            'finished_at'     => $batch->finished_at?->toIso8601String(),
+            'created_at'      => $batch->created_at?->toIso8601String(),
+        ];
     }
 
     public function start(Request $request): JsonResponse
