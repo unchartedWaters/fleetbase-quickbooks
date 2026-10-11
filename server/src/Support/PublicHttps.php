@@ -239,22 +239,40 @@ class PublicHttps
 
     private static function ipv6RangeIsInternal(string $packed): bool
     {
-        $first  = ord($packed[0]);
-        $second = ord($packed[1]);
+        $first = ord($packed[0]);
         if ($first === 0xFF) {
             return true;
         }
-        if ($first === 0xFE && (($second & 0xC0) === 0x80 || ($second & 0xC0) === 0xC0)) {
+        // fe00::/9 is reserved, fe80::/10 is link-local and fec0::/10 is site-local.
+        if ($first === 0xFE) {
             return true;
         }
         if (($first & 0xFE) === 0xFC) {
             return true;
         }
+        // Hex prefixes of ranges that are not public unicast targets: NAT64 64:ff9b::/32 outside
+        // the /96 checked above (including local-use 64:ff9b:1::/48), SIIT ::ffff:0:0:0/96,
+        // Teredo 2001::/32, benchmarking 2001:2::/48, ORCHID 2001:10::/28, documentation
+        // 2001:db8::/32 and 3fff::/20, discard 100::/64 and SRv6 SIDs 5f00::/16.
+        $hex      = bin2hex($packed);
+        $prefixes = [
+            '0064ff9b',
+            '0000000000000000ffff0000',
+            '20010000',
+            '200100020000',
+            '2001001',
+            '20010db8',
+            '3fff0',
+            '0100000000000000',
+            '5f00',
+        ];
+        foreach ($prefixes as $prefix) {
+            if (str_starts_with($hex, $prefix) === true) {
+                return true;
+            }
+        }
 
-        return $packed[0] === "\x20"
-            && $packed[1] === "\x01"
-            && $packed[2] === "\x0d"
-            && $packed[3] === "\xb8";
+        return false;
     }
 
     private static function addressIsInternal(string $ip): bool

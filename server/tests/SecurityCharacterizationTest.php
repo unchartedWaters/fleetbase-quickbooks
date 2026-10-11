@@ -177,7 +177,6 @@ test('ipv6 internal ranges are rejected at their edges and neighbours outside th
         '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff',
         '2001:db9::',
         'fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
-        // fe00::/9, just below link-local, is pinned in the permissive test below.
     ];
 
     foreach ($internal as $ip) {
@@ -222,18 +221,80 @@ test('ipv6 forms that embed ipv4 follow the embedded address', function () {
     }
 });
 
-test('current permissive ipv6 results outside the handled embedded forms are pinned', function () {
-    // These embed a private IPv4 in prefixes that are not decoded (NAT64 local-use
-    // 64:ff9b:1::/48, SIIT ::ffff:0:0:0/96, Teredo 2001::/32) or sit in fe00::/9.
-    // They are accepted today; a change here is a deliberate behavior change.
+test('ipv6 local-use nat64, siit, teredo and fe00::/9 addresses are internal', function () {
+    // NAT64 local-use 64:ff9b:1::/48, SIIT ::ffff:0:0:0/96 and Teredo 2001::/32 can carry
+    // a private IPv4 address, and fe00::/9 is reserved. None is a public unicast target.
     foreach ([
+        '64:ff9b:1::',
         '64:ff9b:1::a00:1',
+        '64:ff9b:1:ffff:ffff:ffff:ffff:ffff',
+        '::ffff:0:0:0',
         '::ffff:0:a00:1',
+        '::ffff:0:808:808',
+        '2001::',
         '2001::a00:1',
+        '2001:0:ffff:ffff:ffff:ffff:ffff:ffff',
         'fe00::',
         'fe00::1',
         'fe40::1',
         'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+    ] as $ip) {
+        expect(sctPrivate('ipv6IsInternal', $ip))->toBeTrue($ip)
+            ->and(PublicHttps::isPublicHttpsUrl('https://[' . $ip . ']/callback'))->toBeFalse($ip);
+    }
+    // Neighbours just outside those ranges stay public.
+    foreach ([
+        '64:ff9a:ffff:ffff:ffff:ffff:ffff:ffff',
+        '::fffe:0:808:808',
+        '2001:1::1',
+        '2001:4860:4860::8888',
+    ] as $ip) {
+        expect(sctPrivate('ipv6IsInternal', $ip))->toBeFalse($ip)
+            ->and(PublicHttps::isPublicHttpsUrl('https://[' . $ip . ']/callback'))->toBeTrue($ip);
+    }
+});
+
+test('ipv6 discard, benchmarking, orchid, documentation, srv6 and other nat64 addresses are internal', function () {
+    // 100::/64 discard, 2001:2::/48 benchmarking, 2001:10::/28 ORCHID, 3fff::/20 documentation,
+    // 5f00::/16 SRv6 SIDs, and 64:ff9b::/32 outside the well-known /96 are not public targets.
+    foreach ([
+        '100::',
+        '100::a00:1',
+        '100::ffff:ffff:ffff:ffff',
+        '2001:2::',
+        '2001:2::a00:1',
+        '2001:2:0:ffff:ffff:ffff:ffff:ffff',
+        '2001:10::',
+        '2001:10::1',
+        '2001:1f:ffff:ffff:ffff:ffff:ffff:ffff',
+        '3fff::',
+        '3fff::1',
+        '3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff',
+        '5f00::',
+        '5f00::1',
+        '5f00:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+        '64:ff9b::1:a00:1',
+        '64:ff9b:2::1',
+        '64:ff9b:ffff:ffff:ffff:ffff:ffff:ffff',
+    ] as $ip) {
+        expect(sctPrivate('ipv6IsInternal', $ip))->toBeTrue($ip)
+            ->and(PublicHttps::isPublicHttpsUrl('https://[' . $ip . ']/callback'))->toBeFalse($ip);
+    }
+    // Neighbours just outside those ranges, the globally reachable AMT, AS112 and ORCHIDv2
+    // assignments, and the NAT64 well-known prefix with a public IPv4 address stay public.
+    foreach ([
+        '100:0:0:1::',
+        '2001:2:1::',
+        '2001:f:ffff:ffff:ffff:ffff:ffff:ffff',
+        '2001:3::1',
+        '2001:4:112::1',
+        '2001:20::1',
+        '3ffe:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+        '3fff:1000::',
+        '5eff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+        '5f01::',
+        '64:ff9b::808:808',
+        '64:ff9c::',
     ] as $ip) {
         expect(sctPrivate('ipv6IsInternal', $ip))->toBeFalse($ip)
             ->and(PublicHttps::isPublicHttpsUrl('https://[' . $ip . ']/callback'))->toBeTrue($ip);

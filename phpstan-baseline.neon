@@ -558,17 +558,17 @@ parameters:
 		-
 			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
 			count: 3
-			path: server/src/Support/WebhookPaymentInvoices.php
+			path: server/src/Support/WebhookPaymentLinks.php
 
 		-
 			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
 			count: 3
-			path: server/src/Support/WebhookPaymentInvoices.php
+			path: server/src/Support/WebhookPaymentLinks.php
 
 		-
 			message: "#^Access to an undefined property object\\:\\:\\$realm_id\\.$#"
 			count: 3
-			path: server/src/Support/WebhookPaymentInvoices.php
+			path: server/src/Support/WebhookPaymentLinks.php
 
 		-
 			message: "#^Offset 'rows' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
