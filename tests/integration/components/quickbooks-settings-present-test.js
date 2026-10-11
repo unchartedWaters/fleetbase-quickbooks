@@ -38,7 +38,7 @@ function saveButton() {
     return document.querySelector('#next-view-section-subheader-actions [data-test-save]');
 }
 
-module('Integration | Component | quickbooks-settings present characterization', function (hooks) {
+module('Integration | Component | quickbooks-settings present characterization', (hooks) => {
     setupRenderingTest(hooks);
 
     hooks.beforeEach(function () {

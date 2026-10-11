@@ -3,8 +3,8 @@ import { activityRows } from '@unchartedwaters/quickbooks-engine/utils/activity-
 
 // Characterization tests: they pin the rows activityRows() returns today so a
 // refactor of activity-view.js can be shown to keep the same output.
-module('Unit | Utility | activity-view characterization', function () {
-    test('a row has the same keys in the same order', function (assert) {
+module('Unit | Utility | activity-view characterization', () => {
+    test('a row has the same keys in the same order', (assert) => {
         const [row] = activityRows([{ uuid: 'b1', trigger: 'now' }]);
 
         assert.deepEqual(Object.keys(row), [
@@ -26,12 +26,12 @@ module('Unit | Utility | activity-view characterization', function () {
         ]);
     });
 
-    test('no batches and an empty list give no rows', function (assert) {
+    test('no batches and an empty list give no rows', (assert) => {
         assert.deepEqual(activityRows(), []);
         assert.deepEqual(activityRows([]), []);
     });
 
-    test('the id is the uuid, then the trigger with the started or finished stamp', function (assert) {
+    test('the id is the uuid, then the trigger with the started or finished stamp', (assert) => {
         const rows = activityRows([
             { uuid: 'batch-1', trigger: 'now', started_at: '2026-01-01T00:00:00Z' },
             { uuid: '', trigger: 'now', started_at: '2026-01-02T00:00:00Z', finished_at: '2026-01-03T00:00:00Z' },
@@ -51,7 +51,7 @@ module('Unit | Utility | activity-view characterization', function () {
         );
     });
 
-    test('each count prefers the plain field, then the _count field, then zero', function (assert) {
+    test('each count prefers the plain field, then the _count field, then zero', (assert) => {
         const names = ['created', 'aligned', 'linked', 'skipped', 'updated', 'unmatched', 'voided', 'failed'];
         const plain = {};
         const counted = {};
@@ -86,7 +86,7 @@ module('Unit | Utility | activity-view characterization', function () {
         assert.strictEqual(rows[6].linked, 0);
     });
 
-    test('an error is a non-empty string, any other truthy value, or null', function (assert) {
+    test('an error is a non-empty string, any other truthy value, or null', (assert) => {
         const detail = { message: 'Boom' };
         const rows = activityRows([
             { uuid: '1', error: 'timeout' },
@@ -111,7 +111,7 @@ module('Unit | Utility | activity-view characterization', function () {
         assert.strictEqual(rows[8].error, 3);
     });
 
-    test('direction defaults to outbound, status to empty, and trigger is passed through', function (assert) {
+    test('direction defaults to outbound, status to empty, and trigger is passed through', (assert) => {
         const rows = activityRows([
             { uuid: '1', trigger: 'import', direction: 'inbound', status: 'failed' },
             { uuid: '2', direction: '', status: null },
@@ -130,7 +130,7 @@ module('Unit | Utility | activity-view characterization', function () {
         );
     });
 
-    test('when uses the finished time, then the created time, and keeps an unreadable value as text', function (assert) {
+    test('when uses the finished time, then the created time, and keeps an unreadable value as text', (assert) => {
         const finished = '2026-03-01T10:05:00Z';
         const created = '2026-03-01T09:00:00Z';
         const rows = activityRows([
