@@ -177,7 +177,6 @@ test('ipv6 internal ranges are rejected at their edges and neighbours outside th
         '2001:db7:ffff:ffff:ffff:ffff:ffff:ffff',
         '2001:db9::',
         'fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
-        // fe00::/9, just below link-local, is pinned in the permissive test below.
     ];
 
     foreach ($internal as $ip) {
@@ -222,18 +221,34 @@ test('ipv6 forms that embed ipv4 follow the embedded address', function () {
     }
 });
 
-test('current permissive ipv6 results outside the handled embedded forms are pinned', function () {
-    // These embed a private IPv4 in prefixes that are not decoded (NAT64 local-use
-    // 64:ff9b:1::/48, SIIT ::ffff:0:0:0/96, Teredo 2001::/32) or sit in fe00::/9.
-    // They are accepted today; a change here is a deliberate behavior change.
+test('ipv6 local-use nat64, siit, teredo and fe00::/9 addresses are internal', function () {
+    // NAT64 local-use 64:ff9b:1::/48, SIIT ::ffff:0:0:0/96 and Teredo 2001::/32 can carry
+    // a private IPv4 address, and fe00::/9 is reserved. None is a public unicast target.
     foreach ([
+        '64:ff9b:1::',
         '64:ff9b:1::a00:1',
+        '64:ff9b:1:ffff:ffff:ffff:ffff:ffff',
+        '::ffff:0:0:0',
         '::ffff:0:a00:1',
+        '::ffff:0:808:808',
+        '2001::',
         '2001::a00:1',
+        '2001:0:ffff:ffff:ffff:ffff:ffff:ffff',
         'fe00::',
         'fe00::1',
         'fe40::1',
         'fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+    ] as $ip) {
+        expect(sctPrivate('ipv6IsInternal', $ip))->toBeTrue($ip)
+            ->and(PublicHttps::isPublicHttpsUrl('https://[' . $ip . ']/callback'))->toBeFalse($ip);
+    }
+    // Neighbours just outside those ranges stay public.
+    foreach ([
+        '64:ff9b:2::1',
+        '64:ff9a:ffff:ffff:ffff:ffff:ffff:ffff',
+        '::fffe:0:808:808',
+        '2001:1::1',
+        '2001:4860:4860::8888',
     ] as $ip) {
         expect(sctPrivate('ipv6IsInternal', $ip))->toBeFalse($ip)
             ->and(PublicHttps::isPublicHttpsUrl('https://[' . $ip . ']/callback'))->toBeTrue($ip);

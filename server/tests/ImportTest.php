@@ -589,20 +589,23 @@ test('customer matching compares normalized email and phone in php', function ()
     foreach ($rows as $row) {
         DB::connection('sqlite')->table('contacts')->insert($row);
     }
-    $sql    = [];
-    $listen = DB::connection('sqlite');
-    $listen->listen(function ($query) use (&$sql): void {
-        $sql[] = $query->sql;
-    });
+    $connection = DB::connection('sqlite');
+    $connection->flushQueryLog();
+    $connection->enableQueryLog();
 
-    $client                = new FakeQuickBooks();
-    $client->customerPages = [1 => [
-        remoteCustomer('1', 'Other', 'ada@example.test', '000'),
-        remoteCustomer('2', 'Other', 'bea@example.test', '222'),
-    ]];
-    $ledger = importLedger();
-    $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true);
-    $joined = strtolower(implode("\n", $sql));
+    try {
+        $client                = new FakeQuickBooks();
+        $client->customerPages = [1 => [
+            remoteCustomer('1', 'Other', 'ada@example.test', '000'),
+            remoteCustomer('2', 'Other', 'bea@example.test', '222'),
+        ]];
+        $ledger = importLedger();
+        $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true);
+        $joined = strtolower(implode("\n", array_column($connection->getQueryLog(), 'query')));
+    } finally {
+        $connection->disableQueryLog();
+        $connection->flushQueryLog();
+    }
 
     expect($batch['linked'])->toBe(1)
         ->and($batch['created'])->toBe(1)
@@ -610,6 +613,7 @@ test('customer matching compares normalized email and phone in php', function ()
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'other-company'))->toBeNull()
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'vendor-row'))->toBeNull()
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'deleted-row'))->toBeNull()
+        ->and($joined)->toContain('from "contacts"')
         ->and($joined)->not->toContain('lower(')
         ->and($joined)->not->toContain('regexp');
 });

@@ -239,16 +239,28 @@ class PublicHttps
 
     private static function ipv6RangeIsInternal(string $packed): bool
     {
-        $first  = ord($packed[0]);
-        $second = ord($packed[1]);
+        $first = ord($packed[0]);
         if ($first === 0xFF) {
             return true;
         }
-        if ($first === 0xFE && (($second & 0xC0) === 0x80 || ($second & 0xC0) === 0xC0)) {
+        // fe00::/9 is reserved, fe80::/10 is link-local and fec0::/10 is site-local.
+        if ($first === 0xFE) {
             return true;
         }
         if (($first & 0xFE) === 0xFC) {
             return true;
+        }
+        // Prefixes that are not public unicast targets and can carry a private IPv4
+        // address: NAT64 local-use 64:ff9b:1::/48, SIIT ::ffff:0:0:0/96 and Teredo 2001::/32.
+        $prefixes = [
+            "\x00\x64\xff\x9b\x00\x01",
+            str_repeat("\x00", 8) . "\xff\xff\x00\x00",
+            "\x20\x01\x00\x00",
+        ];
+        foreach ($prefixes as $prefix) {
+            if (str_starts_with($packed, $prefix) === true) {
+                return true;
+            }
         }
 
         return $packed[0] === "\x20"
