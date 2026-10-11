@@ -166,45 +166,96 @@ class ImportCustomers implements ShouldQueue
         ?SettingsStore $store,
         Lock $lock,
     ): bool {
-        $connection = $directory->connection($this->companyUuid);
-        if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false) {
+        $connection = $this->importConnection($directory, $settings, $store);
+        if ($connection === null) {
             return false;
-        }
-
-        if (empty($connection['needs_reauth']) === false) {
-            $directory->saveSkipped($this->companyUuid, 'import', 'inbound', self::blockedMessage($connection));
-
-            return false;
-        }
-
-        if ($settings !== null && $store !== null) {
-            $resolved = $settings->resolveSync(
-                [],
-                $store->adminSync(),
-                $store->defaultSync()
-            );
-            if (array_key_exists('customer_enabled', $resolved) === true && $resolved['customer_enabled'] === false) {
-                $directory->saveSkipped($this->companyUuid, 'import', 'inbound', 'Customers are turned off in Data Resolution, so they are not imported.');
-
-                return false;
-            }
         }
 
         // Token refresh and customer page queries must not sit inside the company lock.
         // The lock is taken again only for the local save.
         $this->releaseCompanyLock($lock);
-
-        if ($tokens !== null) {
-            $connection = $tokens->refreshIfDue($connection, time());
-            $blocked    = ConnectionTokens::blockedMessage($connection, time());
-            if ($blocked !== null) {
-                $this->ensureCompanyLock($lock);
-                $directory->saveSkipped($this->companyUuid, 'import', 'inbound', $blocked);
-
-                return false;
-            }
+        $connection = $this->refreshedImportConnection($directory, $tokens, $connection, $lock);
+        if ($connection === null) {
+            return false;
         }
 
+        return $this->runCustomerImport($importer, $directory, $settings, $store, $lock, $connection);
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function importConnection(FleetbaseDirectory $directory, ?SettingsService $settings, ?SettingsStore $store): ?array
+    {
+        $connection = $directory->connection($this->companyUuid);
+        if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false) {
+            return null;
+        }
+
+        if (empty($connection['needs_reauth']) === false) {
+            $directory->saveSkipped($this->companyUuid, 'import', 'inbound', self::blockedMessage($connection));
+
+            return null;
+        }
+
+        if ($this->customersDisabled($settings, $store) === true) {
+            $directory->saveSkipped($this->companyUuid, 'import', 'inbound', 'Customers are turned off in Data Resolution, so they are not imported.');
+
+            return null;
+        }
+
+        return $connection;
+    }
+
+    private function customersDisabled(?SettingsService $settings, ?SettingsStore $store): bool
+    {
+        if ($settings === null || $store === null) {
+            return false;
+        }
+
+        $resolved = $settings->resolveSync(
+            [],
+            $store->adminSync(),
+            $store->defaultSync()
+        );
+
+        return array_key_exists('customer_enabled', $resolved) === true && $resolved['customer_enabled'] === false;
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    private function refreshedImportConnection(FleetbaseDirectory $directory, ?ConnectionTokens $tokens, array $connection, Lock $lock): ?array
+    {
+        if ($tokens === null) {
+            return $connection;
+        }
+
+        $connection = $tokens->refreshIfDue($connection, time());
+        $blocked    = ConnectionTokens::blockedMessage($connection, time());
+        if ($blocked !== null) {
+            $this->ensureCompanyLock($lock);
+            $directory->saveSkipped($this->companyUuid, 'import', 'inbound', $blocked);
+
+            return null;
+        }
+
+        return $connection;
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     */
+    private function runCustomerImport(
+        CustomerImporter $importer,
+        FleetbaseDirectory $directory,
+        ?SettingsService $settings,
+        ?SettingsStore $store,
+        Lock $lock,
+        array $connection,
+    ): bool {
         $ledger                                  = $directory->memory ?? new SyncLedger();
         $ledger->connections[$this->companyUuid] = $connection;
         $started                                 = time();

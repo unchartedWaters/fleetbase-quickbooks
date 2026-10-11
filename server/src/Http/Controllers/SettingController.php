@@ -99,21 +99,7 @@ class SettingController extends QuickbooksController
         $publicUrls   = $this->capturePublicUrls($incomingAuth);
         $incomingAuth = $this->store->normalizeAuth($incomingAuth);
 
-        $mergedAuth = $this->withComputedRedirect(array_merge($existingAuth, $incomingAuth));
-        if (isset($mergedAuth['redirect_uri']) === true) {
-            $incomingAuth['redirect_uri'] = $mergedAuth['redirect_uri'];
-        }
-        $secret     = $incomingAuth['client_secret'] ?? '';
-        if (is_string($secret) === false || $secret === '') {
-            $mergedAuth['client_secret'] = $existingAuth['client_secret'] ?? '';
-        } else {
-            $mergedAuth['client_secret'] = $secret;
-        }
-
-        $mergedSync = array_merge($this->onlySyncKeys($existingSync), $incomingSync);
-        $this->stripReadOnly($mergedSync);
-        $this->stripPublicUrls($mergedSync);
-        $this->normalizeDirections($mergedSync);
+        [$mergedAuth, $incomingAuth, $mergedSync] = $this->mergeSavedSettings($existingAuth, $incomingAuth, $existingSync, $incomingSync);
 
         $errors = (new SettingsValidator())->errors($mergedAuth, $mergedSync);
         if ($errors !== []) {
@@ -136,6 +122,35 @@ class SettingController extends QuickbooksController
         $this->applyWebhookSubscriptions($companyUuid);
 
         return response()->json($this->payload($request));
+    }
+
+    /**
+     * @param array<string, mixed> $existingAuth
+     * @param array<string, mixed> $incomingAuth
+     * @param array<string, mixed> $existingSync
+     * @param array<string, mixed> $incomingSync
+     *
+     * @return array{0: array<string, mixed>, 1: array<string, mixed>, 2: array<string, mixed>}
+     */
+    private function mergeSavedSettings(array $existingAuth, array $incomingAuth, array $existingSync, array $incomingSync): array
+    {
+        $mergedAuth = $this->withComputedRedirect(array_merge($existingAuth, $incomingAuth));
+        if (isset($mergedAuth['redirect_uri']) === true) {
+            $incomingAuth['redirect_uri'] = $mergedAuth['redirect_uri'];
+        }
+        $secret = $incomingAuth['client_secret'] ?? '';
+        if (is_string($secret) === false || $secret === '') {
+            $mergedAuth['client_secret'] = $existingAuth['client_secret'] ?? '';
+        } else {
+            $mergedAuth['client_secret'] = $secret;
+        }
+
+        $mergedSync = array_merge($this->onlySyncKeys($existingSync), $incomingSync);
+        $this->stripReadOnly($mergedSync);
+        $this->stripPublicUrls($mergedSync);
+        $this->normalizeDirections($mergedSync);
+
+        return [$mergedAuth, $incomingAuth, $mergedSync];
     }
 
     public function show(Request $request): JsonResponse
@@ -268,42 +283,13 @@ class SettingController extends QuickbooksController
             return '';
         }
 
-        $apiOrigins     = self::configuredOrigins(['app.url', 'fleetbase.url']);
-        $consoleOrigins = [];
-        foreach (self::configuredOrigins(['quickbooks.console_host', 'fleetbase.console.host']) as $origin) {
-            if (self::isFleetbaseIoDefault($origin['host']) === false) {
-                $consoleOrigins[] = $origin;
-            }
-        }
-
-        $selected = null;
-        $fromApi  = false;
-        foreach ($apiOrigins as $origin) {
-            if (self::hostnameIsLoopback($origin['host']) === false) {
-                $selected = $origin;
-                $fromApi  = true;
-                break;
-            }
-        }
-        if ($selected === null) {
-            foreach ($consoleOrigins as $origin) {
-                if (self::hostnameIsLoopback($origin['host']) === false) {
-                    $selected = $origin;
-                    break;
-                }
-            }
-        }
-        if ($selected === null) {
-            if ($apiOrigins !== []) {
-                $selected = $apiOrigins[0];
-                $fromApi  = true;
-            } else {
-                $selected = $consoleOrigins[0] ?? null;
-            }
-        }
-        if ($selected === null) {
+        $apiOrigins = self::configuredOrigins(['app.url', 'fleetbase.url']);
+        $picked     = self::selectedConfiguredOrigin($apiOrigins);
+        if ($picked === null) {
             return '';
         }
+        $selected = $picked['origin'];
+        $fromApi  = $picked['from_api'];
 
         $port   = $fromApi === true ? $selected['port'] : self::configuredApiPort($apiOrigins);
         $scheme = $selected['scheme'];
@@ -312,6 +298,40 @@ class SettingController extends QuickbooksController
         }
 
         return self::formatOrigin($scheme, $selected['host'], $port);
+    }
+
+    /**
+     * @param array<int, array{scheme: string, host: string, port: int|null}> $apiOrigins
+     *
+     * @return array{origin: array{scheme: string, host: string, port: int|null}, from_api: bool}|null
+     */
+    private static function selectedConfiguredOrigin(array $apiOrigins): ?array
+    {
+        $consoleOrigins = [];
+        foreach (self::configuredOrigins(['quickbooks.console_host', 'fleetbase.console.host']) as $origin) {
+            if (self::isFleetbaseIoDefault($origin['host']) === false) {
+                $consoleOrigins[] = $origin;
+            }
+        }
+
+        foreach ($apiOrigins as $origin) {
+            if (self::hostnameIsLoopback($origin['host']) === false) {
+                return ['origin' => $origin, 'from_api' => true];
+            }
+        }
+        foreach ($consoleOrigins as $origin) {
+            if (self::hostnameIsLoopback($origin['host']) === false) {
+                return ['origin' => $origin, 'from_api' => false];
+            }
+        }
+        if ($apiOrigins !== []) {
+            return ['origin' => $apiOrigins[0], 'from_api' => true];
+        }
+        if (isset($consoleOrigins[0]) === true) {
+            return ['origin' => $consoleOrigins[0], 'from_api' => false];
+        }
+
+        return null;
     }
 
     /**

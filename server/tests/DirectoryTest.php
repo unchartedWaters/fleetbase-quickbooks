@@ -743,6 +743,23 @@ test('a payment link stored under the quickbooks id unmarks the paid invoice', f
         ->and($ledger->link('company-a', 'realm-1', 'invoice', 'inv-open')['qbo_id'])->toBe('8');
 });
 
+test('an invoice delete keeps the payment map of a payment with the same quickbooks id', function () {
+    // QuickBooks numbers each entity type separately, so Invoice 42 and Payment 42 can both exist.
+    $ledger                       = new SyncLedger();
+    $ledger->invoices['inv-gone'] = ['uuid' => 'inv-gone', 'company_uuid' => 'company-a', 'status' => 'sent'];
+    $ledger->links                = [
+        ['company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-gone', 'qbo_entity' => 'Invoice', 'qbo_id' => '42'],
+        ['company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'local_type' => 'payment-invoice', 'local_uuid' => '42', 'qbo_entity' => 'PaymentInvoice', 'qbo_id' => 'inv-paid'],
+    ];
+    $directory         = new FleetbaseDirectory();
+    $directory->memory = $ledger;
+
+    $directory->releaseRemoteDelete('company-a', 'realm-1', 'invoice', '42', 'inv-gone');
+
+    expect($ledger->link('company-a', 'realm-1', 'invoice', 'inv-gone'))->toBeNull()
+        ->and($ledger->link('company-a', 'realm-1', 'payment-invoice', '42')['qbo_id'])->toBe('inv-paid');
+});
+
 test('a delete batch uses one link select and bulk status, link, and pending writes', function () {
     [$restore] = directorySqlite();
     try {

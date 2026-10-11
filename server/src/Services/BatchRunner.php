@@ -82,13 +82,24 @@ class BatchRunner
             return $skipped + ['reason' => 'busy'];
         }
 
-        $ledger          = null;
-        $save            = false;
-        $followUp        = false;
-        $ranCatalog      = false;
-        $continueCatalog = false;
-        $dispatchDrain   = false;
-        $dispatchCatalog = false;
+        return $this->performLockedRun($companyUuid, $trigger, $resolved, $catalogDue, $skipped, $lock);
+    }
+
+    /**
+     * @param array<string, mixed> $resolved
+     * @param array<string, mixed> $skipped
+     *
+     * @return array<string, mixed>
+     */
+    private function performLockedRun(string $companyUuid, string $trigger, array $resolved, bool $catalogDue, array $skipped, Lock $lock): array
+    {
+        $state = [
+            'ledger'          => null,
+            'save'            => false,
+            'follow_up'       => false,
+            'ran_catalog'     => false,
+            'continue_catalog'=> false,
+        ];
         $this->engine->setHttpBoundary(function (callable $call) use ($lock, $companyUuid) {
             if (self::holds($companyUuid) === true) {
                 $lock->release();
@@ -97,88 +108,129 @@ class BatchRunner
             return $call();
         });
         try {
-            if ($trigger === 'manual') {
-                $this->claimReconcilePage($companyUuid, (int) $resolved['batch_size']);
-            }
-            if ($trigger === 'catalog' || ($trigger === 'scheduled' && $this->scheduledIsDue($companyUuid, $resolved, time()) === false && $catalogDue === true)) {
-                if (array_key_exists('customer_enabled', $resolved) === true && $resolved['customer_enabled'] === false) {
-                    Cache::forget($this->catalogCursorKey($companyUuid));
-
-                    return $skipped;
-                }
-                $ranCatalog = true;
-
-                return $this->runCustomerCatalog($companyUuid, $resolved, $trigger, $continueCatalog, $ledger, $save, $lock);
-            }
-            $now    = time();
-            $loaded = $this->directory->loadPending($companyUuid, (int) $resolved['batch_size'], $now);
-            if ($loaded === null) {
-                return $skipped;
-            }
-
-            $now        = time();
-            $connection = $this->engine->runHttp(fn () => $this->tokens->refreshIfDue($loaded['connection'], $now));
-            $blocked    = ConnectionTokens::blockedMessage($connection, $now);
-            if ($blocked !== null) {
-                $this->ensureLock($lock, $companyUuid);
-                $this->directory->saveSkipped($companyUuid, $trigger, 'outbound', $blocked);
-
-                return $skipped;
-            }
-            $ledger                            = $loaded['ledger'];
-            $ledger->connections[$companyUuid] = $connection;
-            $batchesBefore                     = count($ledger->batches);
-
-            $save = true;
-            // The size trigger already decided this scheduled run may start early.
-            // Skip only the interval wait. Queries and batch writes release the company lock.
-            $ignoreInterval = $trigger === 'scheduled' && $this->intervalElapsed($connection, $resolved, $now) === false;
-            $batch          = match ($trigger) {
-                'manual'       => $this->engine->reconcile($ledger, $companyUuid, $resolved, $now),
-                'now', 'drain' => $this->engine->runScheduled($ledger, $companyUuid, $resolved, $now, true),
-                default        => $this->engine->runScheduled($ledger, $companyUuid, $resolved, $now, false, $ignoreInterval),
-            };
-            $nothingRecorded = count($ledger->batches) === $batchesBefore;
-            $save            = (($batch['status'] ?? null) === 'skipped' && $nothingRecorded === true) === false;
-            // A run stopped by a token refresh that failed for now is not followed up at once:
-            // each follow-up would try the refresh again for one row. The schedule retries it.
-            $followUp = in_array($trigger, ['manual', 'drain'], true) === true
-                && ($batch['status'] ?? '') === 'finished'
-                && $this->engine->refreshFailed($companyUuid) === false;
-
-            return $batch;
+            return $this->runLockedBody($companyUuid, $trigger, $resolved, $catalogDue, $skipped, $lock, $state);
         } finally {
-            $this->engine->setHttpBoundary(null);
-            try {
-                // Saved even when the engine throws, so links for records already created in QuickBooks are kept.
-                if ($save === true && $ledger !== null) {
-                    $this->ensureLock($lock, $companyUuid);
-                    $this->directory->save($ledger);
-                }
-                // The rows are saved (done, failed, or back to pending with a backoff), so the
-                // lease can go. When save() throws this line is skipped and the lease expires by
-                // itself. The links were committed before the failing part, so the retry updates
-                // the QuickBooks records instead of creating them again.
-                $this->directory->releaseClaims();
-                if ($followUp === true && Cache::get($this->reconcileOpenKey($companyUuid)) === true) {
-                    $this->ensureLock($lock, $companyUuid);
-                    $this->claimReconcilePage($companyUuid, (int) ($resolved['batch_size'] ?? 100));
-                }
-                // Decide while the claim is visible, then release before dispatch.
-                // The follow-up has to take quickbooks.batch.{company} as soon as it starts.
-                $dispatchDrain   = $followUp === true && $this->directory->hasDuePending($companyUuid, time()) === true;
-                $dispatchCatalog = $continueCatalog === true || ($trigger === 'scheduled' && $ranCatalog === false && $catalogDue === true);
-            } finally {
-                if (self::holds($companyUuid) === true) {
-                    $lock->release();
-                }
+            $this->finishLockedRun($companyUuid, $trigger, $resolved, $catalogDue, $lock, $state);
+        }
+    }
+
+    /**
+     * @param array<string, mixed>                                                                               $resolved
+     * @param array<string, mixed>                                                                               $skipped
+     * @param array{ledger: ?SyncLedger, save: bool, follow_up: bool, ran_catalog: bool, continue_catalog: bool} $state
+     *
+     * @return array<string, mixed>
+     */
+    private function runLockedBody(string $companyUuid, string $trigger, array $resolved, bool $catalogDue, array $skipped, Lock $lock, array &$state): array
+    {
+        if ($trigger === 'manual') {
+            $this->claimReconcilePage($companyUuid, (int) $resolved['batch_size']);
+        }
+        if ($trigger === 'catalog' || ($trigger === 'scheduled' && $this->scheduledIsDue($companyUuid, $resolved, time()) === false && $catalogDue === true)) {
+            if (array_key_exists('customer_enabled', $resolved) === true && $resolved['customer_enabled'] === false) {
+                Cache::forget($this->catalogCursorKey($companyUuid));
+
+                return $skipped;
             }
-            if ($dispatchDrain === true) {
-                SyncCompanyBatch::dispatch($companyUuid, 'drain');
+            $state['ran_catalog'] = true;
+
+            return $this->runCustomerCatalog($companyUuid, $resolved, $trigger, $state['continue_catalog'], $state['ledger'], $state['save'], $lock);
+        }
+
+        return $this->runPendingBody($companyUuid, $trigger, $resolved, $skipped, $lock, $state);
+    }
+
+    /**
+     * @param array<string, mixed>                                                                               $resolved
+     * @param array<string, mixed>                                                                               $skipped
+     * @param array{ledger: ?SyncLedger, save: bool, follow_up: bool, ran_catalog: bool, continue_catalog: bool} $state
+     *
+     * @return array<string, mixed>
+     */
+    private function runPendingBody(string $companyUuid, string $trigger, array $resolved, array $skipped, Lock $lock, array &$state): array
+    {
+        $now    = time();
+        $loaded = $this->directory->loadPending($companyUuid, (int) $resolved['batch_size'], $now);
+        if ($loaded === null) {
+            return $skipped;
+        }
+
+        $now        = time();
+        $connection = $this->engine->runHttp(fn () => $this->tokens->refreshIfDue($loaded['connection'], $now));
+        $blocked    = ConnectionTokens::blockedMessage($connection, $now);
+        if ($blocked !== null) {
+            $this->ensureLock($lock, $companyUuid);
+            $this->directory->saveSkipped($companyUuid, $trigger, 'outbound', $blocked);
+
+            return $skipped;
+        }
+        $ledger                            = $loaded['ledger'];
+        $ledger->connections[$companyUuid] = $connection;
+        $batchesBefore                     = count($ledger->batches);
+        $state['ledger']                   = $ledger;
+        $state['save']                     = true;
+        // The size trigger already decided this scheduled run may start early.
+        // Skip only the interval wait. Queries and batch writes release the company lock.
+        $ignoreInterval = $trigger === 'scheduled' && $this->intervalElapsed($connection, $resolved, $now) === false;
+        $batch          = match ($trigger) {
+            'manual'       => $this->engine->reconcile($ledger, $companyUuid, $resolved, $now),
+            'now', 'drain' => $this->engine->runScheduled($ledger, $companyUuid, $resolved, $now, true),
+            default        => $this->engine->runScheduled($ledger, $companyUuid, $resolved, $now, false, $ignoreInterval),
+        };
+        $nothingRecorded   = count($ledger->batches) === $batchesBefore;
+        $state['save']     = (($batch['status'] ?? null) === 'skipped' && $nothingRecorded === true) === false;
+        // A run stopped by a token refresh that failed for now is not followed up at once:
+        // each follow-up would try the refresh again for one row. The schedule retries it.
+        $state['follow_up'] = in_array($trigger, ['manual', 'drain'], true) === true
+            && ($batch['status'] ?? '') === 'finished'
+            && $this->engine->refreshFailed($companyUuid) === false;
+
+        return $batch;
+    }
+
+    /**
+     * @param array<string, mixed>                                                                               $resolved
+     * @param array{ledger: ?SyncLedger, save: bool, follow_up: bool, ran_catalog: bool, continue_catalog: bool} $state
+     */
+    private function finishLockedRun(string $companyUuid, string $trigger, array $resolved, bool $catalogDue, Lock $lock, array $state): void
+    {
+        $this->engine->setHttpBoundary(null);
+        $dispatchDrain   = false;
+        $dispatchCatalog = false;
+        try {
+            // Saved even when the engine throws, so links for records already created in QuickBooks are kept.
+            if ($state['save'] === true && $state['ledger'] !== null) {
+                $this->ensureLock($lock, $companyUuid);
+                $this->directory->save($state['ledger']);
             }
-            if ($dispatchCatalog === true) {
-                SyncCompanyBatch::dispatch($companyUuid, 'catalog');
+            // The rows are saved (done, failed, or back to pending with a backoff), so the
+            // lease can go. When save() throws this line is skipped and the lease expires by
+            // itself. The links were committed before the failing part, so the retry updates
+            // the QuickBooks records instead of creating them again.
+            $this->directory->releaseClaims();
+            if ($state['follow_up'] === true && Cache::get($this->reconcileOpenKey($companyUuid)) === true) {
+                $this->ensureLock($lock, $companyUuid);
+                $this->claimReconcilePage($companyUuid, (int) ($resolved['batch_size'] ?? 100));
             }
+            // Decide while the claim is visible, then release before dispatch.
+            // The follow-up has to take quickbooks.batch.{company} as soon as it starts.
+            $dispatchDrain   = $state['follow_up'] === true && $this->directory->hasDuePending($companyUuid, time()) === true;
+            $dispatchCatalog = $state['continue_catalog'] === true || ($trigger === 'scheduled' && $state['ran_catalog'] === false && $catalogDue === true);
+        } finally {
+            if (self::holds($companyUuid) === true) {
+                $lock->release();
+            }
+        }
+        $this->dispatchFollowUps($companyUuid, $dispatchDrain, $dispatchCatalog);
+    }
+
+    private function dispatchFollowUps(string $companyUuid, bool $dispatchDrain, bool $dispatchCatalog): void
+    {
+        if ($dispatchDrain === true) {
+            SyncCompanyBatch::dispatch($companyUuid, 'drain');
+        }
+        if ($dispatchCatalog === true) {
+            SyncCompanyBatch::dispatch($companyUuid, 'catalog');
         }
     }
 
