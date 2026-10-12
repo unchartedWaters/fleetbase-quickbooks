@@ -85,7 +85,7 @@ module('Unit | extension', function (hooks) {
         ]);
     });
 
-    test('the header menu opens QuickBooks Setup', function (assert) {
+    test('the header menu opens QuickBooks Setup', (assert) => {
         const { headerItems, transitions } = captureRegistration();
 
         assert.strictEqual(headerItems.length, 1);
@@ -100,7 +100,7 @@ module('Unit | extension', function (hooks) {
         assert.deepEqual(transitions, [['console.settings.virtual', 'quickbooks-setup', { queryParams: { view: 'index' } }]]);
     });
 
-    test('QuickBooks Setup and QuickBooks Activity are organization settings items', function (assert) {
+    test('QuickBooks Setup and QuickBooks Activity are organization settings items', (assert) => {
         const { adminItems, settingsItems, settingsPanels, transitions } = captureRegistration();
 
         assert.strictEqual(adminItems.length, 0);

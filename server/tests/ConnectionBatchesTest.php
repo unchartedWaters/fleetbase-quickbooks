@@ -272,7 +272,8 @@ test('a company with no connection does not receive another company connection',
         foreach (['import' => 'import', 'reconcile' => 'reconcile', 'sync' => 'sync'] as $method => $path) {
             $response = $controller->{$method}(Request::create('/' . $path, 'POST'));
             expect($response->getStatusCode())->toBe(422)
-                ->and($response->getData(true)['message'])->toBe('QuickBooks is not connected. Connect from QuickBooks Setup.');
+                ->and($response->getData(true)['message'])->toBe('QuickBooks is not connected. '
+                    . 'Connect from QuickBooks Setup.');
         }
 
         expect($dispatcher->jobs)->toBe([])

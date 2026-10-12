@@ -398,7 +398,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-sync-now]').isDisabled();
     });
 
-    test('the connection card comes first, then the settings note, then the schedule', async function (assert) {
+    test('the connection card comes first, then the settings note, then the schedule', async (assert) => {
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
         const card = document.querySelector('[data-test-connection-state]');
@@ -409,7 +409,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-connection-state]').exists({ count: 1 });
     });
 
-    test('reset sits in the header actions just before Save Changes', async function (assert) {
+    test('reset sits in the header actions just before Save Changes', async (assert) => {
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
         const actions = document.querySelector('#next-view-section-subheader-actions');

@@ -8,7 +8,8 @@ class QuickbooksNeedsReauth extends Notification
 {
     public string $name = 'QuickBooks needs reauthorization';
 
-    public string $description = 'Sent when QuickBooks no longer accepts an organization\'s connection and it must be connected again.';
+    public string $description = 'Sent when QuickBooks no longer accepts an organization\'s connection and it must be '
+        . 'connected again.';
 
     public string $package = 'quickbooks';
 
@@ -37,7 +38,8 @@ class QuickbooksNeedsReauth extends Notification
         return [
             'company_uuid' => $this->companyUuid,
             'realm_id'     => $this->realmId,
-            'message'      => 'QuickBooks needs to be connected again. Choose Connect to QuickBooks on QuickBooks Setup.',
+            'message'      => 'QuickBooks needs to be connected again. '
+                . 'Choose Connect to QuickBooks on QuickBooks Setup.',
         ];
     }
 }

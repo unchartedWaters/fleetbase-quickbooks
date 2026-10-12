@@ -307,7 +307,8 @@ test('a foreign currency fails the invoice instead of posting it in the home cur
 
     expect($batch['created'])->toBe(0)
         ->and($batch['failed'])->toBe(1)
-        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match the QuickBooks home currency USD.')
+        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match the QuickBooks home currency '
+            . 'USD.')
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($client->invoices)->toBeEmpty();
 });

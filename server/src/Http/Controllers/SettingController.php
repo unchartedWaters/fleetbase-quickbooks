@@ -115,7 +115,8 @@ class SettingController extends QuickbooksController
         $extra       = array_diff(array_keys($request->all()), ['scope', 'sync', 'reset', 'company_uuid']);
         if ($extra !== []) {
             return response()->json([
-                'message' => 'An organization can only change its sync options. Global QuickBooks settings are changed in Admin → QuickBooks → Settings.',
+                'message' => 'An organization can only change its sync options. '
+                    . 'Global QuickBooks settings are changed in Admin → QuickBooks → Settings.',
                 'errors'  => ['settings' => 'Send only scope, sync, and reset.'],
             ], 422);
         }

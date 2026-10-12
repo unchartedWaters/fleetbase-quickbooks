@@ -8,9 +8,11 @@ class TokenRefresher
 {
     public const REFRESH_WINDOW_SECONDS = 300;
 
-    public const CREDENTIALS_MESSAGE = 'QuickBooks refused the app\'s Client ID or Client secret. Ask an installation administrator to check them in Admin → QuickBooks → Settings.';
+    public const CREDENTIALS_MESSAGE = 'QuickBooks refused the app\'s Client ID or Client secret. '
+        . 'Ask an installation administrator to check them in Admin → QuickBooks → Settings.';
 
-    public const UNAVAILABLE_MESSAGE = 'Fleetbase could not renew the QuickBooks sign-in. It tries again on the next sync.';
+    public const UNAVAILABLE_MESSAGE = 'Fleetbase could not renew the QuickBooks sign-in. '
+        . 'It tries again on the next sync.';
 
     public function __construct(private QuickBooksClient $client)
     {

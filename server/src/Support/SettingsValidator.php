@@ -64,7 +64,13 @@ class SettingsValidator
             $this->requireBoundedInt($errors, $sync, 'batch_size', 1, 100, 'Enter a whole number from 1 to 100.');
         }
         $this->requireInt($errors, $sync, 'retry_limit', 1, 'Enter a whole number of retry attempts, at least 1.');
-        $this->requireInt($errors, $sync, 'default_backoff_seconds', 5, 'Enter a whole number of seconds for Retry delay, at least 5.');
+        $this->requireInt(
+            $errors,
+            $sync,
+            'default_backoff_seconds',
+            5,
+            'Enter a whole number of seconds for Retry delay, at least 5.'
+        );
 
         $entities = [
             'customer' => 'Customers',
@@ -78,7 +84,12 @@ class SettingsValidator
             }
             $this->requireChoice($errors, $sync, $entity . '_conflict', ['fleetbase', 'quickbooks'], 'Choose Fleetbase or QuickBooks as Primary for ' . $label . '.');
             $this->requireChoice($errors, $sync, $entity . '_reference', ['fleetbase', 'quickbooks'], 'Choose Fleetbase or QuickBooks as Primary for ' . $label . '.');
-            $this->requireDirection($errors, $sync, $entity . '_direction', 'Choose Both, To QuickBooks, or From QuickBooks for ' . $label . '.');
+            $this->requireDirection(
+                $errors,
+                $sync,
+                $entity . '_direction',
+                'Choose Both, To QuickBooks, or From QuickBooks for ' . $label . '.'
+            );
         }
 
         return $errors;

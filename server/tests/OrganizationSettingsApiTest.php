@@ -237,7 +237,8 @@ test('a company save with an auth key or an unknown key is refused and writes no
         $response = $controller->save(orgApiPost(array_merge(['scope' => 'company', 'sync' => ['interval_minutes' => 30]], $extra)));
 
         expect($response->getStatusCode())->toBe(422)
-            ->and($response->getData(true)['message'])->toBe('An organization can only change its sync options. Global QuickBooks settings are changed in Admin → QuickBooks → Settings.')
+            ->and($response->getData(true)['message'])->toBe('An organization can only change its sync options. '
+                . 'Global QuickBooks settings are changed in Admin → QuickBooks → Settings.')
             ->and($store->rows)->toBe($before);
     }
 });

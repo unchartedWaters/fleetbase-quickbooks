@@ -64,7 +64,8 @@ test('a foreign currency invoice fails with the currency message when multi-curr
     expect($batch['created'])->toBe(0)
         ->and($batch['failed'])->toBe(1)
         ->and($ledger->attempts[0]['outcome'])->toBe('failed')
-        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match the QuickBooks home currency USD.')
+        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match the QuickBooks home currency '
+            . 'USD.')
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and($client->invoices)->toBeEmpty();
@@ -96,7 +97,8 @@ test('a linked foreign currency invoice is not updated when multi-currency is of
 
     expect($batch['failed'])->toBe(1)
         ->and($batch['updated'])->toBe(0)
-        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match the QuickBooks home currency USD.')
+        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match the QuickBooks home currency '
+            . 'USD.')
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 

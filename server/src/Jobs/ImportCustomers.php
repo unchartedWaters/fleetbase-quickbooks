@@ -59,7 +59,8 @@ class ImportCustomers implements ShouldQueue
             : (is_array($connection) === true && empty($connection['needs_reauth']) === false);
 
         return $needsReauth === true
-            ? 'QuickBooks needs to be connected again before import can continue. Choose Connect to QuickBooks on QuickBooks Setup.'
+            ? 'QuickBooks needs to be connected again before import can continue. '
+                . 'Choose Connect to QuickBooks on QuickBooks Setup.'
             : 'QuickBooks is not connected. Connect from QuickBooks Setup.';
     }
 

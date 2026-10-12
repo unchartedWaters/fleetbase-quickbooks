@@ -173,7 +173,8 @@ test('direction and the customer catalog interval are validated', function () {
     expect($invalid['customer_direction'])->toBe('Choose Both, To QuickBooks, or From QuickBooks for Customers.')
         ->and($invalid['invoice_direction'])->toBe('Choose Both, To QuickBooks, or From QuickBooks for Invoices.')
         ->and($invalid['payment_direction'])->toBe('Choose Both, To QuickBooks, or From QuickBooks for Payments.')
-        ->and($invalid['wallet_direction'])->toBe('Choose Both, To QuickBooks, or From QuickBooks for Accounts / Wallets.')
+        ->and($invalid['wallet_direction'])->toBe('Choose Both, To QuickBooks, or From QuickBooks for Accounts / '
+            . 'Wallets.')
         ->and($invalid['periodic_interval_hours'])->toBe('Enter a whole number of hours, at least 1.')
         ->and($invalid)->not->toHaveKey('customer_enabled');
 
@@ -195,8 +196,10 @@ test('settings are rejected when required values are missing or out of range', f
     $validator = new SettingsValidator();
 
     expect($validator->errors([], []))->toHaveKey('client_id')
-        ->and($validator->errors([], [])['client_id'])->toBe('Enter the Client ID from developer.intuit.com → your app → Keys & credentials.')
-        ->and($validator->errors(['environment' => 'staging'], [])['environment'])->toBe('Choose Sandbox for Development keys, or Production for your live company.')
+        ->and($validator->errors([], [])['client_id'])->toBe('Enter the Client ID from developer.intuit.com → your app '
+            . '→ Keys & credentials.')
+        ->and($validator->errors(['environment' => 'staging'], [])['environment'])->toBe('Choose Sandbox for '
+            . 'Development keys, or Production for your live company.')
         ->and($validator->errors([], []))->toHaveKey('redirect_uri');
 
     $errors = $validator->errors(validAuth([

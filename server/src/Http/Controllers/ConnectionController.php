@@ -188,7 +188,8 @@ class ConnectionController extends QuickbooksController
         $credentials = $this->credentials($companyUuid);
         if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '' || $this->isAbsoluteHttpUrl($credentials['redirect_uri']) === false) {
             return response()->json([
-                'message' => 'QuickBooks is not set up yet. Ask an installation administrator to enter the Client ID, Client secret and Public OAuth Redirect URL in Admin → QuickBooks → Settings.',
+                'message' => 'QuickBooks is not set up yet. Ask an installation administrator to enter the Client ID, '
+                    . 'Client secret and Public OAuth Redirect URL in Admin → QuickBooks → Settings.',
             ], 422);
         }
         $begun       = $this->oauth->begin(
@@ -246,7 +247,8 @@ class ConnectionController extends QuickbooksController
         }
         if ($connection === null) {
             if ($this->connectionIsStored($companyUuid) === false) {
-                return response()->json(['message' => 'QuickBooks is not connected. Connect again from QuickBooks Setup.'], 422);
+                return response()->json(['message' => 'QuickBooks is not connected. '
+                    . 'Connect again from QuickBooks Setup.'], 422);
             }
 
             // The webhook endpoint is set in the Intuit developer portal. This does not call Intuit.
