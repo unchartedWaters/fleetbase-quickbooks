@@ -151,7 +151,7 @@ test('a first call that answers 401 403 or 404 means the token is not for the re
         $handle = $flow->receive($begun['state'], 'code', '9341453000000001');
 
         expect(fn () => $flow->complete($handle, 'company-uuid', 'user-uuid', realmCredentials()))
-            ->toThrow(QuickBooksException::class, 'QuickBooks could not finish connecting. Connect again from Quickbooks Setup.');
+            ->toThrow(QuickBooksException::class, 'QuickBooks could not finish connecting. Connect again from QuickBooks Setup.');
 
         // The handle is spent and is not marked done, so a reload cannot report a connection.
         try {
@@ -173,7 +173,7 @@ test('the generic connect failure message never carries the Intuit detail', func
         $flow->complete($handle, 'company-uuid', 'user-uuid', realmCredentials());
         expect(false)->toBeTrue();
     } catch (QuickBooksException $exception) {
-        expect($exception->getMessage())->toBe('QuickBooks could not finish connecting. Connect again from Quickbooks Setup.')
+        expect($exception->getMessage())->toBe('QuickBooks could not finish connecting. Connect again from QuickBooks Setup.')
             ->and($exception->status)->toBe(403);
     }
 });

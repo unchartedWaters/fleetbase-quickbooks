@@ -296,7 +296,7 @@ test('the reauth notification carries only the organization and realm', function
     expect($notification->toArray(new stdClass()))->toBe([
         'company_uuid' => 'company-uuid',
         'realm_id'     => 'realm-1',
-        'message'      => 'QuickBooks needs to be reconnected before sync can continue.',
+        'message'      => 'QuickBooks needs to be connected again. Choose Connect to QuickBooks on QuickBooks Setup.',
     ])
         ->and($notification->via(new stdClass()))->toBe($notification->notificationOptions);
 });

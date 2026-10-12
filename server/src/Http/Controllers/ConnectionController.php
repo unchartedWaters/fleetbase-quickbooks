@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Services\ConnectionProbe;
+use Fleetbase\Quickbooks\Services\ConnectionTokens;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\OAuthFlow;
 use Fleetbase\Quickbooks\Services\OrganizationSyncSettings;
@@ -187,7 +188,7 @@ class ConnectionController extends QuickbooksController
         $credentials = $this->credentials($companyUuid);
         if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '' || $this->isAbsoluteHttpUrl($credentials['redirect_uri']) === false) {
             return response()->json([
-                'message' => 'Configure QuickBooks Client ID, Client secret, and Redirect URI before connecting.',
+                'message' => 'QuickBooks is not set up yet. Ask an installation administrator to enter the Client ID, Client secret and Public OAuth Redirect URL in Admin → QuickBooks → Settings.',
             ], 422);
         }
         $begun       = $this->oauth->begin(
@@ -245,7 +246,7 @@ class ConnectionController extends QuickbooksController
         }
         if ($connection === null) {
             if ($this->connectionIsStored($companyUuid) === false) {
-                return response()->json(['message' => 'QuickBooks is not connected. Connect again from Quickbooks Setup.'], 422);
+                return response()->json(['message' => 'QuickBooks is not connected. Connect again from QuickBooks Setup.'], 422);
             }
 
             // The webhook endpoint is set in the Intuit developer portal. This does not call Intuit.
@@ -590,9 +591,9 @@ class ConnectionController extends QuickbooksController
         if ($trigger === 'import') {
             $message = ImportCustomers::blockedMessage(ConnectionGate::hasRealm($row) === true ? $row : null);
         } elseif ($row instanceof Connection === true && $row->needs_reauth === true && ConnectionGate::hasRealm($row) === true) {
-            $message = 'QuickBooks needs to be connected again before sync can continue.';
+            $message = ConnectionTokens::REAUTH_MESSAGE;
         } else {
-            $message = 'QuickBooks is not connected. Connect from Quickbooks Setup.';
+            $message = 'QuickBooks is not connected. Connect from QuickBooks Setup.';
         }
 
         if (ConnectionGate::hasRealm($row) === false) {

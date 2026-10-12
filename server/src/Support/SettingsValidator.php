@@ -26,7 +26,7 @@ class SettingsValidator
     {
         $errors = [];
         if (trim((string) ($auth['client_id'] ?? '')) === '') {
-            $errors['client_id'] = 'Enter the Client ID from developer.intuit.com, your app, Keys & credentials.';
+            $errors['client_id'] = 'Enter the Client ID from developer.intuit.com → your app → Keys & credentials.';
         }
 
         $redirect = trim((string) ($auth['redirect_uri'] ?? ''));
@@ -37,7 +37,7 @@ class SettingsValidator
 
         $environment = (string) ($auth['environment'] ?? '');
         if (in_array($environment, ['sandbox', 'production'], true) === false) {
-            $errors['environment'] = 'Choose Sandbox for Development keys, or Production for the live organization.';
+            $errors['environment'] = 'Choose Sandbox for Development keys, or Production for your live company.';
         }
 
         if (trim((string) ($auth['client_secret'] ?? '')) === '') {
@@ -63,8 +63,8 @@ class SettingsValidator
         if (array_key_exists('batch_size', $sync) === true) {
             $this->requireBoundedInt($errors, $sync, 'batch_size', 1, 100, 'Enter a whole number from 1 to 100.');
         }
-        $this->requireInt($errors, $sync, 'retry_limit', 1, 'Enter a whole number of retries, at least 1.');
-        $this->requireInt($errors, $sync, 'default_backoff_seconds', 5, 'Enter a whole number of seconds, at least 5.');
+        $this->requireInt($errors, $sync, 'retry_limit', 1, 'Enter a whole number of retry attempts, at least 1.');
+        $this->requireInt($errors, $sync, 'default_backoff_seconds', 5, 'Enter a whole number of seconds for Retry delay, at least 5.');
 
         $entities = [
             'customer' => 'Customers',
@@ -78,7 +78,7 @@ class SettingsValidator
             }
             $this->requireChoice($errors, $sync, $entity . '_conflict', ['fleetbase', 'quickbooks'], 'Choose Fleetbase or QuickBooks as Primary for ' . $label . '.');
             $this->requireChoice($errors, $sync, $entity . '_reference', ['fleetbase', 'quickbooks'], 'Choose Fleetbase or QuickBooks as Primary for ' . $label . '.');
-            $this->requireDirection($errors, $sync, $entity . '_direction', 'Choose Both, Outbound, or Inbound for ' . $label . '.');
+            $this->requireDirection($errors, $sync, $entity . '_direction', 'Choose Both, To QuickBooks, or From QuickBooks for ' . $label . '.');
         }
 
         return $errors;

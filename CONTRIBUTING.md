@@ -13,10 +13,22 @@ This package syncs Fleetbase customers, invoices, payments, and wallets (QuickBo
 
 - Activity lists batch counts. Errors are shown on the line under the row.
 - The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires a connection and a saved Client ID and Client secret. A public https redirect is required to connect, not to run Sync now.
-- Organization settings lists Quickbooks Setup (`/settings/quickbooks-setup?view=index`) and Quickbooks Activity (`/settings/quickbooks-activity?view=index`) with Organization, Two Factor, and Notifications. The QuickBooks header item opens Quickbooks Setup. Engine routes `connection`, `activity`, and `actions` redirect to `console.quickbooks.settings`.
+- Organization settings lists QuickBooks Setup
+  (`/settings/quickbooks-setup?view=index`) and QuickBooks Activity
+  (`/settings/quickbooks-activity?view=index`) with Organization, Two Factor,
+  and Notifications. The QuickBooks header item opens QuickBooks Setup. Engine
+  routes `connection`, `activity`, and `actions` redirect to
+  `console.quickbooks.settings`.
 - Connect without Client ID, Client secret, and Redirect URI returns HTTP 422 and does not open Intuit.
+- The Connection card on QuickBooks Setup shows only the actions that apply:
+  Connect when not connected or when QuickBooks must be connected again,
+  Sync now when connected, and Disconnect when a company is saved. An action
+  the user lacks permission for stays visible but disabled. Reset to global
+  defaults sits next to Save Changes in the page header.
 - Sync now with no QuickBooks connection returns HTTP 422 and does not save an activity row. Reconcile uses that same gate. A stored realm that needs reconnect returns HTTP 422 and saves a skipped activity row.
-- Import customers with no connection returns HTTP 422 with a message to connect from Quickbooks Setup, and does not save an activity row. A stored realm that needs reconnect saves a skipped activity row.
+- Import customers with no connection returns HTTP 422 with a message to connect
+  from QuickBooks Setup, and does not save an activity row. A stored realm that
+  needs reconnect saves a skipped activity row.
 - The callback path is `/quickbooks/int/v1/oauth/callback`. The Redirect URI is
   that path on the Fleetbase API host, for example
   `https://{{fleetbase.url}}/quickbooks/int/v1/oauth/callback`. Sandbox uses
@@ -37,7 +49,7 @@ This package syncs Fleetbase customers, invoices, payments, and wallets (QuickBo
   Admin → QuickBooks → Settings, with `scope=admin` on the system settings rows.
   The sync options on that screen are only a template. Changing them does not
   change any organization's sync settings, and a global save queues nothing for
-  organizations. A blank system field stays blank. Quickbooks Setup uses
+  organizations. A blank system field stays blank. QuickBooks Setup uses
   `scope=company`: it shows the connection controls and the organization's own
   sync options, and saves only sync options (with `quickbooks update settings`).
   Sending `reset` copies the current template over the organization's settings
@@ -52,7 +64,7 @@ This package syncs Fleetbase customers, invoices, payments, and wallets (QuickBo
   Intuit refuses the refresh token (`invalid_grant`). Other refresh failures
   keep the old tokens, record a refresh error, and leave the rows pending for a
   later run. During a sync or import, a skipped activity row says to connect
-  from Quickbooks Setup.
+  from QuickBooks Setup.
 - A 401 from QuickBooks during a sync first refreshes the token and retries the
   call once. The batch stops and the console asks to connect again only when
   Intuit refuses the refresh token (`invalid_grant`) or the new token is also
@@ -72,7 +84,19 @@ This package syncs Fleetbase customers, invoices, payments, and wallets (QuickBo
   upgrade. The same command runs the earlier `quickbooks_links` index migration.
 - An import does not run while a sync is running.
 - Home currency comes from QuickBooks Preferences.
-- Quickbooks Setup → Data Resolution lists Customers, Invoices, Payments, and Accounts / Wallets. Each has a switch, then Primary (Fleetbase or QuickBooks) and Sync direction. Primary decides which system wins when records differ and which system supplies identifiers. The Schedule panel holds Sync Frequency and the retry fields. There is no Enable schedule control, and the form does not send `sync.enabled`. A stored `enabled` flag does not stop the scheduler. The schedule runs when a connection does not need reconnect, QuickBooks is not rate limited, and either Sync Frequency has elapsed with at least one due pending row, or at least 20 pending rows are already due. The customer catalog can also start a minute, and it is skipped when Customers is off. Sync now still runs before that interval. One flagged row does not start the next minute. Sync now processes one pending page and does not drain the rest of the queue.
+- QuickBooks Setup → Data Resolution lists Customers, Invoices, Payments, and
+  Accounts / Wallets. Each has a switch, then Primary (Fleetbase or QuickBooks)
+  and Sync direction. Primary decides which system wins when records differ and
+  which system supplies identifiers. The Schedule panel holds Sync frequency and
+  the retry fields. There is no Enable schedule control, and the form does not
+  send `sync.enabled`. A stored `enabled` flag does not stop the scheduler. The
+  schedule runs when a connection does not need reconnect, QuickBooks is not
+  rate limited, and either Sync frequency has elapsed with at least one due
+  pending row, or at least 20 pending rows are already due. The customer catalog
+  can also start a minute, and it is skipped when Customers is off. Sync now
+  still runs before that interval. One flagged row does not start the next
+  minute. Sync now processes one pending page and does not drain the rest of the
+  queue.
 
 ## Tests
 

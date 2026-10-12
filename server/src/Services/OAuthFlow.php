@@ -7,11 +7,11 @@ use Illuminate\Support\Facades\Cache;
 
 class OAuthFlow
 {
-    private const OTHER_USER_MESSAGE = 'This QuickBooks authorization was started by a different user or organization. Connect again from Quickbooks Setup.';
+    private const OTHER_USER_MESSAGE = 'This QuickBooks authorization was started by a different user or organization. Connect again from QuickBooks Setup.';
 
     private const REALM_PATTERN = '/^\d{6,20}\z/';
 
-    private const CONNECT_FAILED_MESSAGE = 'QuickBooks could not finish connecting. Connect again from Quickbooks Setup.';
+    private const CONNECT_FAILED_MESSAGE = 'QuickBooks could not finish connecting. Connect again from QuickBooks Setup.';
 
     public function __construct(private QuickBooksClient $client)
     {
@@ -97,7 +97,7 @@ class OAuthFlow
 
         $stored = $this->validState(Cache::pull($key));
         if (isset($stored['code']) === false) {
-            throw new QuickBooksException(400, 'This QuickBooks authorization link is not valid. Connect again from Quickbooks Setup.');
+            throw new QuickBooksException(400, 'This QuickBooks authorization link is not valid. Connect again from QuickBooks Setup.');
         }
 
         try {

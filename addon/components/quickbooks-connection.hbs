@@ -1,6 +1,6 @@
 {{#if (eq @variant "status")}}
     <div data-test-connection-state={{this.state}}>
-        <ContentPanel @title={{t "quickbooks.connection.title"}} @open={{true}} @wrapperClass="bordered-classic">
+        <ContentPanel @title={{t "quickbooks.connection.card-title"}} @open={{true}} @wrapperClass="bordered-classic">
             {{#if this.loadFailed}}
                 <p class="text-sm text-gray-500 mb-4" data-test-status-unavailable>{{t "quickbooks.connection.unavailable"}}</p>
             {{else if this.isLoading}}
@@ -9,14 +9,16 @@
                 <p class="text-sm text-red-600 dark:text-red-400 mb-4" data-test-reauth>
                     {{#if this.isConfigured}}
                         {{t "quickbooks.connection.reauth-status"}}
-                    {{else}}
+                    {{else if this.isUnconfigured}}
                         {{t "quickbooks.connection.reauth-save-first"}}
+                    {{else}}
+                        {{t "quickbooks.connection.reauth-unknown"}}
                     {{/if}}
                 </p>
             {{else if this.isConnected}}
                 <p class="text-sm text-gray-500 mb-4" data-test-connected>
                     {{#if @connection.environment}}
-                        {{t "quickbooks.connection.connected" realm=@connection.realm_id environment=@connection.environment}}
+                        {{t "quickbooks.connection.connected" realm=@connection.realm_id environment=this.environmentLabel}}
                     {{else}}
                         {{t "quickbooks.connection.connected-plain" realm=@connection.realm_id}}
                     {{/if}}
@@ -28,7 +30,6 @@
                             <li>{{t "quickbooks.connection.home-currency-where"}}</li>
                             <li>{{t "quickbooks.connection.home-currency-invoices"}}</li>
                             <li>{{t "quickbooks.connection.home-currency-wallet"}}</li>
-                            <li>{{t "quickbooks.connection.home-currency-existing"}}</li>
                             <li>{{t "quickbooks.connection.home-currency-primary"}}</li>
                         </ul>
                     </div>
@@ -37,42 +38,51 @@
                 <p class="text-sm text-gray-500 mb-4" data-test-disconnected>
                     {{#if this.isConfigured}}
                         {{t "quickbooks.connection.disconnected-status"}}
-                    {{else}}
+                    {{else if this.isUnconfigured}}
                         {{t "quickbooks.connection.disconnected-save-first"}}
+                    {{else}}
+                        {{t "quickbooks.connection.disconnected-unknown"}}
                     {{/if}}
                 </p>
             {{/if}}
 
             {{#unless this.isLoading}}
                 {{#unless this.loadFailed}}
+                    {{! Only the actions that apply to this state are shown. }}
                     <div class="flex flex-wrap gap-2" data-test-connection-actions>
-                        <Button
-                            @type="primary"
-                            @size="sm"
-                            @icon="play"
-                            @text={{t "quickbooks.actions.sync-now"}}
-                            @disabled={{this.syncDisabled}}
-                            @onClick={{this.syncNow}}
-                            data-test-sync-now
-                        />
-                        <Button
-                            @type="primary"
-                            @size="sm"
-                            @icon="plug"
-                            @text={{t "quickbooks.connection.connect"}}
-                            @disabled={{this.connectDisabled}}
-                            @onClick={{this.connect}}
-                            data-test-connect
-                        />
-                        <Button
-                            @type="default"
-                            @size="sm"
-                            @icon="unlink"
-                            @text={{t "quickbooks.connection.disconnect"}}
-                            @disabled={{this.disconnectDisabled}}
-                            @onClick={{this.disconnect}}
-                            data-test-disconnect
-                        />
+                        {{#if this.showSyncNow}}
+                            <Button
+                                @type="primary"
+                                @size="sm"
+                                @icon="play"
+                                @text={{t "quickbooks.actions.sync-now"}}
+                                @disabled={{this.syncDisabled}}
+                                @onClick={{this.syncNow}}
+                                data-test-sync-now
+                            />
+                        {{/if}}
+                        {{#if this.showConnect}}
+                            <Button
+                                @type="primary"
+                                @size="sm"
+                                @icon="plug"
+                                @text={{t "quickbooks.connection.connect"}}
+                                @disabled={{this.connectDisabled}}
+                                @onClick={{this.connect}}
+                                data-test-connect
+                            />
+                        {{/if}}
+                        {{#if this.showDisconnect}}
+                            <Button
+                                @type="default"
+                                @size="sm"
+                                @icon="unlink"
+                                @text={{t "quickbooks.connection.disconnect"}}
+                                @disabled={{this.disconnectDisabled}}
+                                @onClick={{this.disconnect}}
+                                data-test-disconnect
+                            />
+                        {{/if}}
                         {{#if this.credentialsMissing}}
                             <p class="text-sm text-gray-500 dark:text-gray-400" data-test-credentials-missing>
                                 {{t "quickbooks.widget.credentials-missing"}}

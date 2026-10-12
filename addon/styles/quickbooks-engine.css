@@ -92,3 +92,16 @@ body[data-theme='dark'] .quickbooks-icon-button:hover {
     background-color: #374151;
     color: #e5e7eb;
 }
+
+/*
+ * The light theme colors every link dark gray and removes its underline, which
+ * makes the developer.intuit.com link unreadable on the dark info block. It
+ * takes the block's text color and keeps its underline. The text-inherit class
+ * keeps it out of the dark theme's rule for links without a text- class.
+ */
+body[data-theme] a.quickbooks-guidance-link,
+body[data-theme] a.quickbooks-guidance-link:hover {
+    color: inherit;
+    cursor: pointer;
+    text-decoration-line: underline;
+}

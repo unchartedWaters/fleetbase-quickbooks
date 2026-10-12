@@ -794,7 +794,7 @@ test('the import job records why it skipped: reconnect needed, customers off, or
     expect($env['error'])->toBeNull()
         ->and($client->queries)->toBe([])
         ->and($reauth->events)->toBe(['saveSkipped:held', 'save:held'])
-        ->and($reauth->memory->attempts[0]['error'])->toBe('QuickBooks needs to be connected again before import can continue.')
+        ->and($reauth->memory->attempts[0]['error'])->toBe('QuickBooks needs to be connected again before import can continue. Choose Connect to QuickBooks on QuickBooks Setup.')
         ->and($reauth->memory->batches[0]['trigger'])->toBe('import')
         ->and($reauth->memory->batches[0]['direction'])->toBe('inbound')
         ->and($off->events)->toBe(['saveSkipped:held', 'save:held'])

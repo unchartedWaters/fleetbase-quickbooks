@@ -52,13 +52,39 @@ export default class QuickbooksConnectionComponent extends Component {
         return this.args.configured === true;
     }
 
+    // Only a finished settings load can say the credentials are missing. Undefined means not known yet.
+    get isUnconfigured() {
+        return this.args.configured === false;
+    }
+
+    // Shows the stored environment as its option label. An unknown value is shown as stored.
+    get environmentLabel() {
+        const environment = this.args.connection?.environment;
+        const key = `quickbooks.settings.options.${environment}`;
+
+        return ['sandbox', 'production'].includes(environment) ? this.intl.t(key) : environment;
+    }
+
+    get showSyncNow() {
+        return this.isConnected;
+    }
+
+    get showConnect() {
+        return !this.isConnected;
+    }
+
+    // A saved realm can be removed, including one that needs to be connected again.
+    get showDisconnect() {
+        return this.isConnected || this.needsReauth;
+    }
+
     get canSync() {
         return canRunSyncNow(this.abilities);
     }
 
     // An active realm without saved keys matches the dashboard widget: Sync now stays off.
     get credentialsMissing() {
-        return this.isConnected && !this.isConfigured;
+        return this.isConnected && this.isUnconfigured;
     }
 
     // The button is disabled with no other explanation when the realm and keys are ready.

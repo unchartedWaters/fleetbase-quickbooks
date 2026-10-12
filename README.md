@@ -18,7 +18,9 @@ From the Fleetbase directory, install the Fleetbase QuickBooks extension from th
 flb install @unchartedwaters/quickbooks-engine
 ```
 
-As an installation administrator, open Admin → QuickBooks → Settings and save the Intuit Client ID and Client secret. Then open Organization settings → Quickbooks Setup and connect.
+As an installation administrator, open Admin → QuickBooks → Settings and save
+the Intuit Client ID and Client secret. Then open Organization settings →
+QuickBooks Setup and connect.
 
 The rest of setup is in [docs/SETUP.md](docs/SETUP.md).
 

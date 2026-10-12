@@ -38,7 +38,7 @@ effect on any organization's sync settings, and a global save queues nothing for
 organizations. Credentials, the webhook verifier, environment, and URLs are
 global and admin-only.
 
-Organization settings → Quickbooks Setup uses `scope=company` (the default). It
+Organization settings → QuickBooks Setup uses `scope=company` (the default). It
 shows the connection controls and the organization's own sync options. An
 organization can change only sync options. It never sees or saves credentials,
 the webhook verifier, environment, or URLs. The organization's settings are
@@ -75,9 +75,20 @@ organization (with a QuickBooks connection or an organization settings row) a
 copy of its current effective settings, so nothing changes for them at upgrade.
 It is also required for the earlier `quickbooks_links` index migration.
 
-Organization settings lists **Quickbooks Setup** and **Quickbooks Activity** with Organization, Two Factor, and Notifications. Quickbooks Setup is route `console.settings.virtual`, slug `quickbooks-setup`, view `index` (`/settings/quickbooks-setup?view=index`). Quickbooks Activity is slug `quickbooks-activity` (`/settings/quickbooks-activity?view=index`). The QuickBooks header item opens Quickbooks Setup. The Fleetbase Admin panel **QuickBooks** has one item, **Settings**. There is no Ledger settings entry.
+Organization settings lists **QuickBooks Setup** and **QuickBooks Activity**
+with Organization, Two Factor, and Notifications. QuickBooks Setup is route
+`console.settings.virtual`, slug `quickbooks-setup`, view `index`
+(`/settings/quickbooks-setup?view=index`). QuickBooks Activity is slug
+`quickbooks-activity` (`/settings/quickbooks-activity?view=index`). The
+QuickBooks header item opens QuickBooks Setup. The Fleetbase Admin panel
+**QuickBooks** has one item, **Settings**. There is no Ledger settings entry.
 
-An installation administrator saves the install's Client ID, Client secret, and system webhook verifier on Admin → QuickBooks → Settings. Connect on Quickbooks Setup uses those saved keys. Client ID, Client secret, Redirect URI, and the webhook verifier come only from that system row. A blank system field stays blank. Environment may fall back to `QUICKBOOKS_ENVIRONMENT`, which defaults to `production`.
+An installation administrator saves the install's Client ID, Client secret, and
+system webhook verifier on Admin → QuickBooks → Settings. Connect on QuickBooks
+Setup uses those saved keys. Client ID, Client secret, Redirect URI, and the
+webhook verifier come only from that system row. A blank system field stays
+blank. Environment may fall back to `QUICKBOOKS_ENVIRONMENT`, which defaults to
+`production`.
 
 The settings form does not ask for a batch size and does not send `batch_size`.
 
@@ -91,7 +102,7 @@ from `server/src/Auth/Schemas/Quickbooks.php`.
 | QuickBooks Administrator (`QuickbooksAdministrator`) | `quickbooks see extension`, `quickbooks * connection`, `quickbooks * settings`, `quickbooks * sync` |
 | QuickBooks Operator (`QuickbooksOperator`) | `quickbooks see extension`, `quickbooks view`, `connect`, `disconnect` and `import-customers connection`, `quickbooks view settings`, `quickbooks view sync`, `quickbooks reconcile sync` |
 
-`quickbooks see extension` opens Quickbooks Setup. Sync now authorizes as
+`quickbooks see extension` opens QuickBooks Setup. Sync now authorizes as
 `quickbooks reconcile sync`. Global settings (Admin → QuickBooks → Settings)
 need an installation administrator; no role grants them. Installation
 administrators bypass all of these checks.
@@ -118,9 +129,16 @@ type is not synced.
 
 Turning the switch off stores that type as not enabled. Turning it on again keeps the last Both / To QuickBooks / From QuickBooks choice.
 
-**Primary**, under Data Resolution, decides which system wins when the records differ and which system supplies identifiers. Primary and direction are separate. Outbound still sends the Fleetbase record when Primary is QuickBooks.
+**Primary**, under Data Resolution, decides which system wins when the records
+differ and which system supplies identifiers. Primary and direction are
+separate. To QuickBooks still sends the Fleetbase record when Primary is
+QuickBooks.
 
-Sync Frequency is the schedule. It is separate from each entity switch. There is no Enable schedule control, and a stored `enabled` flag does not stop the scheduler. Sync now with no connection returns HTTP 422 and does not save an activity row. The console shows that error. A stored realm that needs reconnect returns HTTP 422 and saves a skipped activity row.
+Sync frequency is the schedule. It is separate from each entity switch. There is
+no Enable schedule control, and a stored `enabled` flag does not stop the
+scheduler. Sync now with no connection returns HTTP 422 and does not save an
+activity row. The console shows that error. A stored realm that needs reconnect
+returns HTTP 422 and saves a skipped activity row.
 
 ### Environments
 
@@ -128,22 +146,34 @@ New setups use production. The settings default is `production`: `server/config/
 
 The `quickbooks_connections.environment` column is a different thing. Its migration default is `sandbox`, but connect always writes the environment from settings onto the connection row, so that default is only a fallback for a row created some other way. API calls use the environment stored on the connection, not the current setting, and a connection with no environment is treated as sandbox. After you switch the environment in settings, connect again.
 
-- Sandbox uses the Development keys, a sandbox QuickBooks organization, and `https://sandbox-quickbooks.api.intuit.com`.
-- Production uses the Production keys, the live QuickBooks organization, and `https://quickbooks.api.intuit.com`.
+- Sandbox uses the Development keys, a QuickBooks sandbox company, and
+  `https://sandbox-quickbooks.api.intuit.com`.
+- Production uses the Production keys, your live QuickBooks company, and
+  `https://quickbooks.api.intuit.com`.
 
 ### Retry
 
 **Retry attempts** (`retry_limit`, default 5) is how many failures leave the row pending. The next failure after that marks it failed.
 
-**Retry Delay** (`default_backoff_seconds`, default 30, at least 5) is the wait before the first retry. Each later failure waits twice as long. The wait is capped at 900 seconds.
+**Retry delay** (`default_backoff_seconds`, default 30, at least 5) is the wait
+before the first retry. Each later failure waits twice as long. The wait is
+capped at 900 seconds.
 
-HTTP 429 does not use Retry Delay. It uses the `Retry-After` header when that header is present, otherwise 60 seconds. A repeated 429 doubles the previous wait, still capped at 900 seconds.
+HTTP 429 does not use Retry delay. It uses the `Retry-After` header when that
+header is present, otherwise 60 seconds. A repeated 429 doubles the previous
+wait, still capped at 900 seconds.
 
 ## Connect and disconnect
 
 Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved by an installation administrator in Admin → QuickBooks → Settings for the install and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
 
 The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The internal webhook path is `/quickbooks/int/v1/webhooks`. Admin → QuickBooks → Settings shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver URL stay editable and are saved on the install-wide settings row. Paste the public OAuth URL into Intuit Redirect URIs and the public webhook URL into the Intuit Endpoint URL. A blank public URL is shown as the matching internal URL.
+
+The Connection card on QuickBooks Setup shows only the actions that apply.
+Before a company is connected it offers **Connect to QuickBooks**. Once
+connected it offers **Sync now** and **Disconnect**. When QuickBooks must be
+connected again it offers **Connect to QuickBooks** and **Disconnect**. An
+action the user lacks permission for stays visible but disabled.
 
 Connect uses PKCE (`S256`). The API stores a code verifier with the OAuth state and sends the code challenge on `https://appcenter.intuit.com/connect/oauth2` with scope `com.intuit.quickbooks.accounting`.
 
@@ -186,17 +216,43 @@ off, the import is skipped. An import does not run while a sync is running.
 
 ## Sync
 
-`quickbooks:sync` stays registered on the Laravel scheduler, which the system cron invokes every minute. There is no Enable schedule control. The form does not send `sync.enabled`, and the command does not read a stored `enabled` flag, so `enabled: false` does not stop a due sync. The command does not start when no connection can be synced, or while a schedule hold is still in the future. It queues an organization when the connection does not need reconnect, QuickBooks is not rate limited, and either Sync Frequency has elapsed with at least one due pending row, or at least 20 pending rows are already due. The customer catalog is the other reason a minute can start work. It is skipped when Customers is off.
+`quickbooks:sync` stays registered on the Laravel scheduler, which the system
+cron invokes every minute. There is no Enable schedule control. The form does
+not send `sync.enabled`, and the command does not read a stored `enabled` flag,
+so `enabled: false` does not stop a due sync. The command does not start when no
+connection can be synced, or while a schedule hold is still in the future. It
+queues an organization when the connection does not need reconnect, QuickBooks
+is not rate limited, and either Sync frequency has elapsed with at least one due
+pending row, or at least 20 pending rows are already due. The customer catalog
+is the other reason a minute can start work. It is skipped when Customers is
+off.
 
-One flagged row does not start the next minute. Flagging clears a stored schedule hold, so the next `schedule:run` may start the command, but the command still waits until Sync Frequency (`interval_minutes`, default 5) has elapsed after `last_batch_at`, unless 20 or more rows are already due. A first sync, with no `last_batch_at`, can start from one due row. After a run that queues work, the command holds the next start for 60 seconds.
+One flagged row does not start the next minute. Flagging clears a stored
+schedule hold, so the next `schedule:run` may start the command, but the command
+still waits until Sync frequency (`interval_minutes`, default 5) has elapsed
+after `last_batch_at`, unless 20 or more rows are already due. A first sync,
+with no `last_batch_at`, can start from one due row. After a run that queues
+work, the command holds the next start for 60 seconds.
 
 An organization with nothing due does not sync. The schedule does not read a stored batch size. Each run still stops after one page. That page is the stored `batch_size` when an older settings row has one, otherwise 100. The settings form does not send `batch_size`.
 
-**Sync now** is on Quickbooks Setup. It uses the pending queue and does not load the whole organization. It processes one pending page and does not drain the rest of the queue. Leftover rows wait for the schedule above. Drain is chained from a finished reconcile, and from a finished drain that still has due rows. Sync now does not chain it. Reconcile is not a control on this screen. It covers invoices already in this Fleetbase organization: a local non-draft invoice, or a `quickbooks_links` row for this organization whose local type is invoice. It does not list every invoice in the QuickBooks organization.
+**Sync now** is on QuickBooks Setup. It uses the pending queue and does not load
+the whole organization. It processes one pending page and does not drain the
+rest of the queue. Leftover rows wait for the schedule above. Drain is chained
+from a finished reconcile, and from a finished drain that still has due rows.
+Sync now does not chain it. Reconcile is not a control on this screen. It covers
+invoices already in this Fleetbase organization: a local non-draft invoice, or a
+`quickbooks_links` row for this organization whose local type is invoice. It
+does not list every invoice in the QuickBooks company.
 
 QuickBooks update operations are posted in chunks of 20. Queries, creates, and voids are posted in chunks of at most 30.
 
-Sync Frequency is minutes (`interval_minutes`, default 5). Full Sync Frequency (hours) (`periodic_interval_hours`, default 24) limits only the customer catalog, and that catalog is skipped when Customers is unchecked. Customer import reads QuickBooks in pages of at most 100 records and stores the next start in `quickbooks_connections.customer_import_start`, so a run that stops at the 600 second organization lock continues there.
+Sync frequency is minutes (`interval_minutes`, default 5). Full sync frequency
+(hours) (`periodic_interval_hours`, default 24) limits only the customer
+catalog, and that catalog is skipped when Customers is unchecked. Customer
+import reads QuickBooks in pages of at most 100 records and stores the next
+start in `quickbooks_connections.customer_import_start`, so a run that stops at
+the 600 second organization lock continues there.
 
 Sync now with no connection returns HTTP 422 and does not save an activity row. The console shows that error. A stored realm that needs reconnect returns HTTP 422 and saves a skipped activity row.
 
@@ -229,7 +285,15 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 
 ## Known limitations
 
-- **Currency.** An invoice whose currency differs from the QuickBooks home currency syncs only when QuickBooks multi-currency is enabled (Settings, Advanced, Currency). Otherwise the row fails with "Invoice currency EUR does not match QuickBooks home currency USD" and nothing is sent; wallets behave the same way. With multi-currency on, QuickBooks applies its own exchange rate because no `ExchangeRate` is sent. Invoices that were posted in the home currency by an earlier version stay aligned until a push is attempted.
+- **Currency.** An invoice whose currency differs from the QuickBooks home
+  currency syncs only when QuickBooks multi-currency is enabled (Settings,
+  Advanced, Currency). Otherwise the row fails with "Invoice currency EUR does
+  not match the QuickBooks home currency USD." and nothing is sent. A wallet in
+  another currency fails when it has no QuickBooks account yet and Fleetbase is
+  Primary, whether or not multi-currency is on. With multi-currency on,
+  QuickBooks applies its own exchange rate because no `ExchangeRate` is sent.
+  Invoices that were posted in the home currency by an earlier version stay
+  aligned until a push is attempted.
 - **Invoice numbers.** With `invoice_reference=quickbooks`, a QuickBooks DocNumber that another Fleetbase invoice (any organization) already uses is not copied. The invoice keeps its number and the Activity row shows a note. The note repeats on each sync until the duplicate is resolved.
 - **Quantities.** Fleetbase invoice line quantities are whole numbers. A fractional QuickBooks quantity imports as 1 unit at the line amount.
 - **Tax.** Invoice tax is sent as an ordinary sales line whose description is `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No `TxnTaxDetail` or tax code is sent. A QuickBooks company that uses automated sales tax can show different tax and totals than Fleetbase. On the way back, only that synthetic line is read as tax.
@@ -263,7 +327,9 @@ Pass `--path` with the Fleetbase directory when that directory is not the curren
 
 `.github/workflows/deploy.yml` publishes this package to the Fleetbase registry with `flb publish` when a `v*` tag is pushed. The tag has to contain that workflow, and the GitHub secrets named in it have to exist.
 
-As an installation administrator, open Admin → QuickBooks → Settings and save the Intuit Client ID and Client secret. Then open Organization settings → Quickbooks Setup and connect.
+As an installation administrator, open Admin → QuickBooks → Settings and save
+the Intuit Client ID and Client secret. Then open Organization settings →
+QuickBooks Setup and connect.
 
 ### Developer checkout
 

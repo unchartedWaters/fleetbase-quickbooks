@@ -170,10 +170,10 @@ test('direction and the customer catalog interval are validated', function () {
         'periodic_interval_hours' => 0,
     ]));
 
-    expect($invalid['customer_direction'])->toBe('Choose Both, Outbound, or Inbound for Customers.')
-        ->and($invalid['invoice_direction'])->toBe('Choose Both, Outbound, or Inbound for Invoices.')
-        ->and($invalid['payment_direction'])->toBe('Choose Both, Outbound, or Inbound for Payments.')
-        ->and($invalid['wallet_direction'])->toBe('Choose Both, Outbound, or Inbound for Accounts / Wallets.')
+    expect($invalid['customer_direction'])->toBe('Choose Both, To QuickBooks, or From QuickBooks for Customers.')
+        ->and($invalid['invoice_direction'])->toBe('Choose Both, To QuickBooks, or From QuickBooks for Invoices.')
+        ->and($invalid['payment_direction'])->toBe('Choose Both, To QuickBooks, or From QuickBooks for Payments.')
+        ->and($invalid['wallet_direction'])->toBe('Choose Both, To QuickBooks, or From QuickBooks for Accounts / Wallets.')
         ->and($invalid['periodic_interval_hours'])->toBe('Enter a whole number of hours, at least 1.')
         ->and($invalid)->not->toHaveKey('customer_enabled');
 
@@ -195,6 +195,8 @@ test('settings are rejected when required values are missing or out of range', f
     $validator = new SettingsValidator();
 
     expect($validator->errors([], []))->toHaveKey('client_id')
+        ->and($validator->errors([], [])['client_id'])->toBe('Enter the Client ID from developer.intuit.com → your app → Keys & credentials.')
+        ->and($validator->errors(['environment' => 'staging'], [])['environment'])->toBe('Choose Sandbox for Development keys, or Production for your live company.')
         ->and($validator->errors([], []))->toHaveKey('redirect_uri');
 
     $errors = $validator->errors(validAuth([
@@ -208,8 +210,11 @@ test('settings are rejected when required values are missing or out of range', f
     expect($errors)->toHaveKey('redirect_uri')
         ->and($errors)->toHaveKey('client_secret')
         ->and($errors)->toHaveKey('interval_minutes')
-        ->and($errors)->toHaveKey('default_backoff_seconds')
+        ->and($errors['default_backoff_seconds'])->toBe('Enter a whole number of seconds for Retry delay, at least 5.')
         ->and($errors)->not->toHaveKey('client_id');
+
+    expect($validator->errors(validAuth(), qbSettings(['retry_limit' => 0]))['retry_limit'])
+        ->toBe('Enter a whole number of retry attempts, at least 1.');
 
     expect($validator->errors(validAuth(), qbSettings()))->toBe([]);
     expect($validator->errors(validAuth(), qbSettings([

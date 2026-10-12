@@ -774,7 +774,7 @@ test('an unknown home currency is read from quickbooks before the currency check
     expect($ledger->connections['company-uuid']['home_currency'])->toBe('USD')
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($client->calls)->toContain('homeCurrency')
-        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match QuickBooks home currency USD')
+        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match the QuickBooks home currency USD.')
         ->and($client->invoices)->toBeEmpty();
 });
 
@@ -1008,7 +1008,7 @@ test('a new wallet in a foreign currency is not created', function () {
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
     expect($batch['failed'])->toBe(1)
-        ->and($ledger->attempts[0]['error'])->toBe('Wallet currency EUR does not match QuickBooks home currency USD')
+        ->and($ledger->attempts[0]['error'])->toBe('Wallet currency EUR does not match the QuickBooks home currency USD.')
         ->and($client->calls)->not->toContain('createAccount');
 });
 
@@ -2905,7 +2905,7 @@ test('a non-home currency fails the push instead of updating the invoice in the 
 
     expect($first['updated'])->toBe(0)
         ->and($first['failed'])->toBe(1)
-        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match QuickBooks home currency USD')
+        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match the QuickBooks home currency USD.')
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and($client->invoices['qb-1'])->not->toHaveKey('PrivateNote')
         ->and($ledger->invoices['inv-1']['currency'])->toBe('EUR');

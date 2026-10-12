@@ -84,7 +84,7 @@ class Quickbooks
         ],
         [
             'name'        => 'QuickBooks Operator',
-            'description' => 'Runs the QuickBooks connection and Sync now.',
+            'description' => 'Connects and disconnects QuickBooks, imports customers, views settings and sync activity, and runs Sync now. Cannot change settings.',
             'policies'    => ['QuickbooksOperator'],
         ],
     ];

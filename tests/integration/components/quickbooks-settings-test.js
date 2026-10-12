@@ -209,7 +209,11 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-credentials-guidance] a').hasAttribute('rel', 'noopener noreferrer');
         assert.dom('[data-test-credentials-guidance] a').hasText('developer.intuit.com');
         assert.dom('[data-test-credentials-guidance] a').hasClass('underline');
-        assert.dom('[data-test-credentials-guidance] a').hasClass('text-white');
+        // The theme's link color would make a link unreadable on the dark info block, so it takes the block's text color.
+        assert.dom('[data-test-credentials-guidance] a').hasClass('quickbooks-guidance-link');
+        assert
+            .dom('[data-test-credentials-guidance] li:nth-child(2)')
+            .hasText('Copy the Client ID and Client secret from Keys & credentials into the fields below, and choose the matching Environment.');
         assert.dom('[data-test-redirect-step]').hasText('Under Redirect URIs, paste the Public OAuth Redirect URL.');
         assert.dom('[data-test-webhook-step]').hasText('Paste the Public Webhook Receiver URL into Intuit and save the webhook verifier.');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
@@ -217,11 +221,13 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
         assert.dom("[data-test-field-help='environment']").hasClass('text-gray-400');
         assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
-        assert.dom('[data-test-credential-save-step]').hasText('Choose Save Changes, then Connect to QuickBooks. Connect uses the saved keys.');
+        assert.dom('[data-test-credential-save-step]').hasText('Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.');
         assert.dom("[data-test-field='redirect_uri']").doesNotExist();
         assert.dom("[data-test-field='webhook_verifier']").isNotDisabled();
         assert.dom('[data-test-verifier-set]').hasText('A verifier token is already saved. Leave this blank to keep it.');
-        assert.dom("[data-test-field-help='webhook_verifier']").includesText('Leave blank to keep the webhook verifier.');
+        assert
+            .dom("[data-test-field-help='webhook_verifier']")
+            .hasText('Intuit signs webhooks with this token. Stored encrypted.', 'the saved-token line below already says to leave it blank');
         assert.dom("[data-test-field='client_id']").hasAttribute('autocomplete', 'off');
         assert.dom("[data-test-field='client_secret']").hasAttribute('autocomplete', 'new-password');
         assert.dom("[data-test-field='webhook_verifier']").hasAttribute('autocomplete', 'new-password');
@@ -270,8 +276,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-field='client_id']").isNotDisabled();
         assert.dom(this.element.querySelector("[data-test-field='client_id']").closest('.input-group').querySelector('label')).hasClass('required');
         assert.dom(this.element.querySelector("[data-test-field='client_secret']").closest('.input-group').querySelector('label')).doesNotHaveClass('required');
-        assert.dom("[data-test-sync-field='interval_minutes'] label").hasText('Sync Frequency (minutes)');
-        const syncFrequencyHelp = 'Defines the time between possible sync operations. Sync operations will only occur when there is data to sync.';
+        assert.dom("[data-test-sync-field='interval_minutes'] label").hasText('Sync frequency (minutes)');
+        const syncFrequencyHelp = 'Minutes between scheduled syncs of waiting changes. 20 or more waiting changes start one sooner.';
         assert.dom("[data-test-sync-field='interval_minutes'] [data-test-field-help='interval_minutes']").hasText(syncFrequencyHelp);
         assert.strictEqual(bodyTextOutsideScripts().split(syncFrequencyHelp).length - 1, 1);
         assert.dom("[data-test-sync-field='interval_minutes'] .fa-circle-info").doesNotExist();
@@ -280,10 +286,19 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-sync-field='default_backoff_seconds']").doesNotIncludeText(syncFrequencyHelp);
         assert.dom("[data-test-sync='interval_minutes']").hasValue('5');
         assert.dom("[data-test-sync='interval_minutes']").isNotDisabled();
-        assert.dom("[data-test-sync-field='periodic_interval_hours'] label").hasText('Full Sync Frequency (hours)');
+        assert.dom("[data-test-sync-field='periodic_interval_hours'] label").hasText('Full sync frequency (hours)');
+        assert.dom("[data-test-field-help='periodic_interval_hours']").hasText('Hours between full passes over the customer catalog. Waiting changes use the minutes setting above.');
         assert.dom("[data-test-sync='periodic_interval_hours']").hasValue('24');
         assert.dom("[data-test-sync-field='retry_limit'] label").hasText('Retry attempts');
-        assert.dom("[data-test-sync-field='default_backoff_seconds'] label").hasText('Retry Delay (seconds)');
+        assert.dom("[data-test-sync-field='default_backoff_seconds'] label").hasText('Retry delay (seconds)');
+        assert.dom("[data-test-sync-field='environment'] label").hasText('Environment');
+        assert
+            .dom("[data-test-field-help='environment']")
+            .hasText('Sandbox uses the Development keys and a QuickBooks sandbox company. Production uses the Production keys and your live QuickBooks Online company.');
+        assert.dom("[data-test-field-help='client_id']").hasText('On Keys & credentials. Use the Development Client ID with Sandbox, and the Production Client ID with your live company.');
+        assert
+            .dom("[data-test-policy='customer'] [data-test-field-help='sync_direction']")
+            .hasText('Both keeps the two systems in step. To QuickBooks only sends Fleetbase changes. From QuickBooks only brings QuickBooks changes into Fleetbase.');
         assert.dom("[data-test-sync='batch_size']").doesNotExist();
         assert.dom().doesNotIncludeText('Records in each sync');
         assert.dom().doesNotIncludeText('Clear Enable');
@@ -388,7 +403,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom().doesNotIncludeText('Admin → QuickBooks');
         assert.dom('[data-test-credentials-guidance]').hasClass('ui-input-info-block');
         assert.dom('[data-test-credentials-guidance]').includesText('Getting your QuickBooks credentials');
-        assert.dom('[data-test-credential-save-step]').hasText('Choose Save Changes, then Connect to QuickBooks. Connect uses the saved keys.');
+        assert.dom('[data-test-credential-save-step]').hasText('Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.');
         assert.dom('[data-test-redirect-step]').hasText('Under Redirect URIs, paste the Public OAuth Redirect URL.');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
@@ -651,6 +666,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
+        this.set('verifierSecret', { value: '', set: true, verifier: { value: '', set: true } });
 
         await render(hbs`
             <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
@@ -659,6 +675,16 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-field='webhook_verifier']").hasValue('');
         assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', 'A verifier token is saved');
         assert.dom('[data-test-verifier-set]').hasText('A verifier token is already saved. Leave this blank to keep it.');
+        this.set('verifierErrors', { webhook_verifier: 'The webhook verifier is not valid.' });
+        this.set('noop', () => {});
+        await render(
+            hbs`<QuickbooksSettingsFields @secret={{this.verifierSecret}} @errors={{this.verifierErrors}} @syncOnly={{false}} @onUpdate={{this.noop}} @onSetEntityEnabled={{this.noop}} />`
+        );
+        assert.dom('[data-test-error="webhook_verifier"]').hasText('The webhook verifier is not valid.');
+        assert.dom('[data-test-verifier-set]').hasText('A verifier token is already saved. Leave this blank to keep it.', 'an error does not hide how to keep the saved token');
+        await render(hbs`
+            <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
+        `);
         assertPublicUrl(assert, 'public_webhook_receiver_url', 'http://internal.example/hooks');
         assertSelectableUrl(assert, 'internal_webhook_receiver_url', 'http://internal.example/hooks');
         assertPublicUrl(assert, 'public_oauth_redirect_url', 'http://internal.example/oauth');

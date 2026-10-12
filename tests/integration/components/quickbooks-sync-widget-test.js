@@ -80,6 +80,7 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         this.fetch.connection = { realm_id: '123', needs_reauth: true };
         this.fetch.credentialsConfigured = true;
         await render(hbs`<Widget::QuickbooksSync />`);
+        assert.dom('[data-test-widget-subtitle]').hasText('Needs to be connected again');
         assert.dom('[data-test-widget-sync]').isDisabled();
         assert.dom('[data-test-widget-credentials-missing]').doesNotExist();
 
@@ -89,7 +90,7 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         assert.dom('[data-test-widget-sync]').isDisabled();
         assert
             .dom('[data-test-widget-credentials-missing]')
-            .hasText('An installation administrator must enter the QuickBooks Client ID and Client secret on the Admin QuickBooks screen before Sync now.');
+            .hasText('Sync now is unavailable until an installation administrator enters the QuickBooks Client ID and Client secret in Admin → QuickBooks → Settings.');
         assert.dom('[data-test-sync-denied]').doesNotExist();
 
         this.fetch.credentialsConfigured = true;

@@ -58,12 +58,14 @@ function registerAdminSettings(menuService) {
 }
 
 // Same list as Organization, Two Factor, and Notifications. Not an admin panel and not a Ledger menu.
+// The ids keep the values the earlier "Quickbooks" titles produced.
 function registerOrganizationSettings(menuService, app) {
     const onClick = (menuItem) => openOrganizationSetting(app, menuItem.slug, menuItem.view);
 
     menuService.registerSettingsMenuItem(
         new MenuItem({
-            title: 'Quickbooks Setup',
+            id: 'quickbooks-setup',
+            title: 'QuickBooks Setup',
             icon: 'plug',
             slug: 'quickbooks-setup',
             index: 0,
@@ -76,7 +78,8 @@ function registerOrganizationSettings(menuService, app) {
 
     menuService.registerSettingsMenuItem(
         new MenuItem({
-            title: 'Quickbooks Activity',
+            id: 'quickbooks-activity',
+            title: 'QuickBooks Activity',
             icon: 'clock-rotate-left',
             slug: 'quickbooks-activity',
             index: 1,
