@@ -344,9 +344,7 @@ class ConnectionController extends QuickbooksController
 
         return response()->json([
             'connection'             => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
-            'client_id'              => $savedKeys['client_id'],
-            'client_secret_set'      => $savedKeys['client_secret_set'],
-            'credentials_configured' => $savedKeys['credentials_configured'],
+            'credentials_configured' => $savedKeys,
             'queue'                  => PendingSync::query()->where('company_uuid', $companyUuid)->where('status', 'pending')->count(),
             'last_sync'              => $last instanceof SyncBatch === true ? [
                 'finished_at'   => $last->finished_at?->toIso8601String(),
@@ -617,20 +615,14 @@ class ConnectionController extends QuickbooksController
      * Sync now uses the saved Client ID and Client secret.
      * A public https redirect is required to start OAuth, not to sync.
      * The computed callback may be http://localhost.
-     *
-     * @return array{client_id: string, client_secret_set: bool, credentials_configured: bool}
      */
-    private function syncCredentialStatus(string $companyUuid): array
+    private function syncCredentialStatus(string $companyUuid): bool
     {
         $credentials = $this->settings->credentialsFor($this->store, $companyUuid);
         $clientId    = trim($credentials['client_id']);
         $secretSet   = trim($credentials['client_secret']) !== '';
 
-        return [
-            'client_id'              => $clientId,
-            'client_secret_set'      => $secretSet,
-            'credentials_configured' => $clientId !== '' && $secretSet,
-        ];
+        return $clientId !== '' && $secretSet;
     }
 
     /**

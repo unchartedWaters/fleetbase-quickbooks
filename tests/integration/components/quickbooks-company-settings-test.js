@@ -384,7 +384,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
     });
 
-    test('saving with an override posts the sync fields and no auth', async function (assert) {
+    test('saving with an override posts only the sync fields that differ from the global values', async function (assert) {
         const fetch = this.owner.lookup('service:fetch');
 
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
@@ -398,11 +398,35 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.strictEqual(post.body.scope, 'company');
         assert.strictEqual(post.body.company_uuid, 'company-uuid');
         assert.true(post.body.override);
-        assert.strictEqual(post.body.sync.interval_minutes, 15);
-        assert.strictEqual(post.body.sync.customer_direction, 'both');
-        assert.strictEqual(post.body.sync.customer_enabled, true);
+        assert.deepEqual(post.body.sync, { interval_minutes: 15 });
         assert.false(Object.hasOwn(post.body, 'auth'));
-        assert.false(Object.hasOwn(post.body.sync, 'client_id'));
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
+    });
+
+    test('a field set back to the global value is not sent', async function (assert) {
+        const fetch = this.owner.lookup('service:fetch');
+        fetch.override = true;
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+        await fillIn('[data-test-sync="interval_minutes"]', '5');
+        await fillIn('[data-test-sync="retry_limit"]', '7');
+        await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
+
+        const post = fetch.posts.at(-1);
+        assert.true(post.body.override);
+        assert.deepEqual(post.body.sync, { retry_limit: 7 });
+        assert.false(Object.hasOwn(post.body, 'auth'));
+    });
+
+    test('an override that matches the global values sends an empty sync bag', async function (assert) {
+        const fetch = this.owner.lookup('service:fetch');
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+        await click('[data-test-override]');
+        await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
+
+        const post = fetch.posts.at(-1);
+        assert.true(post.body.override);
+        assert.deepEqual(post.body.sync, {});
     });
 });

@@ -428,7 +428,7 @@ export default class QuickbooksSettingsComponent extends Component {
         this.saving = true;
         try {
             if (this.syncOnly) {
-                await this.args.onSave?.({ scope: 'company', override: this.overrideOn, sync: this.overrideOn ? sync : {} });
+                await this.args.onSave?.({ scope: 'company', override: this.overrideOn, sync: this.overrideOn ? this.changedFromGlobal(sync) : {} });
             } else {
                 await this.args.onSave?.({ scope: 'company', auth, sync });
             }
@@ -448,6 +448,41 @@ export default class QuickbooksSettingsComponent extends Component {
         } finally {
             this.saving = false;
         }
+    }
+
+    // The server stores exactly what an override sends, so send only the fields that differ from the global value. The rest keep inheriting.
+    changedFromGlobal(sync) {
+        const global = this.args.globalSync;
+        if (!global) {
+            return sync;
+        }
+
+        const changed = {};
+        Object.keys(sync).forEach((key) => {
+            if (String(sync[key] ?? '') !== String(this.globalValue(global, key) ?? '')) {
+                changed[key] = sync[key];
+            }
+        });
+
+        return changed;
+    }
+
+    // The global value after the same defaults and normalization the form applies to its own fields.
+    globalValue(global, key) {
+        const state = fieldState({ ...global, sources: global.sources, scope: 'company' }, key);
+        this.applyPresentDefault(state, key);
+        const value = state.value;
+        if (key.endsWith('_direction')) {
+            return normalizeSyncDirection(value);
+        }
+        if (key.endsWith('_enabled')) {
+            return !(value === false || value === 'false' || value === 0 || value === '0');
+        }
+        if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) {
+            return Number(value);
+        }
+
+        return value;
     }
 
     buildAuth() {

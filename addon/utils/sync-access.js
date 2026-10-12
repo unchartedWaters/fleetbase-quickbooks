@@ -18,12 +18,3 @@ export function canConnect(abilities) {
 export function canDisconnect(abilities) {
     return allows(abilities, DISCONNECT_PERMISSION);
 }
-
-// Sync now needs the saved Client ID and Client secret.
-// OAuth start is the check that requires a public https redirect.
-// http://localhost is a valid API URL and does not block Sync now.
-export function keysSavedForSync(source) {
-    const clientId = typeof source?.client_id === 'string' ? source.client_id.trim() : '';
-
-    return clientId !== '' && source?.client_secret_set === true;
-}

@@ -1390,8 +1390,9 @@ test('summary last sync is the latest finished batch and stays empty when every 
         try {
             $local = $controller->summary($request)->getData(true);
             expect($local['credentials_configured'])->toBeTrue()
-                ->and($local['client_id'])->toBe('client-id')
-                ->and($local['client_secret_set'])->toBeTrue();
+                ->and($local)->not->toHaveKey('client_id')
+                ->and($local)->not->toHaveKey('client_secret_set')
+                ->and(json_encode($local))->not->toContain('client-id');
         } finally {
             config()->set('app.url', $previousUrl);
         }

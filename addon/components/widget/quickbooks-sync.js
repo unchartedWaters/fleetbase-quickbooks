@@ -3,7 +3,7 @@ import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
 import { inject as service } from '@ember/service';
 import { connectionState } from '../../utils/connection-view';
-import { canRunSyncNow, keysSavedForSync } from '../../utils/sync-access';
+import { canRunSyncNow } from '../../utils/sync-access';
 
 const NAMESPACE = 'quickbooks/int/v1';
 
@@ -46,7 +46,7 @@ export default class WidgetQuickbooksSyncComponent extends Component {
     }
 
     get credentialsConfigured() {
-        return keysSavedForSync(this.summary);
+        return this.summary?.credentials_configured === true;
     }
 
     get credentialsMissing() {

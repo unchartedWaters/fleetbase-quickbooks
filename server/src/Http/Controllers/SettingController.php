@@ -156,15 +156,15 @@ class SettingController extends QuickbooksController
                 SettingsStore::onlySyncFields($incoming),
                 static fn ($value): bool => $value !== null && $value !== ''
             );
-            $merged = array_merge($this->store->companySync($companyUuid), $incoming);
+            // The override is replaced by exactly what was sent. Anything left out inherits the global value.
+            $merged = $incoming;
             $this->stripReadOnly($merged);
             $this->stripPublicUrls($merged);
             $this->normalizePresentDirections($merged);
 
-            // Fields the override leaves out are inherited, so check the override's own values over
-            // what the organization would otherwise run with. The resolver alone would hide a bad value.
+            // Validate the override laid over the inherited values, but report only what the override owns.
             $inherited = $this->settings->resolveSync([], $this->store->adminSync(), $this->store->defaultSync());
-            $errors    = (new SettingsValidator())->syncErrors(array_merge($inherited, $merged));
+            $errors    = $this->overrideErrors($merged, (new SettingsValidator())->syncErrors(array_merge($inherited, $merged)));
             if ($errors !== []) {
                 return response()->json([
                     'message' => 'Some QuickBooks settings are missing or invalid.',
@@ -180,12 +180,48 @@ class SettingController extends QuickbooksController
     }
 
     /**
+     * Errors for the keys the override sets, plus an entity's conflict, reference and direction errors
+     * when that entity's enabled flag is in the override. Inherited problems are not the override's.
+     *
+     * @param array<string, mixed>  $override
+     * @param array<string, string> $errors
+     *
+     * @return array<string, string>
+     */
+    private function overrideErrors(array $override, array $errors): array
+    {
+        foreach (['customer', 'invoice', 'payment', 'wallet'] as $entity) {
+            $key = $entity . '_enabled';
+            if (array_key_exists($key, $override) === false) {
+                continue;
+            }
+            $value = $override[$key];
+            if (is_bool($value) === false && in_array($value, [1, 0, '1', '0', 'true', 'false'], true) === false) {
+                $errors[$key] = 'Choose On or Off.';
+            }
+        }
+
+        $kept = [];
+        foreach ($errors as $key => $message) {
+            $own = array_key_exists($key, $override) === true;
+            if ($own === false && preg_match('/^(customer|invoice|payment|wallet)_(conflict|reference|direction)$/', $key, $match) === 1) {
+                $own = array_key_exists($match[1] . '_enabled', $override) === true;
+            }
+            if ($own === true) {
+                $kept[$key] = $message;
+            }
+        }
+
+        return $kept;
+    }
+
+    /**
      * 'company' (the default) or 'admin'. Anything else is refused.
      */
     private function scope(Request $request): string
     {
-        $scope = (string) $request->input('scope', 'company');
-        if ($scope !== 'company' && $scope !== 'admin') {
+        $scope = $request->input('scope', 'company');
+        if (is_string($scope) === false || ($scope !== 'company' && $scope !== 'admin')) {
             abort(422, 'Unknown QuickBooks settings scope.');
         }
 

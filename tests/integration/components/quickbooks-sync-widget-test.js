@@ -13,19 +13,14 @@ class NotificationsStubService extends Service {
 class FetchStubService extends Service {
     connection = null;
     credentialsConfigured = false;
-    clientId = undefined;
-    secretSet = undefined;
+    legacyKeys = false;
     redirectUri = 'http://localhost:8000/quickbooks/int/v1/oauth/callback';
     posts = [];
 
     async get() {
-        const secretSet = this.secretSet ?? this.credentialsConfigured === true;
-        const clientId = this.clientId ?? (secretSet ? 'client-id' : '');
-
         return {
             connection: this.connection,
-            client_id: clientId,
-            client_secret_set: secretSet,
+            ...(this.legacyKeys ? { client_id: 'client-id', client_secret_set: true } : {}),
             redirect_uri: this.redirectUri,
             credentials_configured: this.credentialsConfigured,
             queue: 0,
@@ -103,12 +98,11 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         assert.dom('[data-test-widget-credentials-missing]').doesNotExist();
 
         this.fetch.credentialsConfigured = false;
-        this.fetch.clientId = 'client-id';
-        this.fetch.secretSet = true;
+        this.fetch.legacyKeys = true;
         this.fetch.redirectUri = 'http://localhost:8000/quickbooks/int/v1/oauth/callback';
         await render(hbs`<Widget::QuickbooksSync />`);
-        assert.dom('[data-test-widget-sync]').isNotDisabled('saved keys enable Sync now when the API URL is localhost');
-        assert.dom('[data-test-widget-credentials-missing]').doesNotExist();
+        assert.dom('[data-test-widget-sync]').isDisabled('only credentials_configured === true enables Sync now');
+        assert.dom('[data-test-widget-credentials-missing]').exists();
     });
 
     test('an operator can sync now', async function (assert) {

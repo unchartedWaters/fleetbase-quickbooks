@@ -312,14 +312,63 @@ test('override false clears the override and the organization inherits again', f
         ->and($data['sync']['interval_minutes'])->toBe(15);
 });
 
-test('a later override merges over the existing one', function () {
+test('a later override replaces the existing one', function () {
     $store = orgApiStore();
     $store->putCompanySync('company-a', ['interval_minutes' => 30]);
     $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
 
-    $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['retry_limit' => 7, 'batch_size' => '']]));
+    $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['retry_limit' => 7, 'batch_size' => '', 'periodic_interval_hours' => null]]));
 
-    expect($store->companySync('company-a'))->toBe(['interval_minutes' => 30, 'retry_limit' => 7]);
+    expect($store->companySync('company-a'))->toBe(['retry_limit' => 7]);
+});
+
+test('an organization that overrides one field follows later global changes to the others', function () {
+    $store = orgApiStore();
+    $org   = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+    $org->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['interval_minutes' => 45]]));
+
+    $store->rows[SettingsKeys::adminSync()] = qbSettings(['interval_minutes' => 15, 'wallet_enabled' => false, 'retry_limit' => 9]);
+    $data                                   = $org->show(orgApiGet())->getData(true);
+
+    expect($store->companySync('company-a'))->toBe(['interval_minutes' => 45])
+        ->and($data['sync']['interval_minutes'])->toBe(45)
+        ->and($data['sync']['retry_limit'])->toBe(9);
+});
+
+test('an inherited legacy conflict value does not block an override that leaves it alone', function () {
+    $store                                  = orgApiStore();
+    $store->rows[SettingsKeys::adminSync()] = qbSettings(['invoice_conflict' => 'report']);
+    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+
+    $ok  = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['interval_minutes' => 20]]));
+    $bad = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['invoice_enabled' => true]]));
+
+    expect($ok->getStatusCode())->toBe(200)
+        ->and($store->companySync('company-a'))->toBe(['interval_minutes' => 20])
+        ->and($bad->getStatusCode())->toBe(422)
+        ->and($bad->getData(true)['errors'])->toHaveKey('invoice_conflict');
+});
+
+test('an enabled flag in an override must be boolean-like', function () {
+    $store      = orgApiStore();
+    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+
+    foreach (['maybe', ['x'], 2] as $value) {
+        $response = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['customer_enabled' => $value]]));
+        expect($response->getStatusCode())->toBe(422)
+            ->and($response->getData(true)['errors'])->toHaveKey('customer_enabled');
+    }
+    foreach ([true, false, 1, 0, 'true', 'false', '1', '0'] as $value) {
+        $response = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['customer_enabled' => $value]]));
+        expect($response->getStatusCode())->toBe(200);
+    }
+});
+
+test('a scope that is not a string is refused', function () {
+    $controller = orgApiController(orgApiStore(), orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+
+    expect(orgApiStatus(fn () => $controller->show(orgApiGet(['scope' => ['company']]))))->toBe(422)
+        ->and(orgApiStatus(fn () => $controller->save(orgApiPost(['scope' => ['company'], 'override' => true, 'sync' => []]))))->toBe(422);
 });
 
 test('a company uuid naming another organization is refused for both scopes', function () {
