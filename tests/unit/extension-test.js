@@ -210,4 +210,45 @@ module('Unit | extension', function (hooks) {
             'component:widget/quickbooks-sync',
         ]);
     });
+
+    test('onEngineLoaded skips a component the engine does not provide', function (assert) {
+        const registrations = [];
+        const app = {
+            hasRegistration() {
+                return false;
+            },
+            register(key) {
+                registrations.push(key);
+            },
+        };
+        const engine = {
+            hasRegistration(key) {
+                return key !== 'component:quickbooks-activity';
+            },
+            factoryFor(key) {
+                assert.notStrictEqual(key, 'component:quickbooks-activity');
+
+                return { class: function QuickbooksComponent() {} };
+            },
+        };
+
+        extension.onEngineLoaded(engine, {}, app);
+
+        assert.false(registrations.includes('component:quickbooks-activity'));
+        assert.strictEqual(registrations.length, 6);
+    });
+
+    test('setupExtension still registers the menus when no widget service is available', function (assert) {
+        const order = [];
+        const menu = {
+            registerHeaderMenuItem: (item) => order.push('header:' + item.title),
+            registerAdminMenuPanel: (title) => order.push('admin-panel:' + title),
+            registerSettingsMenuItem: (item) => order.push('settings-item:' + item.title),
+        };
+        const universe = { getService: (name) => (name === 'menu' ? menu : null) };
+
+        extension.setupExtension({ lookup: () => null }, universe);
+
+        assert.deepEqual(order, ['header:QuickBooks', 'admin-panel:QuickBooks', 'settings-item:Quickbooks Setup', 'settings-item:Quickbooks Activity']);
+    });
 });

@@ -101,3 +101,27 @@ test('an override that matches the global values still counts as an override in 
         ->and($view['can_edit'])->toBeFalse()
         ->and($view['company_sync'])->toBe([]);
 });
+
+test('read-only, public URL and global keys are never stored in an override or shown in the organization view', function () {
+    $store = orgSyncStore();
+    $sync  = orgSyncSettings($store);
+
+    $sync->save('org-a', true, [
+        'interval_minutes'              => 45,
+        'override'                      => false,
+        'sources'                       => ['interval_minutes' => 'company'],
+        'public_receiver_url'           => 'https://evil.example/hook',
+        'webhook_url'                   => 'https://evil.example/hook',
+        'internal_webhook_receiver_url' => 'https://evil.example/hook',
+        'internal_oauth_redirect_url'   => 'https://evil.example/cb',
+        'public_webhook_receiver_url'   => 'https://evil.example/hook',
+        'public_oauth_redirect_url'     => 'https://evil.example/cb',
+        'client_id'                     => 'other-app',
+        'environment'                   => 'sandbox',
+    ]);
+    $view = $sync->view('org-a', true);
+
+    expect($store->companySync('org-a'))->toBe(['interval_minutes' => 45])
+        ->and($view['company_sync'])->toBe(['interval_minutes' => 45])
+        ->and(array_diff(array_keys($store->rows[SettingsKeys::companySync('org-a')]), [...SettingsKeys::SYNC_FIELDS, SettingsKeys::ORGANIZATION_MARKER, 'override']))->toBe([]);
+});
