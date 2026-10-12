@@ -2,6 +2,7 @@
 
 use Fleetbase\Quickbooks\Events\QuickBooksEntityChanged;
 use Fleetbase\Quickbooks\Support\WebhookPaymentInvoices;
+use Fleetbase\Quickbooks\Support\WebhookPaymentLinks;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 
@@ -113,5 +114,53 @@ test('a remote invoice id linked only by another company in the same realm resol
         expect($resolved)->toBe([])
             ->and($calls)->toBe([['company-a', 'realm-1', ['4']]])
             ->and($lookup->reads)->toBe(['realm-1|4' => 'found']);
+    });
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('the stored invoice map reads only this company\'s payment-invoice links for the requested realms', function () {
+    wpiWithDatabase(function () {
+        wpiLinks([
+            ['map-1', 'realm-1', 'payment-invoice', '5', 'Payment', 'inv-x'],
+            ['map-2', 'realm-1', 'payment-invoice', '5', 'Payment', 'inv-x'],
+            ['map-3', 'realm-1', 'payment-invoice', '5', 'Payment', 'inv-y'],
+            ['map-self', 'realm-1', 'payment-invoice', '5', 'Payment', '5'],
+            ['map-other-company', 'realm-1', 'payment-invoice', '5', 'Payment', 'inv-b', 'company-b'],
+            ['map-other-realm', 'realm-2', 'payment-invoice', '5', 'Payment', 'inv-z'],
+            ['map-other-type', 'realm-1', 'invoice', '5', 'Invoice', 'inv-w'],
+        ]);
+        $links = new WebhookPaymentLinks();
+
+        expect($links->storedPaymentInvoices('company-a', ['realm-1' => ['5', '6']]))
+            ->toBe(['realm-1|5' => ['inv-x', 'inv-y']])
+            ->and($links->storedPaymentInvoices('', ['realm-1' => ['5']]))->toBe([]);
+    });
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('invoices without a link in their realm are looked up on file within the company', function () {
+    wpiWithDatabase(function () {
+        $now      = now();
+        $invoices = [
+            ['inv-a', 'company-a'],
+            ['inv-b', 'company-b'],
+            ['inv-c', 'company-a'],
+            ['inv-linked', 'company-a'],
+        ];
+        foreach ($invoices as [$uuid, $company]) {
+            DB::table('ledger_invoices')->insert([
+                'uuid'         => $uuid,
+                'company_uuid' => $company,
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ]);
+        }
+
+        $onFile = (new WebhookPaymentLinks())->invoicesOnFile(
+            'company-a',
+            ['realm-1|4' => ['inv-a', 'inv-b', 'inv-linked']],
+            ['realm-1|5' => ['inv-c']],
+            ['realm-1|inv-linked' => true]
+        );
+
+        expect($onFile)->toBe(['inv-a' => true, 'inv-c' => true]);
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
