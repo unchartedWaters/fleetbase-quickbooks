@@ -8,11 +8,9 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * The global sync row is now only a template. Every organization that is connected, or that already has
- * a sync row, gets its current effective settings stored as its own complete copy, so nothing changes for
- * it at upgrade and later global edits do not reach it. Only sync rows are read or written, never auth rows.
- */
+// The global sync row is now only a template. Every organization that is connected, or that already has
+// a sync row, gets its current effective settings stored as its own complete copy, so nothing changes for
+// it at upgrade and later global edits do not reach it. Only sync rows are read or written, never auth rows.
 return new class extends Migration {
     private const COMPANY_KEY = '/^company\.([^.]+)\.quickbooks\.sync$/';
 
