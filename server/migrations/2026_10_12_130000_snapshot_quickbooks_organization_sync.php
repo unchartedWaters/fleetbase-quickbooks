@@ -53,7 +53,7 @@ return new class extends Migration {
             $effective = SettingsStore::onlySyncFields($resolver->resolve(SettingsStore::syncFromRow($row), $admin, $defaults));
             $copy      = array_merge($effective, [SettingsKeys::ORGANIZATION_MARKER => SettingsKeys::ORGANIZATION_MARKER_VALUE]);
             DB::table('settings')->updateOrInsert(['key' => $key], ['value' => json_encode($copy)]);
-        } catch (\Throwable $exception) {
+        } catch (Throwable $exception) {
             SafeLog::warning('QuickBooks organization sync snapshot failed.', [
                 'company_uuid' => $companyUuid,
                 'exception'    => $exception::class,
