@@ -133,7 +133,7 @@ class SettingsService
     }
 
     /**
-     * Install-wide sync settings, then config defaults. An organization row is unused.
+     * Config defaults, then install-wide sync settings, then the organization override per field.
      *
      * @param array<string, mixed> $company
      * @param array<string, mixed> $admin

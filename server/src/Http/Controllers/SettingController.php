@@ -71,14 +71,19 @@ class SettingController extends QuickbooksController
         parent::__construct($authorizer);
     }
 
+    /**
+     * scope=admin saves the global settings (installation administrator only). scope=company, the
+     * default, saves this organization's sync override and nothing else.
+     */
     public function save(Request $request): JsonResponse
     {
-        // These keys are install-wide (the Intuit app credentials, the webhook verifier and the sync
-        // policy for every organization), so an organization role is not enough to change them.
+        if ($this->scope($request) === 'company') {
+            return $this->saveCompany($request);
+        }
+
         $this->authorizeInstallationAdmin($request);
 
         $companyUuid  = $this->companyUuid($request);
-        $this->rejectCompanyScope($request);
         $authKey      = SettingsKeys::adminAuth();
         $syncKey      = SettingsKeys::adminSync();
         $existingAuth = $this->store->adminAuth();
@@ -109,6 +114,7 @@ class SettingController extends QuickbooksController
             ], 422);
         }
 
+        $before     = $this->effectiveSync($companyUuid, $existingSync);
         $storedAuth = $this->settings->storeAuth($incomingAuth, $existingAuth);
         $storedAuth = $this->applyPublicUrls(
             $this->store->normalizeAuth(array_merge($existingAuth, $storedAuth)),
@@ -118,10 +124,84 @@ class SettingController extends QuickbooksController
         $this->stripReadOnly($mergedSync);
         $this->stripPublicUrls($mergedSync);
         $this->store->put($syncKey, $mergedSync);
-        $this->queueTurnedOnEntities($companyUuid, $this->onlySyncKeys($existingSync), $mergedSync);
+        $this->queueTurnedOnEntities($companyUuid, $before, $this->effectiveSync($companyUuid, $mergedSync));
         $this->applyWebhookSubscriptions($companyUuid);
 
         return response()->json($this->payload($request));
+    }
+
+    /**
+     * Saves or clears this organization's sync override. Global settings are never accepted here.
+     */
+    private function saveCompany(Request $request): JsonResponse
+    {
+        $this->authorizeQuickbooks('quickbooks update settings', $request);
+
+        $companyUuid = $this->companyUuid($request);
+        $extra       = array_diff(array_keys($request->all()), ['scope', 'override', 'sync', 'company_uuid']);
+        if ($extra !== [] || $request->has('override') === false) {
+            return response()->json([
+                'message' => 'An organization can only override the sync options. Global QuickBooks settings are changed on the Admin screen.',
+                'errors'  => ['settings' => 'Send only scope, override, and sync.'],
+            ], 422);
+        }
+
+        $before = $this->effectiveSync($companyUuid, $this->store->adminSync());
+        if ($request->boolean('override') === false) {
+            $this->store->clearCompanySync($companyUuid);
+        } else {
+            $incoming = $request->input('sync', []);
+            $incoming = is_array($incoming) === true ? $incoming : [];
+            $incoming = array_filter(
+                SettingsStore::onlySyncFields($incoming),
+                static fn ($value): bool => $value !== null && $value !== ''
+            );
+            $merged = array_merge($this->store->companySync($companyUuid), $incoming);
+            $this->stripReadOnly($merged);
+            $this->stripPublicUrls($merged);
+            $this->normalizePresentDirections($merged);
+
+            // Fields the override leaves out are inherited, so check the override's own values over
+            // what the organization would otherwise run with. The resolver alone would hide a bad value.
+            $inherited = $this->settings->resolveSync([], $this->store->adminSync(), $this->store->defaultSync());
+            $errors    = (new SettingsValidator())->syncErrors(array_merge($inherited, $merged));
+            if ($errors !== []) {
+                return response()->json([
+                    'message' => 'Some QuickBooks settings are missing or invalid.',
+                    'errors'  => $errors,
+                ], 422);
+            }
+            $this->store->putCompanySync($companyUuid, $merged);
+        }
+
+        $this->queueTurnedOnEntities($companyUuid, $before, $this->effectiveSync($companyUuid, $this->store->adminSync()));
+
+        return response()->json($this->companyPayload($request, $companyUuid));
+    }
+
+    /**
+     * 'company' (the default) or 'admin'. Anything else is refused.
+     */
+    private function scope(Request $request): string
+    {
+        $scope = (string) $request->input('scope', 'company');
+        if ($scope !== 'company' && $scope !== 'admin') {
+            abort(422, 'Unknown QuickBooks settings scope.');
+        }
+
+        return $scope;
+    }
+
+    /**
+     * What this organization actually runs with: its override over the given global row over the defaults.
+     *
+     * @param array<string, mixed> $adminSync
+     *
+     * @return array<string, mixed>
+     */
+    private function effectiveSync(string $companyUuid, array $adminSync): array
+    {
+        return $this->settings->resolveSync($this->store->companySync($companyUuid), $adminSync, $this->store->defaultSync());
     }
 
     /**
@@ -155,22 +235,51 @@ class SettingController extends QuickbooksController
 
     public function show(Request $request): JsonResponse
     {
+        if ($this->scope($request) === 'admin') {
+            // Global settings are for installation administrators only.
+            $this->authorizeInstallationAdmin($request);
+            $this->companyUuid($request);
+
+            return response()->json($this->payload($request));
+        }
+
         $this->authorizeQuickbooks('quickbooks view settings', $request);
 
-        $this->companyUuid($request);
-        $this->rejectCompanyScope($request);
-
-        return response()->json($this->payload($request));
+        return response()->json($this->companyPayload($request, $this->companyUuid($request)));
     }
 
     /**
-     * QuickBooks settings are install-wide. An organization scope is not a settings screen.
+     * The organization view: sync options only. No credential, secret flag, environment or URL.
+     *
+     * @return array<string, mixed>
      */
-    private function rejectCompanyScope(Request $request): void
+    private function companyPayload(Request $request, string $companyUuid): array
     {
-        if ((string) $request->input('scope', 'admin') === 'company') {
-            abort(404, 'QuickBooks settings are saved for the Fleetbase install.');
-        }
+        $row      = $this->store->get(SettingsKeys::companySync($companyUuid));
+        $override  = ($row[SettingsKeys::ORGANIZATION_MARKER] ?? null) === SettingsKeys::ORGANIZATION_MARKER_VALUE && ($row['override'] ?? false) === true;
+        $adminSync = $this->store->adminSync();
+        $auth      = $this->settings->resolveAuth([], $this->store->adminAuth(), $this->store->envAuth());
+
+        return [
+            'can_edit'               => $this->authorizer->can('quickbooks update settings', $request),
+            'override'               => $override,
+            'sync'                   => $this->syncForBrowser($this->effectiveSync($companyUuid, $adminSync)),
+            'global_sync'            => $this->syncForBrowser($this->settings->resolveSync([], $adminSync, $this->store->defaultSync())),
+            'company_sync'           => $this->companySyncForBrowser($this->store->companySync($companyUuid)),
+            'credentials_configured' => trim((string) ($auth['client_id'] ?? '')) !== '' && $this->secretIsSet($auth),
+        ];
+    }
+
+    /**
+     * Only the sync options of a resolved bag.
+     *
+     * @param array<string, mixed> $sync
+     *
+     * @return array<string, mixed>
+     */
+    private function syncForBrowser(array $sync): array
+    {
+        return $this->onlySyncKeys($sync);
     }
 
     /**
@@ -496,7 +605,7 @@ class SettingController extends QuickbooksController
     }
 
     /**
-     * Public URLs belong on the install-wide auth row. A sync payload must not keep them.
+     * Public URLs belong on the global auth row. A sync payload must not keep them.
      *
      * @param array<string, mixed> $bag
      */
@@ -604,6 +713,20 @@ class SettingController extends QuickbooksController
     private static function isPublicHttpsUrl(string $url): bool
     {
         return PublicHttps::isPublicHttpsUrl($url);
+    }
+
+    /**
+     * An override that names a direction as Off or blank means Both. A direction it leaves out is inherited.
+     *
+     * @param array<string, mixed> $sync
+     */
+    private function normalizePresentDirections(array &$sync): void
+    {
+        foreach (self::DIRECTION_FIELDS as $field) {
+            if (array_key_exists($field, $sync) === true && ($sync[$field] === '' || $sync[$field] === 'off' || is_string($sync[$field]) === false)) {
+                $sync[$field] = 'both';
+            }
+        }
     }
 
     /**

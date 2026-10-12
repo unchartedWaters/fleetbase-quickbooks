@@ -12,6 +12,18 @@ class SettingsValidator
      */
     public function errors(array $auth, array $sync): array
     {
+        return array_merge($this->credentialErrors($auth), $this->syncErrors($sync));
+    }
+
+    /**
+     * The global Intuit credentials. Organization overrides never carry these.
+     *
+     * @param array<string, mixed> $auth
+     *
+     * @return array<string, string>
+     */
+    public function credentialErrors(array $auth): array
+    {
         $errors = [];
         if (trim((string) ($auth['client_id'] ?? '')) === '') {
             $errors['client_id'] = 'Enter the Client ID from developer.intuit.com, your app, Keys & credentials.';
@@ -32,6 +44,19 @@ class SettingsValidator
             $errors['client_secret'] = 'Enter the Client secret shown next to the Client ID on Keys & credentials.';
         }
 
+        return $errors;
+    }
+
+    /**
+     * The sync options, for the global row and for an organization override alike.
+     *
+     * @param array<string, mixed> $sync
+     *
+     * @return array<string, string>
+     */
+    public function syncErrors(array $sync): array
+    {
+        $errors = [];
         $this->requireInt($errors, $sync, 'interval_minutes', 1, 'Enter a whole number of minutes, at least 1.');
         $this->requireInt($errors, $sync, 'periodic_interval_hours', 1, 'Enter a whole number of hours, at least 1.');
         // A missing batch_size stays stored. A sent value is the query limit, from 1 to 100.

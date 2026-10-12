@@ -110,7 +110,7 @@ test('an installation administrator can save the install-wide settings and is to
     }
 });
 
-test('settings show tells the console whether the caller can edit and never returns a secret', function () {
+test('global settings show is for installation administrators and never returns a secret', function () {
     session(['company' => 'company-uuid']);
     $cipher                                 = new SecretCipher();
     $store                                  = new MemorySettingsStore();
@@ -126,24 +126,32 @@ test('settings show tells the console whether the caller can edit and never retu
     $controller = accessSettingsController($store, accessOrganizationOperator());
 
     try {
-        $operatorView = $controller->show(InstallAdminRequest::create('/settings', 'GET', ['scope' => 'admin'], false));
-        $adminView    = $controller->show(InstallAdminRequest::create('/settings', 'GET', ['scope' => 'admin'], true));
+        // An organization operator can view settings but only the organization view, never the global one.
+        expect(accessStatus(fn () => $controller->show(InstallAdminRequest::create('/settings', 'GET', ['scope' => 'admin'], false))))->toBe(403);
 
-        foreach ([$operatorView, $adminView] as $view) {
-            $content = (string) $view->getContent();
-            expect($view->getStatusCode())->toBe(200)
-                ->and($content)->not->toContain('super-secret-value')
-                ->and($content)->not->toContain('verifier-token-value')
-                ->and($content)->not->toContain($sealedSecret)
-                ->and($content)->not->toContain($sealedVerifier)
-                ->and($view->getData(true)['auth'])->not->toHaveKey('client_secret')
-                ->and($view->getData(true)['auth'])->not->toHaveKey('webhook_verifier')
-                ->and($view->getData(true)['auth']['client_secret_set'])->toBeTrue()
-                ->and($view->getData(true)['company_auth'])->not->toHaveKey('client_secret');
-        }
+        $adminView = $controller->show(InstallAdminRequest::create('/settings', 'GET', ['scope' => 'admin'], true));
+        $content   = (string) $adminView->getContent();
 
-        expect($operatorView->getData(true)['can_edit'])->toBeFalse()
+        expect($adminView->getStatusCode())->toBe(200)
+            ->and($content)->not->toContain('super-secret-value')
+            ->and($content)->not->toContain('verifier-token-value')
+            ->and($content)->not->toContain($sealedSecret)
+            ->and($content)->not->toContain($sealedVerifier)
+            ->and($adminView->getData(true)['auth'])->not->toHaveKey('client_secret')
+            ->and($adminView->getData(true)['auth'])->not->toHaveKey('webhook_verifier')
+            ->and($adminView->getData(true)['auth']['client_secret_set'])->toBeTrue()
+            ->and($adminView->getData(true)['company_auth'])->not->toHaveKey('client_secret')
             ->and($adminView->getData(true)['can_edit'])->toBeTrue();
+
+        // The organization view an operator does get carries no credential at all.
+        $companyView = $controller->show(InstallAdminRequest::create('/settings', 'GET', [], false));
+        $companyJson = (string) $companyView->getContent();
+
+        expect($companyView->getStatusCode())->toBe(200)
+            ->and($companyView->getData(true)['can_edit'])->toBeFalse()
+            ->and($companyJson)->not->toContain('install-id')
+            ->and($companyJson)->not->toContain($sealedSecret)
+            ->and($companyJson)->not->toContain($sealedVerifier);
     } finally {
         session(['company' => null]);
     }
@@ -198,7 +206,7 @@ test('connect disconnect and sync stay on the per organization permissions', fun
         ->and(accessStatus(fn () => $operator->check('quickbooks reconcile sync', $member)))->toBe(200);
 });
 
-test('the permission schema no longer offers update settings, which nothing checks', function () {
+test('the permission schema offers update settings for organization overrides, and only the administrator policy grants it', function () {
     $schema   = new Quickbooks();
     $settings = [];
     foreach ($schema->resources as $resource) {
@@ -206,12 +214,20 @@ test('the permission schema no longer offers update settings, which nothing chec
             $settings = $resource;
         }
     }
-    $granted = [];
+    $operator      = [];
+    $administrator = [];
     foreach ($schema->policies as $policy) {
-        $granted = array_merge($granted, $policy['permissions']);
+        if ($policy['name'] === 'QuickbooksOperator') {
+            $operator = $policy['permissions'];
+        }
+        if ($policy['name'] === 'QuickbooksAdministrator') {
+            $administrator = $policy['permissions'];
+        }
     }
 
-    expect($settings['remove_actions'])->toContain('update')
-        ->and($granted)->not->toContain('quickbooks update settings')
-        ->and($granted)->toContain('quickbooks view settings');
+    expect($settings['remove_actions'])->not->toContain('update')
+        ->and($administrator)->toContain('quickbooks * settings')
+        ->and($operator)->not->toContain('quickbooks update settings')
+        ->and($operator)->not->toContain('quickbooks * settings')
+        ->and($operator)->toContain('quickbooks view settings');
 });

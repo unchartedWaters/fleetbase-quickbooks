@@ -1,4 +1,5 @@
 <div class="space-y-6">
+    {{#unless @hideConnection}}
     <QuickbooksConnection
         @variant="status"
         @connection={{@connection}}
@@ -9,6 +10,8 @@
         @onDisconnect={{@onDisconnect}}
         @onSync={{@onSync}}
     />
+    {{/unless}}
+    {{#unless @syncOnly}}
     <ContentPanel @title={{t "quickbooks.settings.authentication"}} @open={{true}} @wrapperClass="bordered-classic">
         <InfoBlock @type="info" @icon="circle-info" class="mb-4" data-test-credentials-guidance>
             <div class="font-semibold">{{t "quickbooks.settings.credentials-title"}}</div>
@@ -150,6 +153,7 @@
             </div>
         {{/each}}
     </ContentPanel>
+    {{/unless}}
 
     <ContentPanel @title={{t "quickbooks.settings.schedule"}} @open={{true}} @wrapperClass="bordered-classic">
         {{#each @syncFields key="key" as |field|}}

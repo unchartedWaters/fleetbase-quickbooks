@@ -72,7 +72,7 @@ function securityStatus(callable $action): int
     return 200;
 }
 
-test('install settings are the admin scope and an organization scope is not a settings screen', function () {
+test('global settings are the admin scope and an organization scope only carries sync overrides', function () {
     session(['company' => 'company-uuid']);
     $store               = new MemorySettingsStore();
     $operatorPermissions = [];
@@ -87,23 +87,33 @@ test('install settings are the admin scope and an organization scope is not a se
     );
     $denied      = securitySettingController($store, static fn (): bool => false);
     $companySave = [
-        'scope' => 'company',
+        'scope'    => 'company',
+        'override' => true,
+        'auth'     => ['client_id' => 'x'],
+        'sync'     => ['interval_minutes' => 30],
+    ];
+    $adminSave = [
+        'scope' => 'admin',
         'auth'  => ['client_id' => 'x'],
-        'sync'  => ['override' => true],
+        'sync'  => ['interval_minutes' => 30],
     ];
 
     try {
-        // Saving is for installation administrators, so no organization role carries update settings.
+        // The operator role carries view settings only: no organization save, and no global access.
         expect($operatorPermissions)->not->toContain('quickbooks update settings')
-            ->and(securityStatus(fn () => $operator->show(securityRequest('GET', ['scope' => 'company'], true))))->toBe(404)
             ->and(securityStatus(fn () => $operator->save(securityRequest('POST', $companySave, false))))->toBe(403)
-            ->and(securityStatus(fn () => $operator->save(securityRequest('POST', $companySave, true))))->toBe(404)
+            ->and(securityStatus(fn () => $operator->save(securityRequest('POST', $adminSave, false))))->toBe(403)
             ->and(securityStatus(fn () => $denied->save(securityRequest('POST', $companySave, false))))->toBe(403)
             ->and($store->rows)->toBe([])
             ->and($store->adminAuth())->toBe([])
+            // Auth never travels in the organization scope, even from an installation administrator.
+            ->and($operator->save(securityRequest('POST', $companySave, true))->getStatusCode())->toBe(422)
+            ->and($store->rows)->toBe([])
             ->and(securityStatus(fn () => $denied->show(securityRequest('GET', ['scope' => 'admin'], false))))->toBe(403)
-            ->and(securityStatus(fn () => $operator->show(securityRequest('GET', ['scope' => 'admin'], false))))->toBe(200)
-            ->and(securityStatus(fn () => $denied->show(securityRequest('GET', ['scope' => 'admin'], true))))->toBe(200);
+            ->and(securityStatus(fn () => $operator->show(securityRequest('GET', ['scope' => 'admin'], false))))->toBe(403)
+            ->and(securityStatus(fn () => $denied->show(securityRequest('GET', ['scope' => 'admin'], true))))->toBe(200)
+            ->and(securityStatus(fn () => $operator->show(securityRequest('GET', ['scope' => 'company'], false))))->toBe(200)
+            ->and(securityStatus(fn () => $denied->show(securityRequest('GET', ['scope' => 'company'], false))))->toBe(403);
     } finally {
         session(['company' => null]);
     }
@@ -270,8 +280,8 @@ test('the callback refuses to redirect when only the fleetbase.io default host i
 test('string booleans in sync settings are read as booleans', function () {
     $resolver = new SyncSettingsResolver();
 
-    $off      = $resolver->resolve(['enabled' => true], ['override' => true, 'enabled' => 'false'], ['enabled' => true]);
-    $fallback = $resolver->resolve(['enabled' => '0'], ['override' => true, 'enabled' => 'nonsense'], ['enabled' => true]);
+    $off      = $resolver->resolve([], ['override' => true, 'enabled' => 'false'], ['enabled' => true]);
+    $fallback = $resolver->resolve([], ['override' => true, 'enabled' => 'nonsense'], ['enabled' => true]);
 
     expect($off['enabled'])->toBeFalse()
         ->and($off['sources']['enabled'])->toBe('admin')

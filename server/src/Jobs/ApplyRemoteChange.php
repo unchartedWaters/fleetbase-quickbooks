@@ -153,7 +153,7 @@ class ApplyRemoteChange implements ShouldQueue
         }
 
         $syncSettings = $settings->resolveSync(
-            [],
+            $store->companySync($this->companyUuid),
             $store->adminSync(),
             $store->defaultSync()
         );

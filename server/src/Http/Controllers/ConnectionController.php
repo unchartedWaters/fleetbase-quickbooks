@@ -259,7 +259,7 @@ class ConnectionController extends QuickbooksController
         SyncCompanyBatch::dispatch($companyUuid, 'now');
         // Customers in Data Resolution is the control for copying QuickBooks customers.
         // The sync above usually holds the company lock, so a queued import waits and runs after that lock is released.
-        if ($this->customersEnabled() === true) {
+        if ($this->customersEnabled($companyUuid) === true) {
             ImportCustomers::dispatchAfterLock($companyUuid);
         }
 
@@ -426,7 +426,7 @@ class ConnectionController extends QuickbooksController
     private function queueExistingRecords(string $companyUuid): void
     {
         $resolved = $this->settings->resolveSync(
-            [],
+            $this->store->companySync($companyUuid),
             $this->store->adminSync(),
             $this->store->defaultSync()
         );
@@ -557,9 +557,9 @@ class ConnectionController extends QuickbooksController
      * Connect copies QuickBooks customers only when Customers is on in Data Resolution.
      * A missing value uses the same default as settings: customers stay on.
      */
-    private function customersEnabled(): bool
+    private function customersEnabled(string $companyUuid): bool
     {
-        $resolved = $this->settings->resolveSync([], $this->store->adminSync(), $this->store->defaultSync());
+        $resolved = $this->settings->resolveSync($this->store->companySync($companyUuid), $this->store->adminSync(), $this->store->defaultSync());
 
         return (array_key_exists('customer_enabled', $resolved) === true && $resolved['customer_enabled'] === false) === false;
     }

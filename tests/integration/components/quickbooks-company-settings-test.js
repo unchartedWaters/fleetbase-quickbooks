@@ -1,6 +1,6 @@
 import { module, test } from 'qunit';
 import { setupRenderingTest } from 'dummy/tests/helpers';
-import { click, render, waitFor } from '@ember/test-helpers';
+import { click, fillIn, render, waitFor } from '@ember/test-helpers';
 import { hbs } from 'ember-cli-htmlbars';
 import Service from '@ember/service';
 import ModalsManagerStub from '../../helpers/modals-manager-stub';
@@ -21,23 +21,24 @@ class NotificationsStubService extends Service {
     }
 }
 
+const GLOBAL_SYNC = { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, customer_conflict: 'fleetbase' };
+
 class FetchStubService extends Service {
     postCalls = [];
     posts = [];
-    secretSet = true;
+    credentialsConfigured = true;
     canEdit = true;
+    override = false;
 
     async get(path) {
         if (path === 'settings') {
             return {
                 can_edit: this.canEdit,
-                auth: {
-                    client_id: 'id',
-                    redirect_uri: 'http://localhost:8000/quickbooks/int/v1/oauth/callback',
-                    environment: 'sandbox',
-                    client_secret_set: this.secretSet,
-                },
-                sync: { enabled: true, interval_minutes: 5, batch_size: 100, retry_limit: 5, default_backoff_seconds: 30, override: false },
+                override: this.override,
+                credentials_configured: this.credentialsConfigured,
+                sync: this.override ? { ...GLOBAL_SYNC, interval_minutes: 15 } : GLOBAL_SYNC,
+                global_sync: GLOBAL_SYNC,
+                company_sync: this.override ? { interval_minutes: 15 } : [],
             };
         }
         if (path === 'connection') {
@@ -51,7 +52,14 @@ class FetchStubService extends Service {
         this.postCalls.push(path);
         this.posts.push({ path, body });
         if (path === 'settings') {
-            return { auth: body?.auth ?? {}, sync: body?.sync ?? {} };
+            return {
+                can_edit: true,
+                override: body?.override === true,
+                credentials_configured: true,
+                sync: { ...GLOBAL_SYNC, ...(body?.sync ?? {}) },
+                global_sync: GLOBAL_SYNC,
+                company_sync: body?.sync ?? {},
+            };
         }
 
         return {};
@@ -152,10 +160,6 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-test]').doesNotExist();
         assert.dom().doesNotIncludeText('Import customers');
         assert.dom().doesNotIncludeText('Reconcile');
-        assert.strictEqual(
-            document.querySelector('[data-test-connection-actions]').compareDocumentPosition(document.querySelector("[data-test-field='client_id']")) & Node.DOCUMENT_POSITION_FOLLOWING,
-            Node.DOCUMENT_POSITION_FOLLOWING
-        );
         assert.deepEqual(fetch.posts, []);
 
         await click('[data-test-disconnect]');
@@ -191,10 +195,12 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-reconcile]').doesNotExist();
         assert.dom('[data-test-import]').doesNotExist();
 
-        fetch.secretSet = false;
+        fetch.credentialsConfigured = false;
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
         assert.dom('[data-test-sync-now]').isDisabled();
-        assert.dom('[data-test-credentials-missing]').hasText('Enter Client ID and Client secret on Quickbooks Setup before Sync now.');
+        assert
+            .dom('[data-test-credentials-missing]')
+            .hasText('An installation administrator must enter the QuickBooks Client ID and Client secret on the Admin QuickBooks screen before Sync now.');
         assert.dom('[data-test-disconnect]').isNotDisabled();
     });
 
@@ -277,19 +283,75 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-settings-unavailable]').hasText('QuickBooks settings could not be loaded.');
     });
 
-    test('the form is read only with a note when the caller is not an installation administrator', async function (assert) {
+    test('the organization screen never renders a global setting', async function (assert) {
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        [
+            'client_id',
+            'client_secret',
+            'webhook_verifier',
+            'environment',
+            'redirect_uri',
+            'public_webhook_receiver_url',
+            'internal_webhook_receiver_url',
+            'public_oauth_redirect_url',
+            'internal_oauth_redirect_url',
+        ].forEach((key) => assert.dom(`[data-test-field="${key}"]`).doesNotExist(key));
+        assert.dom('[data-test-credentials-guidance]').doesNotExist();
+        assert.dom().doesNotIncludeText('Authentication');
+        assert.dom('[data-test-settings-scope]').includesText('Schedule');
+        assert.dom('[data-test-settings-scope]').includesText('Data Resolution');
+        assert.dom('[data-test-credentials-not-configured]').doesNotExist();
+    });
+
+    test('without an override the global sync values show read only', async function (assert) {
         const fetch = this.owner.lookup('service:fetch');
-        fetch.canEdit = false;
 
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
-        assert.dom('[data-test-settings-read-only]').includesText('only an installation administrator can change them');
+        assert.dom('[data-test-override]').exists();
+        assert.dom('[data-test-override]').doesNotHaveAttribute('data-disabled');
+        assert.dom('[data-test-inherited-note]').exists();
+        assert.dom('[data-test-sync="interval_minutes"]').hasValue('5');
+        assert.dom('[data-test-sync="interval_minutes"]').isDisabled();
+        assert.dom('[data-test-sync="customer_conflict"]').isDisabled();
+        assert.dom('[data-test-sync="customer_direction"]').isDisabled();
+        assert.dom('[data-test-settings-read-only]').doesNotExist();
+        assert.dom('[data-test-save]', document).isNotDisabled();
+        assert.deepEqual(fetch.postCalls, []);
+    });
+
+    test('turning the override on makes the sync fields editable', async function (assert) {
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        await click('[data-test-override]');
+
+        assert.dom('[data-test-inherited-note]').doesNotExist();
+        assert.dom('[data-test-sync="interval_minutes"]').isNotDisabled();
+        assert.dom('[data-test-sync="interval_minutes"]').hasValue('5');
+        assert.dom('[data-test-sync="customer_direction"]').isNotDisabled();
+    });
+
+    test('an existing override shows its values editable', async function (assert) {
+        this.owner.lookup('service:fetch').override = true;
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        assert.dom('[data-test-inherited-note]').doesNotExist();
+        assert.dom('[data-test-sync="interval_minutes"]').hasValue('15');
+        assert.dom('[data-test-sync="interval_minutes"]').isNotDisabled();
+    });
+
+    test('the form is read only with a note when the caller cannot edit', async function (assert) {
+        const fetch = this.owner.lookup('service:fetch');
+        fetch.canEdit = false;
+        fetch.override = true;
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        assert.dom('[data-test-settings-read-only]').exists();
         assert.dom('[data-test-save]', document).isDisabled();
-        assert.dom('[data-test-field="client_id"]').isDisabled();
-        assert.dom('[data-test-field="environment"]').isDisabled();
-        assert.dom('[data-test-field="client_secret"]').isDisabled();
-        assert.dom('[data-test-field="webhook_verifier"]').isDisabled();
-        assert.dom('[data-test-field="public_webhook_receiver_url"]').isDisabled();
+        assert.dom('[data-test-override]').hasAttribute('data-disabled');
         assert.dom('[data-test-sync="interval_minutes"]').isDisabled();
         assert.dom('[data-test-sync="customer_conflict"]').isDisabled();
         assert.dom('[data-test-sync="customer_direction"]').isDisabled();
@@ -299,59 +361,48 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-sync-now]').isNotDisabled();
     });
 
-    test('an installation administrator sees an editable form without the note', async function (assert) {
+    test('missing global credentials show a note and disable connecting', async function (assert) {
+        const fetch = this.owner.lookup('service:fetch');
+        fetch.credentialsConfigured = false;
+
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
-        assert.dom('[data-test-settings-read-only]').doesNotExist();
-        assert.dom('[data-test-save]', document).isNotDisabled();
-        assert.dom('[data-test-field="client_id"]').isNotDisabled();
-        assert.dom('[data-test-sync="interval_minutes"]').isNotDisabled();
+        assert.dom('[data-test-credentials-not-configured]').includesText('installation administrator must enter the QuickBooks Client ID and Client secret on the Admin QuickBooks screen');
+        assert.dom('[data-test-sync-now]').isDisabled();
     });
 
-    test('a successful settings load posts directions without override', async function (assert) {
+    test('saving without an override posts override false and no auth', async function (assert) {
         const fetch = this.owner.lookup('service:fetch');
 
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
-
-        assert.dom('[data-test-settings-unavailable]').doesNotExist();
-        assert.dom('[data-test-override]').doesNotExist();
-        assert.dom("[data-test-sync='customer_enabled']").isChecked();
         await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
+
         assert.deepEqual(fetch.posts.at(-1), {
             path: 'settings',
-            body: {
-                scope: 'admin',
-                company_uuid: 'company-uuid',
-                auth: {
-                    client_id: 'id',
-                    environment: 'sandbox',
-                    public_webhook_receiver_url: '',
-                    public_oauth_redirect_url: '',
-                },
-                sync: {
-                    interval_minutes: 5,
-                    periodic_interval_hours: 24,
-                    retry_limit: 5,
-                    default_backoff_seconds: 30,
-                    customer_conflict: 'fleetbase',
-                    customer_reference: 'fleetbase',
-                    customer_direction: 'both',
-                    invoice_conflict: 'fleetbase',
-                    invoice_reference: 'fleetbase',
-                    invoice_direction: 'both',
-                    payment_conflict: 'fleetbase',
-                    payment_reference: 'fleetbase',
-                    payment_direction: 'both',
-                    wallet_conflict: 'fleetbase',
-                    wallet_reference: 'fleetbase',
-                    wallet_direction: 'both',
-                    customer_enabled: true,
-                    invoice_enabled: true,
-                    payment_enabled: true,
-                    wallet_enabled: true,
-                },
-            },
+            body: { scope: 'company', company_uuid: 'company-uuid', override: false, sync: {} },
         });
+        assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
+    });
+
+    test('saving with an override posts the sync fields and no auth', async function (assert) {
+        const fetch = this.owner.lookup('service:fetch');
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+        await click('[data-test-override]');
+        await fillIn('[data-test-sync="interval_minutes"]', '15');
+        await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
+
+        const post = fetch.posts.at(-1);
+        assert.strictEqual(post.path, 'settings');
+        assert.deepEqual(Object.keys(post.body).sort(), ['company_uuid', 'override', 'scope', 'sync']);
+        assert.strictEqual(post.body.scope, 'company');
+        assert.strictEqual(post.body.company_uuid, 'company-uuid');
+        assert.true(post.body.override);
+        assert.strictEqual(post.body.sync.interval_minutes, 15);
+        assert.strictEqual(post.body.sync.customer_direction, 'both');
+        assert.strictEqual(post.body.sync.customer_enabled, true);
+        assert.false(Object.hasOwn(post.body, 'auth'));
+        assert.false(Object.hasOwn(post.body.sync, 'client_id'));
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
     });
 });

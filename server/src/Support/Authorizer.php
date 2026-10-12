@@ -31,7 +31,15 @@ class Authorizer
     }
 
     /**
-     * Install-wide settings and the connection test belong to the installation administrator.
+     * Whether the caller holds the permission, without aborting. An installation administrator does.
+     */
+    public function can(string $permission, ?Request $request = null): bool
+    {
+        return $this->isInstallationAdmin($request) === true || $this->granted($permission) === true;
+    }
+
+    /**
+     * Global settings (admin scope) and the connection test belong to the installation administrator.
      * An organization role, even Administrator, is not enough.
      */
     public function checkInstallationAdmin(?Request $request = null): void

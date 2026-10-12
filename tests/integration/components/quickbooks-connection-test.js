@@ -132,7 +132,9 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{false}} @onSync={{this.onSync}} />`);
 
         assert.dom('[data-test-sync-now]').isDisabled();
-        assert.dom('[data-test-credentials-missing]').hasText('Enter Client ID and Client secret on Quickbooks Setup before Sync now.');
+        assert
+            .dom('[data-test-credentials-missing]')
+            .hasText('An installation administrator must enter the QuickBooks Client ID and Client secret on the Admin QuickBooks screen before Sync now.');
         assert.dom('[data-test-sync-denied]').doesNotExist();
         assert.dom('[data-test-connect]').isDisabled();
         assert.dom('[data-test-disconnect]').isNotDisabled();
@@ -325,7 +327,7 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
 
         assert.dom('[data-test-connect]').isDisabled();
         assert.dom('[data-test-disconnect]').isDisabled();
-        assert.dom('[data-test-disconnected]').includesText('Choose Save Changes first');
+        assert.dom('[data-test-disconnected]').includesText('installation administrator must set the QuickBooks credentials');
         assert.dom('[data-test-disconnected]').doesNotIncludeText('Choose Connect to QuickBooks');
         assertConnectionButtons(assert);
 
@@ -340,7 +342,7 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-credentials-missing]').doesNotExist();
         assert.dom('[data-test-connect]').isDisabled();
         assert.dom('[data-test-disconnect]').isNotDisabled();
-        assert.dom('[data-test-reauth]').includesText('Choose Save Changes first');
+        assert.dom('[data-test-reauth]').includesText('installation administrator to set the QuickBooks credentials');
         assert.dom('[data-test-reauth]').doesNotIncludeText('Choose Connect to QuickBooks');
         assertConnectionButtons(assert);
 

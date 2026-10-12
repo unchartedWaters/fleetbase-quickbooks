@@ -165,7 +165,7 @@ test('operator routes stay signed in and the connection test stays on the admin 
     }
 });
 
-test('an operator can read install settings and a user without the permission cannot', function () {
+test('global settings need an installation administrator and the organization view needs view settings', function () {
     session(['company' => 'company-uuid']);
     $store    = new MemorySettingsStore();
     $operator = installSettingsController($store, operatorAuthorizer());
@@ -182,8 +182,14 @@ test('an operator can read install settings and a user without the permission ca
             ]))))->toBe(403)
             ->and($store->rows)->toBe([]);
 
-        $shown = $operator->show(installRequest('/settings', 'GET', false, ['scope' => 'admin']));
+        // An operator may read the organization view but not the global one.
+        expect(installStatus(fn () => $operator->show(installRequest('/settings', 'GET', false, ['scope' => 'admin']))))->toBe(403)
+            ->and(installStatus(fn () => $denied->show(installRequest('/settings', 'GET', false, ['scope' => 'company']))))->toBe(403);
+
+        $shown = $operator->show(installRequest('/settings', 'GET', false, ['scope' => 'company']));
         expect($shown->getStatusCode())->toBe(200)
+            ->and($shown->getData(true)['can_edit'])->toBeFalse()
+            ->and($shown->getData(true))->not->toHaveKey('auth')
             ->and($store->asked)->not->toBe([]);
 
         $adminShown = $admin->show(installRequest('/settings', 'GET', true, ['scope' => 'admin']));
