@@ -130,16 +130,28 @@ test('the stored invoice map reads only this company\'s payment-invoice links fo
         ]);
         $links = new WebhookPaymentLinks();
 
-        expect($links->storedPaymentInvoices('company-a', ['realm-1' => ['5', '6']]))->toBe(['realm-1|5' => ['inv-x', 'inv-y']])
+        expect($links->storedPaymentInvoices('company-a', ['realm-1' => ['5', '6']]))
+            ->toBe(['realm-1|5' => ['inv-x', 'inv-y']])
             ->and($links->storedPaymentInvoices('', ['realm-1' => ['5']]))->toBe([]);
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('invoices without a link in their realm are looked up on file within the company', function () {
     wpiWithDatabase(function () {
-        $now = now();
-        foreach ([['inv-a', 'company-a'], ['inv-b', 'company-b'], ['inv-c', 'company-a'], ['inv-linked', 'company-a']] as [$uuid, $company]) {
-            DB::table('ledger_invoices')->insert(['uuid' => $uuid, 'company_uuid' => $company, 'created_at' => $now, 'updated_at' => $now]);
+        $now      = now();
+        $invoices = [
+            ['inv-a', 'company-a'],
+            ['inv-b', 'company-b'],
+            ['inv-c', 'company-a'],
+            ['inv-linked', 'company-a'],
+        ];
+        foreach ($invoices as [$uuid, $company]) {
+            DB::table('ledger_invoices')->insert([
+                'uuid'         => $uuid,
+                'company_uuid' => $company,
+                'created_at'   => $now,
+                'updated_at'   => $now,
+            ]);
         }
 
         $onFile = (new WebhookPaymentLinks())->invoicesOnFile(
