@@ -16,7 +16,7 @@ class SettingsValidator
     }
 
     /**
-     * The global Intuit credentials. Organization overrides never carry these.
+     * The global Intuit credentials. Organization sync settings never carry these.
      *
      * @param array<string, mixed> $auth
      *
@@ -48,7 +48,7 @@ class SettingsValidator
     }
 
     /**
-     * The sync options, for the global row and for an organization override alike.
+     * The sync options, for the global template and for an organization's own copy alike.
      *
      * @param array<string, mixed> $sync
      *

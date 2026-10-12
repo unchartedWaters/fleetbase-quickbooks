@@ -13,7 +13,7 @@ class SettingsKeys
     public const ORGANIZATION_MARKER_VALUE = 'organization';
 
     /**
-     * Sync options an organization may override. Credentials, the webhook verifier, the
+     * Sync options an organization holds its own copy of. Credentials, the webhook verifier, the
      * environment and the public URLs are global and are never stored on an organization row.
      *
      * @var array<int, string>

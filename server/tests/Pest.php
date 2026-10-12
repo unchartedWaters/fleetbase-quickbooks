@@ -40,6 +40,18 @@ function qbSettings(array $overrides = []): array
     ], $overrides);
 }
 
+/**
+ * An organization sync row as written by a PR #10 era build: marker plus the override flag.
+ *
+ * @param array<string, mixed> $fields
+ *
+ * @return array<string, mixed>
+ */
+function orgRow(array $fields, bool $override = true): array
+{
+    return array_merge($fields, ['scope' => 'organization', 'override' => $override]);
+}
+
 function qbEngine(?FakeQuickBooks $client = null): array
 {
     $client ??= new FakeQuickBooks();

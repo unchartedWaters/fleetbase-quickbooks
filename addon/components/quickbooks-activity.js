@@ -1,7 +1,9 @@
 import Component from '@glimmer/component';
 import { tracked } from '@glimmer/tracking';
+import { guidFor } from '@ember/object/internals';
 import { action } from '@ember/object';
 import { inject as service } from '@ember/service';
+import { runTask } from 'ember-lifeline';
 import { activityRows } from '../utils/activity-view';
 
 const NAMESPACE = 'quickbooks/int/v1';
@@ -43,8 +45,10 @@ export default class QuickbooksActivityComponent extends Component {
     @tracked loadedMeta = null;
     @tracked page = 1;
     @tracked activityLoadFailed = false;
+    @tracked pagerVersion = 0;
 
     requestId = 0;
+    loadFailedId = `${guidFor(this)}-load-failed`;
 
     constructor() {
         super(...arguments);
@@ -115,6 +119,11 @@ export default class QuickbooksActivityComponent extends Component {
         return withPageBounds(this.meta, this.currentPage);
     }
 
+    // Pagination keeps its own page from when it was created, so it is rebuilt after a failed page change.
+    get pagerKeys() {
+        return [this.pagerVersion];
+    }
+
     get showPagination() {
         return Number(this.meta?.last_page) > 1;
     }
@@ -177,10 +186,24 @@ export default class QuickbooksActivityComponent extends Component {
                 return;
             }
 
-            this.loadedBatches = null;
-            this.loadedMeta = null;
+            // Keep the page already on screen so the pager can retry. Only an initial failure has nothing to keep.
+            const pageChange = this.loadedBatches !== null;
+            if (pageChange === false) {
+                this.loadedMeta = null;
+            }
             this.activityLoadFailed = true;
+            this.pagerVersion++;
             this.notifications.serverError(error);
+
+            // Rebuilding the pager removes the button that had focus, so focus moves to the error instead.
+            if (pageChange === true) {
+                // Runs after the render and is cancelled if the component is torn down first.
+                runTask(this, this.focusLoadFailed, 0);
+            }
         }
+    }
+
+    focusLoadFailed() {
+        document.getElementById(this.loadFailedId)?.focus();
     }
 }

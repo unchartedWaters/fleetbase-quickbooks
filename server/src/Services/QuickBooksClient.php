@@ -1303,6 +1303,12 @@ class QuickBooksClient
             $faultCode = isset($fault['code']) === true ? (string) $fault['code'] : null;
         }
 
+        // The OAuth token endpoint answers {"error":"invalid_grant"} with no Fault block. Keep only the short code, never error_description.
+        $oauthError = $response->json('error');
+        if (is_string($oauthError) === true && preg_match('/^[a-z_]{1,40}$/', $oauthError) === 1) {
+            $message .= ': ' . $oauthError;
+        }
+
         throw new QuickBooksException($response->status(), $message, $response->header('Retry-After'), $faultCode);
     }
 

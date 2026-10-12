@@ -2714,17 +2714,24 @@ class FleetbaseDirectory
      */
     private function storePaymentInvoiceRows(array $rows): void
     {
-        $now      = Carbon::now()->toDateTimeString();
-        $existing = [];
-        foreach (array_chunk(array_column($rows, 'local_uuid'), 200) as $chunk) {
-            foreach (Link::query()->where('local_type', 'payment-invoice')->whereIn('local_uuid', $chunk)->get(['uuid', 'company_uuid', 'realm_id', 'local_uuid', 'qbo_id']) as $link) {
-                if (is_object($link) === false) {
-                    continue;
+        $now       = Carbon::now()->toDateTimeString();
+        $existing  = [];
+        $byCompany = [];
+        foreach ($rows as $row) {
+            $byCompany[$row['company_uuid']][] = $row['local_uuid'];
+        }
+        // The company filter lets the (company_uuid, local_type, local_uuid) unique index serve the lookup.
+        foreach ($byCompany as $company => $localUuids) {
+            foreach (array_chunk($localUuids, 200) as $chunk) {
+                foreach (Link::query()->where('company_uuid', (string) $company)->where('local_type', 'payment-invoice')->whereIn('local_uuid', $chunk)->get(['uuid', 'company_uuid', 'realm_id', 'local_uuid', 'qbo_id']) as $link) {
+                    if (is_object($link) === false) {
+                        continue;
+                    }
+                    $existing[(string) $link->company_uuid . '|' . (string) $link->realm_id . '|' . (string) $link->local_uuid] = [
+                        'uuid'   => (string) $link->uuid,
+                        'qbo_id' => (string) $link->qbo_id,
+                    ];
                 }
-                $existing[(string) $link->company_uuid . '|' . (string) $link->realm_id . '|' . (string) $link->local_uuid] = [
-                    'uuid'   => (string) $link->uuid,
-                    'qbo_id' => (string) $link->qbo_id,
-                ];
             }
         }
         $inserts = [];

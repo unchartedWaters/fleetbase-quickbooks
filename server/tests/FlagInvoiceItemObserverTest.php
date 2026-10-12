@@ -19,6 +19,7 @@ beforeEach(function () {
 afterEach(function () {
     resetFlaggedInvoices();
     Container::getInstance()->forgetInstance(FlagInvoiceListener::class);
+    Container::getInstance()->forgetInstance(FleetbaseDirectory::class);
     while (SyncSuppressor::paused() === true) {
         SyncSuppressor::resume();
     }
@@ -98,6 +99,27 @@ test('a line with no invoice uuid does not load a parent', function () {
         ->and($directory->written)->toBe([]);
 });
 
+test('an organization without a connection never loads the invoice', function () {
+    [$observer, $directory]      = itemObserverHarness();
+    $directory->storedConnection = null;
+
+    $observer->created(invoiceLine('inv-1'));
+    $observer->deleted(invoiceLine('inv-1'));
+
+    expect($observer->loads)->toBe(0)
+        ->and($directory->written)->toBe([]);
+});
+
+test('a line carrying its own company uuid is checked without a lookup', function () {
+    [$observer, $directory]      = itemObserverHarness();
+    $directory->storedConnection = null;
+
+    $observer->created(invoiceLine('inv-1', [], 'other-company'));
+
+    expect($observer->companyLookups)->toBe(0)
+        ->and($observer->loads)->toBe(0);
+});
+
 function resetFlaggedInvoices(): void
 {
     FlagInvoiceItemObserver::forget();
@@ -131,10 +153,20 @@ function itemObserverHarness(): array
         }
     };
 
+    Container::getInstance()->instance(FleetbaseDirectory::class, $directory);
     Container::getInstance()->instance(FlagInvoiceListener::class, new FlagInvoiceListener($directory, new SyncFlagger()));
 
     $observer = new class extends FlagInvoiceItemObserver {
         public int $loads = 0;
+
+        public int $companyLookups = 0;
+
+        protected function companyOf(string $invoiceUuid): string
+        {
+            $this->companyLookups++;
+
+            return 'company-uuid';
+        }
 
         protected function loadParent(string $invoiceUuid): ?object
         {
@@ -151,13 +183,13 @@ function itemObserverHarness(): array
     return [$observer, $directory];
 }
 
-function invoiceLine(string $invoiceUuid, array $changed = []): object
+function invoiceLine(string $invoiceUuid, array $changed = [], ?string $companyUuid = null): object
 {
-    return new class($invoiceUuid, $changed) {
+    return new class($invoiceUuid, $changed, $companyUuid) {
         /**
          * @param array<int, string> $changed
          */
-        public function __construct(public string $invoice_uuid, private array $changed)
+        public function __construct(public string $invoice_uuid, private array $changed, public ?string $company_uuid = null)
         {
         }
 

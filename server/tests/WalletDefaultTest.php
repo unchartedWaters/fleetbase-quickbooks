@@ -1,7 +1,6 @@
 <?php
 
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
-use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Support\Authorizer;
@@ -9,6 +8,7 @@ use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
+use Fleetbase\Quickbooks\Tests\Support\CapturedJobs;
 use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 
@@ -29,19 +29,6 @@ function walletConfigDefaults(): array
     }
 
     return $defaults;
-}
-
-function walletQueueDirectory(): FleetbaseDirectory
-{
-    return new class extends FleetbaseDirectory {
-        /** @var array<int, array{0: string, 1: array<string, bool>}> */
-        public array $queued = [];
-
-        public function queueInScope(string $companyUuid, array $enabled): void
-        {
-            $this->queued[] = [$companyUuid, $enabled];
-        }
-    };
 }
 
 test('the shipped default leaves wallet sync off and the other entities on', function () {
@@ -74,37 +61,34 @@ test('a stored wallet switch is kept whichever way it was set', function () {
 });
 
 test('connecting a fresh install does not queue wallets', function () {
-    $directory = walletQueueDirectory();
-    $resolved  = (new SyncSettingsResolver())->resolve([], [], walletConfigDefaults());
+    $resolved = (new SyncSettingsResolver())->resolve([], [], walletConfigDefaults());
 
-    (new SyncFlagger())->queueEnabled($directory, 'company-uuid', $resolved);
-
-    expect($directory->queued)->toBe([
-        ['company-uuid', ['customer' => true, 'invoice' => true, 'wallet' => false]],
-    ]);
+    expect((new SyncFlagger())->enabledEntities($resolved))->toBe(['customer' => true, 'invoice' => true, 'wallet' => false]);
 });
 
-test('turning wallet sync on for the first time queues the wallets', function () {
+test('turning wallet sync on in the global template queues nothing for organizations', function () {
     $store                                  = new MemorySettingsStore();
-    $directory                              = walletQueueDirectory();
     $store->rows[SettingsKeys::adminSync()] = ['interval_minutes' => 5];
     session(['company' => 'company-uuid']);
     $controller = new SettingController(
         new Authorizer(static fn () => true),
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
-        $store,
-        $directory
+        $store
     );
 
     try {
-        $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope' => 'admin',
-            'auth'  => validAuth(),
-            'sync'  => qbSettings(['wallet_enabled' => true]),
-        ]));
+        $saved = null;
+        $jobs  = CapturedJobs::capture(function () use ($controller, &$saved): void {
+            $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
+                'scope' => 'admin',
+                'auth'  => validAuth(),
+                'sync'  => qbSettings(['wallet_enabled' => true]),
+            ]));
+        });
 
+        // The global row is a template: a save changes no organization that has its own copy.
         expect($saved->getStatusCode())->toBe(200)
-            ->and($directory->queued)->toBe([['company-uuid', ['wallet' => true]]]);
+            ->and($jobs)->toBe([]);
     } finally {
         session(['company' => null]);
     }

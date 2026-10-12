@@ -81,10 +81,13 @@ quickbooks:
     save: Save Changes
     saved: QuickBooks settings saved.
     read-only-note: You can view these QuickBooks sync settings, but you do not have permission to change them.
-    override-title: Sync settings
-    override-label: Override the global sync settings
-    override-help: Off, this organization uses the sync settings set by your installation administrator. On, the settings below apply to this organization only.
-    inherited-note: These are the global sync settings. They are read-only until you turn on the override.
+    template-note: These are the current global defaults. They become this organization's own settings when you connect or save.
+    copy-note: Changes to the global defaults do not affect this organization.
+    admin-template-note: These sync settings are only a template. An organization's sync settings are copied from them when it connects, saves or resets its settings. Changing them here has no effect on any organization's sync settings.
+    reset: Reset to global defaults
+    reset-confirm-title: Reset to global defaults?
+    reset-confirm: This replaces this organization's sync settings with a one-time copy of the current global defaults. Later changes to the global defaults will not affect them.
+    reset-done: Sync settings reset to the global defaults.
     credentials-not-configured: An installation administrator must enter the QuickBooks Client ID and Client secret on the Admin QuickBooks screen before this organization can connect.
     authentication: Authentication
     credentials-title: Getting your QuickBooks credentials

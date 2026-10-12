@@ -5,8 +5,9 @@ namespace Fleetbase\Quickbooks\Support;
 class SyncSettingsResolver
 {
     /**
-     * Config defaults, then the install-wide sync row, then the organization override,
-     * per field. A null or empty organization field inherits.
+     * Config defaults, then the global template row, then the organization row,
+     * per field. An organization with its own complete copy sets every field; a null or
+     * empty field (only in rows from older builds) falls back to the template.
      *
      * @param array<string, mixed> $company
      * @param array<string, mixed> $admin

@@ -136,31 +136,8 @@ function qboChangedWithoutVerifier(callable $callback): mixed
     if (class_exists(Cache::class) === true) {
         Cache::flush();
     }
-    $previous  = getenv('QUICKBOOKS_WEBHOOK_VERIFIER');
-    $hadEnv    = array_key_exists('QUICKBOOKS_WEBHOOK_VERIFIER', $_ENV);
-    $hadServer = array_key_exists('QUICKBOOKS_WEBHOOK_VERIFIER', $_SERVER);
-    $env       = $_ENV['QUICKBOOKS_WEBHOOK_VERIFIER'] ?? null;
-    $server    = $_SERVER['QUICKBOOKS_WEBHOOK_VERIFIER'] ?? null;
-    $config    = config('quickbooks.webhook_verifier');
-    putenv('QUICKBOOKS_WEBHOOK_VERIFIER');
-    unset($_ENV['QUICKBOOKS_WEBHOOK_VERIFIER'], $_SERVER['QUICKBOOKS_WEBHOOK_VERIFIER']);
-    config()->set('quickbooks.webhook_verifier', null);
-    try {
-        return $callback();
-    } finally {
-        if ($previous === false) {
-            putenv('QUICKBOOKS_WEBHOOK_VERIFIER');
-        } else {
-            putenv('QUICKBOOKS_WEBHOOK_VERIFIER=' . $previous);
-        }
-        if ($hadEnv === true) {
-            $_ENV['QUICKBOOKS_WEBHOOK_VERIFIER'] = $env;
-        }
-        if ($hadServer === true) {
-            $_SERVER['QUICKBOOKS_WEBHOOK_VERIFIER'] = $server;
-        }
-        config()->set('quickbooks.webhook_verifier', $config);
-    }
+
+    return $callback();
 }
 
 /**

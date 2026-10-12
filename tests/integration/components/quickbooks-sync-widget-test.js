@@ -73,7 +73,7 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
 
     test('sync now stays disabled until QuickBooks is connected and credentials are configured', async function (assert) {
         await render(hbs`<Widget::QuickbooksSync />`);
-        assert.dom('.ledger-widget-subtitle').hasText('Not connected');
+        assert.dom('[data-test-widget-subtitle]').hasText('Not connected');
         assert.dom('[data-test-widget-sync]').isDisabled();
         assert.dom('[data-test-widget-credentials-missing]').doesNotExist();
 
@@ -103,6 +103,16 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         await render(hbs`<Widget::QuickbooksSync />`);
         assert.dom('[data-test-widget-sync]').isDisabled('only credentials_configured === true enables Sync now');
         assert.dom('[data-test-widget-credentials-missing]').exists();
+    });
+
+    test('the widget uses quickbooks classes and no ledger classes', async function (assert) {
+        await render(hbs`<Widget::QuickbooksSync />`);
+
+        assert.dom('.quickbooks-widget').exists();
+        assert.dom('.quickbooks-widget-header').exists();
+        assert.dom('.quickbooks-widget-title').exists();
+        assert.dom('.quickbooks-icon-button').exists();
+        assert.dom('[class*="ledger-"]').doesNotExist();
     });
 
     test('an operator can sync now', async function (assert) {
@@ -143,9 +153,9 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         this.owner.register('service:fetch', FailedSummaryFetchStubService);
         await render(hbs`<Widget::QuickbooksSync />`);
 
-        assert.dom('.ledger-widget-empty').hasText('QuickBooks status is unavailable.');
+        assert.dom('[data-test-widget-empty]').hasText('QuickBooks status is unavailable.');
         assert.dom('[data-test-widget-loading]').doesNotExist();
-        assert.dom('.ledger-widget-subtitle').doesNotExist();
+        assert.dom('[data-test-widget-subtitle]').doesNotExist();
         assert.dom('[data-test-last-sync]').doesNotExist();
         assert.dom('[data-test-sync-queue]').doesNotExist();
         assert.dom().doesNotIncludeText('Not connected');
@@ -160,7 +170,7 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         await render(hbs`<Widget::QuickbooksSync />`);
 
         assert.dom('[data-test-widget-loading]').hasText('Loading QuickBooks status.');
-        assert.dom('.ledger-widget-subtitle').doesNotExist();
+        assert.dom('[data-test-widget-subtitle]').doesNotExist();
         assert.dom('[data-test-last-sync]').doesNotExist();
         assert.dom('[data-test-sync-queue]').doesNotExist();
         assert.dom('[data-test-widget-sync]').doesNotExist();
@@ -177,7 +187,7 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         await settled();
 
         assert.dom('[data-test-widget-loading]').doesNotExist();
-        assert.dom('.ledger-widget-subtitle').hasText('Not connected');
+        assert.dom('[data-test-widget-subtitle]').hasText('Not connected');
         assert.dom('[data-test-last-sync]').hasText('No sync yet');
         assert.dom('[data-test-sync-queue]').hasText('0 waiting');
     });

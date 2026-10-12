@@ -1,7 +1,6 @@
 <?php
 
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
-use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
@@ -9,6 +8,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SettingsValidator;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
+use Fleetbase\Quickbooks\Tests\Support\CapturedJobs;
 use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Support\Facades\Http;
@@ -360,8 +360,6 @@ test('admin connection uses the global secret and ignores an organization row', 
 test('a company scope request is not the global settings screen and shows no credentials', function () {
     $store = new MemorySettingsStore();
     session(['company' => 'company-uuid']);
-    config()->set('quickbooks.client_id', 'env-client');
-    config()->set('quickbooks.client_secret', 'env-secret');
     $controller = new SettingController(
         new Authorizer(static fn () => true),
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
@@ -382,8 +380,6 @@ test('a company scope request is not the global settings screen and shows no cre
 
         expect($company->getStatusCode())->toBe(200)
             ->and($company->getData(true))->not->toHaveKey('auth')
-            ->and($companyJson)->not->toContain('env-client')
-            ->and($companyJson)->not->toContain('env-secret')
             ->and($store->adminAuth())->toBe([])
             ->and($shown['auth']['client_id'])->toBe('')
             ->and($shown['auth']['client_secret_set'])->toBeFalse()
@@ -392,8 +388,6 @@ test('a company scope request is not the global settings screen and shows no cre
             ->and($shown['auth']['sources']['client_secret'])->toBe('none');
     } finally {
         session(['company' => null]);
-        config()->set('quickbooks.client_id', null);
-        config()->set('quickbooks.client_secret', null);
     }
 });
 
@@ -987,80 +981,34 @@ test('sync settings drop keys that are not on the allowlist', function () {
     }
 });
 
-test('saving queues an entity only when its switch is turned on', function () {
-    $store     = new MemorySettingsStore();
-    $directory = new class extends FleetbaseDirectory {
-        /** @var array<int, array{0: string, 1: array<string, bool>}> */
-        public array $queued = [];
-
-        public function queueInScope(string $companyUuid, array $enabled): void
-        {
-            $this->queued[] = [$companyUuid, $enabled];
-        }
-    };
+test('a global save never queues an organization, whichever switch turned on', function () {
+    $store = new MemorySettingsStore();
     session(['company' => 'company-uuid']);
     $controller = new SettingController(
         new Authorizer(static fn () => true),
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
-        $store,
-        $directory
+        $store
     );
     $store->rows[SettingsKeys::adminSync()] = qbSettings([
         'customer_enabled' => false,
         'invoice_enabled'  => false,
-        'wallet_enabled'   => true,
+        'wallet_enabled'   => false,
         'payment_enabled'  => false,
     ]);
 
     try {
-        $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope' => 'admin',
-            'auth'  => validAuth(),
-            'sync'  => qbSettings([
-                'customer_enabled' => true,
-                'invoice_enabled'  => true,
-                'wallet_enabled'   => true,
-                'payment_enabled'  => true,
-            ]),
-        ]));
-        $stayed = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope' => 'admin',
-            'auth'  => validAuth(),
-            'sync'  => qbSettings([
-                'customer_enabled' => true,
-                'invoice_enabled'  => true,
-                'wallet_enabled'   => false,
-                'payment_enabled'  => true,
-            ]),
-        ]));
+        $response = null;
+        $jobs     = CapturedJobs::capture(function () use ($controller, &$response): void {
+            $response = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
+                'scope' => 'admin',
+                'auth'  => validAuth(),
+                'sync'  => qbSettings(['customer_enabled' => true, 'invoice_enabled' => true, 'wallet_enabled' => true, 'payment_enabled' => true]),
+            ]));
+        });
 
-        expect($directory->queued)->toBe([
-            ['company-uuid', ['customer' => true, 'invoice' => true]],
-        ])
-            ->and($stayed->getStatusCode())->toBe(200)
-            ->and($store->rows[SettingsKeys::adminSync()]['wallet_enabled'])->toBeFalse();
-
-        $directory->queued                      = [];
-        $store->rows[SettingsKeys::adminSync()] = qbSettings([
-            'customer_enabled' => true,
-            'invoice_enabled'  => true,
-            'wallet_enabled'   => true,
-            'payment_enabled'  => false,
-        ]);
-        $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope' => 'admin',
-            'auth'  => validAuth(),
-            'sync'  => qbSettings([
-                'customer_enabled' => true,
-                'invoice_enabled'  => true,
-                'wallet_enabled'   => true,
-                'payment_enabled'  => true,
-            ]),
-        ]));
-
-        expect($directory->queued)->toBe([
-            ['company-uuid', ['invoice' => true]],
-        ]);
+        expect($response->getStatusCode())->toBe(200)
+            ->and($jobs)->toBe([])
+            ->and($store->rows[SettingsKeys::adminSync()]['customer_enabled'])->toBeTrue();
     } finally {
         session(['company' => null]);
     }

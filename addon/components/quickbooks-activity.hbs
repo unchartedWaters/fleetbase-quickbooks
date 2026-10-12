@@ -8,6 +8,9 @@
     @panelBodyWrapperClass="min-w-0 max-w-full"
 >
     <section class="quickbooks-activity min-w-0 max-w-full overflow-x-auto" data-test-activity>
+        {{#if this.loadFailed}}
+            <p id={{this.loadFailedId}} class="text-sm text-gray-500 dark:text-gray-400" role="alert" tabindex="-1" data-test-activity-load-failed>{{t "quickbooks.activity.load-failed"}}</p>
+        {{/if}}
         {{#if this.rows.length}}
             <table class="w-full whitespace-nowrap text-sm">
                 <thead>
@@ -50,15 +53,15 @@
                     {{/each}}
                 </tbody>
             </table>
-        {{else if this.loadFailed}}
-            <p class="text-sm text-gray-500" data-test-activity-load-failed>{{t "quickbooks.activity.load-failed"}}</p>
         {{else if this.showEmptyState}}
             <p class="text-sm text-gray-500" data-test-activity-empty>{{t "quickbooks.activity.empty"}}</p>
         {{else if this.isLoading}}
             <p class="text-sm text-gray-500" data-test-activity-loading>{{t "quickbooks.activity.loading"}}</p>
         {{/if}}
         {{#if this.showPagination}}
-            <Pagination @meta={{this.paginationMeta}} @currentPage={{this.currentPage}} @onPageChange={{this.changePage}} />
+            {{#each this.pagerKeys key="@identity"}}
+                <Pagination @meta={{this.paginationMeta}} @currentPage={{this.currentPage}} @onPageChange={{this.changePage}} />
+            {{/each}}
         {{/if}}
     </section>
 </ContentPanel>

@@ -2,13 +2,14 @@
 
 use Fleetbase\Quickbooks\Auth\Schemas\Quickbooks;
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
-use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SettingsService;
+use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
+use Fleetbase\Quickbooks\Tests\Support\CapturedJobs;
 use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -55,26 +56,12 @@ function orgApiAuthorizer(string $policyName): Authorizer
     });
 }
 
-function orgApiDirectory(): FleetbaseDirectory
-{
-    return new class extends FleetbaseDirectory {
-        /** @var array<int, array{0: string, 1: array<string, bool>}> */
-        public array $queued = [];
-
-        public function queueInScope(string $companyUuid, array $enabled): void
-        {
-            $this->queued[] = [$companyUuid, $enabled];
-        }
-    };
-}
-
-function orgApiController(MemorySettingsStore $store, Authorizer $authorizer, ?FleetbaseDirectory $directory = null): SettingController
+function orgApiController(MemorySettingsStore $store, Authorizer $authorizer): SettingController
 {
     return new SettingController(
         $authorizer,
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
-        $store,
-        $directory
+        $store
     );
 }
 
@@ -110,7 +97,7 @@ afterEach(fn () => session(['company' => null]));
 
 test('the company view carries sync options only and never a global setting', function () {
     $store = orgApiStore();
-    $store->putCompanySync('company-a', ['interval_minutes' => 30]);
+    $store->putCompanySync('company-a', qbSettings(['interval_minutes' => 30]));
     $controller = orgApiController($store, orgApiAuthorizer('QuickbooksOperator'));
 
     foreach ([orgApiGet(), orgApiGet(['scope' => 'company'])] as $request) {
@@ -119,19 +106,16 @@ test('the company view carries sync options only and never a global setting', fu
         $data     = $response->getData(true);
 
         expect($response->getStatusCode())->toBe(200)
-            ->and(array_keys($data))->toBe(['can_edit', 'override', 'sync', 'global_sync', 'company_sync', 'credentials_configured'])
+            ->and(array_keys($data))->toBe(['can_edit', 'sync', 'has_copy', 'credentials_configured'])
             ->and($data['can_edit'])->toBeFalse()
-            ->and($data['override'])->toBeTrue()
+            ->and($data['has_copy'])->toBeTrue()
             ->and($data['credentials_configured'])->toBeTrue()
-            ->and($data['company_sync'])->toBe(['interval_minutes' => 30])
-            ->and($data['global_sync']['interval_minutes'])->toBe(15)
-            ->and($data['sync']['interval_minutes'])->toBe(30);
+            ->and($data['sync']['interval_minutes'])->toBe(30)
+            ->and(array_diff(array_keys($data['sync']), SettingsKeys::SYNC_FIELDS))->toBe([]);
 
-        foreach (['client_id', 'client_secret', 'webhook_verifier', 'environment', 'redirect_uri', 'auth', 'sources'] as $key) {
-            expect($json)->not->toContain('"' . $key);
-            foreach (['sync', 'global_sync', 'company_sync'] as $bag) {
-                expect($data[$bag])->not->toHaveKey($key);
-            }
+        foreach (['client_id', 'client_secret', 'webhook_verifier', 'environment', 'redirect_uri', 'auth', 'sources', 'override', 'global_sync', 'company_sync'] as $key) {
+            expect($json)->not->toContain('"' . $key)
+                ->and($data['sync'])->not->toHaveKey($key);
         }
         expect($json)->not->toContain('_url')
             ->and($json)->not->toContain('client_secret_set')
@@ -143,15 +127,15 @@ test('the company view carries sync options only and never a global setting', fu
     }
 });
 
-test('an organization with no override inherits the global sync options exactly', function () {
+test('an organization without a copy reads the current template and has_copy is false', function () {
     $store      = orgApiStore();
     $controller = orgApiController($store, orgApiAuthorizer('QuickbooksOperator'));
     $data       = $controller->show(orgApiGet())->getData(true);
 
-    expect($data['override'])->toBeFalse()
-        ->and($data['company_sync'])->toBe([])
-        ->and($data['sync'])->toBe($data['global_sync'])
-        ->and($data['sync']['interval_minutes'])->toBe(15);
+    expect($data['has_copy'])->toBeFalse()
+        ->and($data['sync']['interval_minutes'])->toBe(15)
+        ->and($data['sync']['wallet_enabled'])->toBeFalse()
+        ->and(array_key_exists(SettingsKeys::companySync('company-a'), $store->rows))->toBeFalse();
 });
 
 test('credentials_configured is false until the global client id and secret are both set', function () {
@@ -184,25 +168,24 @@ test('the schema offers update on settings and only the administrator policy gra
         ->and(orgApiStatus(fn () => $operator->check('quickbooks view settings')))->toBe(200);
 });
 
-test('a QuickbooksOperator cannot save an override and nothing is written', function () {
+test('a QuickbooksOperator cannot save or reset and nothing is written', function () {
     $store      = orgApiStore();
     $before     = $store->rows;
     $controller = orgApiController($store, orgApiAuthorizer('QuickbooksOperator'));
 
-    expect(orgApiStatus(fn () => $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['interval_minutes' => 30]]))))->toBe(403)
-        ->and(orgApiStatus(fn () => $controller->save(orgApiPost(['override' => false]))))->toBe(403)
+    expect(orgApiStatus(fn () => $controller->save(orgApiPost(['scope' => 'company', 'sync' => ['interval_minutes' => 30]]))))->toBe(403)
+        ->and(orgApiStatus(fn () => $controller->save(orgApiPost(['scope' => 'company', 'reset' => true]))))->toBe(403)
         ->and($store->rows)->toBe($before);
 });
 
-test('a QuickbooksAdministrator saves an override that writes only this organizations sync row', function () {
+test('a QuickbooksAdministrator saves a complete copy that writes only this organizations sync row', function () {
     $store      = orgApiStore();
     $before     = $store->rows;
-    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
 
     $response = $controller->save(orgApiPost([
         'scope'        => 'company',
         'company_uuid' => 'company-a',
-        'override'     => true,
         'sync'         => [
             'interval_minutes'            => 30,
             'customer_enabled'            => false,
@@ -214,32 +197,30 @@ test('a QuickbooksAdministrator saves an override that writes only this organiza
     $data = $response->getData(true);
 
     $written = array_diff_key($store->rows, $before);
+    $row     = $store->rows[SettingsKeys::companySync('company-a')];
     expect($response->getStatusCode())->toBe(200)
         ->and(array_keys($written))->toBe([SettingsKeys::companySync('company-a')])
         ->and(array_diff_key($store->rows, $written))->toBe($before)
-        ->and($store->rows[SettingsKeys::companySync('company-a')])->toBe([
-            'interval_minutes'                => 30,
-            'customer_enabled'                => false,
-            SettingsKeys::ORGANIZATION_MARKER => SettingsKeys::ORGANIZATION_MARKER_VALUE,
-            'override'                        => true,
-        ])
-        ->and($data['override'])->toBeTrue()
+        ->and(array_diff(array_keys($row), [...SettingsKeys::SYNC_FIELDS, SettingsKeys::ORGANIZATION_MARKER]))->toBe([])
+        ->and(array_diff(SettingsKeys::SYNC_FIELDS, array_keys($row)))->toBe([])
+        ->and($row['interval_minutes'])->toBe(30)
+        ->and($row['customer_enabled'])->toBeFalse()
+        ->and($row['retry_limit'])->toBe(5)
+        ->and($data['has_copy'])->toBeTrue()
         ->and($data['can_edit'])->toBeTrue()
-        ->and($data['company_sync'])->toBe(['interval_minutes' => 30, 'customer_enabled' => false])
         ->and($data['sync']['interval_minutes'])->toBe(30)
         ->and($data['sync']['customer_enabled'])->toBeFalse()
-        ->and($data['global_sync']['interval_minutes'])->toBe(15)
         ->and((string) $response->getContent())->not->toContain('global-client-id');
 });
 
-test('an installation administrator can save an override without a role', function () {
+test('an installation administrator can save without a role', function () {
     $store      = orgApiStore();
-    $controller = orgApiController($store, new Authorizer(static fn (): bool => false), orgApiDirectory());
+    $controller = orgApiController($store, new Authorizer(static fn (): bool => false));
 
-    $response = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['retry_limit' => 9]], true));
+    $response = $controller->save(orgApiPost(['scope' => 'company', 'sync' => ['retry_limit' => 9]], true));
 
     expect($response->getStatusCode())->toBe(200)
-        ->and($store->companySync('company-a'))->toBe(['retry_limit' => 9]);
+        ->and($store->companySync('company-a')['retry_limit'])->toBe(9);
 });
 
 test('a company save with an auth key or an unknown key is refused and writes nothing', function () {
@@ -253,7 +234,7 @@ test('a company save with an auth key or an unknown key is refused and writes no
         ['environment' => 'sandbox'],
         ['client_secret' => 'x'],
     ] as $extra) {
-        $response = $controller->save(orgApiPost(array_merge(['scope' => 'company', 'override' => true, 'sync' => ['interval_minutes' => 30]], $extra)));
+        $response = $controller->save(orgApiPost(array_merge(['scope' => 'company', 'sync' => ['interval_minutes' => 30]], $extra)));
 
         expect($response->getStatusCode())->toBe(422)
             ->and($response->getData(true)['message'])->toContain('Admin')
@@ -261,21 +242,21 @@ test('a company save with an auth key or an unknown key is refused and writes no
     }
 });
 
-test('a company save without the override flag is refused and writes nothing', function () {
+test('a company save with an override key is refused and writes nothing', function () {
     $store      = orgApiStore();
     $before     = $store->rows;
     $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
 
-    expect($controller->save(orgApiPost(['scope' => 'company', 'sync' => ['interval_minutes' => 30]]))->getStatusCode())->toBe(422)
+    expect($controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['interval_minutes' => 30]]))->getStatusCode())->toBe(422)
         ->and($store->rows)->toBe($before);
 });
 
-test('an invalid override is refused with sync errors and writes nothing', function () {
+test('an invalid save is refused with sync errors and writes nothing', function () {
     $store      = orgApiStore();
     $before     = $store->rows;
     $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
 
-    $response = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['interval_minutes' => 0, 'batch_size' => 500]]));
+    $response = $controller->save(orgApiPost(['scope' => 'company', 'sync' => ['interval_minutes' => 0, 'batch_size' => 500]]));
 
     expect($response->getStatusCode())->toBe(422)
         ->and($response->getData(true)['errors'])->toHaveKeys(['interval_minutes', 'batch_size'])
@@ -286,89 +267,99 @@ test('an invalid override is refused with sync errors and writes nothing', funct
 test('company credentials are never validated at company scope', function () {
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminSync()] = qbSettings();
-    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
 
-    $response = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['interval_minutes' => 20]]));
+    $response = $controller->save(orgApiPost(['scope' => 'company', 'sync' => ['interval_minutes' => 20]]));
 
     expect($response->getStatusCode())->toBe(200)
         ->and($response->getData(true)['credentials_configured'])->toBeFalse();
 });
 
-test('override false clears the override and the organization inherits again', function () {
+test('reset copies the current template into the organization and keeps it separate afterwards', function () {
     $store = orgApiStore();
-    $store->putCompanySync('company-a', ['interval_minutes' => 30]);
-    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+    $store->putCompanySync('company-a', qbSettings(['interval_minutes' => 30]));
+    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
 
-    $response = $controller->save(orgApiPost(['scope' => 'company', 'override' => false, 'sync' => ['interval_minutes' => 99]]));
-    $data     = $response->getData(true);
+    $response                               = $controller->save(orgApiPost(['scope' => 'company', 'reset' => true]));
+    $data                                   = $response->getData(true);
+    $store->rows[SettingsKeys::adminSync()] = qbSettings(['interval_minutes' => 99]);
+    $later                                  = $controller->show(orgApiGet())->getData(true);
 
     expect($response->getStatusCode())->toBe(200)
-        ->and($store->rows[SettingsKeys::companySync('company-a')])->toBe([
-            SettingsKeys::ORGANIZATION_MARKER => SettingsKeys::ORGANIZATION_MARKER_VALUE,
-            'override'                        => false,
-        ])
-        ->and($data['override'])->toBeFalse()
-        ->and($data['company_sync'])->toBe([])
-        ->and($data['sync']['interval_minutes'])->toBe(15);
+        ->and(array_keys($data))->toBe(['can_edit', 'sync', 'has_copy', 'credentials_configured'])
+        ->and($data['has_copy'])->toBeTrue()
+        ->and($data['sync']['interval_minutes'])->toBe(15)
+        ->and($later['sync']['interval_minutes'])->toBe(15)
+        ->and(SettingsStore::isCompleteCopy($store->rows[SettingsKeys::companySync('company-a')]))->toBeTrue();
 });
 
-test('a later override replaces the existing one', function () {
+test('a later save keeps the fields it leaves out', function () {
     $store = orgApiStore();
-    $store->putCompanySync('company-a', ['interval_minutes' => 30]);
-    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+    $store->putCompanySync('company-a', qbSettings(['interval_minutes' => 30]));
+    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
 
-    $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['retry_limit' => 7, 'batch_size' => '', 'periodic_interval_hours' => null]]));
+    $controller->save(orgApiPost(['scope' => 'company', 'sync' => ['retry_limit' => 7, 'batch_size' => '', 'periodic_interval_hours' => null]]));
+    $row = $store->companySync('company-a');
 
-    expect($store->companySync('company-a'))->toBe(['retry_limit' => 7]);
+    expect($row['retry_limit'])->toBe(7)
+        ->and($row['interval_minutes'])->toBe(30)
+        ->and($row['batch_size'])->toBe(100)
+        ->and($row['periodic_interval_hours'])->toBe(24);
 });
 
-test('an organization that overrides one field follows later global changes to the others', function () {
+test('a global edit after the organization saved leaves its settings unchanged', function () {
     $store = orgApiStore();
-    $org   = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
-    $org->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['interval_minutes' => 45]]));
+    $org   = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
+    $org->save(orgApiPost(['scope' => 'company', 'sync' => ['interval_minutes' => 45]]));
+    $copy = $store->rows[SettingsKeys::companySync('company-a')];
 
-    $store->rows[SettingsKeys::adminSync()] = qbSettings(['interval_minutes' => 15, 'wallet_enabled' => false, 'retry_limit' => 9]);
+    $store->rows[SettingsKeys::adminSync()] = qbSettings(['interval_minutes' => 1, 'wallet_enabled' => true, 'retry_limit' => 9, 'customer_conflict' => 'quickbooks']);
     $data                                   = $org->show(orgApiGet())->getData(true);
 
-    expect($store->companySync('company-a'))->toBe(['interval_minutes' => 45])
+    expect($store->rows[SettingsKeys::companySync('company-a')])->toBe($copy)
         ->and($data['sync']['interval_minutes'])->toBe(45)
-        ->and($data['sync']['retry_limit'])->toBe(9);
+        ->and($data['sync']['retry_limit'])->toBe(5)
+        ->and($data['sync']['wallet_enabled'])->toBeFalse()
+        ->and($data['sync']['customer_conflict'])->toBe('fleetbase');
 });
 
-test('an inherited legacy conflict value does not block an override that leaves it alone', function () {
+test('the full set is validated, so a template with a legacy report conflict needs fixing first', function () {
     $store                                  = orgApiStore();
     $store->rows[SettingsKeys::adminSync()] = qbSettings(['invoice_conflict' => 'report']);
-    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
 
-    $ok  = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['interval_minutes' => 20]]));
-    $bad = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['invoice_enabled' => true]]));
+    $blocked = $controller->save(orgApiPost(['scope' => 'company', 'sync' => ['interval_minutes' => 20]]));
 
-    expect($ok->getStatusCode())->toBe(200)
-        ->and($store->companySync('company-a'))->toBe(['interval_minutes' => 20])
-        ->and($bad->getStatusCode())->toBe(422)
-        ->and($bad->getData(true)['errors'])->toHaveKey('invoice_conflict');
+    expect($blocked->getStatusCode())->toBe(422)
+        ->and($blocked->getData(true)['errors'])->toHaveKey('invoice_conflict')
+        ->and(array_key_exists(SettingsKeys::companySync('company-a'), $store->rows))->toBeFalse();
+
+    $fixed = $controller->save(orgApiPost(['scope' => 'company', 'sync' => ['invoice_conflict' => 'fleetbase']]));
+    expect($fixed->getStatusCode())->toBe(200)
+        ->and($store->companySync('company-a')['interval_minutes'])->toBe(5)
+        ->and($store->companySync('company-a')['invoice_conflict'])->toBe('fleetbase');
 });
 
-test('an enabled flag in an override must be boolean-like', function () {
+test('an enabled flag in a save must be boolean-like', function () {
     $store      = orgApiStore();
-    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
 
     foreach (['maybe', ['x'], 2] as $value) {
-        $response = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['customer_enabled' => $value]]));
+        $response = $controller->save(orgApiPost(['scope' => 'company', 'sync' => ['customer_enabled' => $value]]));
         expect($response->getStatusCode())->toBe(422)
             ->and($response->getData(true)['errors'])->toHaveKey('customer_enabled');
     }
     foreach ([true, false, 1, 0, 'true', 'false', '1', '0'] as $value) {
-        $response = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['customer_enabled' => $value]]));
+        $response = $controller->save(orgApiPost(['scope' => 'company', 'sync' => ['customer_enabled' => $value]]));
         expect($response->getStatusCode())->toBe(200);
     }
 });
 
 test('a scope that is not a string is refused', function () {
-    $controller = orgApiController(orgApiStore(), orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+    $controller = orgApiController(orgApiStore(), orgApiAuthorizer('QuickbooksAdministrator'));
 
     expect(orgApiStatus(fn () => $controller->show(orgApiGet(['scope' => ['company']]))))->toBe(422)
-        ->and(orgApiStatus(fn () => $controller->save(orgApiPost(['scope' => ['company'], 'override' => true, 'sync' => []]))))->toBe(422);
+        ->and(orgApiStatus(fn () => $controller->save(orgApiPost(['scope' => ['company'], 'sync' => []]))))->toBe(422);
 });
 
 test('a company uuid naming another organization is refused for both scopes', function () {
@@ -376,7 +367,7 @@ test('a company uuid naming another organization is refused for both scopes', fu
     $before     = $store->rows;
     $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
 
-    expect(orgApiStatus(fn () => $controller->save(orgApiPost(['scope' => 'company', 'company_uuid' => 'company-b', 'override' => true, 'sync' => ['retry_limit' => 7]]))))->toBe(403)
+    expect(orgApiStatus(fn () => $controller->save(orgApiPost(['scope' => 'company', 'company_uuid' => 'company-b', 'sync' => ['retry_limit' => 7]]))))->toBe(403)
         ->and(orgApiStatus(fn () => $controller->show(orgApiGet(['scope' => 'company', 'company_uuid' => 'company-b']))))->toBe(403)
         ->and($store->rows)->toBe($before);
 });
@@ -390,7 +381,7 @@ test('an unknown scope is refused', function () {
 test('the admin scope is for installation administrators only', function () {
     $store      = orgApiStore();
     $before     = $store->rows;
-    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
     $body       = ['scope' => 'admin', 'auth' => ['client_id' => 'hijack'], 'sync' => qbSettings()];
 
     expect(orgApiStatus(fn () => $controller->show(orgApiGet(['scope' => 'admin']))))->toBe(403)
@@ -407,7 +398,7 @@ test('the admin scope is for installation administrators only', function () {
 
 test('the admin scope saves the global rows and never an organization row', function () {
     $store      = orgApiStore();
-    $controller = orgApiController($store, new Authorizer(static fn (): bool => false), orgApiDirectory());
+    $controller = orgApiController($store, new Authorizer(static fn (): bool => false));
 
     $response = $controller->save(orgApiPost([
         'scope' => 'admin',
@@ -422,42 +413,58 @@ test('the admin scope saves the global rows and never an organization row', func
         ->and(array_key_exists(SettingsKeys::companyAuth('company-a'), $store->rows))->toBeFalse();
 });
 
-test('queueing diffs effective settings, so first saving an override equal to inherited on values queues nothing', function () {
+test('queueing diffs effective settings, so first saving values equal to the template queues nothing', function () {
     $store                                  = orgApiStore();
     $store->rows[SettingsKeys::adminSync()] = qbSettings(['customer_enabled' => true, 'invoice_enabled' => true, 'wallet_enabled' => true]);
-    $directory                              = orgApiDirectory();
-    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), $directory);
+    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
 
-    $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => [
-        'customer_enabled' => true,
-        'invoice_enabled'  => true,
-        'wallet_enabled'   => true,
-    ]]));
+    $jobs = CapturedJobs::capture(function () use ($controller): void {
+        $controller->save(orgApiPost(['scope' => 'company', 'sync' => [
+            'customer_enabled' => true,
+            'invoice_enabled'  => true,
+            'wallet_enabled'   => true,
+        ]]));
+    });
 
-    expect($directory->queued)->toBe([]);
+    expect($jobs)->toBe([]);
 });
 
-test('an override that turns an inherited off entity on queues only that entity, and leaving it queues nothing', function () {
+test('turning an entity on queues only that entity, and saving it again or resetting to a template with it on queues nothing', function () {
     $store                                  = orgApiStore();
     $store->rows[SettingsKeys::adminSync()] = qbSettings(['wallet_enabled' => false]);
-    $directory                              = orgApiDirectory();
-    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), $directory);
+    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
 
-    $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['wallet_enabled' => true]]));
-    $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['wallet_enabled' => true]]));
-    $controller->save(orgApiPost(['scope' => 'company', 'override' => false]));
+    $jobs = CapturedJobs::capture(function () use ($controller): void {
+        $controller->save(orgApiPost(['scope' => 'company', 'sync' => ['wallet_enabled' => true]]));
+        $controller->save(orgApiPost(['scope' => 'company', 'sync' => ['wallet_enabled' => true]]));
+        $controller->save(orgApiPost(['scope' => 'company', 'reset' => true]));
+    });
 
-    expect($directory->queued)->toBe([['company-a', ['wallet' => true]]]);
+    expect(CapturedJobs::queued($jobs))->toBe([['company-a', ['wallet' => true]]]);
 });
 
-test('a global save queues by this organizations effective settings, not the raw global row', function () {
+test('a reset that turns an entity on queues it', function () {
+    $store                                  = orgApiStore();
+    $store->rows[SettingsKeys::adminSync()] = qbSettings(['wallet_enabled' => true]);
+    $store->putCompanySync('company-a', qbSettings(['wallet_enabled' => false]));
+    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
+
+    $jobs = CapturedJobs::capture(fn () => $controller->save(orgApiPost(['scope' => 'company', 'reset' => true])));
+
+    expect(CapturedJobs::queued($jobs))->toBe([['company-a', ['wallet' => true]]]);
+});
+
+test('a global save leaves an organization copy unchanged and queues nothing', function () {
     $store                                  = orgApiStore();
     $store->rows[SettingsKeys::adminSync()] = qbSettings(['wallet_enabled' => false]);
-    $store->putCompanySync('company-a', ['wallet_enabled' => true]);
-    $directory  = orgApiDirectory();
-    $controller = orgApiController($store, new Authorizer(static fn (): bool => false), $directory);
+    $store->putCompanySync('company-a', qbSettings(['wallet_enabled' => false]));
+    $controller = orgApiController($store, new Authorizer(static fn (): bool => false));
+    $copy       = $store->rows[SettingsKeys::companySync('company-a')];
 
-    $controller->save(orgApiPost(['scope' => 'admin', 'auth' => [], 'sync' => qbSettings(['wallet_enabled' => true])], true));
+    $jobs = CapturedJobs::capture(function () use ($controller): void {
+        $controller->save(orgApiPost(['scope' => 'admin', 'auth' => [], 'sync' => qbSettings(['wallet_enabled' => true, 'interval_minutes' => 2])], true));
+    });
 
-    expect($directory->queued)->toBe([]);
+    expect($jobs)->toBe([])
+        ->and($store->rows[SettingsKeys::companySync('company-a')])->toBe($copy);
 });

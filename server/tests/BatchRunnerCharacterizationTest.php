@@ -671,6 +671,18 @@ test('a catalog page with a failure keeps the cursor, is still saved, and queues
         ->and(brcDispatched($run['dispatcher']))->toBe([]);
 });
 
+test('a catalog page with a skipped row still commits the cursor and queues the next page', function () {
+    $built                 = brcRunner([], [], ['batch_size' => 2], null, ['c-1', 'c-2', 'c-3']);
+    $built['engine']->work = function (SyncLedger $ledger, string $trigger, int $count): array {
+        return ['trigger' => 'catalog', 'status' => 'finished', 'created' => $count - 1, 'updated' => 0, 'aligned' => 0, 'failed' => 0, 'skipped' => 1];
+    };
+
+    $run = brcRun($built['runner'], 'catalog');
+
+    expect(Cache::get('quickbooks.customer-catalog-after.' . BRC_COMPANY))->toBe('c-2')
+        ->and(brcDispatched($run['dispatcher']))->toBe(['batch:catalog']);
+});
+
 test('a catalog page whose engine throws is still saved under the lock and drops the lease', function () {
     $built                 = brcRunner([], [], ['batch_size' => 2], null, ['c-1', 'c-2', 'c-3']);
     $built['engine']->work = function (): array {

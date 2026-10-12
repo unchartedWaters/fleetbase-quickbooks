@@ -421,8 +421,9 @@ class BatchRunner
     }
 
     /**
-     * A catalog cursor is a page commit marker. Failed, skipped, or halted rows
+     * A catalog cursor is a page commit marker. Failed or halted rows
      * leave it untouched so the whole page is retried from the previous marker.
+     * A skipped row is an intended no-op and does not block the commit.
      *
      * @param array<string, mixed> $batch
      */
@@ -439,8 +440,7 @@ class BatchRunner
 
         return ($batch['status'] ?? null) === 'finished'
             && (int) ($batch['failed'] ?? 0) === 0
-            && (int) ($batch['skipped'] ?? 0) === 0
-            && $completed === $expected;
+            && $completed + (int) ($batch['skipped'] ?? 0) === $expected;
     }
 
     private function reconcileCursorKey(string $companyUuid): string

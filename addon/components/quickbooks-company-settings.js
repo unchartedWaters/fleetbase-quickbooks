@@ -12,8 +12,8 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     @service intl;
 
     @tracked sync = { interval_minutes: 5 };
-    @tracked globalSync = null;
-    @tracked override = false;
+    // Whether this organization already owns a copy of the sync settings. Without one it shows the current global defaults.
+    @tracked hasCopy = false;
     // Whether an installation administrator saved the Client ID and Client secret. Nothing else about them reaches this screen.
     @tracked credentialsConfigured = false;
     // Undefined until the connection request finishes. Null means disconnected.
@@ -48,9 +48,8 @@ export default class QuickbooksCompanySettingsComponent extends Component {
 
     apply(result) {
         this.canEdit = result.can_edit === true;
-        this.override = result.override === true;
+        this.hasCopy = result.has_copy === true;
         this.sync = result.sync ?? this.sync;
-        this.globalSync = result.global_sync ?? null;
         this.credentialsConfigured = result.credentials_configured === true;
     }
 
@@ -79,11 +78,21 @@ export default class QuickbooksCompanySettingsComponent extends Component {
             {
                 scope: 'company',
                 company_uuid: this.currentUser.companyId,
-                override: payload.override === true,
                 sync: payload.sync ?? {},
             },
             { namespace: NAMESPACE }
         );
+        this.apply(result);
+    }
+
+    // Replaces this organization's sync settings with a one-time copy of the current global defaults.
+    @action
+    async reset() {
+        if (this.settingsLoadFailed || !this.settingsLoaded) {
+            return;
+        }
+
+        const result = await this.fetch.post('settings', { scope: 'company', company_uuid: this.currentUser.companyId, reset: true }, { namespace: NAMESPACE });
         this.apply(result);
     }
 
@@ -130,7 +139,8 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     }
 
     get configured() {
-        return this.credentialsConfigured;
+        // Unknown (undefined) until the settings request succeeds, so no screen claims credentials are missing while loading or after a failure.
+        return this.settingsLoaded ? this.credentialsConfigured : undefined;
     }
 
     @action

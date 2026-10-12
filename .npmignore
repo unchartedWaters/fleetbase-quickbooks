@@ -17,7 +17,6 @@
 /.github/
 /.gitignore
 /.prettierignore
-/.prettierrc.js
 /.stylelintignore
 /.stylelintrc.js
 /.template-lintrc.js

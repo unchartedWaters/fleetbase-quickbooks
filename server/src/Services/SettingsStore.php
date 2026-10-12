@@ -116,11 +116,7 @@ class SettingsStore
     public function envAuth(): array
     {
         return [
-            'client_id'        => (string) config('quickbooks.client_id', ''),
-            'client_secret'    => (string) config('quickbooks.client_secret', ''),
-            'redirect_uri'     => (string) config('quickbooks.redirect_uri', ''),
-            'environment'      => $this->configuredEnvironment(),
-            'webhook_verifier' => $this->envWebhookVerifier(),
+            'environment' => $this->configuredEnvironment(),
         ];
     }
 
@@ -139,44 +135,61 @@ class SettingsStore
     }
 
     /**
-     * The Intuit webhook verifier. Config wins when it is set; otherwise the
-     * process environment QUICKBOOKS_WEBHOOK_VERIFIER.
-     */
-    public function envWebhookVerifier(): string
-    {
-        $configured = config('quickbooks.webhook_verifier');
-        if (is_string($configured) === true && $configured !== '') {
-            return $configured;
-        }
-
-        foreach ([
-            getenv('QUICKBOOKS_WEBHOOK_VERIFIER'),
-            $_ENV['QUICKBOOKS_WEBHOOK_VERIFIER'] ?? null,
-            $_SERVER['QUICKBOOKS_WEBHOOK_VERIFIER'] ?? null,
-        ] as $value) {
-            if (is_string($value) === true && $value !== '') {
-                return $value;
-            }
-        }
-
-        return '';
-    }
-
-    /**
+     * This organization's own sync settings, or [] while it has none (it then reads the template).
+     *
      * @return array<string, mixed>
      */
     public function companySync(string $companyUuid): array
     {
-        $stored = $this->get(SettingsKeys::companySync($companyUuid));
-        if (($stored[SettingsKeys::ORGANIZATION_MARKER] ?? null) !== SettingsKeys::ORGANIZATION_MARKER_VALUE || ($stored['override'] ?? false) !== true) {
-            return [];
-        }
-
-        return self::onlySyncFields($stored);
+        return self::syncFromRow($this->get(SettingsKeys::companySync($companyUuid)));
     }
 
     /**
-     * Saves this organization's sync override. Only sync options are kept.
+     * What a stored organization row means. A complete copy is the organization's own settings.
+     * A legacy row (override=true) keeps its fields and inherits the rest; any other legacy row reads as none.
+     *
+     * @param array<string, mixed> $row
+     *
+     * @return array<string, mixed>
+     */
+    public static function syncFromRow(array $row): array
+    {
+        if (($row[SettingsKeys::ORGANIZATION_MARKER] ?? null) !== SettingsKeys::ORGANIZATION_MARKER_VALUE) {
+            return [];
+        }
+        if (self::isCompleteCopy($row) === false && ($row['override'] ?? false) !== true) {
+            return [];
+        }
+
+        return self::onlySyncFields($row);
+    }
+
+    /**
+     * A complete copy carries the organization marker and every sync field with a real value.
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function isCompleteCopy(array $row): bool
+    {
+        if (($row[SettingsKeys::ORGANIZATION_MARKER] ?? null) !== SettingsKeys::ORGANIZATION_MARKER_VALUE) {
+            return false;
+        }
+        foreach (SettingsKeys::SYNC_FIELDS as $field) {
+            if (isset($row[$field]) === false || $row[$field] === '') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function hasCompanyCopy(string $companyUuid): bool
+    {
+        return self::isCompleteCopy($this->get(SettingsKeys::companySync($companyUuid)));
+    }
+
+    /**
+     * Saves this organization's complete sync settings. Only sync options are kept.
      *
      * @param array<string, mixed> $sync
      */
@@ -184,19 +197,7 @@ class SettingsStore
     {
         $this->put(SettingsKeys::companySync($companyUuid), array_merge(self::onlySyncFields($sync), [
             SettingsKeys::ORGANIZATION_MARKER => SettingsKeys::ORGANIZATION_MARKER_VALUE,
-            'override'                        => true,
         ]));
-    }
-
-    /**
-     * Returns this organization to the global sync defaults.
-     */
-    public function clearCompanySync(string $companyUuid): void
-    {
-        $this->put(SettingsKeys::companySync($companyUuid), [
-            SettingsKeys::ORGANIZATION_MARKER => SettingsKeys::ORGANIZATION_MARKER_VALUE,
-            'override'                        => false,
-        ]);
     }
 
     /**

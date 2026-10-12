@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Observers;
 
 use Fleetbase\Quickbooks\Listeners\FlagInvoiceListener;
+use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Support\FlagGuard;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Container\Container;
@@ -72,6 +73,16 @@ class FlagInvoiceItemObserver
                 return;
             }
 
+            // Untracked organizations stop here, before the full invoice and its relations are read.
+            $companyUuid = (string) ($item->company_uuid ?? '');
+            if ($companyUuid === '') {
+                $companyUuid = $this->companyOf($invoiceUuid);
+            }
+            $directory = Container::getInstance()->make(FleetbaseDirectory::class);
+            if ($companyUuid === '' || $directory instanceof FleetbaseDirectory === false || $directory->tracks($companyUuid) === false) {
+                return;
+            }
+
             $invoice = $this->loadParent($invoiceUuid);
             if (is_object($invoice) === false) {
                 return;
@@ -123,6 +134,16 @@ class FlagInvoiceItemObserver
         $events->listen(JobFailed::class, $forget);
         $events->listen(Looping::class, $forget);
         self::$jobHooked = true;
+    }
+
+    protected function companyOf(string $invoiceUuid): string
+    {
+        $class = 'Fleetbase\\Ledger\\Models\\Invoice';
+        if (class_exists($class) === false) {
+            return '';
+        }
+
+        return (string) $class::withoutEagerLoads()->where('uuid', $invoiceUuid)->value('company_uuid');
     }
 
     protected function loadParent(string $invoiceUuid): ?object

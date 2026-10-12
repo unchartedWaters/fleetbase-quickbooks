@@ -5,32 +5,33 @@
     {{#if @settingsLoadFailed}}
         <p class="text-sm text-gray-500" data-test-settings-unavailable>{{t "quickbooks.connection.settings-unavailable"}}</p>
     {{/if}}
-    {{#if this.readOnly}}
+    {{#if this.showReadOnlyNote}}
         <InfoBlock @type="info" @icon="circle-info" data-test-settings-read-only>{{t "quickbooks.settings.read-only-note"}}</InfoBlock>
+    {{/if}}
+    {{#if @showTemplateNote}}
+        <InfoBlock @type="warning" @icon="triangle-exclamation" class="font-semibold" data-test-admin-template-note>{{t "quickbooks.settings.admin-template-note"}}</InfoBlock>
     {{/if}}
     {{#if this.syncOnly}}
         {{#if (eq @configured false)}}
             <InfoBlock @type="info" @icon="circle-info" data-test-credentials-not-configured>{{t "quickbooks.settings.credentials-not-configured"}}</InfoBlock>
         {{/if}}
-        <ContentPanel @title={{t "quickbooks.settings.override-title"}} @open={{true}} @wrapperClass="bordered-classic">
-            <Toggle
-                @isToggled={{this.overrideOn}}
-                @onToggle={{this.setOverride}}
-                @disabled={{this.readOnly}}
-                @label={{t "quickbooks.settings.override-label"}}
-                aria-label={{t "quickbooks.settings.override-label"}}
-                data-test-override
-            />
-            <p class="mt-1 text-xs text-gray-400" data-test-override-help>{{t "quickbooks.settings.override-help"}}</p>
-            {{#if this.inherited}}
-                <InfoBlock @type="info" @icon="circle-info" class="mt-3" data-test-inherited-note>{{t "quickbooks.settings.inherited-note"}}</InfoBlock>
+        {{#if this.showCopyNote}}
+            {{#if this.hasCopy}}
+                <InfoBlock @type="info" @icon="circle-info" data-test-copy-note>{{t "quickbooks.settings.copy-note"}}</InfoBlock>
+            {{else}}
+                <InfoBlock @type="info" @icon="circle-info" data-test-template-note>{{t "quickbooks.settings.template-note"}}</InfoBlock>
             {{/if}}
-        </ContentPanel>
+        {{/if}}
+        {{#unless this.readOnly}}
+            <div>
+                <Button @type="default" @size="sm" @icon="rotate-left" @text={{t "quickbooks.settings.reset"}} @disabled={{this.resetDisabled}} @onClick={{this.reset}} data-test-reset />
+            </div>
+        {{/unless}}
     {{/if}}
     <QuickbooksSettingsFields
         @syncOnly={{this.syncOnly}}
         @hideConnection={{@hideConnection}}
-        @readOnly={{this.fieldsReadOnly}}
+        @readOnly={{this.readOnly}}
         @errors={{this.errors}}
         @connection={{@connection}}
         @loadFailed={{@loadFailed}}

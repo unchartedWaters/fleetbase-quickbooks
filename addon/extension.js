@@ -42,7 +42,7 @@ function registerHeaderItem(menuService, app) {
     );
 }
 
-// Global settings (Client ID, secret, URLs, default sync options) are edited here by installation administrators only.
+// Global settings (Client ID, secret, URLs, the sync template) are edited here by installation administrators only.
 function registerAdminSettings(menuService) {
     menuService.registerAdminMenuPanel(
         'QuickBooks',

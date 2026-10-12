@@ -146,47 +146,72 @@ const URL_COPY = {
 export default class QuickbooksSettingsComponent extends Component {
     @service notifications;
     @service intl;
+    @service modalsManager;
 
     @tracked draft = {};
     @tracked errors = {};
     @tracked saving = false;
-    // null until the switch is touched. Then the switch follows the loaded override.
-    @tracked overrideChoice = null;
 
     // The organization screen edits sync options only: no credentials, no URLs.
     get syncOnly() {
         return this.args.syncOnly === true;
     }
 
-    get overrideOn() {
-        return this.overrideChoice ?? this.args.override === true;
-    }
-
-    // An organization without an override shows the global values and cannot edit them.
-    get inherited() {
-        return this.syncOnly && !this.overrideOn;
-    }
-
-    get fieldsReadOnly() {
-        return this.readOnly || this.inherited;
-    }
-
     get syncSource() {
-        return this.inherited ? (this.args.globalSync ?? this.args.sync) : this.args.sync;
+        return this.args.sync;
+    }
+
+    // The note only describes a finished, successful load.
+    get showCopyNote() {
+        return this.syncOnly && this.args.settingsLoaded === true && this.args.settingsLoadFailed !== true;
+    }
+
+    get hasCopy() {
+        return this.args.hasCopy === true;
+    }
+
+    get resetDisabled() {
+        return this.args.settingsLoadFailed === true || this.args.settingsLoaded !== true || this.saving || this.args.busy === true || this.readOnly;
     }
 
     @action
-    setOverride(on) {
-        this.overrideChoice = on === true;
-        this.primaryTouched.clear();
-        this.draft = {};
-        this.errors = {};
+    reset() {
+        if (this.resetDisabled) {
+            return;
+        }
+
+        this.modalsManager.confirm({
+            title: this.intl.t('quickbooks.settings.reset-confirm-title'),
+            body: this.intl.t('quickbooks.settings.reset-confirm'),
+            acceptButtonText: this.intl.t('quickbooks.settings.reset'),
+            confirm: () => this.performReset(),
+        });
+    }
+
+    async performReset() {
+        this.saving = true;
+        try {
+            await this.args.onReset?.();
+            this.notifications.success(this.intl.t('quickbooks.settings.reset-done'));
+            this.primaryTouched.clear();
+            this.draft = {};
+            this.errors = {};
+        } catch (error) {
+            this.notifications.serverError(error);
+        } finally {
+            this.saving = false;
+        }
     }
 
     // Saving is for installation administrators, so the server's can_edit is the only answer.
     // A missing value (a host that does not pass it) leaves the form editable and the server decides.
     get readOnly() {
         return this.args.canEdit === false;
+    }
+
+    // The note only describes a finished, successful load. Loading or a failed load must not claim the caller lacks permission.
+    get showReadOnlyNote() {
+        return this.args.settingsLoaded === true && this.readOnly;
     }
 
     get saveDisabled() {
@@ -278,7 +303,7 @@ export default class QuickbooksSettingsComponent extends Component {
 
     present(key) {
         const source = AUTH_FIELDS.includes(key) ? this.args.settings : this.syncSource;
-        const state = fieldState({ ...source, sources: source?.sources, scope: 'company' }, key);
+        const state = fieldState(source, key);
         this.applyPresentDefault(state, key);
         this.applyPresentDraft(state, key);
 
@@ -428,7 +453,7 @@ export default class QuickbooksSettingsComponent extends Component {
         this.saving = true;
         try {
             if (this.syncOnly) {
-                await this.args.onSave?.({ scope: 'company', override: this.overrideOn, sync: this.overrideOn ? this.changedFromGlobal(sync) : {} });
+                await this.args.onSave?.({ scope: 'company', sync });
             } else {
                 await this.args.onSave?.({ scope: 'company', auth, sync });
             }
@@ -436,7 +461,6 @@ export default class QuickbooksSettingsComponent extends Component {
             this.primaryTouched.clear();
             this.draft = {};
             this.errors = {};
-            this.overrideChoice = null;
         } catch (error) {
             const serverErrors = error?.errors;
             if (serverErrors && typeof serverErrors === 'object' && !Array.isArray(serverErrors)) {
@@ -448,41 +472,6 @@ export default class QuickbooksSettingsComponent extends Component {
         } finally {
             this.saving = false;
         }
-    }
-
-    // The server stores exactly what an override sends, so send only the fields that differ from the global value. The rest keep inheriting.
-    changedFromGlobal(sync) {
-        const global = this.args.globalSync;
-        if (!global) {
-            return sync;
-        }
-
-        const changed = {};
-        Object.keys(sync).forEach((key) => {
-            if (String(sync[key] ?? '') !== String(this.globalValue(global, key) ?? '')) {
-                changed[key] = sync[key];
-            }
-        });
-
-        return changed;
-    }
-
-    // The global value after the same defaults and normalization the form applies to its own fields.
-    globalValue(global, key) {
-        const state = fieldState({ ...global, sources: global.sources, scope: 'company' }, key);
-        this.applyPresentDefault(state, key);
-        const value = state.value;
-        if (key.endsWith('_direction')) {
-            return normalizeSyncDirection(value);
-        }
-        if (key.endsWith('_enabled')) {
-            return !(value === false || value === 'false' || value === 0 || value === '0');
-        }
-        if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) {
-            return Number(value);
-        }
-
-        return value;
     }
 
     buildAuth() {

@@ -2,12 +2,12 @@
 
 namespace Fleetbase\Quickbooks\Services;
 
-use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SettingsValidator;
 
 /**
- * An organization's sync override over the global sync options. Global settings (credentials, verifier,
- * environment, URLs) are never read from or written to an organization here.
+ * An organization's own copy of the sync options. The global sync row is only a template: it is copied
+ * to an organization when it connects, saves, or resets, and later global edits do not change the copy.
+ * Global settings (credentials, verifier, environment, URLs) are never read from or written to an organization here.
  */
 class OrganizationSyncSettings
 {
@@ -21,7 +21,7 @@ class OrganizationSyncSettings
     }
 
     /**
-     * What this organization runs with: its override over the global row over the defaults.
+     * What this organization runs with: its own copy, or the template while it has none.
      *
      * @return array<string, mixed>
      */
@@ -35,34 +35,46 @@ class OrganizationSyncSettings
     }
 
     /**
-     * Saves or clears the override and returns validation errors. Nothing is written when there are errors.
-     * The override is replaced by exactly the non-empty sync fields sent. Anything left out inherits the global value.
+     * Gives the organization its own copy of its current effective settings. An existing copy is kept.
+     */
+    public function ensureCopy(string $companyUuid): void
+    {
+        if ($this->store->hasCompanyCopy($companyUuid) === true) {
+            return;
+        }
+        $this->store->putCompanySync($companyUuid, SettingsStore::onlySyncFields($this->effective($companyUuid)));
+    }
+
+    /**
+     * Saves the effective settings with the submitted non-empty sync fields applied, as a complete copy.
+     * Returns validation errors; nothing is written when there are errors.
      *
      * @return array<string, string>
      */
-    public function save(string $companyUuid, bool $override, mixed $sync): array
+    public function save(string $companyUuid, mixed $sync): array
     {
-        if ($override === false) {
-            $this->store->clearCompanySync($companyUuid);
-
-            return [];
-        }
-
         $incoming = array_filter(
             SettingsStore::onlySyncFields(is_array($sync) === true ? $sync : []),
             static fn ($value): bool => $value !== null && $value !== ''
         );
         $this->normalizePresentDirections($incoming);
 
-        // Validate the override laid over the inherited values, but report only what the override owns.
-        $merged = array_merge($this->globalSync(), $incoming);
-        $errors = $this->overrideErrors($incoming, (new SettingsValidator())->syncErrors($merged));
+        $full   = array_merge(SettingsStore::onlySyncFields($this->effective($companyUuid)), $incoming);
+        $errors = array_merge($this->enabledErrors($incoming), (new SettingsValidator())->syncErrors($full));
         if ($errors !== []) {
             return $errors;
         }
-        $this->store->putCompanySync($companyUuid, $incoming);
+        $this->store->putCompanySync($companyUuid, $full);
 
         return [];
+    }
+
+    /**
+     * Replaces the organization's settings with a one-time copy of the current template.
+     */
+    public function reset(string $companyUuid): void
+    {
+        $this->store->putCompanySync($companyUuid, $this->template());
     }
 
     /**
@@ -72,69 +84,56 @@ class OrganizationSyncSettings
      */
     public function view(string $companyUuid, bool $canEdit): array
     {
-        $row      = $this->store->get(SettingsKeys::companySync($companyUuid));
-        $marked   = ($row[SettingsKeys::ORGANIZATION_MARKER] ?? null) === SettingsKeys::ORGANIZATION_MARKER_VALUE;
         $auth     = $this->settings->resolveAuth([], $this->store->adminAuth(), $this->store->envAuth());
         $secret   = $auth['client_secret'] ?? null;
         $clientId = trim((string) ($auth['client_id'] ?? ''));
 
         return [
             'can_edit'               => $canEdit,
-            'override'               => $marked && ($row['override'] ?? false) === true,
             'sync'                   => SettingsStore::onlySyncFields($this->effective($companyUuid)),
-            'global_sync'            => SettingsStore::onlySyncFields($this->globalSync()),
-            'company_sync'           => $this->overrideForBrowser($this->store->companySync($companyUuid)),
+            'has_copy'               => $this->store->hasCompanyCopy($companyUuid),
             'credentials_configured' => $clientId !== '' && is_string($secret) === true && trim($secret) !== '',
         ];
     }
 
     /**
+     * The global sync row over the defaults: what a new copy starts from.
+     *
      * @return array<string, mixed>
      */
-    private function globalSync(): array
+    private function template(): array
     {
-        return $this->settings->resolveSync([], $this->store->adminSync(), $this->store->defaultSync());
+        return SettingsStore::onlySyncFields(
+            $this->settings->resolveSync([], $this->store->adminSync(), $this->store->defaultSync())
+        );
     }
 
     /**
-     * Errors for the keys the override sets, plus an entity's conflict, reference and direction errors
-     * when that entity's enabled flag is in the override. Inherited problems are not the override's.
+     * An enabled flag that was sent must be boolean-like.
      *
-     * @param array<string, mixed>  $override
-     * @param array<string, string> $errors
+     * @param array<string, mixed> $incoming
      *
      * @return array<string, string>
      */
-    private function overrideErrors(array $override, array $errors): array
+    private function enabledErrors(array $incoming): array
     {
+        $errors = [];
         foreach (self::ENTITIES as $entity) {
             $key = $entity . '_enabled';
-            if (array_key_exists($key, $override) === false) {
+            if (array_key_exists($key, $incoming) === false) {
                 continue;
             }
-            $value = $override[$key];
+            $value = $incoming[$key];
             if (is_bool($value) === false && in_array($value, [1, 0, '1', '0', 'true', 'false'], true) === false) {
                 $errors[$key] = 'Choose On or Off.';
             }
         }
 
-        $kept = [];
-        foreach ($errors as $key => $message) {
-            $own         = array_key_exists($key, $override) === true;
-            $entityField = '/^(customer|invoice|payment|wallet)_(conflict|reference|direction)$/';
-            if ($own === false && preg_match($entityField, $key, $match) === 1) {
-                $own = array_key_exists($match[1] . '_enabled', $override) === true;
-            }
-            if ($own === true) {
-                $kept[$key] = $message;
-            }
-        }
-
-        return $kept;
+        return $errors;
     }
 
     /**
-     * An override that names a direction as Off or blank means Both. A direction it leaves out is inherited.
+     * A direction the submission sets to off or blank means Both.
      *
      * @param array<string, mixed> $sync
      */
@@ -149,18 +148,5 @@ class OrganizationSyncSettings
                 $sync[$field] = 'both';
             }
         }
-    }
-
-    /**
-     * @param array<string, mixed> $sync
-     *
-     * @return array<string, mixed>
-     */
-    private function overrideForBrowser(array $sync): array
-    {
-        $sync = SettingsStore::onlySyncFields($sync);
-        $this->normalizePresentDirections($sync);
-
-        return $sync;
     }
 }

@@ -60,17 +60,19 @@ class SyncFlagger
     }
 
     /**
-     * Queue in-scope rows for each entity that is turned on.
+     * The entities whose switch is on, keyed for FleetbaseDirectory::queueInScope.
      *
      * @param array<string, mixed> $settings
+     *
+     * @return array<string, bool>
      */
-    public function queueEnabled(FleetbaseDirectory $directory, string $companyUuid, array $settings): void
+    public function enabledEntities(array $settings): array
     {
-        $directory->queueInScope($companyUuid, [
+        return [
             'customer' => $this->entityOn($settings, 'customer_enabled'),
             'invoice'  => $this->entityOn($settings, 'invoice_enabled'),
             'wallet'   => $this->entityOn($settings, 'wallet_enabled'),
-        ]);
+        ];
     }
 
     /**

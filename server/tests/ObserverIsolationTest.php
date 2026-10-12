@@ -22,6 +22,7 @@ beforeEach(function () {
 });
 
 afterEach(function () {
+    Container::getInstance()->forgetInstance(FleetbaseDirectory::class);
     Container::getInstance()->forgetInstance(FlagCustomerListener::class);
     Container::getInstance()->forgetInstance(FlagInvoiceListener::class);
     Container::getInstance()->forgetInstance(FlagWalletListener::class);
@@ -67,6 +68,7 @@ function isolationDirectory(?array $connection, bool $fails = false): FleetbaseD
 function isolationBind(FleetbaseDirectory $directory): void
 {
     $container = Container::getInstance();
+    $container->instance(FleetbaseDirectory::class, $directory);
     $container->instance(FlagCustomerListener::class, new FlagCustomerListener($directory, new SyncFlagger()));
     $container->instance(FlagInvoiceListener::class, new FlagInvoiceListener($directory, new SyncFlagger()));
     $container->instance(FlagWalletListener::class, new FlagWalletListener($directory, new SyncFlagger()));
@@ -134,7 +136,28 @@ test('a failing lookup never throws out of a line item or place save', function 
     $broken->created(isolationRecord('line-2'));
     $places->saved(isolationRecord('place-1', 'city'));
 
-    expect($directory->lookups)->toBe(2)
+    // Each line item checks tracking before its parent is read, so the failing lookup stops both lines.
+    expect($directory->lookups)->toBe(3)
+        ->and($directory->written)->toBe([]);
+});
+
+test('a failing parent read never throws out of a line item save for a tracked organization', function () {
+    $directory = isolationDirectory(['realm_id' => 'realm-1'], false);
+    isolationBind($directory);
+    $broken = new class extends FlagInvoiceItemObserver {
+        public int $reads = 0;
+
+        protected function loadParent(string $invoiceUuid): ?object
+        {
+            $this->reads++;
+
+            throw new RuntimeException('SQLSTATE[HY000]: General error: 2006 MySQL server has gone away');
+        }
+    };
+
+    $broken->created(isolationRecord('line-2'));
+
+    expect($broken->reads)->toBe(1)
         ->and($directory->written)->toBe([]);
 });
 
