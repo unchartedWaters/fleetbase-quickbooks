@@ -27,7 +27,11 @@ class OrganizationSyncSettings
      */
     public function effective(string $companyUuid): array
     {
-        return $this->settings->resolveSync($this->store->companySync($companyUuid), $this->store->adminSync(), $this->store->defaultSync());
+        return $this->settings->resolveSync(
+            $this->store->companySync($companyUuid),
+            $this->store->adminSync(),
+            $this->store->defaultSync()
+        );
     }
 
     /**
@@ -51,7 +55,8 @@ class OrganizationSyncSettings
         $this->normalizePresentDirections($incoming);
 
         // Validate the override laid over the inherited values, but report only what the override owns.
-        $errors = $this->overrideErrors($incoming, (new SettingsValidator())->syncErrors(array_merge($this->globalSync(), $incoming)));
+        $merged = array_merge($this->globalSync(), $incoming);
+        $errors = $this->overrideErrors($incoming, (new SettingsValidator())->syncErrors($merged));
         if ($errors !== []) {
             return $errors;
         }
@@ -67,16 +72,19 @@ class OrganizationSyncSettings
      */
     public function view(string $companyUuid, bool $canEdit): array
     {
-        $row  = $this->store->get(SettingsKeys::companySync($companyUuid));
-        $auth = $this->settings->resolveAuth([], $this->store->adminAuth(), $this->store->envAuth());
+        $row      = $this->store->get(SettingsKeys::companySync($companyUuid));
+        $marked   = ($row[SettingsKeys::ORGANIZATION_MARKER] ?? null) === SettingsKeys::ORGANIZATION_MARKER_VALUE;
+        $auth     = $this->settings->resolveAuth([], $this->store->adminAuth(), $this->store->envAuth());
+        $secret   = $auth['client_secret'] ?? null;
+        $clientId = trim((string) ($auth['client_id'] ?? ''));
 
         return [
             'can_edit'               => $canEdit,
-            'override'               => ($row[SettingsKeys::ORGANIZATION_MARKER] ?? null) === SettingsKeys::ORGANIZATION_MARKER_VALUE && ($row['override'] ?? false) === true,
+            'override'               => $marked && ($row['override'] ?? false) === true,
             'sync'                   => SettingsStore::onlySyncFields($this->effective($companyUuid)),
             'global_sync'            => SettingsStore::onlySyncFields($this->globalSync()),
             'company_sync'           => $this->overrideForBrowser($this->store->companySync($companyUuid)),
-            'credentials_configured' => trim((string) ($auth['client_id'] ?? '')) !== '' && is_string($auth['client_secret'] ?? null) === true && trim($auth['client_secret']) !== '',
+            'credentials_configured' => $clientId !== '' && is_string($secret) === true && trim($secret) !== '',
         ];
     }
 
@@ -112,8 +120,9 @@ class OrganizationSyncSettings
 
         $kept = [];
         foreach ($errors as $key => $message) {
-            $own = array_key_exists($key, $override) === true;
-            if ($own === false && preg_match('/^(customer|invoice|payment|wallet)_(conflict|reference|direction)$/', $key, $match) === 1) {
+            $own         = array_key_exists($key, $override) === true;
+            $entityField = '/^(customer|invoice|payment|wallet)_(conflict|reference|direction)$/';
+            if ($own === false && preg_match($entityField, $key, $match) === 1) {
                 $own = array_key_exists($match[1] . '_enabled', $override) === true;
             }
             if ($own === true) {
@@ -133,7 +142,10 @@ class OrganizationSyncSettings
     {
         foreach (self::ENTITIES as $entity) {
             $field = $entity . '_direction';
-            if (array_key_exists($field, $sync) === true && ($sync[$field] === '' || $sync[$field] === 'off' || is_string($sync[$field]) === false)) {
+            if (array_key_exists($field, $sync) === false) {
+                continue;
+            }
+            if ($sync[$field] === '' || $sync[$field] === 'off' || is_string($sync[$field]) === false) {
                 $sync[$field] = 'both';
             }
         }

@@ -123,7 +123,11 @@ class SettingController extends QuickbooksController
         }
 
         $before = $this->organizationSync()->effective($companyUuid);
-        $errors = $this->organizationSync()->save($companyUuid, $request->boolean('override'), $request->input('sync', []));
+        $errors = $this->organizationSync()->save(
+            $companyUuid,
+            $request->boolean('override'),
+            $request->input('sync', [])
+        );
         if ($errors !== []) {
             return response()->json([
                 'message' => 'Some QuickBooks settings are missing or invalid.',
@@ -132,7 +136,9 @@ class SettingController extends QuickbooksController
         }
         $this->queueTurnedOnEntities($companyUuid, $before, $this->organizationSync()->effective($companyUuid));
 
-        return response()->json($this->organizationSync()->view($companyUuid, $this->authorizer->can('quickbooks update settings', $request)));
+        $canEdit = $this->authorizer->can('quickbooks update settings', $request);
+
+        return response()->json($this->organizationSync()->view($companyUuid, $canEdit));
     }
 
     /**
@@ -201,7 +207,9 @@ class SettingController extends QuickbooksController
 
         $this->authorizeQuickbooks('quickbooks view settings', $request);
 
-        return response()->json($this->organizationSync()->view($this->companyUuid($request), $this->authorizer->can('quickbooks update settings', $request)));
+        $canEdit = $this->authorizer->can('quickbooks update settings', $request);
+
+        return response()->json($this->organizationSync()->view($this->companyUuid($request), $canEdit));
     }
 
     /**
