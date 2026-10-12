@@ -2,7 +2,6 @@ import Component from '@glimmer/component';
 import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
 import { inject as service } from '@ember/service';
-import { keysSavedForSync } from '../utils/sync-access';
 
 const NAMESPACE = 'quickbooks/int/v1';
 
@@ -12,17 +11,17 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     @service notifications;
     @service intl;
 
-    @tracked settings = null;
     @tracked sync = { interval_minutes: 5 };
-    @tracked companySettings = null;
-    @tracked companySync = null;
+    @tracked globalSync = null;
+    @tracked override = false;
+    // Whether an installation administrator saved the Client ID and Client secret. Nothing else about them reaches this screen.
+    @tracked credentialsConfigured = false;
     // Undefined until the connection request finishes. Null means disconnected.
     @tracked connection = undefined;
     @tracked connectionLoadFailed = false;
     @tracked connectionLoading = true;
     @tracked settingsLoadFailed = false;
     @tracked settingsLoaded = false;
-    // The settings are install-wide. Only an installation administrator can change them.
     @tracked canEdit = false;
     @tracked busy = false;
 
@@ -35,12 +34,8 @@ export default class QuickbooksCompanySettingsComponent extends Component {
         const companyUuid = this.currentUser.companyId;
 
         try {
-            const result = await this.fetch.get('settings', { scope: 'admin', company_uuid: companyUuid }, { namespace: NAMESPACE });
-            this.settings = result.auth;
-            this.canEdit = result.can_edit === true;
-            this.sync = result.sync ?? { interval_minutes: 5 };
-            this.companySettings = result.company_auth ?? null;
-            this.companySync = result.company_sync ?? null;
+            const result = await this.fetch.get('settings', { scope: 'company', company_uuid: companyUuid }, { namespace: NAMESPACE });
+            this.apply(result);
             this.settingsLoadFailed = false;
             this.settingsLoaded = true;
         } catch (error) {
@@ -49,6 +44,14 @@ export default class QuickbooksCompanySettingsComponent extends Component {
         }
 
         await this.loadConnection();
+    }
+
+    apply(result) {
+        this.canEdit = result.can_edit === true;
+        this.override = result.override === true;
+        this.sync = result.sync ?? this.sync;
+        this.globalSync = result.global_sync ?? null;
+        this.credentialsConfigured = result.credentials_configured === true;
     }
 
     async loadConnection() {
@@ -74,17 +77,14 @@ export default class QuickbooksCompanySettingsComponent extends Component {
         const result = await this.fetch.post(
             'settings',
             {
-                scope: 'admin',
+                scope: 'company',
                 company_uuid: this.currentUser.companyId,
-                auth: payload.auth,
-                sync: payload.sync,
+                override: payload.override === true,
+                sync: payload.sync ?? {},
             },
             { namespace: NAMESPACE }
         );
-        this.settings = result.auth;
-        this.sync = result.sync ?? this.sync;
-        this.companySettings = result.company_auth ?? this.companySettings;
-        this.companySync = result.company_sync ?? this.companySync;
+        this.apply(result);
     }
 
     @action
@@ -130,7 +130,7 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     }
 
     get configured() {
-        return keysSavedForSync(this.settings);
+        return this.credentialsConfigured;
     }
 
     @action

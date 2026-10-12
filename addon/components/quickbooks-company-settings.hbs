@@ -1,9 +1,8 @@
 <QuickbooksSettings
-    @scope="company"
-    @settings={{this.settings}}
+    @syncOnly={{true}}
+    @override={{this.override}}
     @sync={{this.sync}}
-    @companySettings={{this.companySettings}}
-    @companySync={{this.companySync}}
+    @globalSync={{this.globalSync}}
     @connection={{this.connection}}
     @loadFailed={{this.connectionLoadFailed}}
     @settingsLoadFailed={{this.settingsLoadFailed}}

@@ -468,10 +468,8 @@ class BatchRunner
      */
     private function settingsFor(string $companyUuid): array
     {
-        unset($companyUuid);
-
         return $this->settings->resolveSync(
-            [],
+            $this->store->companySync($companyUuid),
             $this->store->adminSync(),
             $this->store->defaultSync()
         );

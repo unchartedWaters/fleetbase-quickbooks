@@ -40,6 +40,19 @@ export default {
         // A settings item stays available to anyone who can open Settings unless it passes the same permission.
         const seeExtension = 'quickbooks see extension';
 
+        // Global settings (Client ID, secret, URLs, default sync options) are edited here by installation administrators only.
+        menuService.registerAdminMenuPanel(
+            'QuickBooks',
+            [
+                new MenuItem({
+                    title: 'Settings',
+                    icon: 'gear',
+                    component: new ExtensionComponent('@unchartedwaters/quickbooks-engine', 'quickbooks-admin-settings'),
+                }),
+            ],
+            { slug: 'quickbooks' }
+        );
+
         menuService.registerSettingsMenuItem(
             new MenuItem({
                 title: 'Quickbooks Setup',
@@ -87,7 +100,15 @@ export default {
     // The organization settings page renders this engine's component from the host app.
     // Nested engine components resolve only after they are registered there.
     onEngineLoaded(engine, universe, app) {
-        const names = ['quickbooks-company-settings', 'quickbooks-settings', 'quickbooks-settings-fields', 'quickbooks-connection', 'quickbooks-activity', 'widget/quickbooks-sync'];
+        const names = [
+            'quickbooks-company-settings',
+            'quickbooks-admin-settings',
+            'quickbooks-settings',
+            'quickbooks-settings-fields',
+            'quickbooks-connection',
+            'quickbooks-activity',
+            'widget/quickbooks-sync',
+        ];
 
         names.forEach((name) => {
             const key = `component:${name}`;

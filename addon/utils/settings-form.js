@@ -70,19 +70,22 @@ function wholeNumber(value, minimum) {
     return false;
 }
 
-export function validateSettings({ auth, sync, secretSet }) {
+// syncOnly is the organization screen: credentials are global and are not checked there.
+export function validateSettings({ auth, sync, secretSet, syncOnly = false }) {
     const errors = {};
-    if (!String(auth?.client_id || '').trim()) {
-        errors.client_id = 'quickbooks.validation.client-id';
-    }
+    if (!syncOnly) {
+        if (!String(auth?.client_id || '').trim()) {
+            errors.client_id = 'quickbooks.validation.client-id';
+        }
 
-    const environment = auth?.environment || DEFAULT_ENVIRONMENT;
-    if (!['sandbox', 'production'].includes(environment)) {
-        errors.environment = 'quickbooks.validation.environment';
-    }
+        const environment = auth?.environment || DEFAULT_ENVIRONMENT;
+        if (!['sandbox', 'production'].includes(environment)) {
+            errors.environment = 'quickbooks.validation.environment';
+        }
 
-    if (!String(auth?.client_secret || '').trim() && !secretSet) {
-        errors.client_secret = 'quickbooks.validation.client-secret';
+        if (!String(auth?.client_secret || '').trim() && !secretSet) {
+            errors.client_secret = 'quickbooks.validation.client-secret';
+        }
     }
 
     if (!wholeNumber(sync?.interval_minutes, 1)) {

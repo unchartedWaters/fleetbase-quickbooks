@@ -214,7 +214,7 @@ class ImportCustomers implements ShouldQueue
         }
 
         $resolved = $settings->resolveSync(
-            [],
+            $store->companySync($this->companyUuid),
             $store->adminSync(),
             $store->defaultSync()
         );
@@ -311,7 +311,7 @@ class ImportCustomers implements ShouldQueue
         $batch = CustomerImporter::MAX_PAGE_SIZE;
         if ($settings !== null && $store !== null) {
             $resolved = $settings->resolveSync(
-                [],
+                $store->companySync($this->companyUuid),
                 $store->adminSync(),
                 $store->defaultSync()
             );

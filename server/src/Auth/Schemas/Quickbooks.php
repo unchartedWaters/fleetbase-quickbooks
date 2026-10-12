@@ -28,11 +28,12 @@ class Quickbooks
             'actions' => ['connect', 'disconnect', 'import-customers'],
         ],
         [
-            // Saving the install-wide settings is checked as installation administrator, not as a
-            // permission, so the schema offers view only.
+            // "view" and "update" cover an organization's sync overrides. The global settings (Intuit
+            // credentials, environment, webhook verifier, default sync options) are saved on the Admin
+            // screen and are checked as installation administrator, not as a permission.
             'name'           => 'settings',
             'actions'        => [],
-            'remove_actions' => ['create', 'update', 'delete', 'list'],
+            'remove_actions' => ['create', 'delete', 'list'],
         ],
         [
             'name'           => 'sync',

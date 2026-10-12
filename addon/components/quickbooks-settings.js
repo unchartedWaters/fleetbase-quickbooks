@@ -150,6 +150,38 @@ export default class QuickbooksSettingsComponent extends Component {
     @tracked draft = {};
     @tracked errors = {};
     @tracked saving = false;
+    // null until the switch is touched. Then the switch follows the loaded override.
+    @tracked overrideChoice = null;
+
+    // The organization screen edits sync options only: no credentials, no URLs.
+    get syncOnly() {
+        return this.args.syncOnly === true;
+    }
+
+    get overrideOn() {
+        return this.overrideChoice ?? this.args.override === true;
+    }
+
+    // An organization without an override shows the global values and cannot edit them.
+    get inherited() {
+        return this.syncOnly && !this.overrideOn;
+    }
+
+    get fieldsReadOnly() {
+        return this.readOnly || this.inherited;
+    }
+
+    get syncSource() {
+        return this.inherited ? (this.args.globalSync ?? this.args.sync) : this.args.sync;
+    }
+
+    @action
+    setOverride(on) {
+        this.overrideChoice = on === true;
+        this.primaryTouched.clear();
+        this.draft = {};
+        this.errors = {};
+    }
 
     // Saving is for installation administrators, so the server's can_edit is the only answer.
     // A missing value (a host that does not pass it) leaves the form editable and the server decides.
@@ -245,7 +277,7 @@ export default class QuickbooksSettingsComponent extends Component {
     }
 
     present(key) {
-        const source = AUTH_FIELDS.includes(key) ? this.args.settings : this.args.sync;
+        const source = AUTH_FIELDS.includes(key) ? this.args.settings : this.syncSource;
         const state = fieldState({ ...source, sources: source?.sources, scope: 'company' }, key);
         this.applyPresentDefault(state, key);
         this.applyPresentDraft(state, key);
@@ -273,7 +305,7 @@ export default class QuickbooksSettingsComponent extends Component {
         if (entity) {
             // Dropdown edits live in the draft. Otherwise show the loaded Primary.
             const drafted = this.primaryTouched.has(entity) && Object.hasOwn(this.draft, key);
-            state.value = drafted ? this.draft[key] : displayedPrimary(this.args.sync?.[`${entity}_conflict`]);
+            state.value = drafted ? this.draft[key] : displayedPrimary(this.syncSource?.[`${entity}_conflict`]);
 
             return;
         }
@@ -363,18 +395,7 @@ export default class QuickbooksSettingsComponent extends Component {
             return;
         }
 
-        const auth = {
-            client_id: String(this.present('client_id').value || '').trim(),
-            environment: this.present('environment').value || DEFAULT_ENVIRONMENT,
-        };
-        if (this.draft.client_secret) {
-            auth.client_secret = this.draft.client_secret;
-        }
-        if (this.draft.webhook_verifier) {
-            auth.webhook_verifier = this.draft.webhook_verifier;
-        }
-        auth.public_webhook_receiver_url = String(this.displayedUrl('public_webhook_receiver_url') || '').trim();
-        auth.public_oauth_redirect_url = String(this.displayedUrl('public_oauth_redirect_url') || '').trim();
+        const auth = this.syncOnly ? null : this.buildAuth();
 
         const sync = {};
         SYNC_FIELDS.forEach((key) => {
@@ -393,9 +414,10 @@ export default class QuickbooksSettingsComponent extends Component {
         });
 
         const errors = validateSettings({
-            auth: { ...auth, client_secret: this.draft.client_secret || '' },
+            auth: auth && { ...auth, client_secret: this.draft.client_secret || '' },
             sync,
             secretSet: Boolean(this.args.settings?.client_secret_set),
+            syncOnly: this.syncOnly,
         });
         this.errors = this.localizeErrors(errors);
         if (Object.keys(errors).length) {
@@ -405,11 +427,16 @@ export default class QuickbooksSettingsComponent extends Component {
 
         this.saving = true;
         try {
-            await this.args.onSave?.({ scope: 'company', auth, sync });
+            if (this.syncOnly) {
+                await this.args.onSave?.({ scope: 'company', override: this.overrideOn, sync: this.overrideOn ? this.changedFromGlobal(sync) : {} });
+            } else {
+                await this.args.onSave?.({ scope: 'company', auth, sync });
+            }
             this.notifications.success(this.intl.t('quickbooks.settings.saved'));
             this.primaryTouched.clear();
             this.draft = {};
             this.errors = {};
+            this.overrideChoice = null;
         } catch (error) {
             const serverErrors = error?.errors;
             if (serverErrors && typeof serverErrors === 'object' && !Array.isArray(serverErrors)) {
@@ -421,6 +448,58 @@ export default class QuickbooksSettingsComponent extends Component {
         } finally {
             this.saving = false;
         }
+    }
+
+    // The server stores exactly what an override sends, so send only the fields that differ from the global value. The rest keep inheriting.
+    changedFromGlobal(sync) {
+        const global = this.args.globalSync;
+        if (!global) {
+            return sync;
+        }
+
+        const changed = {};
+        Object.keys(sync).forEach((key) => {
+            if (String(sync[key] ?? '') !== String(this.globalValue(global, key) ?? '')) {
+                changed[key] = sync[key];
+            }
+        });
+
+        return changed;
+    }
+
+    // The global value after the same defaults and normalization the form applies to its own fields.
+    globalValue(global, key) {
+        const state = fieldState({ ...global, sources: global.sources, scope: 'company' }, key);
+        this.applyPresentDefault(state, key);
+        const value = state.value;
+        if (key.endsWith('_direction')) {
+            return normalizeSyncDirection(value);
+        }
+        if (key.endsWith('_enabled')) {
+            return !(value === false || value === 'false' || value === 0 || value === '0');
+        }
+        if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) {
+            return Number(value);
+        }
+
+        return value;
+    }
+
+    buildAuth() {
+        const auth = {
+            client_id: String(this.present('client_id').value || '').trim(),
+            environment: this.present('environment').value || DEFAULT_ENVIRONMENT,
+        };
+        if (this.draft.client_secret) {
+            auth.client_secret = this.draft.client_secret;
+        }
+        if (this.draft.webhook_verifier) {
+            auth.webhook_verifier = this.draft.webhook_verifier;
+        }
+        auth.public_webhook_receiver_url = String(this.displayedUrl('public_webhook_receiver_url') || '').trim();
+        auth.public_oauth_redirect_url = String(this.displayedUrl('public_oauth_redirect_url') || '').trim();
+
+        return auth;
     }
 
     localizeErrors(errors) {
@@ -435,7 +514,7 @@ export default class QuickbooksSettingsComponent extends Component {
 
     entityEnabled(entity) {
         const key = `${entity}_enabled`;
-        const stored = Object.hasOwn(this.draft, key) ? this.draft[key] : this.args.sync?.[key];
+        const stored = Object.hasOwn(this.draft, key) ? this.draft[key] : this.syncSource?.[key];
         if (stored === false || stored === 'false' || stored === 0 || stored === '0') {
             return false;
         }
@@ -445,7 +524,7 @@ export default class QuickbooksSettingsComponent extends Component {
 
     entityDirection(entity) {
         const directionKey = `${entity}_direction`;
-        const stored = Object.hasOwn(this.draft, directionKey) ? this.draft[directionKey] : this.args.sync?.[directionKey];
+        const stored = Object.hasOwn(this.draft, directionKey) ? this.draft[directionKey] : this.syncSource?.[directionKey];
 
         return {
             direction: normalizeSyncDirection(stored),

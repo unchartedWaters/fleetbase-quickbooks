@@ -167,7 +167,46 @@ class SettingsStore
      */
     public function companySync(string $companyUuid): array
     {
-        return $this->get(SettingsKeys::companySync($companyUuid));
+        $stored = $this->get(SettingsKeys::companySync($companyUuid));
+        if (($stored[SettingsKeys::ORGANIZATION_MARKER] ?? null) !== SettingsKeys::ORGANIZATION_MARKER_VALUE || ($stored['override'] ?? false) !== true) {
+            return [];
+        }
+
+        return self::onlySyncFields($stored);
+    }
+
+    /**
+     * Saves this organization's sync override. Only sync options are kept.
+     *
+     * @param array<string, mixed> $sync
+     */
+    public function putCompanySync(string $companyUuid, array $sync): void
+    {
+        $this->put(SettingsKeys::companySync($companyUuid), array_merge(self::onlySyncFields($sync), [
+            SettingsKeys::ORGANIZATION_MARKER => SettingsKeys::ORGANIZATION_MARKER_VALUE,
+            'override'                        => true,
+        ]));
+    }
+
+    /**
+     * Returns this organization to the global sync defaults.
+     */
+    public function clearCompanySync(string $companyUuid): void
+    {
+        $this->put(SettingsKeys::companySync($companyUuid), [
+            SettingsKeys::ORGANIZATION_MARKER => SettingsKeys::ORGANIZATION_MARKER_VALUE,
+            'override'                        => false,
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $sync
+     *
+     * @return array<string, mixed>
+     */
+    public static function onlySyncFields(array $sync): array
+    {
+        return array_intersect_key($sync, array_fill_keys(SettingsKeys::SYNC_FIELDS, true));
     }
 
     /**

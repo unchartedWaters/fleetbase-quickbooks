@@ -81,10 +81,9 @@ module('Unit | extension', function (hooks) {
     });
 
     test('Quickbooks Setup and Quickbooks Activity are organization settings items', function (assert) {
-        const { adminItems, adminPanels, settingsItems, settingsPanels, transitions } = captureRegistration();
+        const { adminItems, settingsItems, settingsPanels, transitions } = captureRegistration();
 
         assert.strictEqual(adminItems.length, 0);
-        assert.strictEqual(adminPanels.length, 0);
         assert.strictEqual(settingsPanels.length, 0);
         assert.strictEqual(settingsItems.length, 2);
 
@@ -119,6 +118,19 @@ module('Unit | extension', function (hooks) {
         ]);
     });
 
+    test('the QuickBooks admin panel holds the global Settings item', function (assert) {
+        const { adminPanels, adminItems } = captureRegistration();
+
+        assert.strictEqual(adminItems.length, 0);
+        assert.strictEqual(adminPanels.length, 1);
+        assert.strictEqual(adminPanels[0].title, 'QuickBooks');
+        assert.strictEqual(adminPanels[0].items.length, 1);
+        assert.strictEqual(adminPanels[0].items[0].title, 'Settings');
+        assert.strictEqual(adminPanels[0].items[0].component.engine, '@unchartedwaters/quickbooks-engine');
+        assert.strictEqual(adminPanels[0].items[0].component.path, 'quickbooks-admin-settings');
+        assert.strictEqual(adminPanels[0].options.slug, 'quickbooks');
+    });
+
     test('QuickBooks widgets register on the ledger and dashboard', function (assert) {
         const { widgetCalls } = captureRegistration();
         const component = '#extension-component:@unchartedwaters/quickbooks-engine:widget/quickbooks-sync';
@@ -140,6 +152,7 @@ module('Unit | extension', function (hooks) {
         const registrations = [];
         const presentOnEngine = new Set([
             'component:quickbooks-company-settings',
+            'component:quickbooks-admin-settings',
             'component:quickbooks-settings',
             'component:quickbooks-settings-fields',
             'component:quickbooks-connection',
@@ -170,6 +183,7 @@ module('Unit | extension', function (hooks) {
 
         assert.deepEqual(registrations, [
             'component:quickbooks-company-settings',
+            'component:quickbooks-admin-settings',
             'component:quickbooks-settings-fields',
             'component:quickbooks-connection',
             'component:quickbooks-activity',

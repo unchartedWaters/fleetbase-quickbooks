@@ -5,7 +5,8 @@ namespace Fleetbase\Quickbooks\Support;
 class SyncSettingsResolver
 {
     /**
-     * Install-wide sync settings, then config defaults. An organization row is unused.
+     * Config defaults, then the install-wide sync row, then the organization override,
+     * per field. A null or empty organization field inherits.
      *
      * @param array<string, mixed> $company
      * @param array<string, mixed> $admin
@@ -15,8 +16,13 @@ class SyncSettingsResolver
      */
     public function resolve(array $company, array $admin, array $defaults): array
     {
-        unset($company);
-        unset($admin['override'], $admin['sources']);
+        unset($admin['override'], $admin['sources'], $company['override'], $company['sources'], $company[SettingsKeys::ORGANIZATION_MARKER]);
+        foreach ($company as $field => $value) {
+            if ($value === null || $value === '') {
+                continue;
+            }
+            $admin[$field] = $value;
+        }
 
         $enabled  = $this->pickBool('enabled', $admin, (bool) ($defaults['enabled'] ?? true));
         $interval = $this->pickInt('interval_minutes', $admin, (int) ($defaults['interval_minutes'] ?? 5), 1);

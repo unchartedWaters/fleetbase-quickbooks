@@ -11,7 +11,6 @@ use Fleetbase\Quickbooks\Support\SettingsValidator;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 
 function validAuth(array $overrides = []): array
@@ -24,13 +23,12 @@ function validAuth(array $overrides = []): array
     ], $overrides);
 }
 
-test('global settings are used and an organization row is unused', function () {
+test('global settings are used when the organization has no override', function () {
     $resolver = new SyncSettingsResolver();
     $defaults = qbSettings();
     $admin    = qbSettings(['interval_minutes' => 9, 'invoice_reference' => 'fleetbase']);
-    $company  = qbSettings(['override' => false, 'interval_minutes' => 2, 'invoice_reference' => 'quickbooks']);
 
-    $resolved = $resolver->resolve($company, $admin, $defaults);
+    $resolved = $resolver->resolve([], $admin, $defaults);
 
     expect($resolved)->not->toHaveKey('override')
         ->and($resolved['interval_minutes'])->toBe(9)
@@ -42,7 +40,7 @@ test('global settings are used and an organization row is unused', function () {
 test('a stored report conflict does not write and cannot be saved', function () {
     $resolver = new SyncSettingsResolver();
     $resolved = $resolver->resolve(
-        qbSettings(['customer_conflict' => 'quickbooks']),
+        [],
         qbSettings([
             'override'          => true,
             'customer_conflict' => 'report',
@@ -69,7 +67,7 @@ test('a stored report conflict does not write and cannot be saved', function () 
         ->and($resolved['wallet_enabled'])->toBeTrue();
 
     $globalChoice = $resolver->resolve(
-        qbSettings(['customer_conflict' => 'report']),
+        [],
         qbSettings(['override' => false, 'customer_conflict' => 'quickbooks']),
         qbSettings(['customer_conflict' => 'report'])
     );
@@ -97,16 +95,14 @@ test('a stored report conflict does not write and cannot be saved', function () 
     expect($validator->errors(validAuth(), $disabled))->not->toHaveKey('customer_conflict');
 });
 
-test('a missing or off direction resolves to both and an organization row is unused', function () {
+test('a missing or off direction resolves to both', function () {
     $resolver = new SyncSettingsResolver();
     $defaults = qbSettings();
     unset($defaults['customer_direction']);
     $adminWithout = qbSettings(['override' => true, 'customer_enabled' => false]);
     unset($adminWithout['customer_direction']);
-    $companyWithout = qbSettings();
-    unset($companyWithout['customer_direction']);
 
-    $missing = $resolver->resolve($companyWithout, $adminWithout, $defaults);
+    $missing = $resolver->resolve([], $adminWithout, $defaults);
 
     expect($missing['customer_direction'])->toBe('both')
         ->and($missing['sources']['customer_direction'])->toBe('default')
@@ -119,7 +115,7 @@ test('a missing or off direction resolves to both and an organization row is unu
         ->and($missing['sources'])->toHaveKey('periodic_interval_hours');
 
     $globalDirection = $resolver->resolve(
-        qbSettings(['invoice_direction' => 'outbound', 'periodic_interval_hours' => 48]),
+        [],
         qbSettings(['override' => false, 'invoice_direction' => 'inbound', 'periodic_interval_hours' => 2]),
         qbSettings()
     );
@@ -130,7 +126,7 @@ test('a missing or off direction resolves to both and an organization row is unu
         ->and($globalDirection['sources']['periodic_interval_hours'])->toBe('admin');
 
     $off = $resolver->resolve(
-        qbSettings(['payment_direction' => 'inbound', 'periodic_interval_hours' => 48]),
+        [],
         qbSettings(['payment_direction' => 'off', 'periodic_interval_hours' => 6, 'payment_enabled' => false]),
         qbSettings()
     );
@@ -260,7 +256,7 @@ test('a blank client secret is not configured and interval minutes stay out of a
     );
 
     try {
-        $leftover = $controller->show(Request::create('/settings', 'GET', [
+        $leftover = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -288,7 +284,7 @@ test('a blank client secret is not configured and interval minutes stay out of a
         ]));
         $stored     = $store->rows[SettingsKeys::adminAuth()];
         $storedSync = $store->rows[SettingsKeys::adminSync()];
-        $shown      = $controller->show(Request::create('/settings', 'GET', [
+        $shown      = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -330,7 +326,7 @@ test('admin connection uses the global secret and ignores an organization row', 
     );
 
     try {
-        $shown = $controller->show(Request::create('/settings', 'GET', [
+        $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -361,7 +357,7 @@ test('admin connection uses the global secret and ignores an organization row', 
     }
 });
 
-test('a company scope request is not the install settings screen', function () {
+test('a company scope request is not the global settings screen and shows no credentials', function () {
     $store = new MemorySettingsStore();
     session(['company' => 'company-uuid']);
     config()->set('quickbooks.client_id', 'env-client');
@@ -371,25 +367,23 @@ test('a company scope request is not the install settings screen', function () {
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
         $store
     );
-    $request = Request::create('/settings', 'GET', [
-        'scope'        => 'company',
-        'company_uuid' => 'company-uuid',
-    ]);
 
     try {
-        $status = 200;
-        try {
-            $controller->show($request);
-        } catch (Symfony\Component\HttpKernel\Exception\HttpException $exception) {
-            $status = $exception->getStatusCode();
-        }
+        $company = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
+            'scope'        => 'company',
+            'company_uuid' => 'company-uuid',
+        ], false));
+        $companyJson = (string) $company->getContent();
 
-        $shown = $controller->show(Request::create('/settings', 'GET', [
+        $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
 
-        expect($status)->toBe(404)
+        expect($company->getStatusCode())->toBe(200)
+            ->and($company->getData(true))->not->toHaveKey('auth')
+            ->and($companyJson)->not->toContain('env-client')
+            ->and($companyJson)->not->toContain('env-secret')
             ->and($store->adminAuth())->toBe([])
             ->and($shown['auth']['client_id'])->toBe('')
             ->and($shown['auth']['client_secret_set'])->toBeFalse()
@@ -422,7 +416,7 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
     $oauth   = 'https://api.example.test/quickbooks/int/v1/oauth/callback';
 
     try {
-        $shown = $controller->show(Request::create('/settings', 'GET', [
+        $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -444,7 +438,7 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
             ->and($shown['company_auth'])->not->toHaveKey('public_oauth_redirect_url');
 
         config()->set('app.url', '   ');
-        $pathOnly = $controller->show(Request::create('/settings', 'GET', [
+        $pathOnly = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -457,7 +451,7 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
 
         config()->set('fleetbase.console.host', 'https://console.example.test');
         config()->set('fleetbase.url', 'https://api.core.test/');
-        $fromCore = $controller->show(Request::create('/settings', 'GET', [
+        $fromCore = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -580,7 +574,7 @@ test('batch size must be from 1 to 100 when it is sent', function () {
     }
 });
 
-test('a company save with override on does not require batch size', function () {
+test('a global save does not require batch size, and a stored one is kept', function () {
     $store = new MemorySettingsStore();
     session(['company' => 'company-uuid']);
     $controller = new SettingController(
@@ -681,7 +675,7 @@ test('a loopback app url yields to a configured non-loopback api host', function
     );
 
     try {
-        $shown = $controller->show(Request::create('/settings', 'GET', [
+        $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -716,7 +710,7 @@ test('a loopback app url uses the non-loopback host and the api port', function 
     $oauth   = 'http://10.30.0.34:8000/quickbooks/int/v1/oauth/callback';
 
     try {
-        $shown = $controller->show(Request::create('/settings', 'GET', [
+        $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -734,7 +728,7 @@ test('a loopback app url uses the non-loopback host and the api port', function 
 
         config()->set('quickbooks.console_host', null);
         config()->set('fleetbase.console.host', 'fleetbase.io');
-        $kept = $controller->show(Request::create('/settings', 'GET', [
+        $kept = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -745,7 +739,7 @@ test('a loopback app url uses the non-loopback host and the api port', function 
         config()->set('app.url', 'http://localhost');
         config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
         config()->set('fleetbase.console.host', 'http://10.30.0.34:4200/');
-        $withoutApiPort = $controller->show(Request::create('/settings', 'GET', [
+        $withoutApiPort = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -779,7 +773,7 @@ test('a loopback https app url keeps that scheme on the console host', function 
     $oauth   = 'https://10.30.0.34:8000/quickbooks/int/v1/oauth/callback';
 
     try {
-        $shown = $controller->show(Request::create('/settings', 'GET', [
+        $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -812,7 +806,7 @@ test('a new install defaults to production and a stored sandbox stays stored', f
     );
 
     try {
-        $shown = $controller->show(Request::create('/settings', 'GET', [
+        $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -822,7 +816,7 @@ test('a new install defaults to production and a stored sandbox stays stored', f
             ->and($store->adminAuth())->toBe([]);
 
         $store->rows[SettingsKeys::adminAuth()] = validAuth(['environment' => 'sandbox']);
-        $unusedSystem                           = $controller->show(Request::create('/settings', 'GET', [
+        $unusedSystem                           = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
@@ -941,7 +935,7 @@ test('a public oauth or webhook url must be https and not an internal address', 
 
         $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']   = 'https://10.1.1.1/callback';
         $store->rows[SettingsKeys::adminAuth()]['public_webhook_receiver_url'] = 'http://192.168.0.8/hook';
-        $shown                                                                 = $controller->show(Request::create('/settings', 'GET', [
+        $shown                                                                 = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope' => 'admin',
         ]))->getData(true);
 
@@ -982,7 +976,7 @@ test('sync settings drop keys that are not on the allowlist', function () {
             ->and($saved->getData(true)['company_sync'])->not->toHaveKey('injected');
 
         $store->rows[SettingsKeys::adminSync()] = qbSettings(['injected' => 'still-nope']);
-        $shown                                  = $controller->show(Request::create('/settings', 'GET', [
+        $shown                                  = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope' => 'admin',
         ]))->getData(true);
 

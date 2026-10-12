@@ -72,7 +72,7 @@ class EnqueueWebhookSync
         $this->deferred                  = [];
 
         $settings = $this->settings->resolveSync(
-            [],
+            $store->companySync($companyUuid),
             $store->adminSync(),
             $store->defaultSync()
         );

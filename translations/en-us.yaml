@@ -5,7 +5,7 @@ quickbooks:
     unavailable: QuickBooks status could not be loaded.
     settings-unavailable: QuickBooks settings could not be loaded.
     reauth-status: QuickBooks needs to be connected again before sync can continue. Choose Connect to QuickBooks.
-    reauth-save-first: QuickBooks needs to be connected again before sync can continue. Choose Save Changes first.
+    reauth-save-first: QuickBooks needs to be connected again before sync can continue. Ask an installation administrator to set the QuickBooks credentials on the Admin QuickBooks screen first.
     connected: "Connected to QuickBooks organization {realm} ({environment})."
     connected-plain: "Connected to QuickBooks organization {realm}."
     home-currency: "Home currency is {currency}."
@@ -15,7 +15,7 @@ quickbooks:
     home-currency-existing: An existing wallet is still sent.
     home-currency-primary: When QuickBooks is Primary, the account currency is copied onto the wallet.
     disconnected-status: Not connected. Choose Connect to QuickBooks. Fleetbase then syncs customers, invoices, payments, and wallets with QuickBooks Online.
-    disconnected-save-first: Not connected. Choose Save Changes first. Fleetbase then syncs customers, invoices, payments, and wallets with QuickBooks Online.
+    disconnected-save-first: Not connected. An installation administrator must set the QuickBooks credentials on the Admin QuickBooks screen before you can connect.
     disconnect: Disconnect
     disconnect-confirm-title: Disconnect QuickBooks?
     disconnect-confirm: This removes the saved QuickBooks connection. Sync now stays off until you connect again.
@@ -73,14 +73,19 @@ quickbooks:
     no-sync: No sync yet
     records-waiting: Records waiting
     waiting: "{count} waiting"
-    credentials-missing: Enter Client ID and Client secret on Quickbooks Setup before Sync now.
+    credentials-missing: An installation administrator must enter the QuickBooks Client ID and Client secret on the Admin QuickBooks screen before Sync now.
     reauth: Connect QuickBooks again
     connected: Connected
     disconnected: Not connected
   settings:
     save: Save Changes
     saved: QuickBooks settings saved.
-    read-only-note: These settings apply to every organization on this Fleetbase install, so only an installation administrator can change them.
+    read-only-note: You can view these QuickBooks sync settings, but you do not have permission to change them.
+    override-title: Sync settings
+    override-label: Override the global sync settings
+    override-help: Off, this organization uses the sync settings set by your installation administrator. On, the settings below apply to this organization only.
+    inherited-note: These are the global sync settings. They are read-only until you turn on the override.
+    credentials-not-configured: An installation administrator must enter the QuickBooks Client ID and Client secret on the Admin QuickBooks screen before this organization can connect.
     authentication: Authentication
     credentials-title: Getting your QuickBooks credentials
     credentials-step-keys-before: "Sign in at "
