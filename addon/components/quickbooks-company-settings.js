@@ -130,7 +130,8 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     }
 
     get configured() {
-        return this.credentialsConfigured;
+        // Unknown (undefined) until the settings request succeeds, so no screen claims credentials are missing while loading or after a failure.
+        return this.settingsLoaded ? this.credentialsConfigured : undefined;
     }
 
     @action

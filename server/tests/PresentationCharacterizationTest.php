@@ -4,7 +4,6 @@ use Fleetbase\Quickbooks\Http\Controllers\ConnectionController;
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
-use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\OAuthFlow;
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Fleetbase\Quickbooks\Services\SettingsService;
@@ -84,26 +83,12 @@ function pctSync(array $overrides = []): array
     ], $overrides);
 }
 
-function pctDirectory(): FleetbaseDirectory
-{
-    return new class extends FleetbaseDirectory {
-        /** @var array<int, array{0: string, 1: array<string, bool>}> */
-        public array $queued = [];
-
-        public function queueInScope(string $companyUuid, array $enabled): void
-        {
-            $this->queued[] = [$companyUuid, $enabled];
-        }
-    };
-}
-
-function pctSettingController(MemorySettingsStore $store, ?FleetbaseDirectory $directory = null): SettingController
+function pctSettingController(MemorySettingsStore $store): SettingController
 {
     return new SettingController(
         new Authorizer(static fn () => true),
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
-        $store,
-        $directory ?? pctDirectory()
+        $store
     );
 }
 

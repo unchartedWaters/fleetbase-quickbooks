@@ -16,21 +16,6 @@ parameters:
 			path: server/src/Http/Controllers/ConnectionController.php
 
 		-
-			message: "#^Parameter \\#1 \\$directory of method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncFlagger\\:\\:queueEnabled\\(\\) expects Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory, mixed given\\.$#"
-			count: 1
-			path: server/src/Http/Controllers/ConnectionController.php
-
-		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Http\\\\Controllers\\\\SettingController\\:\\:directory\\(\\) should return Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory but returns mixed\\.$#"
-			count: 1
-			path: server/src/Http/Controllers/SettingController.php
-
-		-
-			message: "#^Property Fleetbase\\\\Quickbooks\\\\Http\\\\Controllers\\\\SettingController\\:\\:\\$directory \\(Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory\\|null\\) does not accept mixed\\.$#"
-			count: 1
-			path: server/src/Http/Controllers/SettingController.php
-
-		-
 			message: "#^Cannot call method flush\\(\\) on mixed\\.$#"
 			count: 1
 			path: server/src/Http/Controllers/WebhookController.php

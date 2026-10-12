@@ -39,9 +39,20 @@ An installation administrator saves the install's Client ID, Client secret, and 
 
 The settings form does not ask for a batch size and does not send `batch_size`.
 
+### Permissions
+
+Assign one of these roles to non-administrator users. Roles and policies come from `server/src/Auth/Schemas/Quickbooks.php`.
+
+| Role (policy) | Permissions |
+| --- | --- |
+| QuickBooks Administrator (`QuickbooksAdministrator`) | `quickbooks see extension`, `quickbooks * connection`, `quickbooks * settings`, `quickbooks * sync` |
+| QuickBooks Operator (`QuickbooksOperator`) | `quickbooks see extension`, `quickbooks view`, `connect`, `disconnect` and `import-customers connection`, `quickbooks view settings`, `quickbooks view sync`, `quickbooks reconcile sync` |
+
+`quickbooks see extension` opens Quickbooks Setup. Sync now authorizes as `quickbooks reconcile sync`. Global settings (Admin → QuickBooks → Settings) need an installation administrator; no role grants them. Installation administrators bypass all of these checks.
+
 ### Enable and sync direction
 
-Each of Customers, Invoices, Payments, and Accounts / Wallets is a switch, then that name. The switch defaults to on, except Accounts / Wallets, which defaults to off on a fresh install because a wallet per driver or customer can flood the QuickBooks chart of accounts. Turning wallets on queues the existing wallets. An install that already saved a value keeps it; an install that never saved settings and relied on the old default must switch wallets on again. Primary and Sync direction are required while the switch is on. Off means that type is not synced.
+Each of Customers, Invoices, Payments, and Accounts / Wallets is a switch, then that name. The switch defaults to on, except Accounts / Wallets, which defaults to off on a fresh install because a wallet per driver or customer can flood the QuickBooks chart of accounts. Turning wallets on queues the existing wallets. Queueing runs in a background job, so queue workers must be running. Turning an entity on, connecting, or changing the global sync defaults all queue this way, and a global change queues every connected organization (using each one's own override). An install that already saved a value keeps it; an install that never saved settings and relied on the old default must switch wallets on again. Primary and Sync direction are required while the switch is on. Off means that type is not synced.
 
 | Switch | Stored direction | Meaning |
 | --- | --- | --- |
@@ -89,11 +100,11 @@ The callback is limited per client IP to `quickbooks.oauth.callback_per_minute` 
 - `state` — the OAuth state is missing, expired, or already used, or the `realmId` is not valid.
 - `failed` — Intuit returned any other error.
 
-`QUICKBOOKS_CONSOLE_HOST` is checked first, then `CONSOLE_HOST`, then `fleetbase.console.host`. One of those must be the console origin so the callback can return to the console. An `http://` or `https://` prefix is kept. If the host has no prefix, the API adds `https://`. Without a console host, the callback returns HTTP 500.
+`QUICKBOOKS_CONSOLE_HOST` is checked first, then `CONSOLE_HOST`, then `fleetbase.console.host`. That last fallback counts only when it is set to something other than its default `fleetbase.io`, so set `CONSOLE_HOST` (or `QUICKBOOKS_CONSOLE_HOST`) explicitly. One of those must be the console origin so the callback can return to the console. An `http://` or `https://` prefix is kept. If the host has no prefix, the API adds `https://`. Without a console host, the callback returns HTTP 500.
 
 **Disconnect** revokes the refresh token at Intuit (`developer.api.intuit.com/v2/oauth2/tokens/revoke`) on a best-effort basis, then deletes the local connection row and this organization's still-pending sync rows. A failed revoke does not block the disconnect. `quickbooks_links` rows are kept so a later reconnect restores the mappings. Disconnect does not change the Intuit app or its webhook subscription.
 
-Home currency comes from QuickBooks Preferences. Test connection also reads Preferences. Tokens are refreshed before a sync, import, webhook job, or connection test when they expire within 5 minutes. HTTP 401 during a sync first refreshes the token and retries that call once. The console asks to connect QuickBooks again only when Intuit refuses the refresh token (`invalid_grant`) or the new token is also refused. A refresh that fails for another reason (for example a 503) does not ask to reconnect: the row that hit it is retried later, the rest of that run is left pending, and the refresh is not tried again until the next scheduled run (a Sync now or drain run does not queue another run straight away). The same refresh-and-retry applies when QuickBooks answers a batch with an authentication fault on every item instead of HTTP 401; a batch where only some items were refused is not repeated, so the accepted items are not written twice. A large batch is sent in chunks; when a later chunk is refused, the earlier chunks' results are kept and the refused and remaining items are retried on the next run. Copying QuickBooks customers on connect runs only when Customers is enabled in Data Resolution. If Customers is off, the import is skipped. An import does not run while a sync is running.
+Home currency comes from QuickBooks Preferences. The admin-only `POST /quickbooks/int/v1/connection/test` endpoint also reads Preferences; the console has no Test connection button. Tokens are refreshed before a sync, import, webhook job, or connection test when they expire within 5 minutes. HTTP 401 during a sync first refreshes the token and retries that call once. The console asks to connect QuickBooks again only when Intuit refuses the refresh token (`invalid_grant`) or the new token is also refused. A refresh that fails for another reason (for example a 503) does not ask to reconnect: the row that hit it is retried later, the rest of that run is left pending, and the refresh is not tried again until the next scheduled run (a Sync now or drain run does not queue another run straight away). The same refresh-and-retry applies when QuickBooks answers a batch with an authentication fault on every item instead of HTTP 401; a batch where only some items were refused is not repeated, so the accepted items are not written twice. A large batch is sent in chunks; when a later chunk is refused, the earlier chunks' results are kept and the refused and remaining items are retried on the next run. Copying QuickBooks customers on connect runs only when Customers is enabled in Data Resolution. If Customers is off, the import is skipped. An import does not run while a sync is running.
 
 ## Sync
 

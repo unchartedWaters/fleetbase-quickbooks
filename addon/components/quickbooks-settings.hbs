@@ -5,7 +5,7 @@
     {{#if @settingsLoadFailed}}
         <p class="text-sm text-gray-500" data-test-settings-unavailable>{{t "quickbooks.connection.settings-unavailable"}}</p>
     {{/if}}
-    {{#if this.readOnly}}
+    {{#if this.showReadOnlyNote}}
         <InfoBlock @type="info" @icon="circle-info" data-test-settings-read-only>{{t "quickbooks.settings.read-only-note"}}</InfoBlock>
     {{/if}}
     {{#if this.syncOnly}}

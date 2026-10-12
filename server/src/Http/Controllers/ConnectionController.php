@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Http\Controllers;
 
 use Fleetbase\Quickbooks\Jobs\ImportCustomers;
+use Fleetbase\Quickbooks\Jobs\QueueCompanyScope;
 use Fleetbase\Quickbooks\Jobs\SyncCompanyBatch;
 use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Models\PendingSync;
@@ -255,8 +256,8 @@ class ConnectionController extends QuickbooksController
         $this->persist($connection);
         // The webhook endpoint is set in the Intuit developer portal. This does not call Intuit.
         app(WebhookSubscriptions::class)->apply('admin', $companyUuid);
+        // The catalog is queued in the background, and that job then starts the first sync.
         $this->queueExistingRecords($companyUuid);
-        SyncCompanyBatch::dispatch($companyUuid, 'now');
         // Customers in Data Resolution is the control for copying QuickBooks customers.
         // The sync above usually holds the company lock, so a queued import waits and runs after that lock is released.
         if ($this->customersEnabled($companyUuid) === true) {
@@ -420,6 +421,7 @@ class ConnectionController extends QuickbooksController
 
     /**
      * Queue in-scope rows for entities that are turned on, then the sync job drains them.
+     * Both happen in a background job so a large catalog cannot hold this request.
      */
     private function queueExistingRecords(string $companyUuid): void
     {
@@ -428,7 +430,7 @@ class ConnectionController extends QuickbooksController
             $this->store->adminSync(),
             $this->store->defaultSync()
         );
-        (new SyncFlagger())->queueEnabled(app(FleetbaseDirectory::class), $companyUuid, $resolved);
+        QueueCompanyScope::dispatch($companyUuid, (new SyncFlagger())->enabledEntities($resolved), true);
     }
 
     protected function connectionIsStored(string $companyUuid): bool
@@ -446,6 +448,13 @@ class ConnectionController extends QuickbooksController
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
         $existing    = $this->latestConnection($companyUuid);
         $model       = $existing instanceof Connection === true ? $existing : new Connection();
+        // A different QuickBooks company starts clean. A reconnect to the same one keeps its cursor and limits.
+        if ($existing instanceof Connection === true && (string) $existing->realm_id !== (string) ($connection['realm_id'] ?? '')) {
+            $model->customer_import_start = null;
+            $model->rate_limited_until    = null;
+            $model->last_rate_limit_wait  = null;
+            $model->last_batch_at         = null;
+        }
         $model->fill($connection);
         $model->save();
     }

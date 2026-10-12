@@ -116,11 +116,7 @@ class SettingsStore
     public function envAuth(): array
     {
         return [
-            'client_id'        => (string) config('quickbooks.client_id', ''),
-            'client_secret'    => (string) config('quickbooks.client_secret', ''),
-            'redirect_uri'     => (string) config('quickbooks.redirect_uri', ''),
-            'environment'      => $this->configuredEnvironment(),
-            'webhook_verifier' => $this->envWebhookVerifier(),
+            'environment' => $this->configuredEnvironment(),
         ];
     }
 
@@ -136,30 +132,6 @@ class SettingsStore
         }
 
         return $environment;
-    }
-
-    /**
-     * The Intuit webhook verifier. Config wins when it is set; otherwise the
-     * process environment QUICKBOOKS_WEBHOOK_VERIFIER.
-     */
-    public function envWebhookVerifier(): string
-    {
-        $configured = config('quickbooks.webhook_verifier');
-        if (is_string($configured) === true && $configured !== '') {
-            return $configured;
-        }
-
-        foreach ([
-            getenv('QUICKBOOKS_WEBHOOK_VERIFIER'),
-            $_ENV['QUICKBOOKS_WEBHOOK_VERIFIER'] ?? null,
-            $_SERVER['QUICKBOOKS_WEBHOOK_VERIFIER'] ?? null,
-        ] as $value) {
-            if (is_string($value) === true && $value !== '') {
-                return $value;
-            }
-        }
-
-        return '';
     }
 
     /**

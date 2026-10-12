@@ -4,6 +4,7 @@ use Fleetbase\Quickbooks\Auth\Schemas\Quickbooks;
 use Fleetbase\Quickbooks\Http\Controllers\ConnectionController;
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
 use Fleetbase\Quickbooks\Jobs\ImportCustomers;
+use Fleetbase\Quickbooks\Jobs\QueueCompanyScope;
 use Fleetbase\Quickbooks\Jobs\SyncCompanyBatch;
 use Fleetbase\Quickbooks\Services\OAuthFlow;
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
@@ -479,17 +480,11 @@ test('oauth start refuses a private callback and sends a public https redirect',
         'fleetbase.url',
         'fleetbase.console.host',
         'quickbooks.console_host',
-        'quickbooks.redirect_uri',
-        'quickbooks.client_id',
-        'quickbooks.client_secret',
     ]);
     config()->set('app.url', 'http://localhost:8000');
     config()->set('fleetbase.url', null);
     config()->set('fleetbase.console.host', 'http://10.30.0.34:4200');
     config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
-    config()->set('quickbooks.redirect_uri', '');
-    config()->set('quickbooks.client_id', '');
-    config()->set('quickbooks.client_secret', '');
     $computed                                               = 'http://10.30.0.34:8000/quickbooks/int/v1/oauth/callback';
     $store                                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()]                 = [
@@ -577,13 +572,11 @@ test('a path-only computed callback uses a full public oauth url and otherwise s
         'fleetbase.url',
         'fleetbase.console.host',
         'quickbooks.console_host',
-        'quickbooks.redirect_uri',
     ]);
     config()->set('app.url', null);
     config()->set('fleetbase.url', null);
     config()->set('fleetbase.console.host', null);
     config()->set('quickbooks.console_host', null);
-    config()->set('quickbooks.redirect_uri', '');
     $public                                                 = 'https://example.com/quickbooks/int/v1/oauth/callback';
     $store                                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()]                 = [
@@ -633,13 +626,11 @@ test('oauth complete exchanges the code with the same computed callback', functi
         'fleetbase.url',
         'fleetbase.console.host',
         'quickbooks.console_host',
-        'quickbooks.redirect_uri',
     ]);
     config()->set('app.url', 'https://example.com');
     config()->set('fleetbase.url', null);
     config()->set('fleetbase.console.host', 'http://10.30.0.34:4200');
     config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
-    config()->set('quickbooks.redirect_uri', '');
     $computed = 'https://example.com/quickbooks/int/v1/oauth/callback';
     Http::swap(new Illuminate\Http\Client\Factory());
     Http::fake([
@@ -703,15 +694,18 @@ test('oauth complete exchanges the code with the same computed callback', functi
         $exchanges = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
         parse_str($exchanges[0][0]->body(), $form);
         $syncs   = array_values(array_filter($jobs, fn ($job) => $job instanceof SyncCompanyBatch));
+        $scopes  = array_values(array_filter($jobs, fn ($job) => $job instanceof QueueCompanyScope));
         $imports = array_values(array_filter($jobs, fn ($job) => $job instanceof ImportCustomers));
 
         expect($completed->getStatusCode())->toBe(200)
             ->and($completed->getData(true))->toBe(['connected' => true])
             ->and($form['redirect_uri'])->toBe($computed)
             ->and($controller->saved['realm_id'])->toBe('9341453000000001')
-            ->and($syncs)->toHaveCount(1)
-            ->and($syncs[0]->companyUuid)->toBe('company-uuid')
-            ->and($syncs[0]->trigger)->toBe('now')
+            // The catalog queueing and then the first sync run in one background job.
+            ->and($syncs)->toBe([])
+            ->and($scopes)->toHaveCount(1)
+            ->and($scopes[0]->companyUuid)->toBe('company-uuid')
+            ->and($scopes[0]->syncAfter)->toBeTrue()
             ->and($imports)->toHaveCount(1)
             ->and($imports[0]->companyUuid)->toBe('company-uuid')
             ->and($imports[0]->waitForLock)->toBeTrue()
@@ -729,13 +723,11 @@ test('oauth complete skips customer import when customers are turned off', funct
         'fleetbase.url',
         'fleetbase.console.host',
         'quickbooks.console_host',
-        'quickbooks.redirect_uri',
     ]);
     config()->set('app.url', 'https://example.com');
     config()->set('fleetbase.url', null);
     config()->set('fleetbase.console.host', 'https://console.example.test');
     config()->set('quickbooks.console_host', 'https://console.example.test');
-    config()->set('quickbooks.redirect_uri', '');
     Http::swap(new Illuminate\Http\Client\Factory());
     Http::fake([
         'oauth.platform.intuit.com/*' => Http::response([
@@ -786,9 +778,12 @@ test('oauth complete skips customer import when customers are turned off', funct
             expect($completed->getStatusCode())->toBe(200);
         });
         $syncs   = array_values(array_filter($jobs, fn ($job) => $job instanceof SyncCompanyBatch));
+        $scopes  = array_values(array_filter($jobs, fn ($job) => $job instanceof QueueCompanyScope));
         $imports = array_values(array_filter($jobs, fn ($job) => $job instanceof ImportCustomers));
 
-        expect($syncs)->toHaveCount(1)
+        expect($syncs)->toBe([])
+            ->and($scopes)->toHaveCount(1)
+            ->and($scopes[0]->syncAfter)->toBeTrue()
             ->and($imports)->toBe([]);
     } finally {
         qbRestoreConfig($previous);
@@ -969,10 +964,12 @@ test('the oauth callback only keeps the code and the user who started the flow c
                 ->and($disconnected->getData(true)['message'])->toBe('QuickBooks is not connected. Connect again from Quickbooks Setup.');
         });
         $syncs   = array_values(array_filter($jobs, fn ($job) => $job instanceof SyncCompanyBatch));
+        $scopes  = array_values(array_filter($jobs, fn ($job) => $job instanceof QueueCompanyScope));
         $imports = array_values(array_filter($jobs, fn ($job) => $job instanceof ImportCustomers));
 
-        expect($syncs)->toHaveCount(1)
-            ->and($syncs[0]->trigger)->toBe('now')
+        expect($syncs)->toBe([])
+            ->and($scopes)->toHaveCount(1)
+            ->and($scopes[0]->syncAfter)->toBeTrue()
             ->and($imports)->toHaveCount(1)
             ->and($imports[0]->companyUuid)->toBe('company-uuid')
             ->and($imports[0]->waitForLock)->toBeTrue();

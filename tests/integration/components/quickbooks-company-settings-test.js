@@ -1,6 +1,6 @@
 import { module, test } from 'qunit';
 import { setupRenderingTest } from 'dummy/tests/helpers';
-import { click, fillIn, render, waitFor } from '@ember/test-helpers';
+import { click, fillIn, render, settled, waitFor } from '@ember/test-helpers';
 import { hbs } from 'ember-cli-htmlbars';
 import Service from '@ember/service';
 import ModalsManagerStub from '../../helpers/modals-manager-stub';
@@ -370,6 +370,41 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
         assert.dom('[data-test-credentials-not-configured]').includesText('installation administrator must enter the QuickBooks Client ID and Client secret on the Admin QuickBooks screen');
+        assert.dom('[data-test-sync-now]').isDisabled();
+    });
+
+    test('the credentials and read-only notes stay hidden while settings load', async function (assert) {
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        class HoldingSettingsFetchStubService extends FetchStubService {
+            async get(path) {
+                if (path === 'settings') {
+                    await gate;
+                }
+
+                return super.get(path);
+            }
+        }
+        this.owner.register('service:fetch', HoldingSettingsFetchStubService);
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+        assert.dom('[data-test-credentials-not-configured]').doesNotExist();
+        assert.dom('[data-test-settings-read-only]').doesNotExist();
+
+        release();
+        await settled();
+    });
+
+    test('a failed settings load shows neither the credentials note nor the read-only note', async function (assert) {
+        this.owner.register('service:fetch', SettingsLoadFailedFetchStubService);
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        assert.dom('[data-test-settings-unavailable]').exists();
+        assert.dom('[data-test-credentials-not-configured]').doesNotExist();
+        assert.dom('[data-test-settings-read-only]').doesNotExist();
         assert.dom('[data-test-sync-now]').isDisabled();
     });
 

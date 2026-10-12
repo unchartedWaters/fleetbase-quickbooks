@@ -224,4 +224,40 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         assert.dom('[data-test-activity-loading]').doesNotExist();
         assert.dom().doesNotIncludeText('No syncs yet');
     });
+
+    test('a failed page change keeps the table and pager and shows the error inline', async function (assert) {
+        this.owner.register('service:notifications', NotificationsStubService);
+        this.owner.register('service:current-user', CurrentUserStubService);
+        let fail = true;
+        this.owner.register(
+            'service:fetch',
+            class extends Service {
+                get(path, query) {
+                    if (Number(query?.page) === 2 && fail) {
+                        return Promise.reject(new Error('page 2 failed'));
+                    }
+                    const page = Number(query?.page) || 1;
+
+                    return Promise.resolve({
+                        batches: [{ uuid: `page-${page}`, trigger: 'now', direction: 'outbound', created: page }],
+                        meta: { current_page: page, last_page: 2, per_page: 25, total: 26 },
+                    });
+                }
+            }
+        );
+
+        await render(hbs`<QuickbooksActivity />`);
+        await click('#fleetbase-pagination-forward-button');
+
+        assert.dom('[data-test-activity-load-failed]').hasText('Sync activity could not be loaded.');
+        assert.dom('[data-test-activity-row]').exists({ count: 1 });
+        assert.dom('[data-test-activity-created]').hasText('1');
+        assert.dom('#fleetbase-pagination').exists({ count: 1 });
+
+        fail = false;
+        await click('#fleetbase-pagination-forward-button');
+
+        assert.dom('[data-test-activity-load-failed]').doesNotExist();
+        assert.dom('[data-test-activity-created]').hasText('2');
+    });
 });

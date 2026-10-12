@@ -86,9 +86,8 @@ class SettingsService
      *
      * The only accepted verifier is the system webhook_verifier. When that
      * row has none, the list is empty and the signature check fails. An
-     * organization verifier, another organization's secret,
-     * config('quickbooks.webhook_verifier'), and QUICKBOOKS_WEBHOOK_VERIFIER
-     * are not substitutes. Only webhook_verifier is decrypted, never
+     * organization verifier, another organization's secret, and the
+     * QUICKBOOKS_WEBHOOK_VERIFIER environment variable are not substitutes. Only webhook_verifier is decrypted, never
      * client_secret, and no organization auth row is read.
      *
      * @return array<int, string>

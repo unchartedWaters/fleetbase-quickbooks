@@ -2,7 +2,8 @@
 
 namespace Fleetbase\Quickbooks\Http\Controllers;
 
-use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
+use Fleetbase\Quickbooks\Jobs\QueueCompanyScope;
+use Fleetbase\Quickbooks\Jobs\QueueGlobalScope;
 use Fleetbase\Quickbooks\Services\OrganizationSyncSettings;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
@@ -41,7 +42,6 @@ class SettingController extends QuickbooksController
         Authorizer $authorizer,
         private SettingsService $settings,
         private SettingsStore $store,
-        private ?FleetbaseDirectory $directory = null,
         private ?OrganizationSyncSettings $organizationSync = null,
     ) {
         parent::__construct($authorizer);
@@ -90,7 +90,6 @@ class SettingController extends QuickbooksController
             ], 422);
         }
 
-        $before     = $this->effectiveSync($companyUuid, $existingSync);
         $storedAuth = $this->settings->storeAuth($incomingAuth, $existingAuth);
         $storedAuth = $this->applyPublicUrls(
             $this->store->normalizeAuth(array_merge($existingAuth, $storedAuth)),
@@ -100,7 +99,8 @@ class SettingController extends QuickbooksController
         $this->stripReadOnly($mergedSync);
         $this->stripPublicUrls($mergedSync);
         $this->store->put($syncKey, $mergedSync);
-        $this->queueTurnedOnEntities($companyUuid, $before, $this->effectiveSync($companyUuid, $mergedSync));
+        // Every organization that inherits a global switch is queued, each by its own override.
+        QueueGlobalScope::dispatch($existingSync, $mergedSync);
         $this->applyWebhookSubscriptions($companyUuid);
 
         return response()->json($this->payload($request));
@@ -152,18 +152,6 @@ class SettingController extends QuickbooksController
         }
 
         return $scope;
-    }
-
-    /**
-     * What this organization actually runs with: its override over the given global row over the defaults.
-     *
-     * @param array<string, mixed> $adminSync
-     *
-     * @return array<string, mixed>
-     */
-    private function effectiveSync(string $companyUuid, array $adminSync): array
-    {
-        return $this->settings->resolveSync($this->store->companySync($companyUuid), $adminSync, $this->store->defaultSync());
     }
 
     /**
@@ -692,50 +680,20 @@ class SettingController extends QuickbooksController
     }
 
     /**
-     * Queue the rows that just became eligible. A switch that stays on, or
-     * that is turned off, does not queue.
+     * Queue, in the background, the rows that just became eligible. A switch that stays on,
+     * or that is turned off, does not queue.
      *
      * @param array<string, mixed> $existing
      * @param array<string, mixed> $merged
      */
     private function queueTurnedOnEntities(string $companyUuid, array $existing, array $merged): void
     {
-        $enabled = [];
-        foreach ([
-            'customer_enabled' => 'customer',
-            'invoice_enabled'  => 'invoice',
-            'wallet_enabled'   => 'wallet',
-        ] as $key => $entity) {
-            if ($this->entitySwitchOn($existing, $key) === false && $this->entitySwitchOn($merged, $key) === true) {
-                $enabled[$entity] = true;
-            }
-        }
-        if ($this->entitySwitchOn($existing, 'payment_enabled') === false && $this->entitySwitchOn($merged, 'payment_enabled') === true) {
-            $enabled['invoice'] = true;
-        }
+        $enabled = QueueCompanyScope::turnedOn($existing, $merged);
         if ($enabled === [] || $companyUuid === '') {
             return;
         }
 
-        $this->directory()->queueInScope($companyUuid, $enabled);
-    }
-
-    /**
-     * @param array<string, mixed> $sync
-     */
-    private function entitySwitchOn(array $sync, string $key): bool
-    {
-        // A wallet switch that was never stored is off; the other entities default to on.
-        if (array_key_exists($key, $sync) === false) {
-            return $key !== 'wallet_enabled';
-        }
-
-        return $sync[$key] !== false;
-    }
-
-    private function directory(): FleetbaseDirectory
-    {
-        return $this->directory ??= app(FleetbaseDirectory::class);
+        QueueCompanyScope::dispatch($companyUuid, $enabled);
     }
 
     private function organizationSync(): OrganizationSyncSettings

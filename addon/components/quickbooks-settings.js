@@ -189,6 +189,11 @@ export default class QuickbooksSettingsComponent extends Component {
         return this.args.canEdit === false;
     }
 
+    // The note only describes a finished, successful load. Loading or a failed load must not claim the caller lacks permission.
+    get showReadOnlyNote() {
+        return this.args.settingsLoaded === true && this.readOnly;
+    }
+
     get saveDisabled() {
         return this.args.settingsLoadFailed === true || this.saving || this.readOnly;
     }
