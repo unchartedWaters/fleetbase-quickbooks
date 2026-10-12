@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Http\Controllers;
 
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
+use Fleetbase\Quickbooks\Services\OrganizationSyncSettings;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Support\Authorizer;
@@ -36,37 +37,12 @@ class SettingController extends QuickbooksController
         'wallet_direction',
     ];
 
-    /** @var array<int, string> */
-    private const SYNC_KEYS = [
-        'enabled',
-        'interval_minutes',
-        'periodic_interval_hours',
-        'batch_size',
-        'retry_limit',
-        'default_backoff_seconds',
-        'customer_conflict',
-        'customer_reference',
-        'customer_direction',
-        'customer_enabled',
-        'invoice_conflict',
-        'invoice_reference',
-        'invoice_direction',
-        'invoice_enabled',
-        'payment_conflict',
-        'payment_reference',
-        'payment_direction',
-        'payment_enabled',
-        'wallet_conflict',
-        'wallet_reference',
-        'wallet_direction',
-        'wallet_enabled',
-    ];
-
     public function __construct(
         Authorizer $authorizer,
         private SettingsService $settings,
         private SettingsStore $store,
         private ?FleetbaseDirectory $directory = null,
+        private ?OrganizationSyncSettings $organizationSync = null,
     ) {
         parent::__construct($authorizer);
     }
@@ -146,73 +122,23 @@ class SettingController extends QuickbooksController
             ], 422);
         }
 
-        $before = $this->effectiveSync($companyUuid, $this->store->adminSync());
-        if ($request->boolean('override') === false) {
-            $this->store->clearCompanySync($companyUuid);
-        } else {
-            $incoming = $request->input('sync', []);
-            $incoming = is_array($incoming) === true ? $incoming : [];
-            $incoming = array_filter(
-                SettingsStore::onlySyncFields($incoming),
-                static fn ($value): bool => $value !== null && $value !== ''
-            );
-            // The override is replaced by exactly what was sent. Anything left out inherits the global value.
-            $merged = $incoming;
-            $this->stripReadOnly($merged);
-            $this->stripPublicUrls($merged);
-            $this->normalizePresentDirections($merged);
-
-            // Validate the override laid over the inherited values, but report only what the override owns.
-            $inherited = $this->settings->resolveSync([], $this->store->adminSync(), $this->store->defaultSync());
-            $errors    = $this->overrideErrors($merged, (new SettingsValidator())->syncErrors(array_merge($inherited, $merged)));
-            if ($errors !== []) {
-                return response()->json([
-                    'message' => 'Some QuickBooks settings are missing or invalid.',
-                    'errors'  => $errors,
-                ], 422);
-            }
-            $this->store->putCompanySync($companyUuid, $merged);
+        $before = $this->organizationSync()->effective($companyUuid);
+        $errors = $this->organizationSync()->save(
+            $companyUuid,
+            $request->boolean('override'),
+            $request->input('sync', [])
+        );
+        if ($errors !== []) {
+            return response()->json([
+                'message' => 'Some QuickBooks settings are missing or invalid.',
+                'errors'  => $errors,
+            ], 422);
         }
+        $this->queueTurnedOnEntities($companyUuid, $before, $this->organizationSync()->effective($companyUuid));
 
-        $this->queueTurnedOnEntities($companyUuid, $before, $this->effectiveSync($companyUuid, $this->store->adminSync()));
+        $canEdit = $this->authorizer->can('quickbooks update settings', $request);
 
-        return response()->json($this->companyPayload($request, $companyUuid));
-    }
-
-    /**
-     * Errors for the keys the override sets, plus an entity's conflict, reference and direction errors
-     * when that entity's enabled flag is in the override. Inherited problems are not the override's.
-     *
-     * @param array<string, mixed>  $override
-     * @param array<string, string> $errors
-     *
-     * @return array<string, string>
-     */
-    private function overrideErrors(array $override, array $errors): array
-    {
-        foreach (['customer', 'invoice', 'payment', 'wallet'] as $entity) {
-            $key = $entity . '_enabled';
-            if (array_key_exists($key, $override) === false) {
-                continue;
-            }
-            $value = $override[$key];
-            if (is_bool($value) === false && in_array($value, [1, 0, '1', '0', 'true', 'false'], true) === false) {
-                $errors[$key] = 'Choose On or Off.';
-            }
-        }
-
-        $kept = [];
-        foreach ($errors as $key => $message) {
-            $own = array_key_exists($key, $override) === true;
-            if ($own === false && preg_match('/^(customer|invoice|payment|wallet)_(conflict|reference|direction)$/', $key, $match) === 1) {
-                $own = array_key_exists($match[1] . '_enabled', $override) === true;
-            }
-            if ($own === true) {
-                $kept[$key] = $message;
-            }
-        }
-
-        return $kept;
+        return response()->json($this->organizationSync()->view($companyUuid, $canEdit));
     }
 
     /**
@@ -281,41 +207,9 @@ class SettingController extends QuickbooksController
 
         $this->authorizeQuickbooks('quickbooks view settings', $request);
 
-        return response()->json($this->companyPayload($request, $this->companyUuid($request)));
-    }
+        $canEdit = $this->authorizer->can('quickbooks update settings', $request);
 
-    /**
-     * The organization view: sync options only. No credential, secret flag, environment or URL.
-     *
-     * @return array<string, mixed>
-     */
-    private function companyPayload(Request $request, string $companyUuid): array
-    {
-        $row       = $this->store->get(SettingsKeys::companySync($companyUuid));
-        $override  = ($row[SettingsKeys::ORGANIZATION_MARKER] ?? null) === SettingsKeys::ORGANIZATION_MARKER_VALUE && ($row['override'] ?? false) === true;
-        $adminSync = $this->store->adminSync();
-        $auth      = $this->settings->resolveAuth([], $this->store->adminAuth(), $this->store->envAuth());
-
-        return [
-            'can_edit'               => $this->authorizer->can('quickbooks update settings', $request),
-            'override'               => $override,
-            'sync'                   => $this->syncForBrowser($this->effectiveSync($companyUuid, $adminSync)),
-            'global_sync'            => $this->syncForBrowser($this->settings->resolveSync([], $adminSync, $this->store->defaultSync())),
-            'company_sync'           => $this->companySyncForBrowser($this->store->companySync($companyUuid)),
-            'credentials_configured' => trim((string) ($auth['client_id'] ?? '')) !== '' && $this->secretIsSet($auth),
-        ];
-    }
-
-    /**
-     * Only the sync options of a resolved bag.
-     *
-     * @param array<string, mixed> $sync
-     *
-     * @return array<string, mixed>
-     */
-    private function syncForBrowser(array $sync): array
-    {
-        return $this->onlySyncKeys($sync);
+        return response()->json($this->organizationSync()->view($this->companyUuid($request), $canEdit));
     }
 
     /**
@@ -752,20 +646,6 @@ class SettingController extends QuickbooksController
     }
 
     /**
-     * An override that names a direction as Off or blank means Both. A direction it leaves out is inherited.
-     *
-     * @param array<string, mixed> $sync
-     */
-    private function normalizePresentDirections(array &$sync): void
-    {
-        foreach (self::DIRECTION_FIELDS as $field) {
-            if (array_key_exists($field, $sync) === true && ($sync[$field] === '' || $sync[$field] === 'off' || is_string($sync[$field]) === false)) {
-                $sync[$field] = 'both';
-            }
-        }
-    }
-
-    /**
      * @param array<string, mixed> $sync
      */
     private function normalizeDirections(array &$sync): void
@@ -808,7 +688,7 @@ class SettingController extends QuickbooksController
      */
     private function onlySyncKeys(array $sync): array
     {
-        return array_intersect_key($sync, array_fill_keys(self::SYNC_KEYS, true));
+        return SettingsStore::onlySyncFields($sync);
     }
 
     /**
@@ -856,5 +736,10 @@ class SettingController extends QuickbooksController
     private function directory(): FleetbaseDirectory
     {
         return $this->directory ??= app(FleetbaseDirectory::class);
+    }
+
+    private function organizationSync(): OrganizationSyncSettings
+    {
+        return $this->organizationSync ??= new OrganizationSyncSettings($this->settings, $this->store);
     }
 }
