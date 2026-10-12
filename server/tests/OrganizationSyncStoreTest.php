@@ -10,7 +10,7 @@ function orgRow(array $fields, bool $override = true): array
 
 test('an organization sync override is read only when it carries the organization marker and override is on', function () {
     $store                                            = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companySync('org-a')] = orgRow(['interval_minutes' => 7]);
+    $store->rows[SettingsKeys::companySync('org-a')]  = orgRow(['interval_minutes' => 7]);
     // A row written by an older build that saved organization rows has no marker and is ignored.
     $store->rows[SettingsKeys::companySync('org-b')] = ['interval_minutes' => 9, 'override' => true];
     $store->rows[SettingsKeys::companySync('org-d')] = orgRow(['interval_minutes' => 11], false);

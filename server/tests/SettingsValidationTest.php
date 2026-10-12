@@ -11,7 +11,6 @@ use Fleetbase\Quickbooks\Support\SettingsValidator;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 
 function validAuth(array $overrides = []): array

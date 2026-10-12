@@ -155,9 +155,9 @@ test('an organization with no override inherits the global sync options exactly'
 });
 
 test('credentials_configured is false until the global client id and secret are both set', function () {
-    $store = new MemorySettingsStore();
+    $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = ['client_id' => 'only-an-id'];
-    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksOperator'));
+    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksOperator'));
 
     expect($controller->show(orgApiGet())->getData(true)['credentials_configured'])->toBeFalse();
 });
@@ -204,10 +204,10 @@ test('a QuickbooksAdministrator saves an override that writes only this organiza
         'company_uuid' => 'company-a',
         'override'     => true,
         'sync'         => [
-            'interval_minutes' => 30,
-            'customer_enabled' => false,
-            'client_id'        => 'smuggled',
-            'webhook_url'      => 'https://evil.test',
+            'interval_minutes'            => 30,
+            'customer_enabled'            => false,
+            'client_id'                   => 'smuggled',
+            'webhook_url'                 => 'https://evil.test',
             'public_webhook_receiver_url' => 'https://evil.test',
         ],
     ]));
@@ -284,9 +284,9 @@ test('an invalid override is refused with sync errors and writes nothing', funct
 });
 
 test('company credentials are never validated at company scope', function () {
-    $store = new MemorySettingsStore();
+    $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminSync()] = qbSettings();
-    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
+    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), orgApiDirectory());
 
     $response = $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['interval_minutes' => 20]]));
 
@@ -374,10 +374,10 @@ test('the admin scope saves the global rows and never an organization row', func
 });
 
 test('queueing diffs effective settings, so first saving an override equal to inherited on values queues nothing', function () {
-    $store = orgApiStore();
+    $store                                  = orgApiStore();
     $store->rows[SettingsKeys::adminSync()] = qbSettings(['customer_enabled' => true, 'invoice_enabled' => true, 'wallet_enabled' => true]);
-    $directory  = orgApiDirectory();
-    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), $directory);
+    $directory                              = orgApiDirectory();
+    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), $directory);
 
     $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => [
         'customer_enabled' => true,
@@ -389,10 +389,10 @@ test('queueing diffs effective settings, so first saving an override equal to in
 });
 
 test('an override that turns an inherited off entity on queues only that entity, and leaving it queues nothing', function () {
-    $store = orgApiStore();
+    $store                                  = orgApiStore();
     $store->rows[SettingsKeys::adminSync()] = qbSettings(['wallet_enabled' => false]);
-    $directory  = orgApiDirectory();
-    $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), $directory);
+    $directory                              = orgApiDirectory();
+    $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'), $directory);
 
     $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['wallet_enabled' => true]]));
     $controller->save(orgApiPost(['scope' => 'company', 'override' => true, 'sync' => ['wallet_enabled' => true]]));
@@ -402,7 +402,7 @@ test('an override that turns an inherited off entity on queues only that entity,
 });
 
 test('a global save queues by this organizations effective settings, not the raw global row', function () {
-    $store = orgApiStore();
+    $store                                  = orgApiStore();
     $store->rows[SettingsKeys::adminSync()] = qbSettings(['wallet_enabled' => false]);
     $store->putCompanySync('company-a', ['wallet_enabled' => true]);
     $directory  = orgApiDirectory();

@@ -27,11 +27,15 @@ Money is stored as integer minor units. QuickBooks major-unit amounts are conver
 
 ## Settings
 
-Settings are install-wide, and only an installation administrator can save them. An organization role can view the settings (`quickbooks view settings`) and `GET settings` returns `can_edit`, but `POST settings` returns HTTP 403, and the console shows the form read-only with a note. Client ID, Client secret, Redirect URI, webhook verifier, and sync options are saved on the system rows `system.quickbooks.auth` and `system.quickbooks.sync`. Organization settings → Quickbooks Setup loads and saves them with `scope=admin`.
+Global settings are Client ID, Client secret, Redirect URI, environment, webhook verifier, public webhook and OAuth URLs, and the default sync options. Only an installation administrator can view or save them, on Admin → QuickBooks → Settings, which uses `scope=admin` and the system rows `system.quickbooks.auth` and `system.quickbooks.sync` (others get HTTP 403).
 
-Organization settings lists **Quickbooks Setup** and **Quickbooks Activity** with Organization, Two Factor, and Notifications. Quickbooks Setup is route `console.settings.virtual`, slug `quickbooks-setup`, view `index` (`/settings/quickbooks-setup?view=index`). Quickbooks Activity is slug `quickbooks-activity` (`/settings/quickbooks-activity?view=index`). The QuickBooks header item opens Quickbooks Setup. There is no Admin QuickBooks panel and no Ledger settings entry.
+Organization settings → Quickbooks Setup uses `scope=company` (the default). It shows the connection controls and an **Override the global sync settings** switch. An organization can override only sync options. It never sees or saves credentials, the webhook verifier, environment, or URLs. With the switch off, the organization inherits the global sync options. The override is stored on `company.{uuid}.quickbooks.sync` with a `scope: organization` marker; organization rows written by older builds (no marker) are ignored. `GET settings` at company scope returns only `can_edit`, `override`, `sync`, `global_sync`, `company_sync`, and `credentials_configured`. `POST settings` at company scope accepts only `scope`, `override`, and `sync`; an `auth` key or any other key returns HTTP 422.
 
-Save the install's Client ID, Client secret, and system webhook verifier on Organization settings → Quickbooks Setup. Connect uses those saved keys. Client ID, Client secret, Redirect URI, and the webhook verifier come only from that system row. A blank system field stays blank. Environment may fall back to `QUICKBOOKS_ENVIRONMENT`, which defaults to `production`.
+Saving an override needs `quickbooks update settings`, which the QuickBooks Administrator policy grants. QuickBooks Operator can only view (`quickbooks view settings`) and the console shows the form read-only with a note. Installation administrators always pass. On an existing install, re-seed permissions so `update settings` exists: `php artisan fleetbase:create-permissions` from the Fleetbase API directory (Fleetbase core command; `--reset` rebuilds all permissions, policies, and roles). Every sync reader (schedule, Sync now, webhooks, customer import, remote changes) uses the organization's effective sync settings: the defaults, then the global row, then the organization override.
+
+Organization settings lists **Quickbooks Setup** and **Quickbooks Activity** with Organization, Two Factor, and Notifications. Quickbooks Setup is route `console.settings.virtual`, slug `quickbooks-setup`, view `index` (`/settings/quickbooks-setup?view=index`). Quickbooks Activity is slug `quickbooks-activity` (`/settings/quickbooks-activity?view=index`). The QuickBooks header item opens Quickbooks Setup. The Fleetbase Admin panel **QuickBooks** has one item, **Settings**. There is no Ledger settings entry.
+
+An installation administrator saves the install's Client ID, Client secret, and system webhook verifier on Admin → QuickBooks → Settings. Connect on Quickbooks Setup uses those saved keys. Client ID, Client secret, Redirect URI, and the webhook verifier come only from that system row. A blank system field stays blank. Environment may fall back to `QUICKBOOKS_ENVIRONMENT`, which defaults to `production`.
 
 The settings form does not ask for a batch size and does not send `batch_size`.
 
@@ -71,9 +75,9 @@ HTTP 429 does not use Retry Delay. It uses the `Retry-After` header when that he
 
 ## Connect and disconnect
 
-Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved in Organization settings → Quickbooks Setup for the install and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
+Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved by an installation administrator in Admin → QuickBooks → Settings for the install and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
 
-The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The internal webhook path is `/quickbooks/int/v1/webhooks`. Quickbooks Setup shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver URL stay editable and are saved on the install-wide settings row. Paste the public OAuth URL into Intuit Redirect URIs and the public webhook URL into the Intuit Endpoint URL. A blank public URL is shown as the matching internal URL.
+The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The internal webhook path is `/quickbooks/int/v1/webhooks`. Admin → QuickBooks → Settings shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver URL stay editable and are saved on the install-wide settings row. Paste the public OAuth URL into Intuit Redirect URIs and the public webhook URL into the Intuit Endpoint URL. A blank public URL is shown as the matching internal URL.
 
 Connect uses PKCE (`S256`). The API stores a code verifier with the OAuth state and sends the code challenge on `https://appcenter.intuit.com/connect/oauth2` with scope `com.intuit.quickbooks.accounting`.
 
@@ -170,7 +174,7 @@ Pass `--path` with the Fleetbase directory when that directory is not the curren
 
 `.github/workflows/deploy.yml` publishes this package to the Fleetbase registry with `flb publish` when a `v*` tag is pushed. The tag has to contain that workflow, and the GitHub secrets named in it have to exist.
 
-Open Organization settings → Quickbooks Setup, save the Intuit Client ID and Client secret, and connect.
+As an installation administrator, open Admin → QuickBooks → Settings and save the Intuit Client ID and Client secret. Then open Organization settings → Quickbooks Setup and connect.
 
 ### Developer checkout
 
@@ -185,7 +189,7 @@ On this machine the repository is checked out at `/opt/fleetbase-quickbooks` on 
 
 ### Developing locally
 
-Starting OAuth needs a public https redirect URL. The redirect that Intuit receives is the `public_oauth_redirect_url` setting (Public OAuth Redirect URL on Quickbooks Setup) when it is set, otherwise the computed callback on the API host. Either one must pass `Support/PublicHttps`: it has to be `https://`, and localhost, loopback, private, link-local, and other internal addresses are rejected, as is a hostname that does not resolve to a public address. A dev server on a private IP such as `10.30.0.34` therefore cannot connect as it is. Put a public https tunnel or reverse proxy in front of the API, save its callback URL (`https://<public host>/quickbooks/int/v1/oauth/callback`) as Public OAuth Redirect URL, and list the same URL under Redirect URIs in the Intuit app. Without a usable redirect, connect returns HTTP 422 and does not open Intuit.
+Starting OAuth needs a public https redirect URL. The redirect that Intuit receives is the `public_oauth_redirect_url` setting (Public OAuth Redirect URL on Admin → QuickBooks → Settings) when it is set, otherwise the computed callback on the API host. Either one must pass `Support/PublicHttps`: it has to be `https://`, and localhost, loopback, private, link-local, and other internal addresses are rejected, as is a hostname that does not resolve to a public address. A dev server on a private IP such as `10.30.0.34` therefore cannot connect as it is. Put a public https tunnel or reverse proxy in front of the API, save its callback URL (`https://<public host>/quickbooks/int/v1/oauth/callback`) as Public OAuth Redirect URL, and list the same URL under Redirect URIs in the Intuit app. Without a usable redirect, connect returns HTTP 422 and does not open Intuit.
 
 Set `CONSOLE_HOST` (or `QUICKBOOKS_CONSOLE_HOST`) on the API to the console origin. The OAuth callback redirects the browser there, and returns HTTP 500 without it. Sync now and the schedule do not need the public redirect once a connection exists.
 

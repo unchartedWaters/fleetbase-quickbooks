@@ -255,7 +255,7 @@ class SettingController extends QuickbooksController
      */
     private function companyPayload(Request $request, string $companyUuid): array
     {
-        $row      = $this->store->get(SettingsKeys::companySync($companyUuid));
+        $row       = $this->store->get(SettingsKeys::companySync($companyUuid));
         $override  = ($row[SettingsKeys::ORGANIZATION_MARKER] ?? null) === SettingsKeys::ORGANIZATION_MARKER_VALUE && ($row['override'] ?? false) === true;
         $adminSync = $this->store->adminSync();
         $auth      = $this->settings->resolveAuth([], $this->store->adminAuth(), $this->store->envAuth());
