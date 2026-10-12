@@ -253,6 +253,8 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         assert.dom('[data-test-activity-row]').exists({ count: 1 });
         assert.dom('[data-test-activity-created]').hasText('1');
         assert.dom('#fleetbase-pagination').exists({ count: 1 });
+        assert.dom('[data-test-activity-load-failed]').hasAttribute('role', 'alert');
+        assert.dom('[data-test-activity-load-failed]').isFocused('focus moves to the error, not to the page body');
 
         fail = false;
         await click('#fleetbase-pagination-forward-button');
