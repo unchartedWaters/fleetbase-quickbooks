@@ -10,6 +10,7 @@ function captureRegistration() {
     const settingsPanels = [];
     const widgetCalls = [];
     const transitions = [];
+    const order = [];
     const app = {
         lookup(name) {
             if (name === 'service:router') {
@@ -28,18 +29,23 @@ function captureRegistration() {
             if (name === 'menu') {
                 return {
                     registerHeaderMenuItem(item) {
+                        order.push('header:' + item.title);
                         headerItems.push(item);
                     },
                     registerAdminMenuItem(item) {
+                        order.push('admin-item:' + item.title);
                         adminItems.push(item);
                     },
                     registerAdminMenuPanel(title, items, options) {
+                        order.push('admin-panel:' + title);
                         adminPanels.push({ title, items, options });
                     },
                     registerSettingsMenuItem(item) {
+                        order.push('settings-item:' + item.title);
                         settingsItems.push(item);
                     },
                     registerSettingsMenuPanel(title, items, options) {
+                        order.push('settings-panel:' + title);
                         settingsPanels.push({ title, items, options });
                     },
                 };
@@ -48,6 +54,7 @@ function captureRegistration() {
             if (name === 'universe/widget-service') {
                 return {
                     registerWidgets(dashboard, widgets) {
+                        order.push('widgets:' + dashboard);
                         widgetCalls.push({ dashboard, widgets });
                     },
                 };
@@ -59,11 +66,24 @@ function captureRegistration() {
 
     extension.setupExtension(app, universe);
 
-    return { headerItems, adminItems, adminPanels, settingsItems, settingsPanels, widgetCalls, transitions };
+    return { headerItems, adminItems, adminPanels, settingsItems, settingsPanels, widgetCalls, transitions, order };
 }
 
 module('Unit | extension', function (hooks) {
     setupTest(hooks);
+
+    test('setupExtension registers the menus and widgets in a fixed order', function (assert) {
+        const { order } = captureRegistration();
+
+        assert.deepEqual(order, [
+            'header:QuickBooks',
+            'admin-panel:QuickBooks',
+            'settings-item:Quickbooks Setup',
+            'settings-item:Quickbooks Activity',
+            'widgets:ledger',
+            'widgets:dashboard',
+        ]);
+    });
 
     test('the header menu opens Quickbooks Setup', function (assert) {
         const { headerItems, transitions } = captureRegistration();
