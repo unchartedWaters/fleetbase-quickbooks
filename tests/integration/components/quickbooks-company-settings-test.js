@@ -56,7 +56,7 @@ class FetchStubService extends Service {
                 can_edit: true,
                 override: body?.override === true,
                 credentials_configured: true,
-                sync: { ...GLOBAL_SYNC, ...(body?.sync ?? {}) },
+                sync: { ...GLOBAL_SYNC, ...body?.sync },
                 global_sync: GLOBAL_SYNC,
                 company_sync: body?.sync ?? {},
             };
@@ -296,7 +296,9 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
             'internal_webhook_receiver_url',
             'public_oauth_redirect_url',
             'internal_oauth_redirect_url',
-        ].forEach((key) => assert.dom(`[data-test-field="${key}"]`).doesNotExist(key));
+        ].forEach((key) => {
+            assert.dom(`[data-test-field="${key}"]`).doesNotExist(key);
+        });
         assert.dom('[data-test-credentials-guidance]').doesNotExist();
         assert.dom().doesNotIncludeText('Authentication');
         assert.dom('[data-test-settings-scope]').includesText('Schedule');
