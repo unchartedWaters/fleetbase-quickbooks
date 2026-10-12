@@ -28,8 +28,8 @@ class Quickbooks
             'actions' => ['connect', 'disconnect', 'import-customers'],
         ],
         [
-            // "view" and "update" cover an organization's sync overrides. The global settings (Intuit
-            // credentials, environment, webhook verifier, default sync options) are saved on the Admin
+            // "view" and "update" cover an organization's own sync settings. The global settings (Intuit
+            // credentials, environment, webhook verifier, sync template) are saved on the Admin
             // screen and are checked as installation administrator, not as a permission.
             'name'           => 'settings',
             'actions'        => [],

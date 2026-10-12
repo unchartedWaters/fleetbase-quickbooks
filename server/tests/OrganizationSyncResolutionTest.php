@@ -7,6 +7,7 @@ use Fleetbase\Quickbooks\Jobs\SyncWebhookBatch;
 use Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync;
 use Fleetbase\Quickbooks\Services\BatchRunner;
 use Fleetbase\Quickbooks\Services\SettingsService;
+use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
@@ -24,8 +25,10 @@ function orgResolutionStore(array $global = [], array $orgs = []): MemorySetting
 {
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminSync()] = array_merge(['override' => true], $global);
+    // Each organization holds a complete copy: the template at this moment with its own fields over it.
+    $template = SettingsStore::onlySyncFields(orgResolutionSettings()->resolveSync([], $store->adminSync(), $store->defaultSync()));
     foreach ($orgs as $uuid => $fields) {
-        $store->putCompanySync($uuid, $fields);
+        $store->putCompanySync($uuid, array_merge($template, $fields));
     }
 
     return $store;
@@ -44,7 +47,7 @@ function orgResolutionPrivate(object $target, string $method, array $args = []):
     return $reflection->invoke($target, ...$args);
 }
 
-test('an organization field wins over the global row', function () {
+test('an organization copy field wins over the global row', function () {
     $store = orgResolutionStore(['interval_minutes' => 10, 'batch_size' => 50], ['org-a' => ['interval_minutes' => 3]]);
 
     $resolved = orgResolve($store, 'org-a');
@@ -53,20 +56,22 @@ test('an organization field wins over the global row', function () {
         ->and($resolved['batch_size'])->toBe(50);
 });
 
-test('a null or empty organization field inherits the global value', function () {
-    $store = orgResolutionStore(['interval_minutes' => 10, 'batch_size' => 50, 'customer_conflict' => 'quickbooks', 'customer_direction' => 'inbound'], [
-        'org-a' => ['interval_minutes' => null, 'batch_size' => '', 'customer_conflict' => '', 'customer_direction' => null],
-    ]);
+test('a legacy partial override still inherits the fields it leaves out until it is migrated', function () {
+    $store                                           = orgResolutionStore(['interval_minutes' => 10, 'batch_size' => 50, 'customer_conflict' => 'quickbooks', 'customer_direction' => 'inbound']);
+    $store->rows[SettingsKeys::companySync('org-a')] = orgRow(['interval_minutes' => null, 'batch_size' => '', 'customer_conflict' => '', 'customer_direction' => null, 'retry_limit' => 9]);
+    $store->rows[SettingsKeys::companySync('org-b')] = orgRow(['retry_limit' => 9], false);
 
     $resolved = orgResolve($store, 'org-a');
 
     expect($resolved['interval_minutes'])->toBe(10)
         ->and($resolved['batch_size'])->toBe(50)
         ->and($resolved['customer_conflict'])->toBe('quickbooks')
-        ->and($resolved['customer_direction'])->toBe('inbound');
+        ->and($resolved['customer_direction'])->toBe('inbound')
+        ->and($resolved['retry_limit'])->toBe(9)
+        ->and(orgResolve($store, 'org-b')['retry_limit'])->toBe(5);
 });
 
-test('an organization false overrides a global true', function () {
+test('an organization copy false stays false over a global true', function () {
     $store = orgResolutionStore(['customer_enabled' => true, 'wallet_enabled' => false], ['org-a' => ['customer_enabled' => false, 'wallet_enabled' => true]]);
 
     $resolved = orgResolve($store, 'org-a');
@@ -75,22 +80,38 @@ test('an organization false overrides a global true', function () {
         ->and($resolved['wallet_enabled'])->toBeTrue();
 });
 
-test('an organization without an override gets exactly the global result', function () {
-    $store  = orgResolutionStore(['interval_minutes' => 10, 'invoice_enabled' => false], ['org-a' => ['interval_minutes' => 3]]);
-    $global = orgResolutionSettings()->resolveSync([], $store->adminSync(), $store->defaultSync());
+test('an organization without a copy gets exactly the template result', function () {
+    $store    = orgResolutionStore(['interval_minutes' => 10, 'invoice_enabled' => false], ['org-a' => ['interval_minutes' => 3]]);
+    $template = orgResolutionSettings()->resolveSync([], $store->adminSync(), $store->defaultSync());
 
-    expect(orgResolve($store, 'org-b'))->toBe($global)
-        ->and($global['interval_minutes'])->toBe(10);
+    expect(orgResolve($store, 'org-b'))->toBe($template)
+        ->and($template['interval_minutes'])->toBe(10);
 });
 
-test('an organization that cleared its override inherits the global result', function () {
-    $store = orgResolutionStore(['interval_minutes' => 10], ['org-a' => ['interval_minutes' => 3]]);
-    $store->clearCompanySync('org-a');
+test('changing every global sync field leaves an organization copy unchanged', function () {
+    $store  = orgResolutionStore(['interval_minutes' => 10, 'customer_conflict' => 'quickbooks'], ['org-a' => []]);
+    $before = orgResolve($store, 'org-a');
 
-    expect(orgResolve($store, 'org-a')['interval_minutes'])->toBe(10);
+    $store->rows[SettingsKeys::adminSync()] = qbSettings([
+        'enabled'                 => false,
+        'interval_minutes'        => 77,
+        'periodic_interval_hours' => 3,
+        'batch_size'              => 9,
+        'retry_limit'             => 2,
+        'default_backoff_seconds' => 99,
+        'customer_conflict'       => 'fleetbase',
+        'customer_reference'      => 'quickbooks',
+        'customer_direction'      => 'inbound',
+        'invoice_enabled'         => false,
+        'payment_direction'       => 'outbound',
+        'wallet_enabled'          => false,
+    ]);
+
+    expect(orgResolve($store, 'org-a'))->toBe($before)
+        ->and(orgResolve($store, 'org-b')['interval_minutes'])->toBe(77);
 });
 
-test('one organization override never changes another organization result', function () {
+test('one organization copy never changes another organization result', function () {
     $store = orgResolutionStore(['interval_minutes' => 10], [
         'org-a' => ['interval_minutes' => 3, 'customer_enabled' => false],
         'org-b' => ['interval_minutes' => 20],
@@ -104,7 +125,7 @@ test('one organization override never changes another organization result', func
         ->and($b['customer_enabled'])->toBeTrue();
 });
 
-test('the batch runner schedules each organization with its own override', function () {
+test('the batch runner schedules each organization with its own copy', function () {
     $store  = orgResolutionStore(['interval_minutes' => 10], ['org-a' => ['interval_minutes' => 3]]);
     $runner = (new ReflectionClass(BatchRunner::class))->newInstanceWithoutConstructor();
     foreach (['settings' => orgResolutionSettings(), 'store' => $store] as $property => $value) {
@@ -115,9 +136,15 @@ test('the batch runner schedules each organization with its own override', funct
 
     expect($runner->deferSeconds('org-a'))->toBe(180)
         ->and($runner->deferSeconds('org-b'))->toBe(600);
+
+    // A later global edit moves an organization without a copy, never one with a copy.
+    $store->rows[SettingsKeys::adminSync()] = qbSettings(['interval_minutes' => 20]);
+
+    expect($runner->deferSeconds('org-a'))->toBe(180)
+        ->and($runner->deferSeconds('org-b'))->toBe(1200);
 });
 
-test('the webhook flush uses the override of the company it is flushing', function () {
+test('the webhook flush uses the copy of the company it is flushing', function () {
     $dispatcher = new class implements Dispatcher {
         public array $jobs = [];
 
@@ -181,7 +208,7 @@ test('the webhook flush uses the override of the company it is flushing', functi
         ->and($batches[0]->companyUuid)->toBe('org-b');
 });
 
-test('connect copies customers per the organization override', function () {
+test('connect copies customers per the organization copy', function () {
     $store      = orgResolutionStore(['customer_enabled' => true], ['org-a' => ['customer_enabled' => false]]);
     $controller = (new ReflectionClass(ConnectionController::class))->newInstanceWithoutConstructor();
     foreach (['settings' => orgResolutionSettings(), 'store' => $store] as $property => $value) {
@@ -194,7 +221,7 @@ test('connect copies customers per the organization override', function () {
         ->and(orgResolutionPrivate($controller, 'customersEnabled', ['org-b']))->toBeTrue();
 });
 
-test('the customer import reads the organization override for its company', function () {
+test('the customer import reads the organization copy for its company', function () {
     $store = orgResolutionStore(['customer_enabled' => true, 'batch_size' => 80], ['org-a' => ['customer_enabled' => false, 'batch_size' => 7]]);
     $a     = new ImportCustomers('org-a');
     $b     = new ImportCustomers('org-b');

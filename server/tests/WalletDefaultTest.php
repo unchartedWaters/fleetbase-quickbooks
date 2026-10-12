@@ -1,8 +1,6 @@
 <?php
 
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
-use Fleetbase\Quickbooks\Jobs\QueueCompanyScope;
-use Fleetbase\Quickbooks\Jobs\QueueGlobalScope;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Support\Authorizer;
@@ -68,7 +66,7 @@ test('connecting a fresh install does not queue wallets', function () {
     expect((new SyncFlagger())->enabledEntities($resolved))->toBe(['customer' => true, 'invoice' => true, 'wallet' => false]);
 });
 
-test('turning wallet sync on for the first time queues the wallets', function () {
+test('turning wallet sync on in the global template queues nothing for organizations', function () {
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminSync()] = ['interval_minutes' => 5];
     session(['company' => 'company-uuid']);
@@ -88,11 +86,9 @@ test('turning wallet sync on for the first time queues the wallets', function ()
             ]));
         });
 
-        // A global save queues in the background, for every connected organization.
-        $global = array_values(array_filter($jobs, fn ($job) => $job instanceof QueueGlobalScope));
+        // The global row is a template: a save changes no organization that has its own copy.
         expect($saved->getStatusCode())->toBe(200)
-            ->and($global)->toHaveCount(1)
-            ->and(QueueCompanyScope::turnedOn($global[0]->before, $global[0]->after))->toBe(['wallet' => true]);
+            ->and($jobs)->toBe([]);
     } finally {
         session(['company' => null]);
     }

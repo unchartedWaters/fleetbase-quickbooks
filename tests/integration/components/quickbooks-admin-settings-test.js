@@ -86,6 +86,13 @@ module('Integration | Component | quickbooks-admin-settings', function (hooks) {
         assert.dom('[data-test-field="public_webhook_receiver_url"]').exists();
         assert.dom('[data-test-sync="interval_minutes"]').isNotDisabled();
         assert.dom('[data-test-override]').doesNotExist();
+        assert
+            .dom('[data-test-admin-template-note]')
+            .hasText(
+                "These sync settings are only a template. An organization's sync settings are copied from them when it connects, saves or resets its settings. Changing them here has no effect on any organization's sync settings."
+            );
+        assert.dom('[data-test-reset]').doesNotExist();
+        assert.dom('[data-test-template-note]').doesNotExist();
         assert.dom('[data-test-connection-actions]').doesNotExist();
         assert.dom('[data-test-connect]').doesNotExist();
     });

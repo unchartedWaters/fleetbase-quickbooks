@@ -132,7 +132,7 @@ class SettingsService
     }
 
     /**
-     * Config defaults, then install-wide sync settings, then the organization override per field.
+     * Config defaults, then the global sync template, then the organization's own copy, per field.
      *
      * @param array<string, mixed> $company
      * @param array<string, mixed> $admin

@@ -20,10 +20,12 @@
 - Inbound: `WebhookController` checks the Intuit signature against the
   install-wide verifier, then stale/replay checks, then queues work for every
   organization connected to that realm.
-- Settings are two-tier: global (installation admin only, `scope=admin`) and
-  per-organization sync overrides (`scope=company`, rows marked
-  `scope: organization`). `SyncSettingsResolver` merges config defaults, global
-  row, organization row.
+- Global settings (installation admin only, `scope=admin`) are credentials and
+  a sync template. An organization (`scope=company`, rows marked
+  `scope: organization`) has its own complete copy of the sync options, made
+  when it connects, saves or resets. Template edits must never change or queue
+  an organization that has a copy. `SyncSettingsResolver` merges config
+  defaults, global row, organization row.
 - Authorization: controllers extend `QuickbooksController` and call
   `authorizeQuickbooks('quickbooks <action> <resource>')` or
   `authorizeInstallationAdmin()`. The company comes from the session; a request

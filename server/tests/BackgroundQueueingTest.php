@@ -3,7 +3,6 @@
 use Fleetbase\Quickbooks\Http\Controllers\ConnectionController;
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
 use Fleetbase\Quickbooks\Jobs\QueueCompanyScope;
-use Fleetbase\Quickbooks\Jobs\QueueGlobalScope;
 use Fleetbase\Quickbooks\Jobs\SyncCompanyBatch;
 use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
@@ -119,47 +118,7 @@ test('the connect queue job starts the sync after queueing and a plain one does 
         ->and($jobs[0]->trigger)->toBe('now');
 });
 
-test('the global queue job queues every connected organization by its own effective settings', function () {
-    bgWithConnections(function () {
-        bgConnection('company-a', 'realm-1');
-        bgConnection('company-b', 'realm-2');
-        bgConnection('company-c', '');
-        bgConnection('company-d', 'realm-4', ['needs_reauth' => true]);
-        bgConnection('company-e', null);
-        $store                                  = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminSync()] = qbSettings(['wallet_enabled' => true]);
-        // company-b keeps wallets off with its own override.
-        $store->putCompanySync('company-b', ['wallet_enabled' => false]);
-        $directory = bgDirectory();
-
-        $job = new QueueGlobalScope(
-            qbSettings(['wallet_enabled' => false]),
-            qbSettings(['wallet_enabled' => true])
-        );
-        $job->handle($directory, $store);
-
-        $queued = $directory->queued;
-        usort($queued, fn ($left, $right) => strcmp($left[0], $right[0]));
-        expect($queued)->toBe([
-            ['company-a', ['wallet' => true]],
-            ['company-d', ['wallet' => true]],
-        ]);
-    });
-});
-
-test('the global queue job queues nothing when no switch turned on', function () {
-    bgWithConnections(function () {
-        bgConnection('company-a', 'realm-1');
-        $store     = new MemorySettingsStore();
-        $directory = bgDirectory();
-
-        (new QueueGlobalScope(qbSettings(['wallet_enabled' => true]), qbSettings(['wallet_enabled' => true])))->handle($directory, $store);
-
-        expect($directory->queued)->toBe([]);
-    });
-});
-
-test('a global save dispatches one job carrying the before and after settings and queues nothing inline', function () {
+test('a global save queues nothing for any organization', function () {
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminSync()] = qbSettings(['wallet_enabled' => false]);
     session(['company' => 'company-uuid']);
@@ -175,10 +134,7 @@ test('a global save dispatches one job carrying the before and after settings an
             expect($saved->getStatusCode())->toBe(200);
         });
 
-        $global = array_values(array_filter($jobs, fn ($job) => $job instanceof QueueGlobalScope));
-        expect($global)->toHaveCount(1)
-            ->and($global[0]->before['wallet_enabled'])->toBeFalse()
-            ->and($global[0]->after['wallet_enabled'])->toBeTrue()
+        expect($jobs)->toBe([])
             ->and(CapturedJobs::queued($jobs))->toBe([]);
     } finally {
         session(['company' => null]);
@@ -194,9 +150,8 @@ test('an organization save dispatches a queue job instead of queueing inline', f
     try {
         $jobs = CapturedJobs::capture(function () use ($controller): void {
             $controller->save(Request::create('/settings', 'POST', [
-                'scope'    => 'company',
-                'override' => true,
-                'sync'     => ['wallet_enabled' => true],
+                'scope' => 'company',
+                'sync'  => ['wallet_enabled' => true],
             ]));
         });
 

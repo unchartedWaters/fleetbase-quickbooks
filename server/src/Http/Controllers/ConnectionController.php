@@ -12,6 +12,7 @@ use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Services\ConnectionProbe;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\OAuthFlow;
+use Fleetbase\Quickbooks\Services\OrganizationSyncSettings;
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
@@ -422,9 +423,12 @@ class ConnectionController extends QuickbooksController
     /**
      * Queue in-scope rows for entities that are turned on, then the sync job drains them.
      * Both happen in a background job so a large catalog cannot hold this request.
+     * The organization first gets its own copy of the sync settings (an existing copy is kept),
+     * so what is queued here is what it keeps running with.
      */
     private function queueExistingRecords(string $companyUuid): void
     {
+        (new OrganizationSyncSettings($this->settings, $this->store))->ensureCopy($companyUuid);
         $resolved = $this->settings->resolveSync(
             $this->store->companySync($companyUuid),
             $this->store->adminSync(),

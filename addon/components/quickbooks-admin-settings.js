@@ -5,7 +5,7 @@ import { inject as service } from '@ember/service';
 
 const NAMESPACE = 'quickbooks/int/v1';
 
-// Admin > QuickBooks > Settings. The global Client ID, secret, URLs, and default sync options live here, for installation administrators only.
+// Admin > QuickBooks > Settings. The global Client ID, secret, URLs, and sync template live here, for installation administrators only.
 export default class QuickbooksAdminSettingsComponent extends Component {
     @service fetch;
     @service currentUser;

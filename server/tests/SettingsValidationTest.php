@@ -1,9 +1,6 @@
 <?php
 
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
-use Fleetbase\Quickbooks\Jobs\QueueCompanyScope;
-use Fleetbase\Quickbooks\Jobs\QueueGlobalScope;
-use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
@@ -984,17 +981,8 @@ test('sync settings drop keys that are not on the allowlist', function () {
     }
 });
 
-test('saving queues an entity only when its switch is turned on', function () {
-    $store     = new MemorySettingsStore();
-    $directory = new class extends FleetbaseDirectory {
-        /** @var array<int, array{0: string, 1: array<string, bool>}> */
-        public array $queued = [];
-
-        public function queueInScope(string $companyUuid, array $enabled): void
-        {
-            $this->queued[] = [$companyUuid, $enabled];
-        }
-    };
+test('a global save never queues an organization, whichever switch turned on', function () {
+    $store = new MemorySettingsStore();
     session(['company' => 'company-uuid']);
     $controller = new SettingController(
         new Authorizer(static fn () => true),
@@ -1004,62 +992,23 @@ test('saving queues an entity only when its switch is turned on', function () {
     $store->rows[SettingsKeys::adminSync()] = qbSettings([
         'customer_enabled' => false,
         'invoice_enabled'  => false,
-        'wallet_enabled'   => true,
+        'wallet_enabled'   => false,
         'payment_enabled'  => false,
     ]);
 
-    $save = function (array $sync) use ($controller): array {
+    try {
         $response = null;
-        $jobs     = CapturedJobs::capture(function () use ($controller, $sync, &$response): void {
+        $jobs     = CapturedJobs::capture(function () use ($controller, &$response): void {
             $response = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
                 'scope' => 'admin',
                 'auth'  => validAuth(),
-                'sync'  => qbSettings($sync),
+                'sync'  => qbSettings(['customer_enabled' => true, 'invoice_enabled' => true, 'wallet_enabled' => true, 'payment_enabled' => true]),
             ]));
         });
-        $global = array_values(array_filter($jobs, fn ($job) => $job instanceof QueueGlobalScope));
 
-        return [$response, $global];
-    };
-
-    try {
-        [, $first] = $save([
-            'customer_enabled' => true,
-            'invoice_enabled'  => true,
-            'wallet_enabled'   => true,
-            'payment_enabled'  => true,
-        ]);
-        [$stayed, $second] = $save([
-            'customer_enabled' => true,
-            'invoice_enabled'  => true,
-            'wallet_enabled'   => false,
-            'payment_enabled'  => true,
-        ]);
-
-        // Queueing runs in the background, once per save, and only for what turned on.
-        expect($directory->queued)->toBe([])
-            ->and($first)->toHaveCount(1)
-            ->and(QueueCompanyScope::turnedOn($first[0]->before, $first[0]->after))->toBe(['customer' => true, 'invoice' => true])
-            ->and($second)->toHaveCount(1)
-            ->and(QueueCompanyScope::turnedOn($second[0]->before, $second[0]->after))->toBe([])
-            ->and($stayed->getStatusCode())->toBe(200)
-            ->and($store->rows[SettingsKeys::adminSync()]['wallet_enabled'])->toBeFalse();
-
-        $store->rows[SettingsKeys::adminSync()] = qbSettings([
-            'customer_enabled' => true,
-            'invoice_enabled'  => true,
-            'wallet_enabled'   => true,
-            'payment_enabled'  => false,
-        ]);
-        [, $third] = $save([
-            'customer_enabled' => true,
-            'invoice_enabled'  => true,
-            'wallet_enabled'   => true,
-            'payment_enabled'  => true,
-        ]);
-
-        expect($third)->toHaveCount(1)
-            ->and(QueueCompanyScope::turnedOn($third[0]->before, $third[0]->after))->toBe(['invoice' => true]);
+        expect($response->getStatusCode())->toBe(200)
+            ->and($jobs)->toBe([])
+            ->and($store->rows[SettingsKeys::adminSync()]['customer_enabled'])->toBeTrue();
     } finally {
         session(['company' => null]);
     }

@@ -3,7 +3,6 @@
 namespace Fleetbase\Quickbooks\Http\Controllers;
 
 use Fleetbase\Quickbooks\Jobs\QueueCompanyScope;
-use Fleetbase\Quickbooks\Jobs\QueueGlobalScope;
 use Fleetbase\Quickbooks\Services\OrganizationSyncSettings;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
@@ -49,7 +48,7 @@ class SettingController extends QuickbooksController
 
     /**
      * scope=admin saves the global settings (installation administrator only). scope=company, the
-     * default, saves this organization's sync override and nothing else.
+     * default, saves this organization's own sync settings and nothing else.
      */
     public function save(Request $request): JsonResponse
     {
@@ -99,35 +98,35 @@ class SettingController extends QuickbooksController
         $this->stripReadOnly($mergedSync);
         $this->stripPublicUrls($mergedSync);
         $this->store->put($syncKey, $mergedSync);
-        // Every organization that inherits a global switch is queued, each by its own override.
-        QueueGlobalScope::dispatch($existingSync, $mergedSync);
+        // The global row is only a template: no organization that has its own copy changes, so nothing is queued.
         $this->applyWebhookSubscriptions($companyUuid);
 
         return response()->json($this->payload($request));
     }
 
     /**
-     * Saves or clears this organization's sync override. Global settings are never accepted here.
+     * Saves or resets this organization's own sync settings. Global settings are never accepted here.
      */
     private function saveCompany(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks update settings', $request);
 
         $companyUuid = $this->companyUuid($request);
-        $extra       = array_diff(array_keys($request->all()), ['scope', 'override', 'sync', 'company_uuid']);
-        if ($extra !== [] || $request->has('override') === false) {
+        $extra       = array_diff(array_keys($request->all()), ['scope', 'sync', 'reset', 'company_uuid']);
+        if ($extra !== []) {
             return response()->json([
-                'message' => 'An organization can only override the sync options. Global QuickBooks settings are changed on the Admin screen.',
-                'errors'  => ['settings' => 'Send only scope, override, and sync.'],
+                'message' => 'An organization can only change its sync options. Global QuickBooks settings are changed on the Admin screen.',
+                'errors'  => ['settings' => 'Send only scope, sync, and reset.'],
             ], 422);
         }
 
         $before = $this->organizationSync()->effective($companyUuid);
-        $errors = $this->organizationSync()->save(
-            $companyUuid,
-            $request->boolean('override'),
-            $request->input('sync', [])
-        );
+        $errors = [];
+        if ($request->boolean('reset') === true) {
+            $this->organizationSync()->reset($companyUuid);
+        } else {
+            $errors = $this->organizationSync()->save($companyUuid, $request->input('sync', []));
+        }
         if ($errors !== []) {
             return response()->json([
                 'message' => 'Some QuickBooks settings are missing or invalid.',

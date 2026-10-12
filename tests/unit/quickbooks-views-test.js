@@ -62,19 +62,15 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.deepEqual(replaced, ['console.quickbooks.settings']);
     });
 
-    test('settings fields mark inherited company values and omit a blank secret', function (assert) {
-        const inherited = fieldState({ scope: 'company', client_id: 'admin-id', sources: { client_id: 'admin' } }, 'client_id');
-        assert.true(inherited.inherited);
-
-        const overridden = fieldState({ scope: 'company', client_id: 'company-id', sources: { client_id: 'company' } }, 'client_id');
-        assert.false(overridden.inherited);
+    test('settings fields carry the stored value and omit a blank secret', function (assert) {
+        assert.deepEqual(fieldState({ client_id: 'company-id' }, 'client_id'), { value: 'company-id' });
+        assert.deepEqual(fieldState({}, 'client_id'), { value: '' });
 
         assert.deepEqual(secretPresentation({ client_secret_set: true }), { value: '', set: true });
 
-        const withoutOverride = validateSettings({ auth: {}, sync: {}, secretSet: false });
-        assert.ok(withoutOverride.client_id);
-        assert.strictEqual(withoutOverride.redirect_uri, undefined);
-        assert.strictEqual(withoutOverride.override, undefined);
+        const withoutAuth = validateSettings({ auth: {}, sync: {}, secretSet: false });
+        assert.ok(withoutAuth.client_id);
+        assert.strictEqual(withoutAuth.redirect_uri, undefined);
 
         const invalid = validateSettings({
             auth: { client_id: '', redirect_uri: 'callback', environment: 'sandbox', client_secret: '' },

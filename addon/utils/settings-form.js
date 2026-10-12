@@ -1,12 +1,5 @@
 export function fieldState(settings, key) {
-    const source = settings?.sources?.[key] || 'default';
-    const scope = settings?.scope || 'company';
-
-    return {
-        value: settings?.[key] ?? '',
-        source,
-        inherited: scope === 'company' && source !== 'company',
-    };
+    return { value: settings?.[key] ?? '' };
 }
 
 function savedSecretPresentation(set) {

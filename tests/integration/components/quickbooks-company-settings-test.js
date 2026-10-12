@@ -21,24 +21,44 @@ class NotificationsStubService extends Service {
     }
 }
 
-const GLOBAL_SYNC = { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, customer_conflict: 'fleetbase' };
+const GLOBAL_SYNC = {
+    interval_minutes: 5,
+    periodic_interval_hours: 24,
+    retry_limit: 5,
+    default_backoff_seconds: 30,
+    customer_conflict: 'fleetbase',
+    customer_reference: 'fleetbase',
+    customer_direction: 'both',
+    customer_enabled: true,
+    invoice_conflict: 'fleetbase',
+    invoice_reference: 'fleetbase',
+    invoice_direction: 'both',
+    invoice_enabled: true,
+    payment_conflict: 'fleetbase',
+    payment_reference: 'fleetbase',
+    payment_direction: 'both',
+    payment_enabled: true,
+    wallet_conflict: 'fleetbase',
+    wallet_reference: 'fleetbase',
+    wallet_direction: 'both',
+    wallet_enabled: true,
+};
+const SYNC_KEYS = Object.keys(GLOBAL_SYNC).sort();
 
 class FetchStubService extends Service {
     postCalls = [];
     posts = [];
     credentialsConfigured = true;
     canEdit = true;
-    override = false;
+    hasCopy = false;
 
     async get(path) {
         if (path === 'settings') {
             return {
                 can_edit: this.canEdit,
-                override: this.override,
+                has_copy: this.hasCopy,
                 credentials_configured: this.credentialsConfigured,
-                sync: this.override ? { ...GLOBAL_SYNC, interval_minutes: 15 } : GLOBAL_SYNC,
-                global_sync: GLOBAL_SYNC,
-                company_sync: this.override ? { interval_minutes: 15 } : [],
+                sync: this.hasCopy ? { ...GLOBAL_SYNC, interval_minutes: 15 } : GLOBAL_SYNC,
             };
         }
         if (path === 'connection') {
@@ -54,11 +74,9 @@ class FetchStubService extends Service {
         if (path === 'settings') {
             return {
                 can_edit: true,
-                override: body?.override === true,
+                has_copy: true,
                 credentials_configured: true,
-                sync: { ...GLOBAL_SYNC, ...body?.sync },
-                global_sync: GLOBAL_SYNC,
-                company_sync: body?.sync ?? {},
+                sync: body?.reset === true ? GLOBAL_SYNC : { ...GLOBAL_SYNC, ...body?.sync },
             };
         }
 
@@ -306,54 +324,62 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-credentials-not-configured]').doesNotExist();
     });
 
-    test('without an override the global sync values show read only', async function (assert) {
+    test('there is no override toggle and the sync fields are editable by default', async function (assert) {
         const fetch = this.owner.lookup('service:fetch');
 
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
-        assert.dom('[data-test-override]').exists();
-        assert.dom('[data-test-override]').doesNotHaveAttribute('data-disabled');
-        assert.dom('[data-test-inherited-note]').exists();
+        assert.dom('[data-test-override]').doesNotExist();
+        assert.dom('[data-test-inherited-note]').doesNotExist();
+        assert.dom().doesNotIncludeText('Override');
         assert.dom('[data-test-sync="interval_minutes"]').hasValue('5');
-        assert.dom('[data-test-sync="interval_minutes"]').isDisabled();
-        assert.dom('[data-test-sync="customer_conflict"]').isDisabled();
-        assert.dom('[data-test-sync="customer_direction"]').isDisabled();
+        assert.dom('[data-test-sync="interval_minutes"]').isNotDisabled();
+        assert.dom('[data-test-sync="customer_conflict"]').isNotDisabled();
+        assert.dom('[data-test-sync="customer_direction"]').isNotDisabled();
         assert.dom('[data-test-settings-read-only]').doesNotExist();
         assert.dom('[data-test-save]', document).isNotDisabled();
         assert.deepEqual(fetch.postCalls, []);
     });
 
-    test('turning the override on makes the sync fields editable', async function (assert) {
+    test('an organization without its own copy sees the template note', async function (assert) {
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
-        await click('[data-test-override]');
-
-        assert.dom('[data-test-inherited-note]').doesNotExist();
-        assert.dom('[data-test-sync="interval_minutes"]').isNotDisabled();
-        assert.dom('[data-test-sync="interval_minutes"]').hasValue('5');
-        assert.dom('[data-test-sync="customer_direction"]').isNotDisabled();
+        assert.dom('[data-test-template-note]').hasText("These are the current global defaults. They become this organization's own settings when you connect or save.");
+        assert.dom('[data-test-copy-note]').doesNotExist();
+        assert.dom('[data-test-admin-template-note]').doesNotExist();
     });
 
-    test('an existing override shows its values editable', async function (assert) {
-        this.owner.lookup('service:fetch').override = true;
+    test('an organization with its own copy shows its values and the copy note', async function (assert) {
+        this.owner.lookup('service:fetch').hasCopy = true;
 
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
-        assert.dom('[data-test-inherited-note]').doesNotExist();
+        assert.dom('[data-test-copy-note]').hasText('Changes to the global defaults do not affect this organization.');
+        assert.dom('[data-test-template-note]').doesNotExist();
         assert.dom('[data-test-sync="interval_minutes"]').hasValue('15');
         assert.dom('[data-test-sync="interval_minutes"]').isNotDisabled();
+    });
+
+    test('the notes stay hidden while settings load and after a failed load', async function (assert) {
+        this.owner.register('service:fetch', SettingsLoadFailedFetchStubService);
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        assert.dom('[data-test-template-note]').doesNotExist();
+        assert.dom('[data-test-copy-note]').doesNotExist();
+        assert.dom('[data-test-reset]').doesNotExist();
     });
 
     test('the form is read only with a note when the caller cannot edit', async function (assert) {
         const fetch = this.owner.lookup('service:fetch');
         fetch.canEdit = false;
-        fetch.override = true;
+        fetch.hasCopy = true;
 
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
         assert.dom('[data-test-settings-read-only]').exists();
         assert.dom('[data-test-save]', document).isDisabled();
-        assert.dom('[data-test-override]').hasAttribute('data-disabled');
+        assert.dom('[data-test-reset]').doesNotExist();
         assert.dom('[data-test-sync="interval_minutes"]').isDisabled();
         assert.dom('[data-test-sync="customer_conflict"]').isDisabled();
         assert.dom('[data-test-sync="customer_direction"]').isDisabled();
@@ -408,62 +434,68 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-sync-now]').isDisabled();
     });
 
-    test('saving without an override posts override false and no auth', async function (assert) {
+    test('saving posts the full sync field set without an override or auth', async function (assert) {
         const fetch = this.owner.lookup('service:fetch');
 
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
-        await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
-
-        assert.deepEqual(fetch.posts.at(-1), {
-            path: 'settings',
-            body: { scope: 'company', company_uuid: 'company-uuid', override: false, sync: {} },
-        });
-        assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
-    });
-
-    test('saving with an override posts only the sync fields that differ from the global values', async function (assert) {
-        const fetch = this.owner.lookup('service:fetch');
-
-        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
-        await click('[data-test-override]');
         await fillIn('[data-test-sync="interval_minutes"]', '15');
         await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
 
         const post = fetch.posts.at(-1);
         assert.strictEqual(post.path, 'settings');
-        assert.deepEqual(Object.keys(post.body).sort(), ['company_uuid', 'override', 'scope', 'sync']);
+        assert.deepEqual(Object.keys(post.body).sort(), ['company_uuid', 'scope', 'sync']);
         assert.strictEqual(post.body.scope, 'company');
         assert.strictEqual(post.body.company_uuid, 'company-uuid');
-        assert.true(post.body.override);
-        assert.deepEqual(post.body.sync, { interval_minutes: 15 });
+        assert.deepEqual(Object.keys(post.body.sync).sort(), SYNC_KEYS);
+        assert.strictEqual(post.body.sync.interval_minutes, 15);
+        assert.strictEqual(post.body.sync.retry_limit, 5);
+        assert.false(Object.hasOwn(post.body, 'override'));
         assert.false(Object.hasOwn(post.body, 'auth'));
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
+        assert.dom('[data-test-copy-note]').exists('the response marks the organization as having its own copy');
     });
 
-    test('a field set back to the global value is not sent', async function (assert) {
-        const fetch = this.owner.lookup('service:fetch');
-        fetch.override = true;
-
-        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
-        await fillIn('[data-test-sync="interval_minutes"]', '5');
-        await fillIn('[data-test-sync="retry_limit"]', '7');
-        await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
-
-        const post = fetch.posts.at(-1);
-        assert.true(post.body.override);
-        assert.deepEqual(post.body.sync, { retry_limit: 7 });
-        assert.false(Object.hasOwn(post.body, 'auth'));
-    });
-
-    test('an override that matches the global values sends an empty sync bag', async function (assert) {
+    test('saving without changes still posts the full set', async function (assert) {
         const fetch = this.owner.lookup('service:fetch');
 
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
-        await click('[data-test-override]');
         await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
 
-        const post = fetch.posts.at(-1);
-        assert.true(post.body.override);
-        assert.deepEqual(post.body.sync, {});
+        assert.deepEqual(Object.keys(fetch.posts.at(-1).body.sync).sort(), SYNC_KEYS);
+    });
+
+    test('reset asks for confirmation, posts reset and reloads from the response', async function (assert) {
+        const fetch = this.owner.lookup('service:fetch');
+        fetch.hasCopy = true;
+        const modals = this.owner.lookup('service:modals-manager');
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+        assert.dom('[data-test-sync="interval_minutes"]').hasValue('15');
+        await fillIn('[data-test-sync="retry_limit"]', '9');
+
+        await click('[data-test-reset]');
+
+        assert.strictEqual(modals.last.title, 'Reset to global defaults?');
+        assert.strictEqual(
+            modals.last.body,
+            "This replaces this organization's sync settings with a one-time copy of the current global defaults. Later changes to the global defaults will not affect them."
+        );
+        assert.deepEqual(fetch.posts.at(-1), {
+            path: 'settings',
+            body: { scope: 'company', company_uuid: 'company-uuid', reset: true },
+        });
+        assert.dom('[data-test-sync="interval_minutes"]').hasValue('5');
+        assert.dom('[data-test-sync="retry_limit"]').hasValue('5', 'unsaved edits are dropped');
+        assert.deepEqual(this.notifications.messages.at(-1), ['success', 'Sync settings reset to the global defaults.']);
+    });
+
+    test('declining the reset confirmation posts nothing', async function (assert) {
+        const fetch = this.owner.lookup('service:fetch');
+        this.owner.lookup('service:modals-manager').decline = true;
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+        await click('[data-test-reset]');
+
+        assert.deepEqual(fetch.postCalls, []);
     });
 });

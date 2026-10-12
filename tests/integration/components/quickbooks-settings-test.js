@@ -121,7 +121,6 @@ function assertUrlsStayOutOfPayload(assert, payload, publicUrls = {}) {
     assert.strictEqual(payload.auth.redirect_uri, undefined);
     assert.strictEqual(payload.auth.webhook_url, undefined);
     assert.strictEqual(payload.auth.public_receiver_url, undefined);
-    assert.strictEqual(payload.sync.override, undefined);
     assert.strictEqual(payload.sync.batch_size, undefined);
     assert.strictEqual(payload.sync.enabled, undefined);
     assert.true(payload.sync.customer_enabled);
@@ -169,7 +168,6 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         });
         this.set('sync', {
             enabled: true,
-            override: false,
             interval_minutes: 5,
             batch_size: 100,
             retry_limit: 5,
@@ -177,7 +175,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             invoice_reference: 'quickbooks',
         });
         this.set('companySettings', { client_id: 'company-id', client_secret_set: true });
-        this.set('companySync', { interval_minutes: 2, override: false });
+        this.set('companySync', { interval_minutes: 2 });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
 
@@ -374,7 +372,6 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         this.set('settings', { client_id: '', redirect_uri: '', environment: 'sandbox', client_secret_set: false });
         this.set('sync', {
             enabled: true,
-            override: true,
             interval_minutes: 5,
             batch_size: 100,
             retry_limit: 5,
@@ -433,7 +430,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             environment: 'sandbox',
             client_secret_set: true,
         });
-        this.set('sync', { enabled: true, override: true, interval_minutes: 5, batch_size: 100, retry_limit: 5, default_backoff_seconds: 30 });
+        this.set('sync', { enabled: true, interval_minutes: 5, batch_size: 100, retry_limit: 5, default_backoff_seconds: 30 });
         this.set('onSave', () => Promise.resolve());
 
         await render(hbs`
@@ -456,7 +453,6 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         });
         this.set('sync', {
             enabled: true,
-            override: true,
             interval_minutes: 5,
             batch_size: 100,
             retry_limit: 5,
@@ -537,7 +533,6 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         });
         this.set('sync', {
             enabled: true,
-            override: false,
             interval_minutes: 5,
             batch_size: 100,
             retry_limit: 5,
@@ -647,7 +642,6 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         });
         this.set('sync', {
             enabled: true,
-            override: true,
             interval_minutes: 5,
             batch_size: 100,
             retry_limit: 5,
@@ -743,7 +737,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             redirect_uri: 'https://example.test/callback',
             client_secret_set: true,
         });
-        this.set('sync', { enabled: true, override: true, interval_minutes: 5, retry_limit: 5, default_backoff_seconds: 30 });
+        this.set('sync', { enabled: true, interval_minutes: 5, retry_limit: 5, default_backoff_seconds: 30 });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
 
@@ -779,7 +773,6 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         });
         this.set('sync', {
             enabled: true,
-            override: true,
             interval_minutes: 5,
             retry_limit: 5,
             default_backoff_seconds: 30,
