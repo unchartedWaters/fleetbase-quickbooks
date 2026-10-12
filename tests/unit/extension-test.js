@@ -29,23 +29,23 @@ function captureRegistration() {
             if (name === 'menu') {
                 return {
                     registerHeaderMenuItem(item) {
-                        order.push('header:' + item.title);
+                        order.push(`header:${item.title}`);
                         headerItems.push(item);
                     },
                     registerAdminMenuItem(item) {
-                        order.push('admin-item:' + item.title);
+                        order.push(`admin-item:${item.title}`);
                         adminItems.push(item);
                     },
                     registerAdminMenuPanel(title, items, options) {
-                        order.push('admin-panel:' + title);
+                        order.push(`admin-panel:${title}`);
                         adminPanels.push({ title, items, options });
                     },
                     registerSettingsMenuItem(item) {
-                        order.push('settings-item:' + item.title);
+                        order.push(`settings-item:${item.title}`);
                         settingsItems.push(item);
                     },
                     registerSettingsMenuPanel(title, items, options) {
-                        order.push('settings-panel:' + title);
+                        order.push(`settings-panel:${title}`);
                         settingsPanels.push({ title, items, options });
                     },
                 };
@@ -54,7 +54,7 @@ function captureRegistration() {
             if (name === 'universe/widget-service') {
                 return {
                     registerWidgets(dashboard, widgets) {
-                        order.push('widgets:' + dashboard);
+                        order.push(`widgets:${dashboard}`);
                         widgetCalls.push({ dashboard, widgets });
                     },
                 };
@@ -241,9 +241,9 @@ module('Unit | extension', function (hooks) {
     test('setupExtension still registers the menus when no widget service is available', function (assert) {
         const order = [];
         const menu = {
-            registerHeaderMenuItem: (item) => order.push('header:' + item.title),
-            registerAdminMenuPanel: (title) => order.push('admin-panel:' + title),
-            registerSettingsMenuItem: (item) => order.push('settings-item:' + item.title),
+            registerHeaderMenuItem: (item) => order.push(`header:${item.title}`),
+            registerAdminMenuPanel: (title) => order.push(`admin-panel:${title}`),
+            registerSettingsMenuItem: (item) => order.push(`settings-item:${item.title}`),
         };
         const universe = { getService: (name) => (name === 'menu' ? menu : null) };
 
