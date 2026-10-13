@@ -98,9 +98,10 @@ export default class QuickbooksActivityComponent extends Component {
             return error || null;
         }
 
-        const page = 'Quickbooks Setup';
+        const page = this.intl.t('quickbooks.connection.title');
 
-        return error.split('Connection Config').join(this.intl.t('quickbooks.connection.title')).split('from Connection').join(`from ${page}`).split('on Connection').join(`on ${page}`);
+        // Stored errors can name the page by an older title.
+        return error.split('Connection Config').join(page).split('Quickbooks Setup').join(page).split('from Connection').join(`from ${page}`).split('on Connection').join(`on ${page}`);
     }
 
     get meta() {

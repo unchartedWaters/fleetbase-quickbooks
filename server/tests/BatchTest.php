@@ -49,6 +49,16 @@ test('a company is skipped when the interval has not elapsed the rate limit is a
     $reauth                                              = batchLedger();
     $reauth->connections['company-uuid']['needs_reauth'] = true;
     expect($engine->runScheduled($reauth, 'company-uuid', $settings, $now)['status'])->toBe('skipped');
+
+    $forced = $engine->runScheduled($reauth, 'company-uuid', $settings, $now, true);
+    expect($forced['status'])->toBe('skipped')
+        ->and(end($reauth->attempts)['error'])->toBe('QuickBooks needs to be connected again. '
+            . 'Choose Connect to QuickBooks on QuickBooks Setup.');
+
+    $reconcile = $engine->reconcile($reauth, 'company-uuid', $settings, $now);
+    expect($reconcile['status'])->toBe('skipped')
+        ->and(end($reauth->attempts)['error'])->toBe('QuickBooks needs to be connected again. '
+            . 'Choose Connect to QuickBooks on QuickBooks Setup.');
 });
 
 test('a 429 with retry after pauses the company and does not consume the retry count', function () {

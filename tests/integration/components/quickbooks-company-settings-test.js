@@ -170,7 +170,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
 
         assert.dom('[data-test-connected]').exists();
         assert.dom('[data-test-disconnect]').exists({ count: 1 });
-        assert.dom('[data-test-connect]').isDisabled();
+        assert.dom('[data-test-connect]').doesNotExist('an active connection does not offer Connect');
         assert.dom('[data-test-sync-now]').isNotDisabled('a localhost API callback does not block Sync now');
         assert.dom('[data-test-reconcile]').doesNotExist();
         assert.dom('[data-test-import]').doesNotExist();
@@ -191,9 +191,8 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.false(this.notifications.messages.some((entry) => /unsubscribe|intuit/i.test(String(entry[1]))));
         assert.dom('[data-test-disconnected]').includesText('Not connected');
         assert.dom('[data-test-connect]').isNotDisabled();
-        assert.dom('[data-test-disconnect]').exists({ count: 1 });
-        assert.dom('[data-test-disconnect]').isDisabled();
-        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom('[data-test-disconnect]').doesNotExist();
+        assert.dom('[data-test-sync-now]').doesNotExist();
         assert.dom('[data-test-reconcile]').doesNotExist();
         assert.dom('[data-test-import]').doesNotExist();
     });
@@ -218,7 +217,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-sync-now]').isDisabled();
         assert
             .dom('[data-test-credentials-missing]')
-            .hasText('An installation administrator must enter the QuickBooks Client ID and Client secret on the Admin QuickBooks screen before Sync now.');
+            .hasText('Sync now is unavailable until an installation administrator enters the QuickBooks Client ID and Client secret in Admin → QuickBooks → Settings.');
         assert.dom('[data-test-disconnect]').isNotDisabled();
     });
 
@@ -229,10 +228,9 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
 
         assert.dom('[data-test-status-unavailable]').doesNotExist();
         assert.dom('[data-test-connect]').exists();
-        assert.dom('[data-test-disconnect]').exists({ count: 1 });
-        assert.dom('[data-test-disconnect]').isDisabled();
+        assert.dom('[data-test-disconnect]').doesNotExist();
         assert.dom('[data-test-test]').doesNotExist();
-        assert.dom('[data-test-sync-now]').isDisabled();
+        assert.dom('[data-test-sync-now]').doesNotExist();
         assert.dom('[data-test-reconcile]').doesNotExist();
         assert.dom('[data-test-import]').doesNotExist();
         await click('[data-test-connect]');
@@ -267,7 +265,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
             assert.dom('[data-test-connection-loading]').doesNotExist();
             assert.dom('[data-test-disconnected]').includesText('Not connected');
             assert.dom('[data-test-connect]').isNotDisabled();
-            assert.dom('[data-test-disconnect]').isDisabled();
+            assert.dom('[data-test-disconnect]').doesNotExist();
             assert.dom('[data-test-status-unavailable]').doesNotExist();
         } finally {
             release();
@@ -321,7 +319,6 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom().doesNotIncludeText('Authentication');
         assert.dom('[data-test-settings-scope]').includesText('Schedule');
         assert.dom('[data-test-settings-scope]').includesText('Data Resolution');
-        assert.dom('[data-test-credentials-not-configured]').doesNotExist();
     });
 
     test('there is no override toggle and the sync fields are editable by default', async function (assert) {
@@ -367,7 +364,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
 
         assert.dom('[data-test-template-note]').doesNotExist();
         assert.dom('[data-test-copy-note]').doesNotExist();
-        assert.dom('[data-test-reset]').doesNotExist();
+        assert.dom('[data-test-reset]', document).doesNotExist();
     });
 
     test('the form is read only with a note when the caller cannot edit', async function (assert) {
@@ -379,7 +376,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
 
         assert.dom('[data-test-settings-read-only]').exists();
         assert.dom('[data-test-save]', document).isDisabled();
-        assert.dom('[data-test-reset]').doesNotExist();
+        assert.dom('[data-test-reset]', document).doesNotExist();
         assert.dom('[data-test-sync="interval_minutes"]').isDisabled();
         assert.dom('[data-test-sync="customer_conflict"]').isDisabled();
         assert.dom('[data-test-sync="customer_direction"]').isDisabled();
@@ -389,14 +386,38 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-sync-now]').isNotDisabled();
     });
 
-    test('missing global credentials show a note and disable connecting', async function (assert) {
+    test('missing global credentials are explained once, on the connection card', async function (assert) {
         const fetch = this.owner.lookup('service:fetch');
         fetch.credentialsConfigured = false;
 
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
-        assert.dom('[data-test-credentials-not-configured]').includesText('installation administrator must enter the QuickBooks Client ID and Client secret on the Admin QuickBooks screen');
+        assert.dom('[data-test-credentials-not-configured]').doesNotExist();
+        assert.dom('[data-test-credentials-missing]').includesText('installation administrator enters the QuickBooks Client ID and Client secret in Admin → QuickBooks → Settings');
+        assert.dom().doesNotIncludeText('Admin QuickBooks screen');
         assert.dom('[data-test-sync-now]').isDisabled();
+    });
+
+    test('the connection card comes first, then the settings note, then the schedule', async (assert) => {
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        const card = document.querySelector('[data-test-connection-state]');
+        const note = document.querySelector('[data-test-template-note]');
+        const schedule = document.querySelector('[data-test-sync-field="interval_minutes"]');
+        assert.ok(card.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING, 'the note follows the connection card');
+        assert.ok(note.compareDocumentPosition(schedule) & Node.DOCUMENT_POSITION_FOLLOWING, 'the schedule follows the note');
+        assert.dom('[data-test-connection-state]').exists({ count: 1 });
+    });
+
+    test('reset sits in the header actions just before Save Changes', async (assert) => {
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        const actions = document.querySelector('#next-view-section-subheader-actions');
+        const reset = actions.querySelector('[data-test-reset]');
+        const save = actions.querySelector('[data-test-save]');
+        assert.ok(reset, 'Reset is in the header actions');
+        assert.ok(reset.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING, 'Save Changes comes last');
+        assert.dom('[data-test-reset]').doesNotExist('Reset is not repeated in the page body');
     });
 
     test('the credentials and read-only notes stay hidden while settings load', async function (assert) {
@@ -416,7 +437,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         this.owner.register('service:fetch', HoldingSettingsFetchStubService);
 
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
-        assert.dom('[data-test-credentials-not-configured]').doesNotExist();
+        assert.dom('[data-test-credentials-missing]').doesNotExist();
         assert.dom('[data-test-settings-read-only]').doesNotExist();
 
         release();
@@ -429,7 +450,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
         assert.dom('[data-test-settings-unavailable]').exists();
-        assert.dom('[data-test-credentials-not-configured]').doesNotExist();
+        assert.dom('[data-test-credentials-missing]').doesNotExist('an unknown credential state is not reported as missing');
         assert.dom('[data-test-settings-read-only]').doesNotExist();
         assert.dom('[data-test-sync-now]').isDisabled();
     });
@@ -473,7 +494,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-sync="interval_minutes"]').hasValue('15');
         await fillIn('[data-test-sync="retry_limit"]', '9');
 
-        await click('[data-test-reset]');
+        await click(document.querySelector('#next-view-section-subheader-actions [data-test-reset]'));
 
         assert.strictEqual(modals.last.title, 'Reset to global defaults?');
         assert.strictEqual(
@@ -494,7 +515,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         this.owner.lookup('service:modals-manager').decline = true;
 
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
-        await click('[data-test-reset]');
+        await click(document.querySelector('#next-view-section-subheader-actions [data-test-reset]'));
 
         assert.deepEqual(fetch.postCalls, []);
     });

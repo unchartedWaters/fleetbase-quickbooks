@@ -606,7 +606,10 @@ test('a path-only computed callback uses a full public oauth url and otherwise s
         $redirectOnly = $controller->start(Request::create('/oauth/start', 'POST', [
             'company_uuid' => 'company-uuid',
         ]));
-        expect($redirectOnly->getStatusCode())->toBe(422);
+        expect($redirectOnly->getStatusCode())->toBe(422)
+            ->and($redirectOnly->getData(true)['message'])->toBe('QuickBooks is not set up yet. '
+                . 'Ask an installation administrator to enter the Client ID, Client secret and Public OAuth Redirect '
+                . 'URL in Admin → QuickBooks → Settings.');
 
         $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']                 = 'not-a-url';
         $invalid                                                                             = $controller->start(Request::create('/oauth/start', 'POST', [
@@ -961,7 +964,8 @@ test('the oauth callback only keeps the code and the user who started the flow c
             $controller->stored = false;
             $disconnected       = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
             expect($disconnected->getStatusCode())->toBe(422)
-                ->and($disconnected->getData(true)['message'])->toBe('QuickBooks is not connected. Connect again from Quickbooks Setup.');
+                ->and($disconnected->getData(true)['message'])->toBe('QuickBooks is not connected. '
+                    . 'Connect again from QuickBooks Setup.');
         });
         $syncs   = array_values(array_filter($jobs, fn ($job) => $job instanceof SyncCompanyBatch));
         $scopes  = array_values(array_filter($jobs, fn ($job) => $job instanceof QueueCompanyScope));
@@ -1133,7 +1137,8 @@ test('a failed token exchange and an unreachable probe do not return transport t
         ))->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
 
         expect($response->getStatusCode())->toBe(422)
-            ->and($response->getData(true)['message'])->toBe('QuickBooks could not finish connecting. Connect again from Quickbooks Setup.')
+            ->and($response->getData(true)['message'])->toBe('QuickBooks could not finish connecting. '
+                . 'Connect again from QuickBooks Setup.')
             ->and(json_encode($response->getData(true)))->not->toContain('cURL')
             ->and(json_encode($response->getData(true)))->not->toContain('timed out');
     } finally {
@@ -1180,7 +1185,8 @@ test('completing with the original state instead of the handle says the link is 
     $begun = $flow->begin('company-uuid', 'user-uuid', $credentials);
 
     expect(fn () => $flow->complete($begun['state'], 'company-uuid', 'user-uuid', $credentials))
-        ->toThrow(QuickBooksException::class, 'This QuickBooks authorization link is not valid. Connect again from Quickbooks Setup.');
+        ->toThrow(QuickBooksException::class, 'This QuickBooks authorization link is not valid. '
+            . 'Connect again from QuickBooks Setup.');
 });
 
 test('a refresh persists the rotated refresh token', function () {

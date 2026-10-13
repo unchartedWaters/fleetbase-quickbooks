@@ -1,7 +1,25 @@
 <EmberWormhole @to="next-view-section-subheader-actions">
-    <Button @type="primary" @size="sm" @icon="save" @text={{t "quickbooks.settings.save"}} @disabled={{this.saveDisabled}} @isLoading={{this.saving}} @onClick={{this.save}} data-test-save />
+    <div class="flex items-center gap-2">
+        {{#if this.showReset}}
+            <Button @type="default" @size="sm" @icon="rotate-left" @text={{t "quickbooks.settings.reset"}} @disabled={{this.resetDisabled}} @onClick={{this.reset}} data-test-reset />
+        {{/if}}
+        <Button @type="primary" @size="sm" @icon="save" @text={{t "quickbooks.settings.save"}} @disabled={{this.saveDisabled}} @isLoading={{this.saving}} @onClick={{this.save}} data-test-save />
+    </div>
 </EmberWormhole>
 <div data-test-settings-scope="admin" class="space-y-6">
+    {{! The connection card comes first; the notes below describe the sync settings under them. }}
+    {{#unless @hideConnection}}
+        <QuickbooksConnection
+            @variant="status"
+            @connection={{@connection}}
+            @configured={{@configured}}
+            @loadFailed={{@loadFailed}}
+            @busy={{@busy}}
+            @onConnect={{@onConnect}}
+            @onDisconnect={{@onDisconnect}}
+            @onSync={{@onSync}}
+        />
+    {{/unless}}
     {{#if @settingsLoadFailed}}
         <p class="text-sm text-gray-500" data-test-settings-unavailable>{{t "quickbooks.connection.settings-unavailable"}}</p>
     {{/if}}
@@ -11,35 +29,17 @@
     {{#if @showTemplateNote}}
         <InfoBlock @type="warning" @icon="triangle-exclamation" class="font-semibold" data-test-admin-template-note>{{t "quickbooks.settings.admin-template-note"}}</InfoBlock>
     {{/if}}
-    {{#if this.syncOnly}}
-        {{#if (eq @configured false)}}
-            <InfoBlock @type="info" @icon="circle-info" data-test-credentials-not-configured>{{t "quickbooks.settings.credentials-not-configured"}}</InfoBlock>
+    {{#if this.showCopyNote}}
+        {{#if this.hasCopy}}
+            <InfoBlock @type="info" @icon="circle-info" data-test-copy-note>{{t "quickbooks.settings.copy-note"}}</InfoBlock>
+        {{else}}
+            <InfoBlock @type="info" @icon="circle-info" data-test-template-note>{{t "quickbooks.settings.template-note"}}</InfoBlock>
         {{/if}}
-        {{#if this.showCopyNote}}
-            {{#if this.hasCopy}}
-                <InfoBlock @type="info" @icon="circle-info" data-test-copy-note>{{t "quickbooks.settings.copy-note"}}</InfoBlock>
-            {{else}}
-                <InfoBlock @type="info" @icon="circle-info" data-test-template-note>{{t "quickbooks.settings.template-note"}}</InfoBlock>
-            {{/if}}
-        {{/if}}
-        {{#unless this.readOnly}}
-            <div>
-                <Button @type="default" @size="sm" @icon="rotate-left" @text={{t "quickbooks.settings.reset"}} @disabled={{this.resetDisabled}} @onClick={{this.reset}} data-test-reset />
-            </div>
-        {{/unless}}
     {{/if}}
     <QuickbooksSettingsFields
         @syncOnly={{this.syncOnly}}
-        @hideConnection={{@hideConnection}}
         @readOnly={{this.readOnly}}
         @errors={{this.errors}}
-        @connection={{@connection}}
-        @loadFailed={{@loadFailed}}
-        @busy={{@busy}}
-        @onConnect={{@onConnect}}
-        @onDisconnect={{@onDisconnect}}
-        @configured={{@configured}}
-        @onSync={{@onSync}}
         @authFields={{this.authFields}}
         @syncFields={{this.syncFields}}
         @policies={{this.policies}}

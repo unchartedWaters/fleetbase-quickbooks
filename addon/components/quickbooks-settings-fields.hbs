@@ -1,16 +1,4 @@
 <div class="space-y-6">
-    {{#unless @hideConnection}}
-    <QuickbooksConnection
-        @variant="status"
-        @connection={{@connection}}
-        @configured={{@configured}}
-        @loadFailed={{@loadFailed}}
-        @busy={{@busy}}
-        @onConnect={{@onConnect}}
-        @onDisconnect={{@onDisconnect}}
-        @onSync={{@onSync}}
-    />
-    {{/unless}}
     {{#unless @syncOnly}}
     <ContentPanel @title={{t "quickbooks.settings.authentication"}} @open={{true}} @wrapperClass="bordered-classic">
         <InfoBlock @type="info" @icon="circle-info" class="mb-4" data-test-credentials-guidance>
@@ -20,7 +8,7 @@
                         href="https://developer.intuit.com"
                         target="_blank"
                         rel="noopener noreferrer"
-                        class="cursor-pointer text-white underline"
+                        class="quickbooks-guidance-link text-inherit cursor-pointer underline"
                     >{{t "quickbooks.settings.credentials-step-keys-link"}}</a>{{t "quickbooks.settings.credentials-step-keys-after"}}</li>
                 <li>{{t "quickbooks.settings.credentials-step-form"}}</li>
                 <li data-test-redirect-step>{{t "quickbooks.settings.credentials-step-redirect"}}</li>
@@ -118,15 +106,10 @@
             {{/if}}
             <p class="text-xs text-gray-400 mt-1" data-test-field-help="webhook_verifier">
                 {{t "quickbooks.settings.verifier-help"}}
-                {{#if @secret.verifier.set}}
-                    {{t "quickbooks.settings.verifier-keep"}}
-                {{/if}}
             </p>
         </InputGroup>
-        {{#if (not (get @errors "webhook_verifier"))}}
-            {{#if @secret.verifier.set}}
-                <p class="text-xs text-gray-400 mt-1" data-test-verifier-set>{{t "quickbooks.settings.verifier-saved"}}</p>
-            {{/if}}
+        {{#if @secret.verifier.set}}
+            <p class="text-xs text-gray-400 mt-1" data-test-verifier-set>{{t "quickbooks.settings.verifier-saved"}}</p>
         {{/if}}
         {{#each @displayedUrls key="key" as |url|}}
             <div data-test-sync-field={{url.key}}>

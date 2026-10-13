@@ -170,6 +170,11 @@ export default class QuickbooksSettingsComponent extends Component {
         return this.args.hasCopy === true;
     }
 
+    // Reset is for an organization that can edit its own copy of the sync settings.
+    get showReset() {
+        return this.syncOnly && !this.readOnly;
+    }
+
     get resetDisabled() {
         return this.args.settingsLoadFailed === true || this.args.settingsLoaded !== true || this.saving || this.args.busy === true || this.readOnly;
     }

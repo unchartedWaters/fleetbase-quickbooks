@@ -15,7 +15,7 @@ class SyncEngine
 {
     private const RATE_LIMITED_MESSAGE = 'QuickBooks asked Fleetbase to wait (rate limit). Try again in a few minutes.';
 
-    public const TOKEN_REJECTED_MESSAGE = 'QuickBooks rejected the access token. Connect again from Quickbooks Setup.';
+    public const TOKEN_REJECTED_MESSAGE = ConnectionTokens::REAUTH_MESSAGE;
 
     private const SYNC_FAILED_MESSAGE = 'Sync failed.';
 
@@ -326,7 +326,7 @@ class SyncEngine
         }
         if (empty($connection['needs_reauth']) === false) {
             if ($force === true) {
-                return $this->recordSkipped($ledger, $companyUuid, $trigger, 'QuickBooks needs to be connected again before sync can continue.');
+                return $this->recordSkipped($ledger, $companyUuid, $trigger, ConnectionTokens::REAUTH_MESSAGE);
             }
 
             return $this->emptyBatch($trigger, 'skipped');
@@ -362,7 +362,7 @@ class SyncEngine
             return $this->emptyBatch('manual', 'skipped');
         }
         if (empty($connection['needs_reauth']) === false) {
-            return $this->recordSkipped($ledger, $companyUuid, 'manual', 'QuickBooks needs to be connected again before sync can continue.');
+            return $this->recordSkipped($ledger, $companyUuid, 'manual', ConnectionTokens::REAUTH_MESSAGE);
         }
         if ($this->isRateLimited($connection, $now) === true) {
             return $this->recordSkipped($ledger, $companyUuid, 'manual', self::RATE_LIMITED_MESSAGE);
@@ -1595,7 +1595,7 @@ class SyncEngine
             return null;
         }
 
-        return $label . ' currency ' . $currency . ' does not match QuickBooks home currency ' . $home;
+        return $label . ' currency ' . $currency . ' does not match the QuickBooks home currency ' . $home . '.';
     }
 
     /**

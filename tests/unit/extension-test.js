@@ -78,14 +78,14 @@ module('Unit | extension', function (hooks) {
         assert.deepEqual(order, [
             'header:QuickBooks',
             'admin-panel:QuickBooks',
-            'settings-item:Quickbooks Setup',
-            'settings-item:Quickbooks Activity',
+            'settings-item:QuickBooks Setup',
+            'settings-item:QuickBooks Activity',
             'widgets:ledger',
             'widgets:dashboard',
         ]);
     });
 
-    test('the header menu opens Quickbooks Setup', function (assert) {
+    test('the header menu opens QuickBooks Setup', (assert) => {
         const { headerItems, transitions } = captureRegistration();
 
         assert.strictEqual(headerItems.length, 1);
@@ -100,14 +100,15 @@ module('Unit | extension', function (hooks) {
         assert.deepEqual(transitions, [['console.settings.virtual', 'quickbooks-setup', { queryParams: { view: 'index' } }]]);
     });
 
-    test('Quickbooks Setup and Quickbooks Activity are organization settings items', function (assert) {
+    test('QuickBooks Setup and QuickBooks Activity are organization settings items', (assert) => {
         const { adminItems, settingsItems, settingsPanels, transitions } = captureRegistration();
 
         assert.strictEqual(adminItems.length, 0);
         assert.strictEqual(settingsPanels.length, 0);
         assert.strictEqual(settingsItems.length, 2);
 
-        assert.strictEqual(settingsItems[0].title, 'Quickbooks Setup');
+        assert.strictEqual(settingsItems[0].title, 'QuickBooks Setup');
+        assert.strictEqual(settingsItems[0].id, 'quickbooks-setup', 'the id stays the same after the title was recapitalized');
         assert.strictEqual(settingsItems[0].slug, 'quickbooks-setup');
         assert.strictEqual(settingsItems[0].view, 'index');
         assert.strictEqual(settingsItems[0].index, 0);
@@ -118,7 +119,8 @@ module('Unit | extension', function (hooks) {
         assert.false(settingsItems[0].overwriteWrapperClass);
         assert.strictEqual(settingsItems[0].wrapperClass, null);
 
-        assert.strictEqual(settingsItems[1].title, 'Quickbooks Activity');
+        assert.strictEqual(settingsItems[1].title, 'QuickBooks Activity');
+        assert.strictEqual(settingsItems[1].id, 'quickbooks-activity');
         assert.strictEqual(settingsItems[1].slug, 'quickbooks-activity');
         assert.strictEqual(settingsItems[1].view, 'index');
         assert.strictEqual(settingsItems[1].index, 1);
@@ -249,6 +251,6 @@ module('Unit | extension', function (hooks) {
 
         extension.setupExtension({ lookup: () => null }, universe);
 
-        assert.deepEqual(order, ['header:QuickBooks', 'admin-panel:QuickBooks', 'settings-item:Quickbooks Setup', 'settings-item:Quickbooks Activity']);
+        assert.deepEqual(order, ['header:QuickBooks', 'admin-panel:QuickBooks', 'settings-item:QuickBooks Setup', 'settings-item:QuickBooks Activity']);
     });
 });
