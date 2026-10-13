@@ -130,3 +130,85 @@ test('every message key named in the server code exists in en-us.yaml', function
 
     expect($found)->toBeGreaterThan(40);
 });
+
+/**
+ * Adds a second translations file for one test, so locale selection has something to choose.
+ */
+function qbWithExtraLocale(callable $body): void
+{
+    $file  = dirname(__DIR__, 2) . '/translations/zz-zz.yaml';
+    $reset = static function (): void {
+        $class = new ReflectionClass(Translation::class);
+        $class->setStaticPropertyValue('catalogs', []);
+        $class->setStaticPropertyValue('locales', null);
+    };
+    file_put_contents($file, implode("\n", [
+        'quickbooks:',
+        '  messages:',
+        '    sync-failed: Synchro échouée.',
+        '    reauth: Reconnectez QuickBooks.',
+        '',
+    ]));
+    $reset();
+
+    try {
+        $body();
+    } finally {
+        unlink($file);
+        $reset();
+    }
+}
+
+test('the signed-in user locale is used when a translations file exists for it', function () {
+    // Setting reads the core 'mysql' connection; point it at an in-memory database for this test.
+    $capsule   = (new ReflectionProperty(Illuminate\Database\Capsule\Manager::class, 'instance'))->getValue();
+    $container = $capsule->getContainer();
+    $capsule->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''], 'mysql');
+    $previousUser = session('user');
+
+    try {
+        $capsule->getConnection('mysql')->getSchemaBuilder()->create('settings', function ($table) {
+            $table->increments('id');
+            $table->string('key');
+            $table->text('value')->nullable();
+        });
+        $capsule->getConnection('mysql')->table('settings')->insert([
+            'key'   => 'user.user-fr.locale',
+            'value' => json_encode('ZZ_zz'),
+        ]);
+
+        qbWithExtraLocale(function () {
+            session(['user' => 'user-fr']);
+            expect(Translation::currentLocale())->toBe('zz-zz')
+                ->and(Translation::get('quickbooks.messages.sync-failed'))->toBe('Synchro échouée.')
+                ->and(Translation::render('quickbooks.messages.sync-failed'))->toBe('Synchro échouée.')
+                // A key the locale file does not have falls back to en-us.
+                ->and(Translation::get('quickbooks.messages.rate-limited'))
+                ->toBe('QuickBooks asked Fleetbase to wait (rate limit). Try again in a few minutes.');
+
+            session(['user' => 'user-without-setting']);
+            expect(Translation::currentLocale())->toBe('en-us');
+        });
+    } finally {
+        session(['user' => $previousUser]);
+        $capsule->getDatabaseManager()->purge('mysql');
+        $connections = $container['config']['database.connections'];
+        unset($connections['mysql']);
+        $container['config']['database.connections'] = $connections;
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('the reconnect notification uses the recipient locale', function () {
+    qbWithExtraLocale(function () {
+        $french = new class {
+            public function getLocale(): string
+            {
+                return 'zz-zz';
+            }
+        };
+        $notification = new Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth('company-uuid', 'realm-1');
+
+        expect($notification->toArray($french)['message'])->toBe('Reconnectez QuickBooks.')
+            ->and($notification->toArray(new stdClass())['message'])->toBe(qbText('quickbooks.messages.reauth'));
+    });
+});

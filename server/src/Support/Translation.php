@@ -235,7 +235,8 @@ class Translation
     private static function locales(): array
     {
         if (self::$locales === null) {
-            $files         = glob(self::directory() . '/*.yaml') ?: [];
+            $files         = glob(self::directory() . '/*.yaml');
+            $files         = $files === false ? [] : $files;
             self::$locales = array_map(static fn (string $file): string => basename($file, '.yaml'), $files);
         }
 
