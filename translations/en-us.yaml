@@ -6,6 +6,7 @@ quickbooks:
     unavailable: QuickBooks status could not be loaded.
     settings-unavailable: QuickBooks settings could not be loaded.
     reauth-status: QuickBooks needs to be connected again before sync can continue. Choose Connect to QuickBooks.
+    reauth-no-permission: QuickBooks needs to be connected again before sync can continue. You do not have permission to connect QuickBooks.
     reauth-unknown: QuickBooks needs to be connected again before sync can continue.
     reauth-save-first: QuickBooks needs to be connected again before sync can continue. First, an installation administrator must enter the QuickBooks credentials in Admin → QuickBooks → Settings.
     connected: "Connected to QuickBooks company {realm} ({environment})."
@@ -16,9 +17,11 @@ quickbooks:
     home-currency-wallet: A wallet in another currency fails when it has no QuickBooks account yet and Fleetbase is Primary. A wallet already linked to an account is still sent.
     home-currency-primary: "When QuickBooks is Primary for Accounts / Wallets and changes come from QuickBooks (Both or From QuickBooks), the wallet takes the QuickBooks account's currency."
     disconnected-status: Not connected. Choose Connect to QuickBooks. Fleetbase then syncs customers, invoices, payments, and wallets with QuickBooks Online.
+    disconnected-no-permission: Not connected. You do not have permission to connect QuickBooks. Fleetbase syncs customers, invoices, payments, and wallets with QuickBooks Online after QuickBooks is connected.
     disconnected-unknown: Not connected.
     disconnected-save-first: Not connected. An installation administrator must enter the QuickBooks credentials in Admin → QuickBooks → Settings before you can connect.
     disconnect: Disconnect
+    disconnect-denied: You do not have permission to disconnect QuickBooks.
     disconnect-confirm-title: Disconnect QuickBooks?
     disconnect-confirm: This removes the saved QuickBooks connection. Syncing stops until you connect again.
     connect: Connect to QuickBooks
@@ -36,6 +39,7 @@ quickbooks:
     title: Activity
     empty: No syncs yet. Connect on QuickBooks Setup, then choose Sync now or wait for the next scheduled sync.
     load-failed: Sync activity could not be loaded.
+    credentials-where: Check Client ID and Client secret in Admin → QuickBooks → Settings.
     loading: Loading sync activity.
     columns:
       when: When
@@ -78,6 +82,7 @@ quickbooks:
     waiting: "{count} waiting"
     credentials-missing: Sync now is unavailable until an installation administrator enters the QuickBooks Client ID and Client secret in Admin → QuickBooks → Settings.
     reauth: Needs to be connected again
+    reauth-setup: Connect again on QuickBooks Setup.
     connected: Connected
     disconnected: Not connected
   settings:
@@ -102,7 +107,7 @@ quickbooks:
     credentials-step-save: Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.
     schedule: Schedule
     data-resolution: Data Resolution
-    data-resolution-description: Controls the data to be synchronized, the data that should be accepted in the event of a conflict, and the directionality of the synchronization.
+    data-resolution-description: Which records sync, which system wins when they differ, and which way changes move.
     primary: Primary
     primary-help: Which system wins when records differ, and which supplies identifiers.
     entity-primary: "{entity} Primary"

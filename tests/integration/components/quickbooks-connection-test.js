@@ -65,6 +65,7 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-sync-denied]').hasText('You do not have permission to run Sync now.');
         assert.dom('[data-test-connect]').doesNotExist('an active connection does not offer Connect');
         assert.dom('[data-test-disconnect]').isDisabled();
+        assert.dom('[data-test-disconnect-denied]').hasText('You do not have permission to disconnect QuickBooks.');
         assert.false(this.synced);
     });
 
@@ -87,12 +88,18 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-connect]').isDisabled();
         assert.dom('[data-test-disconnect]').doesNotExist('nothing is saved to disconnect');
         assert.dom('[data-test-sync-denied]').doesNotExist();
+        assert.dom('[data-test-disconnect-denied]').doesNotExist();
+        assert.dom('[data-test-disconnected]').includesText('You do not have permission to connect QuickBooks.');
+        assert.dom('[data-test-disconnected]').doesNotIncludeText('Choose Connect to QuickBooks');
         assert.false(this.connected);
 
         this.set('connection', { realm_id: '123', needs_reauth: true });
         assert.dom('[data-test-connect]').isDisabled();
         assert.dom('[data-test-disconnect]').isDisabled();
         assert.dom('[data-test-sync-now]').doesNotExist('Sync now waits for a working connection');
+        assert.dom('[data-test-reauth]').includesText('You do not have permission to connect QuickBooks.');
+        assert.dom('[data-test-reauth]').doesNotIncludeText('Choose Connect to QuickBooks');
+        assert.dom('[data-test-disconnect-denied]').hasText('You do not have permission to disconnect QuickBooks.');
         assert.false(this.disconnected);
     });
 

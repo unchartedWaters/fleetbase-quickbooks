@@ -84,6 +84,12 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
                 direction: 'outbound',
                 error: 'QuickBooks refused the app credentials. Check Client ID and Client secret on Connection.',
             },
+            {
+                uuid: 'credentials-setup',
+                trigger: 'manual',
+                direction: 'outbound',
+                error: 'QuickBooks refused the app credentials. Check Client ID and Client secret on Quickbooks Setup.',
+            },
         ]);
 
         await render(hbs`<QuickbooksActivity @batches={{this.batches}} />`);
@@ -92,7 +98,8 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         assert.deepEqual(errors, [
             'QuickBooks is not connected. Connect from QuickBooks Setup.',
             'QuickBooks needs to be reconnected. Connect from QuickBooks Setup.',
-            'QuickBooks refused the app credentials. Check Client ID and Client secret on QuickBooks Setup.',
+            'QuickBooks refused the app credentials. Check Client ID and Client secret in Admin → QuickBooks → Settings.',
+            'QuickBooks refused the app credentials. Check Client ID and Client secret in Admin → QuickBooks → Settings.',
         ]);
         assert.dom(this.element.querySelector('[data-test-activity-trigger]')).hasText('Import customers');
         assert.dom(this.element.querySelector('[data-test-activity-error]')).hasAttribute('headers', 'quickbooks-activity-0');

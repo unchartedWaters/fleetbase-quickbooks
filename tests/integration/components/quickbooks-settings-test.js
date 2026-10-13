@@ -241,7 +241,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom().doesNotIncludeText('Enable schedule');
         assert.dom().doesNotIncludeText('The schedule syncs records. Sync now and Reconcile still run when it is off.');
         assert.dom('[data-test-settings-scope]').includesText('Data Resolution');
-        const resolution = 'Controls the data to be synchronized, the data that should be accepted in the event of a conflict, and the directionality of the synchronization.';
+        const resolution = 'Which records sync, which system wins when they differ, and which way changes move.';
         assert.dom('[data-test-data-resolution-description]').exists();
         assert.true(
             [...document.querySelectorAll('.ui-input-info')].some((node) => node.textContent.includes(resolution)),
@@ -254,7 +254,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         resolutionHelp.focus();
         assert.strictEqual(document.activeElement, resolutionHelp);
         assert.false(
-            [...this.element.querySelectorAll('[data-test-data-resolution] p')].some((node) => node.textContent.includes('Controls the data to be synchronized')),
+            [...this.element.querySelectorAll('[data-test-data-resolution] p')].some((node) => node.textContent.includes('Which records sync')),
             'the data resolution description is not a paragraph under the heading'
         );
         assert.dom('[data-test-actions]').doesNotExist();

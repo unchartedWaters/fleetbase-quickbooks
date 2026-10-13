@@ -82,7 +82,16 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         await render(hbs`<Widget::QuickbooksSync />`);
         assert.dom('[data-test-widget-subtitle]').hasText('Needs to be connected again');
         assert.dom('[data-test-widget-sync]').isDisabled();
+        assert.dom('[data-test-widget-reauth]').hasText('Connect again on QuickBooks Setup.');
         assert.dom('[data-test-widget-credentials-missing]').doesNotExist();
+        assert.dom('[data-test-widget-reauth-keys]').doesNotExist();
+
+        this.fetch.credentialsConfigured = false;
+        await render(hbs`<Widget::QuickbooksSync />`);
+        assert.dom('[data-test-widget-sync]').isDisabled();
+        assert.dom('[data-test-widget-reauth]').doesNotExist();
+        assert.dom('[data-test-widget-reauth-keys]').includesText('Admin → QuickBooks → Settings');
+        assert.dom().doesNotIncludeText('Connect again on QuickBooks Setup');
 
         this.fetch.connection = { realm_id: '123', environment: 'sandbox' };
         this.fetch.credentialsConfigured = false;

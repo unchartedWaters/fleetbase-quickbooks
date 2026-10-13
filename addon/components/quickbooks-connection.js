@@ -87,9 +87,19 @@ export default class QuickbooksConnectionComponent extends Component {
         return this.isConnected && this.isUnconfigured;
     }
 
-    // The button is disabled with no other explanation when the realm and keys are ready.
+    // The realm and keys are ready, and Sync now is off only because this user cannot run it.
     get syncPermissionDenied() {
         return this.isConnected && this.isConfigured && !this.canSync;
+    }
+
+    // Keys are saved and QuickBooks is not already connected. Connect is off only because this user cannot connect.
+    get connectPermissionDenied() {
+        return !this.isLoading && !this.loadFailed && !this.isConnected && this.isConfigured && !canConnect(this.abilities);
+    }
+
+    // A saved realm can be removed, including one that needs to be connected again. The button is off only for permission.
+    get disconnectPermissionDenied() {
+        return (this.isConnected || this.needsReauth) && !canDisconnect(this.abilities);
     }
 
     get syncDisabled() {
