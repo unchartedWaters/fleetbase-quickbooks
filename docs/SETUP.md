@@ -365,6 +365,9 @@ php scripts/pest-runner.php
 
 `composer test:unit` runs `php scripts/pest-runner.php`. That script needs `composer install` in this package first. `composer test:types` runs PHPStan. `composer test` also runs the PHP linter.
 
+`composer test:sandbox` runs live tests against a QuickBooks sandbox company.
+CONTRIBUTING.md lists what they need.
+
 Ember tests need Chrome. `testem.js` launches Chrome in development and in CI.
 
 ```bash

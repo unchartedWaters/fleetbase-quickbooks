@@ -2,9 +2,11 @@
 
 /*
  * Live tests against a real QuickBooks sandbox company. They run only through
- * `composer test:sandbox`, which sets QB_SANDBOX_RUN=1, and only when these are set:
+ * `composer test:sandbox`, which sets QB_SANDBOX_RUN=1, and need these variables:
  * QB_SANDBOX_CLIENT_ID, QB_SANDBOX_CLIENT_SECRET, QB_SANDBOX_REFRESH_TOKEN, QB_SANDBOX_REALM_ID.
- * Otherwise every test here is skipped, so the default suite and CI never call Intuit.
+ * Without QB_SANDBOX_RUN every test here is skipped, so the default suite and CI never call
+ * Intuit. With it, a missing variable fails every test and names the variable, so an
+ * incomplete setup never passes as all-skipped.
  *
  * Each run creates its own customers, invoices, payments and accounts, named with a run tag,
  * in the sandbox company. Intuit rotates refresh tokens about once a day; when the stored one
