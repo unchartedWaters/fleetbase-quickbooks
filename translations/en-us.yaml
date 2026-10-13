@@ -166,3 +166,65 @@ quickbooks:
     direction-invoice: Choose Both, To QuickBooks, or From QuickBooks for Invoices.
     direction-payment: Choose Both, To QuickBooks, or From QuickBooks for Payments.
     direction-wallet: Choose Both, To QuickBooks, or From QuickBooks for Accounts / Wallets.
+    redirect-uri: "Enter a full http:// or https:// address that is listed under Keys & credentials, Redirect URIs."
+    batch-size: Enter a whole number from 1 to 100.
+    on-off: Choose On or Off.
+    primary-customer: Choose Fleetbase or QuickBooks as Primary for Customers.
+    primary-invoice: Choose Fleetbase or QuickBooks as Primary for Invoices.
+    primary-payment: Choose Fleetbase or QuickBooks as Primary for Payments.
+    primary-wallet: Choose Fleetbase or QuickBooks as Primary for Accounts / Wallets.
+  messages:
+    unauthorized: This action is unauthorized.
+    organization-required: Sign in to an organization to manage QuickBooks.
+    organization-mismatch: You may only manage the QuickBooks connection for your own organization.
+    not-set-up: "QuickBooks is not set up yet. Ask an installation administrator to enter the Client ID, Client secret and Public OAuth Redirect URL in Admin → QuickBooks → Settings."
+    not-connected: QuickBooks is not connected.
+    not-connected-connect: QuickBooks is not connected. Connect from QuickBooks Setup.
+    not-connected-reconnect: QuickBooks is not connected. Connect again from QuickBooks Setup.
+    connection-works: QuickBooks connection works.
+    console-host: Set CONSOLE_HOST so QuickBooks can return to the console.
+    reauth: QuickBooks needs to be connected again. Choose Connect to QuickBooks on QuickBooks Setup.
+    import-reauth: QuickBooks needs to be connected again before import can continue. Choose Connect to QuickBooks on QuickBooks Setup.
+    oauth-other-user: This QuickBooks authorization was started by a different user or organization. Connect again from QuickBooks Setup.
+    oauth-connect-failed: QuickBooks could not finish connecting. Connect again from QuickBooks Setup.
+    oauth-invalid-link: This QuickBooks authorization link is not valid. Connect again from QuickBooks Setup.
+    oauth-state-invalid: QuickBooks authorization state is invalid or expired.
+    settings-invalid: Some QuickBooks settings are missing or invalid.
+    settings-organization-scope: An organization can only change its sync options. Global QuickBooks settings are changed in Admin → QuickBooks → Settings.
+    settings-organization-fields: Send only scope, sync, and reset.
+    settings-unknown-scope: Unknown QuickBooks settings scope.
+    refresh-running: This run was skipped because Fleetbase is already renewing the QuickBooks sign-in.
+    credentials-refused: QuickBooks refused the app's Client ID or Client secret. Ask an installation administrator to check them in Admin → QuickBooks → Settings.
+    refresh-unavailable: Fleetbase could not renew the QuickBooks sign-in. It tries again on the next sync.
+    lock-unavailable: This run was skipped because the Fleetbase server's cache does not support locks. Ask an installation administrator to check the cache settings.
+    sync-running: Another QuickBooks sync is already running.
+    rate-limited: QuickBooks asked Fleetbase to wait (rate limit). Try again in a few minutes.
+    sync-failed: Sync failed.
+    failed-count: "{count} failed."
+    transport: QuickBooks could not be reached. Try again in a few minutes.
+    request-failed: "QuickBooks request failed with status {status}"
+    request-failed-detail: "QuickBooks request failed with status {status}: {detail}"
+    access-token-refused: "QuickBooks request failed with status 401: the access token was refused."
+    query-failed: QuickBooks query failed.
+    invoice-lookup-failed: QuickBooks invoice lookup failed.
+    payment-lookup-failed: QuickBooks payment lookup failed.
+    batch-item-missing: QuickBooks batch response did not include this item.
+    batch-item-no-entity: QuickBooks batch item had no entity.
+    batch-item-unsupported: Unsupported batch item.
+    item-rejected: QuickBooks rejected this item.
+    import-customers-off: Customers are turned off in Data Resolution, so they are not imported.
+    import-failed: Customer import failed.
+    customer-missing: Customer no longer exists in Fleetbase.
+    wallet-missing: Wallet no longer exists in Fleetbase.
+    invoice-missing: Invoice no longer exists in Fleetbase.
+    invoice-customer-off: Customer sync is off, so this invoice cannot be synced.
+    invoice-customer-failed: Invoice customer could not be synced to QuickBooks.
+    invoice-customer-invalid: Invoice customer is not a Fleetbase customer.
+    invoice-item-missing: "QuickBooks has no item for invoice lines. Fleetbase could not create its \"Fleetbase service\" item; add an Income account in QuickBooks and try again."
+    invoice-number-unconfirmed: QuickBooks did not confirm a free invoice number, so Fleetbase did not create this invoice.
+    invoice-number-taken: "QuickBooks invoice number {number} was not copied because another Fleetbase invoice already uses it."
+    invoice-number-kept: "This invoice keeps {number}."
+    invoice-payments-multiple: This invoice has more than one QuickBooks payment, so Fleetbase left them unchanged.
+    payment-shared: This QuickBooks payment also applies to other invoices, so Fleetbase left it unchanged.
+    wallet-currency-mismatch: "Wallet currency {currency} does not match the QuickBooks home currency {home}."
+    invoice-currency-mismatch: "Invoice currency {currency} does not match the QuickBooks home currency {home}."

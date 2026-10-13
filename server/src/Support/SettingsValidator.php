@@ -26,22 +26,22 @@ class SettingsValidator
     {
         $errors = [];
         if (trim((string) ($auth['client_id'] ?? '')) === '') {
-            $errors['client_id'] = 'Enter the Client ID from developer.intuit.com → your app → Keys & credentials.';
+            $errors['client_id'] = 'quickbooks.validation.client-id';
         }
 
         $redirect = trim((string) ($auth['redirect_uri'] ?? ''));
         $schemeOk = str_starts_with($redirect, 'https://') === true || str_starts_with($redirect, 'http://') === true;
         if (filter_var($redirect, FILTER_VALIDATE_URL) === false || $schemeOk === false) {
-            $errors['redirect_uri'] = 'Enter a full http:// or https:// address that is listed under Keys & credentials, Redirect URIs.';
+            $errors['redirect_uri'] = 'quickbooks.validation.redirect-uri';
         }
 
         $environment = (string) ($auth['environment'] ?? '');
         if (in_array($environment, ['sandbox', 'production'], true) === false) {
-            $errors['environment'] = 'Choose Sandbox for Development keys, or Production for your live company.';
+            $errors['environment'] = 'quickbooks.validation.environment';
         }
 
         if (trim((string) ($auth['client_secret'] ?? '')) === '') {
-            $errors['client_secret'] = 'Enter the Client secret shown next to the Client ID on Keys & credentials.';
+            $errors['client_secret'] = 'quickbooks.validation.client-secret';
         }
 
         return $errors;
@@ -57,39 +57,36 @@ class SettingsValidator
     public function syncErrors(array $sync): array
     {
         $errors = [];
-        $this->requireInt($errors, $sync, 'interval_minutes', 1, 'Enter a whole number of minutes, at least 1.');
-        $this->requireInt($errors, $sync, 'periodic_interval_hours', 1, 'Enter a whole number of hours, at least 1.');
+        $this->requireInt($errors, $sync, 'interval_minutes', 1, 'quickbooks.validation.interval-minutes');
+        $hours = 'quickbooks.validation.periodic-interval-hours';
+        $this->requireInt($errors, $sync, 'periodic_interval_hours', 1, $hours);
         // A missing batch_size stays stored. A sent value is the query limit, from 1 to 100.
         if (array_key_exists('batch_size', $sync) === true) {
-            $this->requireBoundedInt($errors, $sync, 'batch_size', 1, 100, 'Enter a whole number from 1 to 100.');
+            $this->requireBoundedInt($errors, $sync, 'batch_size', 1, 100, 'quickbooks.validation.batch-size');
         }
-        $this->requireInt($errors, $sync, 'retry_limit', 1, 'Enter a whole number of retry attempts, at least 1.');
+        $this->requireInt($errors, $sync, 'retry_limit', 1, 'quickbooks.validation.retry-limit');
         $this->requireInt(
             $errors,
             $sync,
             'default_backoff_seconds',
             5,
-            'Enter a whole number of seconds for Retry delay, at least 5.'
+            'quickbooks.validation.retry-delay'
         );
 
+        // Each message is a translation key; the controller renders it in the reader's locale.
         $entities = [
-            'customer' => 'Customers',
-            'invoice'  => 'Invoices',
-            'payment'  => 'Payments',
-            'wallet'   => 'Accounts / Wallets',
+            'customer' => ['quickbooks.validation.primary-customer', 'quickbooks.validation.direction-customer'],
+            'invoice'  => ['quickbooks.validation.primary-invoice', 'quickbooks.validation.direction-invoice'],
+            'payment'  => ['quickbooks.validation.primary-payment', 'quickbooks.validation.direction-payment'],
+            'wallet'   => ['quickbooks.validation.primary-wallet', 'quickbooks.validation.direction-wallet'],
         ];
-        foreach ($entities as $entity => $label) {
+        foreach ($entities as $entity => [$primary, $direction]) {
             if ($this->entityEnabled($sync, $entity) === false) {
                 continue;
             }
-            $this->requireChoice($errors, $sync, $entity . '_conflict', ['fleetbase', 'quickbooks'], 'Choose Fleetbase or QuickBooks as Primary for ' . $label . '.');
-            $this->requireChoice($errors, $sync, $entity . '_reference', ['fleetbase', 'quickbooks'], 'Choose Fleetbase or QuickBooks as Primary for ' . $label . '.');
-            $this->requireDirection(
-                $errors,
-                $sync,
-                $entity . '_direction',
-                'Choose Both, To QuickBooks, or From QuickBooks for ' . $label . '.'
-            );
+            $this->requireChoice($errors, $sync, $entity . '_conflict', ['fleetbase', 'quickbooks'], $primary);
+            $this->requireChoice($errors, $sync, $entity . '_reference', ['fleetbase', 'quickbooks'], $primary);
+            $this->requireDirection($errors, $sync, $entity . '_direction', $direction);
         }
 
         return $errors;

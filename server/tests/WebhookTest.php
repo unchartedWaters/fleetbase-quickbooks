@@ -931,8 +931,8 @@ test('a busy lock is retried and an unavailable lock does not call the engine', 
 
         expect($engine->calls)->toBe([])
             ->and($directory->skipped)->toHaveCount(3)
-            ->and($directory->skipped[0]['message'])->toBe('Another QuickBooks sync is already running.')
-            ->and($directory->skipped[1]['message'])->toBe('Another QuickBooks sync is already running.')
+            ->and(qbText($directory->skipped[0]['message']))->toBe('Another QuickBooks sync is already running.')
+            ->and(qbText($directory->skipped[1]['message']))->toBe('Another QuickBooks sync is already running.')
             ->and($directory->skipped[2]['message'])->toBe(BatchRunner::LOCK_UNAVAILABLE)
             ->and($directory->saved)->toBeNull()
             ->and($dispatcher->jobs)->toHaveCount(1)

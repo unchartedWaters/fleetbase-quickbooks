@@ -11,24 +11,25 @@ use Fleetbase\Quickbooks\Services\TokenRefresher;
 test('reconnect messages say where to connect again', function () {
     $reconnect = 'QuickBooks needs to be connected again. Choose Connect to QuickBooks on QuickBooks Setup.';
 
-    expect(ConnectionTokens::REAUTH_MESSAGE)->toBe($reconnect)
-        ->and(SyncEngine::TOKEN_REJECTED_MESSAGE)->toBe($reconnect)
-        ->and(ImportCustomers::blockedMessage(['needs_reauth' => true]))
+    expect(qbText(ConnectionTokens::REAUTH_MESSAGE))->toBe($reconnect)
+        ->and(qbText(SyncEngine::TOKEN_REJECTED_MESSAGE))->toBe($reconnect)
+        ->and(qbText(ImportCustomers::blockedMessage(['needs_reauth' => true])))
         ->toBe('QuickBooks needs to be connected again before import can continue. '
             . 'Choose Connect to QuickBooks on QuickBooks Setup.')
-        ->and(ImportCustomers::blockedMessage(null))->toBe('QuickBooks is not connected. '
+        ->and(qbText(ImportCustomers::blockedMessage(null)))->toBe('QuickBooks is not connected. '
             . 'Connect from QuickBooks Setup.');
 });
 
 test('token and lock messages are written for the people who read them', function () {
-    expect(TokenRefresher::CREDENTIALS_MESSAGE)
+    expect(qbText(TokenRefresher::CREDENTIALS_MESSAGE))
         ->toBe("QuickBooks refused the app's Client ID or Client secret. "
             . 'Ask an installation administrator to check them in Admin → QuickBooks → Settings.')
-        ->and(TokenRefresher::UNAVAILABLE_MESSAGE)->toBe('Fleetbase could not renew the QuickBooks sign-in. '
+        ->and(qbText(TokenRefresher::UNAVAILABLE_MESSAGE))->toBe('Fleetbase could not renew the QuickBooks sign-in. '
             . 'It tries again on the next sync.')
-        ->and(ConnectionTokens::ALREADY_RUNNING)->toBe('This run was skipped because Fleetbase is already renewing the '
+        ->and(qbText(ConnectionTokens::ALREADY_RUNNING))->toBe('This run was skipped because Fleetbase is already '
+            . 'renewing the '
             . 'QuickBooks sign-in.')
-        ->and(BatchRunner::LOCK_UNAVAILABLE)
+        ->and(qbText(BatchRunner::LOCK_UNAVAILABLE))
         ->toBe("This run was skipped because the Fleetbase server's cache does not support locks. "
             . 'Ask an installation administrator to check the cache settings.');
 });
@@ -49,4 +50,14 @@ test('the operator role description matches what its policy grants', function ()
     expect($roles['QuickBooks Operator'])
         ->toBe('Connects and disconnects QuickBooks, imports customers, views settings and sync activity, and runs '
             . 'Sync now. Cannot change settings.');
+});
+
+test('client and oauth messages keep their wording', function () {
+    expect(qbText('quickbooks.messages.oauth-invalid-link'))
+        ->toBe('This QuickBooks authorization link is not valid. Connect again from QuickBooks Setup.')
+        ->and(qbText('quickbooks.messages.item-rejected'))->toBe('QuickBooks rejected this item.')
+        ->and(qbText('quickbooks.messages.batch-item-no-entity'))->toBe('QuickBooks batch item had no entity.')
+        ->and(qbText('quickbooks.messages.batch-item-missing'))
+        ->toBe('QuickBooks batch response did not include this item.')
+        ->and(qbText('quickbooks.messages.invoice-lookup-failed'))->toBe('QuickBooks invoice lookup failed.');
 });

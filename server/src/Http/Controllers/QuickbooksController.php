@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Http\Controllers;
 
 use Fleetbase\Quickbooks\Support\Authorizer;
+use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 
@@ -35,11 +36,11 @@ class QuickbooksController extends Controller
         $requestedCompany = (string) $request->input('company_uuid', '');
 
         if ($sessionCompany === '') {
-            abort(403, 'Sign in to an organization to manage QuickBooks.');
+            abort(403, Translation::get('quickbooks.messages.organization-required'));
         }
 
         if ($requestedCompany !== '' && $requestedCompany !== $sessionCompany) {
-            abort(403, 'You may only manage the QuickBooks connection for your own organization.');
+            abort(403, Translation::get('quickbooks.messages.organization-mismatch'));
         }
 
         return $sessionCompany;

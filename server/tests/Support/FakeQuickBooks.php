@@ -246,7 +246,7 @@ class FakeQuickBooks extends QuickBooksClient
 
         $invoice = $this->invoices[$id] ?? ['Id' => $id];
         if (empty($invoice['voided']) === false) {
-            throw new QuickBooksException(400, 'QuickBooks request failed with status 400: The invoice is already voided.');
+            throw new QuickBooksException(400, qbRequestFailed(400, 'The invoice is already voided.'));
         }
 
         $invoice['Id']        = $id;
@@ -396,7 +396,7 @@ class FakeQuickBooks extends QuickBooksClient
             'Payment:update'  => $this->updatePayment($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
             'Account:create'  => $this->createAccount($connection, $payload),
             'Account:update'  => $this->updateAccount($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
-            default           => throw new QuickBooksException(400, 'Unsupported batch item.'),
+            default           => throw new QuickBooksException(400, 'quickbooks.messages.batch-item-unsupported'),
         };
 
         return [

@@ -39,8 +39,7 @@ class BatchRunner
      */
     public const SYNC_JOB_TRIES = 2;
 
-    public const LOCK_UNAVAILABLE = 'This run was skipped because the Fleetbase server\'s cache does not support '
-        . 'locks. Ask an installation administrator to check the cache settings.';
+    public const LOCK_UNAVAILABLE = 'quickbooks.messages.lock-unavailable';
 
     /** @var array<string, int> */
     private static array $heldLocks = [];
@@ -77,7 +76,7 @@ class BatchRunner
         }
         if ($lock->get() === false) {
             if ($trigger !== 'scheduled') {
-                $this->directory->saveSkipped($companyUuid, $trigger, 'outbound', 'Another QuickBooks sync is already running.');
+                $this->directory->saveSkipped($companyUuid, $trigger, 'outbound', 'quickbooks.messages.sync-running');
             }
 
             return $skipped + ['reason' => 'busy'];

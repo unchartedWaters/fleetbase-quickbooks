@@ -14,6 +14,7 @@ use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
+use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -560,8 +561,11 @@ class FleetbaseDirectory
 
     private function noteInvoiceNumberCollision(SyncLedger $ledger, string $companyUuid, string $uuid, string $number, string $kept): void
     {
-        $note  = 'QuickBooks invoice number ' . $number . ' was not copied because another Fleetbase invoice already uses it.'
-            . ($kept === '' ? '' : ' This invoice keeps ' . $kept . '.');
+        $note = Translation::encode('quickbooks.messages.invoice-number-taken', ['number' => $number]);
+        if ($kept !== '') {
+            $keeps = Translation::encode('quickbooks.messages.invoice-number-kept', ['number' => $kept]);
+            $note  = Translation::append($note, $keeps);
+        }
         $noted = false;
         foreach ($ledger->attempts as $index => $attempt) {
             if (empty($attempt['uuid']) === false
@@ -569,11 +573,15 @@ class FleetbaseDirectory
                 continue;
             }
             $existing                          = trim((string) ($attempt['error'] ?? ''));
-            $ledger->attempts[$index]['error'] = $existing === '' ? $note : $existing . ' ' . $note;
+            $ledger->attempts[$index]['error'] = $existing === '' ? $note : Translation::append($existing, $note);
             $noted                             = true;
         }
         if ($noted === false) {
-            Log::warning('QuickBooks invoice number was not copied.', ['company_uuid' => $companyUuid, 'invoice_uuid' => $uuid, 'note' => $note]);
+            Log::warning('QuickBooks invoice number was not copied.', [
+                'company_uuid' => $companyUuid,
+                'invoice_uuid' => $uuid,
+                'note'         => Translation::render($note, Translation::FALLBACK_LOCALE),
+            ]);
         }
     }
 

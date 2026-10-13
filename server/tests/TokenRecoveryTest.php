@@ -91,7 +91,7 @@ class TokenRecoveryClient extends FakeQuickBooks
         $token              = (string) ($connection['access_token'] ?? '');
         $this->tokensSeen[] = $token;
         if ($token === 'old-access' || $this->refuseNewToken === true) {
-            throw new QuickBooksException(401, 'QuickBooks request failed with status 401');
+            throw new QuickBooksException(401, qbRequestFailed(401));
         }
     }
 
@@ -107,7 +107,7 @@ class TokenRecoveryClient extends FakeQuickBooks
         $token                 = (string) ($connection['access_token'] ?? '');
         $this->paymentTokens[] = $token;
         if ($token === 'old-access') {
-            throw new QuickBooksException(401, 'QuickBooks request failed with status 401');
+            throw new QuickBooksException(401, qbRequestFailed(401));
         }
 
         return parent::getPayment($connection, $id);

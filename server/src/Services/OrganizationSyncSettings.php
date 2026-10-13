@@ -125,7 +125,7 @@ class OrganizationSyncSettings
             }
             $value = $incoming[$key];
             if (is_bool($value) === false && in_array($value, [1, 0, '1', '0', 'true', 'false'], true) === false) {
-                $errors[$key] = 'Choose On or Off.';
+                $errors[$key] = 'quickbooks.validation.on-off';
             }
         }
 

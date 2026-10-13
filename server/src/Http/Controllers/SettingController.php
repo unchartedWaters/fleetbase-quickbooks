@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\PublicHttps;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SettingsValidator;
+use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -83,10 +84,7 @@ class SettingController extends QuickbooksController
 
         $errors = (new SettingsValidator())->errors($mergedAuth, $mergedSync);
         if ($errors !== []) {
-            return response()->json([
-                'message' => 'Some QuickBooks settings are missing or invalid.',
-                'errors'  => $errors,
-            ], 422);
+            return $this->invalid($errors);
         }
 
         $storedAuth = $this->settings->storeAuth($incomingAuth, $existingAuth);
@@ -115,9 +113,8 @@ class SettingController extends QuickbooksController
         $extra       = array_diff(array_keys($request->all()), ['scope', 'sync', 'reset', 'company_uuid']);
         if ($extra !== []) {
             return response()->json([
-                'message' => 'An organization can only change its sync options. '
-                    . 'Global QuickBooks settings are changed in Admin → QuickBooks → Settings.',
-                'errors'  => ['settings' => 'Send only scope, sync, and reset.'],
+                'message' => Translation::get('quickbooks.messages.settings-organization-scope'),
+                'errors'  => ['settings' => Translation::get('quickbooks.messages.settings-organization-fields')],
             ], 422);
         }
 
@@ -129,10 +126,7 @@ class SettingController extends QuickbooksController
             $errors = $this->organizationSync()->save($companyUuid, $request->input('sync', []));
         }
         if ($errors !== []) {
-            return response()->json([
-                'message' => 'Some QuickBooks settings are missing or invalid.',
-                'errors'  => $errors,
-            ], 422);
+            return $this->invalid($errors);
         }
         $this->queueTurnedOnEntities($companyUuid, $before, $this->organizationSync()->effective($companyUuid));
 
@@ -142,13 +136,31 @@ class SettingController extends QuickbooksController
     }
 
     /**
+     * Validation errors are translation keys, rendered in the reader's locale.
+     *
+     * @param array<string, string> $errors
+     */
+    private function invalid(array $errors): JsonResponse
+    {
+        $locale = Translation::currentLocale();
+
+        return response()->json([
+            'message' => Translation::get('quickbooks.messages.settings-invalid', [], $locale),
+            'errors'  => array_map(
+                static fn (string $error): string => (string) Translation::render($error, $locale),
+                $errors
+            ),
+        ], 422);
+    }
+
+    /**
      * 'company' (the default) or 'admin'. Anything else is refused.
      */
     private function scope(Request $request): string
     {
         $scope = $request->input('scope', 'company');
         if (is_string($scope) === false || ($scope !== 'company' && $scope !== 'admin')) {
-            abort(422, 'Unknown QuickBooks settings scope.');
+            abort(422, Translation::get('quickbooks.messages.settings-unknown-scope'));
         }
 
         return $scope;

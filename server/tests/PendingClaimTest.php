@@ -560,12 +560,12 @@ class ClaimRefreshDownQuickBooks extends ClaimProbeQuickBooks
 
     public function createCustomer(array $connection, array $payload): array
     {
-        throw new QuickBooksException(401, 'QuickBooks request failed with status 401');
+        throw new QuickBooksException(401, qbRequestFailed(401));
     }
 
     public function batch(array $connection, array $items): array
     {
-        throw new QuickBooksException(401, 'QuickBooks request failed with status 401');
+        throw new QuickBooksException(401, qbRequestFailed(401));
     }
 }
 

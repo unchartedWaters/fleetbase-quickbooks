@@ -23,6 +23,7 @@ use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\PublicHttps;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -80,13 +81,14 @@ class ConnectionController extends QuickbooksController
                 'created_at',
             ], 'page', $page);
         [$batches, $meta] = $this->batchPage($paginator);
-        $errors           = $this->errorsByBatch($this->batchUuids($batches));
+        $locale           = Translation::currentLocale();
+        $errors           = $this->errorsByBatch($this->batchUuids($batches), $locale);
         $payload          = [];
         foreach ($batches as $batch) {
             if ($batch instanceof SyncBatch === false) {
                 continue;
             }
-            $payload[] = $this->presentBatch($batch, $errors);
+            $payload[] = $this->presentBatch($batch, $errors, $locale);
         }
 
         return response()->json([
@@ -115,9 +117,11 @@ class ConnectionController extends QuickbooksController
     /**
      * @param array<int, string> $batchUuids
      *
+     * Stored errors are rendered here, in the reader's locale, before duplicates are removed
+     *
      * @return array<string, array<int, string>>
      */
-    private function errorsByBatch(array $batchUuids): array
+    private function errorsByBatch(array $batchUuids, string $locale): array
     {
         $errors   = [];
         $attempts = SyncAttempt::query()
@@ -130,7 +134,7 @@ class ConnectionController extends QuickbooksController
                 continue;
             }
             $batchUuid = (string) $attempt->batch_uuid;
-            $message   = trim((string) $attempt->error);
+            $message   = trim((string) Translation::render((string) $attempt->error, $locale));
             if ($batchUuid === '' || $message === '') {
                 continue;
             }
@@ -145,12 +149,16 @@ class ConnectionController extends QuickbooksController
      *
      * @return array<string, mixed>
      */
-    private function presentBatch(SyncBatch $batch, array $errors): array
+    private function presentBatch(SyncBatch $batch, array $errors, string $locale): array
     {
         $messages = array_values(array_unique($errors[(string) $batch->uuid] ?? []));
         $error    = $messages === [] ? null : implode('; ', array_slice($messages, 0, 3));
         if ($error === null && (int) $batch->failed_count > 0) {
-            $error = (int) $batch->failed_count . ' failed.';
+            $error = Translation::get(
+                'quickbooks.messages.failed-count',
+                ['count' => (int) $batch->failed_count],
+                $locale
+            );
         }
 
         return [
@@ -188,8 +196,7 @@ class ConnectionController extends QuickbooksController
         $credentials = $this->credentials($companyUuid);
         if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '' || $this->isAbsoluteHttpUrl($credentials['redirect_uri']) === false) {
             return response()->json([
-                'message' => 'QuickBooks is not set up yet. Ask an installation administrator to enter the Client ID, '
-                    . 'Client secret and Public OAuth Redirect URL in Admin → QuickBooks → Settings.',
+                'message' => Translation::get('quickbooks.messages.not-set-up'),
             ], 422);
         }
         $begun       = $this->oauth->begin(
@@ -243,12 +250,13 @@ class ConnectionController extends QuickbooksController
                 $this->credentials($companyUuid)
             );
         } catch (QuickBooksException $exception) {
-            return response()->json(['message' => $exception->getMessage()], 422);
+            return response()->json(['message' => Translation::render($exception->getMessage())], 422);
         }
         if ($connection === null) {
             if ($this->connectionIsStored($companyUuid) === false) {
-                return response()->json(['message' => 'QuickBooks is not connected. '
-                    . 'Connect again from QuickBooks Setup.'], 422);
+                $message = Translation::get('quickbooks.messages.not-connected-reconnect');
+
+                return response()->json(['message' => $message], 422);
             }
 
             // The webhook endpoint is set in the Intuit developer portal. This does not call Intuit.
@@ -478,7 +486,7 @@ class ConnectionController extends QuickbooksController
             $host          = $fleetbaseHost === 'fleetbase.io' ? '' : $fleetbaseHost;
         }
         if ($host === '') {
-            return response()->json(['message' => 'Set CONSOLE_HOST so QuickBooks can return to the console.'], 500);
+            return response()->json(['message' => Translation::get('quickbooks.messages.console-host')], 500);
         }
         if (preg_match('#^https?://#i', $host) !== 1) {
             $host = 'https://' . $host;
@@ -595,11 +603,11 @@ class ConnectionController extends QuickbooksController
         } elseif ($row instanceof Connection === true && $row->needs_reauth === true && ConnectionGate::hasRealm($row) === true) {
             $message = ConnectionTokens::REAUTH_MESSAGE;
         } else {
-            $message = 'QuickBooks is not connected. Connect from QuickBooks Setup.';
+            $message = 'quickbooks.messages.not-connected-connect';
         }
 
         if (ConnectionGate::hasRealm($row) === false) {
-            return response()->json(['message' => $message], 422);
+            return response()->json(['message' => Translation::render($message)], 422);
         }
 
         $batch = new SyncBatch();
@@ -624,7 +632,7 @@ class ConnectionController extends QuickbooksController
         ]);
         $attempt->save();
 
-        return response()->json(['message' => $message], 422);
+        return response()->json(['message' => Translation::render($message)], 422);
     }
 
     /**

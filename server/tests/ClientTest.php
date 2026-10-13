@@ -237,7 +237,8 @@ test('a failed request includes the quickbooks fault detail', function () {
         expect(false)->toBeTrue();
     } catch (QuickBooksException $exception) {
         expect($exception->status)->toBe(400)
-            ->and($exception->getMessage())->toBe('QuickBooks request failed with status 400: The name supplied already exists.');
+            ->and(qbText($exception->getMessage()))->toBe('QuickBooks request failed with status 400: The name '
+                . 'supplied already exists.');
     }
 });
 

@@ -52,9 +52,9 @@ test('a quickbooks invoice number that another company already uses is not copie
             ->and(DB::table('ledger_invoices')->where('uuid', 'other-1')->value('number'))->toBe('QB-100')
             ->and($ledger->invoices['inv-9']['number'])->toBe('inv-9')
             ->and($attempt->outcome)->toBe('updated')
-            ->and($attempt->error)->toContain('QB-100')
-            ->and($attempt->error)->toContain('already uses it')
-            ->and($attempt->error)->toContain('keeps inv-9')
+            ->and(qbText($attempt->error))->toContain('QB-100')
+            ->and(qbText($attempt->error))->toContain('already uses it')
+            ->and(qbText($attempt->error))->toContain('keeps inv-9')
             ->and(DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-1')->value('status'))->toBe('done');
     } finally {
         $restore();

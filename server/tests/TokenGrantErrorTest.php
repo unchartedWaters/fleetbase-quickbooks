@@ -41,6 +41,6 @@ test('the oauth error code reaches the exception message but the description doe
         (new QuickBooksClient())->refresh(grantCredentials(), 'dead');
         $this->fail('expected exception');
     } catch (QuickBooksException $exception) {
-        expect($exception->getMessage())->toBe('QuickBooks request failed with status 400: invalid_grant');
+        expect(qbText($exception->getMessage()))->toBe('QuickBooks request failed with status 400: invalid_grant');
     }
 });

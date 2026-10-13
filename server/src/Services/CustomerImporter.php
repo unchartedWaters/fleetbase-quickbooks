@@ -233,7 +233,7 @@ class CustomerImporter
                 'local_type'   => 'customer',
                 'local_uuid'   => (string) ($remote['Id'] ?? ''),
                 'outcome'      => 'failed',
-                'error'        => 'Customer import failed.',
+                'error'        => 'quickbooks.messages.import-failed',
             ];
         }
     }
@@ -457,7 +457,7 @@ class CustomerImporter
                 'local_type'   => 'customer',
                 'local_uuid'   => (string) ($remote['Id'] ?? ''),
                 'outcome'      => 'failed',
-                'error'        => 'Customer import failed.',
+                'error'        => 'quickbooks.messages.import-failed',
             ];
 
             return 'failed';

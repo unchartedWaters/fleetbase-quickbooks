@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\Translation;
 
 class ConnectionProbe
 {
@@ -17,9 +18,22 @@ class ConnectionProbe
      */
     public function probe(?array $connection): array
     {
+        $result            = $this->check($connection);
+        $result['message'] = (string) Translation::render($result['message']);
+
+        return $result;
+    }
+
+    /**
+     * @param array<string, mixed>|null $connection
+     *
+     * @return array{ok: bool, message: string, company_name: string|null, home_currency: string|null}
+     */
+    private function check(?array $connection): array
+    {
         $empty = [
             'ok'            => false,
-            'message'       => 'QuickBooks is not connected.',
+            'message'       => 'quickbooks.messages.not-connected',
             'company_name'  => null,
             'home_currency' => null,
         ];
@@ -48,7 +62,7 @@ class ConnectionProbe
 
         return [
             'ok'            => true,
-            'message'       => 'QuickBooks connection works.',
+            'message'       => 'quickbooks.messages.connection-works',
             'company_name'  => isset($info['CompanyName']) === true ? (string) $info['CompanyName'] : null,
             'home_currency' => $currency,
         ];

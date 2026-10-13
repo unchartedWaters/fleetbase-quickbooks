@@ -372,7 +372,7 @@ test('a failed row on a later page keeps the cursor at that row and stops even t
             'local_type'   => 'customer',
             'local_uuid'   => '5',
             'outcome'      => 'failed',
-            'error'        => 'Customer import failed.',
+            'error'        => 'quickbooks.messages.import-failed',
         ]]);
 });
 
@@ -648,7 +648,7 @@ test('a failed contact lookup fails the page rows, still counts skipped rows, an
                 'local_type'   => 'customer',
                 'local_uuid'   => '61',
                 'outcome'      => 'failed',
-                'error'        => 'Customer import failed.',
+                'error'        => 'quickbooks.messages.import-failed',
             ]])
             ->and($ledger->connections['company-uuid'][CustomerImporter::CURSOR_COLUMN])->toBe(3);
     } finally {
@@ -794,12 +794,14 @@ test('the import job records why it skipped: reconnect needed, customers off, or
     expect($env['error'])->toBeNull()
         ->and($client->queries)->toBe([])
         ->and($reauth->events)->toBe(['saveSkipped:held', 'save:held'])
-        ->and($reauth->memory->attempts[0]['error'])->toBe('QuickBooks needs to be connected again before import can '
+        ->and(qbText($reauth->memory->attempts[0]['error']))->toBe('QuickBooks needs to be connected again before '
+            . 'import can '
             . 'continue. Choose Connect to QuickBooks on QuickBooks Setup.')
         ->and($reauth->memory->batches[0]['trigger'])->toBe('import')
         ->and($reauth->memory->batches[0]['direction'])->toBe('inbound')
         ->and($off->events)->toBe(['saveSkipped:held', 'save:held'])
-        ->and($off->memory->attempts[0]['error'])->toBe('Customers are turned off in Data Resolution, so they are not imported.')
+        ->and(qbText($off->memory->attempts[0]['error']))->toBe('Customers are turned off in Data Resolution, so they '
+            . 'are not imported.')
         ->and($blockedTokens->heldDuringRefresh)->toBeFalse()
         ->and($blocked->events)->toBe(['saveSkipped:held', 'save:held'])
         ->and($blocked->memory->attempts[0]['error'])->toBe('QuickBooks token refresh failed.')

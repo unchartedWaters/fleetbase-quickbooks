@@ -26,7 +26,7 @@ class Authorizer
         }
 
         if ($this->granted($permission) === false) {
-            abort(403, 'This action is unauthorized.');
+            abort(403, Translation::get('quickbooks.messages.unauthorized'));
         }
     }
 
@@ -45,7 +45,7 @@ class Authorizer
     public function checkInstallationAdmin(?Request $request = null): void
     {
         if ($this->isInstallationAdmin($request) === false) {
-            abort(403, 'This action is unauthorized.');
+            abort(403, Translation::get('quickbooks.messages.unauthorized'));
         }
     }
 

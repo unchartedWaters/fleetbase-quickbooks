@@ -357,7 +357,8 @@ test('a connect import waits out a busy company lock and then records the skip',
         }
 
         expect($dispatcher->jobs)->toHaveCount(1)
-            ->and($directory->memory->attempts[0]['error'])->toBe('Another QuickBooks sync is already running.');
+            ->and(qbText($directory->memory->attempts[0]['error']))->toBe('Another QuickBooks sync is already '
+                . 'running.');
 
         $dispatcher->jobs[0]->handle(new CustomerImporter($client), $directory);
 
@@ -454,7 +455,7 @@ test('a single failing record is recorded and the rest of the import continues',
         ->and($ledger->attempts)->toHaveCount(1)
         ->and($ledger->attempts[0]['outcome'])->toBe('failed')
         ->and($ledger->attempts[0]['local_uuid'])->toBe('2')
-        ->and($ledger->attempts[0]['error'])->toBe('Customer import failed.')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('Customer import failed.')
         ->and($ledger->connections['company-uuid']['customer_import_start'])->toBe(2);
 });
 

@@ -4,6 +4,7 @@ use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
+use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Illuminate\Http\Client\Factory;
@@ -64,4 +65,35 @@ function qbEngine(?FakeQuickBooks $client = null): array
     );
 
     return [$engine, $client];
+}
+
+/**
+ * Stored and thrown server text is a translation key; this is what an en-us reader sees.
+ */
+function qbText(?string $stored): ?string
+{
+    return Translation::render($stored, 'en-us');
+}
+
+/**
+ * @param array<string, string> $errors
+ *
+ * @return array<string, string>
+ */
+function qbTexts(array $errors): array
+{
+    return array_map(static fn (string $error): string => (string) qbText($error), $errors);
+}
+
+/**
+ * The message QuickBooksClient throws for a failed request.
+ */
+function qbRequestFailed(int $status, string $detail = ''): string
+{
+    return $detail === ''
+        ? Translation::encode('quickbooks.messages.request-failed', ['status' => (string) $status])
+        : Translation::encode(
+            'quickbooks.messages.request-failed-detail',
+            ['status' => (string) $status, 'detail' => $detail]
+        );
 }

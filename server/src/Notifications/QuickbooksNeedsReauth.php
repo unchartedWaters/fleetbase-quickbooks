@@ -2,6 +2,7 @@
 
 namespace Fleetbase\Quickbooks\Notifications;
 
+use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Notifications\Notification;
 
 class QuickbooksNeedsReauth extends Notification
@@ -38,8 +39,21 @@ class QuickbooksNeedsReauth extends Notification
         return [
             'company_uuid' => $this->companyUuid,
             'realm_id'     => $this->realmId,
-            'message'      => 'QuickBooks needs to be connected again. '
-                . 'Choose Connect to QuickBooks on QuickBooks Setup.',
+            'message'      => Translation::get('quickbooks.messages.reauth', [], $this->recipientLocale($notifiable)),
         ];
+    }
+
+    /**
+     * The recipient's console locale. A Fleetbase user has one; anything else reads en-us.
+     */
+    private function recipientLocale(object $notifiable): string
+    {
+        try {
+            return method_exists($notifiable, 'getLocale') === true
+                ? Translation::normalize((string) $notifiable->getLocale())
+                : Translation::FALLBACK_LOCALE;
+        } catch (\Throwable) {
+            return Translation::FALLBACK_LOCALE;
+        }
     }
 }

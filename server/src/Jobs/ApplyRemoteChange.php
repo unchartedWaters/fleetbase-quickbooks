@@ -90,7 +90,7 @@ class ApplyRemoteChange implements ShouldQueue
             return null;
         }
         if ($lock->get() === false) {
-            $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', 'Another QuickBooks sync is already running.');
+            $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', 'quickbooks.messages.sync-running');
             $this->retryBusyLock();
 
             return null;

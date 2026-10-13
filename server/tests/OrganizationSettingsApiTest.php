@@ -262,6 +262,10 @@ test('an invalid save is refused with sync errors and writes nothing', function 
     expect($response->getStatusCode())->toBe(422)
         ->and($response->getData(true)['errors'])->toHaveKeys(['interval_minutes', 'batch_size'])
         ->and($response->getData(true)['errors'])->not->toHaveKey('client_id')
+        ->and($response->getData(true)['message'])->toBe('Some QuickBooks settings are missing or invalid.')
+        ->and($response->getData(true)['errors']['interval_minutes'])
+        ->toBe('Enter a whole number of minutes, at least 1.')
+        ->and($response->getData(true)['errors']['batch_size'])->toBe('Enter a whole number from 1 to 100.')
         ->and($store->rows)->toBe($before);
 });
 

@@ -89,7 +89,7 @@ test('receive refuses a realm that is not 6 to 20 digits and burns the state', f
         $begun = $flow->begin('company-uuid', 'user-uuid', realmCredentials());
 
         expect(fn () => $flow->receive($begun['state'], 'code', $realm))
-            ->toThrow(QuickBooksException::class, 'QuickBooks authorization state is invalid or expired.')
+            ->toThrow(QuickBooksException::class, 'quickbooks.messages.oauth-state-invalid')
             // The state was pulled, so the same state cannot be tried again with a good realm.
             ->and(fn () => $flow->receive($begun['state'], 'code', '9341453000000001'))
             ->toThrow(QuickBooksException::class);
@@ -145,14 +145,13 @@ test('the realm is url encoded when the API url is built', function () {
 
 test('a first call that answers 401 403 or 404 means the token is not for the realm and nothing is stored', function () {
     foreach ([401, 403, 404] as $status) {
-        $client = realmClient(new QuickBooksException($status, 'QuickBooks request failed with status ' . $status . ': secret detail'));
+        $client = realmClient(new QuickBooksException($status, qbRequestFailed($status, 'secret detail')));
         $flow   = new OAuthFlow($client);
         $begun  = $flow->begin('company-uuid', 'user-uuid', realmCredentials());
         $handle = $flow->receive($begun['state'], 'code', '9341453000000001');
 
         expect(fn () => $flow->complete($handle, 'company-uuid', 'user-uuid', realmCredentials()))
-            ->toThrow(QuickBooksException::class, 'QuickBooks could not finish connecting. '
-                . 'Connect again from QuickBooks Setup.');
+            ->toThrow(QuickBooksException::class, 'quickbooks.messages.oauth-connect-failed');
 
         // The handle is spent and is not marked done, so a reload cannot report a connection.
         try {
@@ -166,7 +165,8 @@ test('a first call that answers 401 403 or 404 means the token is not for the re
 });
 
 test('the generic connect failure message never carries the Intuit detail', function () {
-    $flow   = new OAuthFlow(realmClient(new QuickBooksException(403, 'QuickBooks request failed with status 403: Forbidden realm 9341453000000001')));
+    $flow   = new OAuthFlow(realmClient(new QuickBooksException(403, qbRequestFailed(403, 'Forbidden realm '
+        . '9341453000000001'))));
     $begun  = $flow->begin('company-uuid', 'user-uuid', realmCredentials());
     $handle = $flow->receive($begun['state'], 'code', '9341453000000001');
 
@@ -174,7 +174,7 @@ test('the generic connect failure message never carries the Intuit detail', func
         $flow->complete($handle, 'company-uuid', 'user-uuid', realmCredentials());
         expect(false)->toBeTrue();
     } catch (QuickBooksException $exception) {
-        expect($exception->getMessage())->toBe('QuickBooks could not finish connecting. '
+        expect(qbText($exception->getMessage()))->toBe('QuickBooks could not finish connecting. '
             . 'Connect again from QuickBooks Setup.')
             ->and($exception->status)->toBe(403);
     }
@@ -197,7 +197,7 @@ test('other first call failures are tolerated and the connection is still return
 });
 
 test('a service item failure after a good first call is tolerated even when it is a 401', function () {
-    $flow   = new OAuthFlow(realmClient(null, new QuickBooksException(401, 'QuickBooks request failed with status 401')));
+    $flow   = new OAuthFlow(realmClient(null, new QuickBooksException(401, qbRequestFailed(401))));
     $begun  = $flow->begin('company-uuid', 'user-uuid', realmCredentials());
     $handle = $flow->receive($begun['state'], 'code', '9341453000000001');
 
