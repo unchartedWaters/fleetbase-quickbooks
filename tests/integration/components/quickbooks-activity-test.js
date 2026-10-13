@@ -64,7 +64,7 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         assert.dom('[data-test-activity-loading]').doesNotExist();
     });
 
-    test('stored Connection sentences point at QuickBooks Setup', async function (assert) {
+    test('stored Connection sentences point at QuickBooks Setup, and credential checks at an installation administrator', async function (assert) {
         this.set('batches', [
             {
                 uuid: 'import-sep-27',
@@ -98,8 +98,8 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         assert.deepEqual(errors, [
             'QuickBooks is not connected. Connect from QuickBooks Setup.',
             'QuickBooks needs to be reconnected. Connect from QuickBooks Setup.',
-            'QuickBooks refused the app credentials. Check Client ID and Client secret in Admin → QuickBooks → Settings.',
-            'QuickBooks refused the app credentials. Check Client ID and Client secret in Admin → QuickBooks → Settings.',
+            'QuickBooks refused the app credentials. Ask an installation administrator to check Client ID and Client secret in Admin → QuickBooks → Settings.',
+            'QuickBooks refused the app credentials. Ask an installation administrator to check Client ID and Client secret in Admin → QuickBooks → Settings.',
         ]);
         assert.dom(this.element.querySelector('[data-test-activity-trigger]')).hasText('Import customers');
         assert.dom(this.element.querySelector('[data-test-activity-error]')).hasAttribute('headers', 'quickbooks-activity-0');

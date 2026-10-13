@@ -3,7 +3,7 @@ import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
 import { inject as service } from '@ember/service';
 import { connectionState } from '../../utils/connection-view';
-import { canRunSyncNow } from '../../utils/sync-access';
+import { canConnect, canRunSyncNow } from '../../utils/sync-access';
 
 const NAMESPACE = 'quickbooks/int/v1';
 
@@ -57,9 +57,13 @@ export default class WidgetQuickbooksSyncComponent extends Component {
         return !this.isLoading && !this.error && connectionState(this.summary?.connection) === 'needs-reauth';
     }
 
-    // Sync now stays off until someone connects again. Say where, and do not send them there without keys.
+    // Sync now stays off until someone connects again. Say where, and do not send them there without keys or permission.
     get reauthReady() {
-        return this.needsReauth && this.credentialsConfigured;
+        return this.needsReauth && this.credentialsConfigured && canConnect(this.abilities);
+    }
+
+    get reauthPermissionDenied() {
+        return this.needsReauth && this.credentialsConfigured && !canConnect(this.abilities);
     }
 
     get reauthNeedsKeys() {

@@ -37,6 +37,9 @@
                 {{#if this.reauthReady}}
                     <p class="text-sm text-gray-500 dark:text-gray-400" data-test-widget-reauth>{{t "quickbooks.widget.reauth-setup"}}</p>
                 {{/if}}
+                {{#if this.reauthPermissionDenied}}
+                    <p class="text-sm text-gray-500 dark:text-gray-400" data-test-widget-reauth-denied>{{t "quickbooks.widget.reauth-no-permission"}}</p>
+                {{/if}}
                 {{#if this.reauthNeedsKeys}}
                     <p class="text-sm text-gray-500 dark:text-gray-400" data-test-widget-reauth-keys>{{t "quickbooks.connection.reauth-save-first"}}</p>
                 {{/if}}

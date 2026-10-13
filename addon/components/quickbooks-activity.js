@@ -101,13 +101,11 @@ export default class QuickbooksActivityComponent extends Component {
         const page = this.intl.t('quickbooks.connection.title');
         const credentials = this.intl.t('quickbooks.activity.credentials-where');
 
-        // Stored errors can name the page by an older title. Credential checks belong in Admin settings, not on Setup.
+        // Stored errors can name the page by an older title. Only an installation administrator can check credentials, in Admin settings.
         return error
             .split('Check Client ID and Client secret on Connection.')
             .join(credentials)
             .split('Check Client ID and Client secret on Quickbooks Setup.')
-            .join(credentials)
-            .split('Check Client ID and Client secret on QuickBooks Setup.')
             .join(credentials)
             .split('Connection Config')
             .join(page)
