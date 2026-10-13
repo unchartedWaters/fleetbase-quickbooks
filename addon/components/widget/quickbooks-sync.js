@@ -53,6 +53,19 @@ export default class WidgetQuickbooksSyncComponent extends Component {
         return this.isConnected && !this.credentialsConfigured;
     }
 
+    get needsReauth() {
+        return !this.isLoading && !this.error && connectionState(this.summary?.connection) === 'needs-reauth';
+    }
+
+    // Sync now stays off until someone connects again. Say where, and do not send them there without keys.
+    get reauthReady() {
+        return this.needsReauth && this.credentialsConfigured;
+    }
+
+    get reauthNeedsKeys() {
+        return this.needsReauth && !this.credentialsConfigured;
+    }
+
     get canSync() {
         return canRunSyncNow(this.abilities);
     }

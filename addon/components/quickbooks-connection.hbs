@@ -7,7 +7,9 @@
                 <p class="text-sm text-gray-500 mb-4" data-test-connection-loading>{{t "quickbooks.connection.loading"}}</p>
             {{else if this.needsReauth}}
                 <p class="text-sm text-red-600 dark:text-red-400 mb-4" data-test-reauth>
-                    {{#if this.isConfigured}}
+                    {{#if this.connectPermissionDenied}}
+                        {{t "quickbooks.connection.reauth-no-permission"}}
+                    {{else if this.isConfigured}}
                         {{t "quickbooks.connection.reauth-status"}}
                     {{else if this.isUnconfigured}}
                         {{t "quickbooks.connection.reauth-save-first"}}
@@ -36,7 +38,9 @@
                 {{/if}}
             {{else}}
                 <p class="text-sm text-gray-500 mb-4" data-test-disconnected>
-                    {{#if this.isConfigured}}
+                    {{#if this.connectPermissionDenied}}
+                        {{t "quickbooks.connection.disconnected-no-permission"}}
+                    {{else if this.isConfigured}}
                         {{t "quickbooks.connection.disconnected-status"}}
                     {{else if this.isUnconfigured}}
                         {{t "quickbooks.connection.disconnected-save-first"}}
@@ -91,6 +95,11 @@
                         {{#if this.syncPermissionDenied}}
                             <p class="text-sm text-gray-500 dark:text-gray-400" data-test-sync-denied>
                                 {{t "quickbooks.actions.sync-denied"}}
+                            </p>
+                        {{/if}}
+                        {{#if this.disconnectPermissionDenied}}
+                            <p class="text-sm text-gray-500 dark:text-gray-400" data-test-disconnect-denied>
+                                {{t "quickbooks.connection.disconnect-denied"}}
                             </p>
                         {{/if}}
                     </div>

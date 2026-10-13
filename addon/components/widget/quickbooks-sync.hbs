@@ -34,6 +34,12 @@
                         {{t "quickbooks.widget.credentials-missing"}}
                     </p>
                 {{/if}}
+                {{#if this.reauthReady}}
+                    <p class="text-sm text-gray-500 dark:text-gray-400" data-test-widget-reauth>{{t "quickbooks.widget.reauth-setup"}}</p>
+                {{/if}}
+                {{#if this.reauthNeedsKeys}}
+                    <p class="text-sm text-gray-500 dark:text-gray-400" data-test-widget-reauth-keys>{{t "quickbooks.connection.reauth-save-first"}}</p>
+                {{/if}}
                 {{#if this.syncPermissionDenied}}
                     <p class="text-sm text-gray-500 dark:text-gray-400" data-test-sync-denied>
                         {{t "quickbooks.actions.sync-denied"}}
