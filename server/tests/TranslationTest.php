@@ -1,24 +1,6 @@
 <?php
 
 use Fleetbase\Quickbooks\Support\Translation;
-use Symfony\Component\Yaml\Yaml;
-
-function qbTranslationKeys(): array
-{
-    $keys    = [];
-    $flatten = function (array $tree, string $prefix) use (&$flatten, &$keys): void {
-        foreach ($tree as $name => $value) {
-            if (is_array($value) === true) {
-                $flatten($value, $prefix . $name . '.');
-            } else {
-                $keys[$prefix . $name] = (string) $value;
-            }
-        }
-    };
-    $flatten(Yaml::parseFile(dirname(__DIR__, 2) . '/translations/en-us.yaml'), '');
-
-    return $keys;
-}
 
 test('server text is read from the frontend translations file', function () {
     expect(Translation::get('quickbooks.connection.title', [], 'en-us'))->toBe('QuickBooks Setup')
@@ -130,34 +112,6 @@ test('every message key named in the server code exists in en-us.yaml', function
 
     expect($found)->toBeGreaterThan(40);
 });
-
-/**
- * Adds a second translations file for one test, so locale selection has something to choose.
- */
-function qbWithExtraLocale(callable $body): void
-{
-    $file  = dirname(__DIR__, 2) . '/translations/zz-zz.yaml';
-    $reset = static function (): void {
-        $class = new ReflectionClass(Translation::class);
-        $class->setStaticPropertyValue('catalogs', []);
-        $class->setStaticPropertyValue('locales', null);
-    };
-    file_put_contents($file, implode("\n", [
-        'quickbooks:',
-        '  messages:',
-        '    sync-failed: Synchro échouée.',
-        '    reauth: Reconnectez QuickBooks.',
-        '',
-    ]));
-    $reset();
-
-    try {
-        $body();
-    } finally {
-        unlink($file);
-        $reset();
-    }
-}
 
 test('the signed-in user locale is used when a translations file exists for it', function () {
     // Setting reads the core 'mysql' connection; point it at an in-memory database for this test.

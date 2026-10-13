@@ -8,6 +8,7 @@ use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Illuminate\Http\Client\Factory;
+use Symfony\Component\Yaml\Yaml;
 
 uses()->beforeEach(function () {
     Illuminate\Support\Facades\Http::swap(new Factory());
@@ -96,4 +97,49 @@ function qbRequestFailed(int $status, string $detail = ''): string
             'quickbooks.messages.request-failed-detail',
             ['status' => (string) $status, 'detail' => $detail]
         );
+}
+
+function qbTranslationKeys(): array
+{
+    $keys    = [];
+    $flatten = function (array $tree, string $prefix) use (&$flatten, &$keys): void {
+        foreach ($tree as $name => $value) {
+            if (is_array($value) === true) {
+                $flatten($value, $prefix . $name . '.');
+            } else {
+                $keys[$prefix . $name] = (string) $value;
+            }
+        }
+    };
+    $flatten(Yaml::parseFile(dirname(__DIR__, 2) . '/translations/en-us.yaml'), '');
+
+    return $keys;
+}
+
+/**
+ * Adds a second translations file for one test, so locale selection has something to choose.
+ */
+function qbWithExtraLocale(callable $body): void
+{
+    $file  = dirname(__DIR__, 2) . '/translations/zz-zz.yaml';
+    $reset = static function (): void {
+        $class = new ReflectionClass(Translation::class);
+        $class->setStaticPropertyValue('catalogs', []);
+        $class->setStaticPropertyValue('locales', null);
+    };
+    file_put_contents($file, implode("\n", [
+        'quickbooks:',
+        '  messages:',
+        '    sync-failed: Synchro échouée.',
+        '    reauth: Reconnectez QuickBooks.',
+        '',
+    ]));
+    $reset();
+
+    try {
+        $body();
+    } finally {
+        unlink($file);
+        $reset();
+    }
 }
