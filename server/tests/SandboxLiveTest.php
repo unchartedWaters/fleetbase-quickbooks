@@ -389,4 +389,18 @@ test('the sync engine pushes a customer, invoice, payment and wallet end to end'
         ->and(sandboxCents($remoteInvoice['Balance'] ?? null))->toBe(0)
         ->and($remoteInvoice['CustomerRef']['value'] ?? null)->toBe($links['customer:cust-e2e'])
         ->and($remoteAccount['Name'] ?? null)->toBe('Fleetbase Test Engine Wallet ' . $tag);
+
+    $paymentIds = array_values(array_map(
+        fn (array $link): string => (string) $link['qbo_id'],
+        array_filter($ledger->links, fn (array $link): bool => ($link['local_type'] ?? '') === 'payment')
+    ));
+
+    expect($paymentIds)->toHaveCount(1);
+
+    $remotePayment = $client->getPayment($connection, $paymentIds[0]);
+    $linkedTxnIds  = array_column(array_merge(...array_map(fn (array $line): array => $line['LinkedTxn'] ?? [], $remotePayment['Line'] ?? [])), 'TxnId');
+
+    expect(sandboxCents($remotePayment['TotalAmt'] ?? null))->toBe(2100)
+        ->and($remotePayment['CustomerRef']['value'] ?? null)->toBe($links['customer:cust-e2e'])
+        ->and($linkedTxnIds)->toContain($links['invoice:inv-e2e']);
 })->group('sandbox');
