@@ -53,7 +53,7 @@ class QuickBooksClient
      *
      * @return array{access_token: string, refresh_token: string, expires_in: int}
      */
-    public function exchangeCode(array $credentials, string $code, ?string $codeVerifier = null): array
+    public function exchangeCode(#[\SensitiveParameter] array $credentials, #[\SensitiveParameter] string $code, #[\SensitiveParameter] ?string $codeVerifier = null): array
     {
         $form = [
             'grant_type'   => 'authorization_code',
@@ -72,7 +72,7 @@ class QuickBooksClient
      *
      * @return array{access_token: string, refresh_token: string, expires_in: int}
      */
-    public function refresh(array $credentials, string $refreshToken): array
+    public function refresh(#[\SensitiveParameter] array $credentials, #[\SensitiveParameter] string $refreshToken): array
     {
         return $this->tokenRequest($credentials, [
             'grant_type'    => 'refresh_token',
@@ -86,7 +86,7 @@ class QuickBooksClient
      *
      * @param array{client_id: string, client_secret: string, redirect_uri: string, environment: string} $credentials
      */
-    public function revoke(array $credentials, string $refreshToken): void
+    public function revoke(#[\SensitiveParameter] array $credentials, #[\SensitiveParameter] string $refreshToken): void
     {
         try {
             $response = Http::asJson()
@@ -978,7 +978,7 @@ class QuickBooksClient
      *
      * @return array{access_token: string, refresh_token: string, expires_in: int}
      */
-    private function tokenRequest(array $credentials, array $form): array
+    private function tokenRequest(#[\SensitiveParameter] array $credentials, #[\SensitiveParameter] array $form): array
     {
         try {
             $response = Http::asForm()
@@ -1265,7 +1265,7 @@ class QuickBooksClient
      * @param array<string, mixed>      $connection
      * @param array<string, mixed>|null $payload
      */
-    private function accounting(array $connection, string $method, string $path, ?array $payload = null): Response
+    private function accounting(#[\SensitiveParameter] array $connection, string $method, string $path, ?array $payload = null): Response
     {
         $base = ($connection['environment'] ?? 'sandbox') === 'production'
             ? 'https://quickbooks.api.intuit.com'

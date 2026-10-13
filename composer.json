@@ -71,7 +71,11 @@
         "lint": "php-cs-fixer fix -v --dry-run",
         "test:lint": "php-cs-fixer fix -v --dry-run",
         "test:types": "phpstan analyse --ansi --memory-limit=1G",
-        "test:unit": "php scripts/pest-runner.php --colors=always",
+        "test:unit": "php scripts/pest-runner.php --colors=always --exclude-group=sandbox",
+        "test:sandbox": [
+            "@putenv QB_SANDBOX_RUN=1",
+            "php scripts/pest-runner.php --colors=always --group=sandbox"
+        ],
         "test": [
             "@test:lint",
             "@test:types",
