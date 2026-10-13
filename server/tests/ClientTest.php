@@ -436,3 +436,19 @@ function clientConnection(): array
 {
     return ['company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'access_token' => 'token', 'environment' => 'sandbox'];
 }
+
+test('credential and token parameters are hidden from stack traces', function () {
+    $sensitive = static fn (string $method, string $parameter): bool => (new ReflectionParameter([QuickBooksClient::class, $method], $parameter))
+        ->getAttributes(SensitiveParameter::class) !== [];
+
+    expect($sensitive('exchangeCode', 'credentials'))->toBeTrue()
+        ->and($sensitive('exchangeCode', 'code'))->toBeTrue()
+        ->and($sensitive('exchangeCode', 'codeVerifier'))->toBeTrue()
+        ->and($sensitive('refresh', 'credentials'))->toBeTrue()
+        ->and($sensitive('refresh', 'refreshToken'))->toBeTrue()
+        ->and($sensitive('revoke', 'credentials'))->toBeTrue()
+        ->and($sensitive('revoke', 'refreshToken'))->toBeTrue()
+        ->and($sensitive('tokenRequest', 'credentials'))->toBeTrue()
+        ->and($sensitive('tokenRequest', 'form'))->toBeTrue()
+        ->and($sensitive('accounting', 'connection'))->toBeTrue();
+});
