@@ -46,6 +46,13 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-sync-now]').isNotDisabled();
         await click('[data-test-sync-now]');
         assert.true(this.synced);
+        assert.dom('[data-test-disconnect]').isNotDisabled();
+        assert.dom('[data-test-disconnect-denied]').doesNotExist();
+
+        this.set('connection', { realm_id: '123', needs_reauth: true });
+        assert.dom('[data-test-disconnect]').isNotDisabled();
+        assert.dom('[data-test-disconnect-denied]').doesNotExist();
+        assert.dom('[data-test-reauth]').doesNotIncludeText('You do not have permission');
     });
 
     test('sync now stays off without the operator permission', async function (assert) {
@@ -101,6 +108,29 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-reauth]').doesNotIncludeText('Choose Connect to QuickBooks');
         assert.dom('[data-test-disconnect-denied]').hasText('You do not have permission to disconnect QuickBooks.');
         assert.false(this.disconnected);
+    });
+
+    test('missing credentials explain the admin step before a missing connect permission', async function (assert) {
+        class DeniedAbilitiesStubService extends Service {
+            can() {
+                return false;
+            }
+        }
+
+        this.owner.register('service:abilities', DeniedAbilitiesStubService);
+        this.set('connection', null);
+
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{false}} />`);
+        assert
+            .dom('[data-test-disconnected]')
+            .hasText('Not connected. An installation administrator must enter the QuickBooks credentials in Admin → QuickBooks → Settings before you can connect.');
+
+        this.set('connection', { realm_id: '123', needs_reauth: true });
+        assert
+            .dom('[data-test-reauth]')
+            .hasText(
+                'QuickBooks needs to be connected again before sync can continue. First, an installation administrator must enter the QuickBooks credentials in Admin → QuickBooks → Settings.'
+            );
     });
 
     test('the actions section is not rendered', async function (assert) {

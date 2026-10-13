@@ -71,6 +71,17 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         this.fetch = this.owner.lookup('service:fetch');
     });
 
+    test('a user who cannot connect is not sent to connect again', async function (assert) {
+        this.owner.register('service:abilities', OperatorAbilitiesStubService);
+        this.fetch.connection = { realm_id: '123', needs_reauth: true };
+        this.fetch.credentialsConfigured = true;
+
+        await render(hbs`<Widget::QuickbooksSync />`);
+        assert.dom('[data-test-widget-sync]').isDisabled();
+        assert.dom('[data-test-widget-reauth]').doesNotExist();
+        assert.dom('[data-test-widget-reauth-denied]').hasText('You do not have permission to connect QuickBooks.');
+    });
+
     test('sync now stays disabled until QuickBooks is connected and credentials are configured', async function (assert) {
         await render(hbs`<Widget::QuickbooksSync />`);
         assert.dom('[data-test-widget-subtitle]').hasText('Not connected');
@@ -85,6 +96,7 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         assert.dom('[data-test-widget-reauth]').hasText('Connect again on QuickBooks Setup.');
         assert.dom('[data-test-widget-credentials-missing]').doesNotExist();
         assert.dom('[data-test-widget-reauth-keys]').doesNotExist();
+        assert.dom('[data-test-widget-reauth-denied]').doesNotExist();
 
         this.fetch.credentialsConfigured = false;
         await render(hbs`<Widget::QuickbooksSync />`);

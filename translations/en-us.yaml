@@ -39,7 +39,7 @@ quickbooks:
     title: Activity
     empty: No syncs yet. Connect on QuickBooks Setup, then choose Sync now or wait for the next scheduled sync.
     load-failed: Sync activity could not be loaded.
-    credentials-where: Check Client ID and Client secret in Admin → QuickBooks → Settings.
+    credentials-where: Ask an installation administrator to check Client ID and Client secret in Admin → QuickBooks → Settings.
     loading: Loading sync activity.
     columns:
       when: When
@@ -83,6 +83,7 @@ quickbooks:
     credentials-missing: Sync now is unavailable until an installation administrator enters the QuickBooks Client ID and Client secret in Admin → QuickBooks → Settings.
     reauth: Needs to be connected again
     reauth-setup: Connect again on QuickBooks Setup.
+    reauth-no-permission: You do not have permission to connect QuickBooks.
     connected: Connected
     disconnected: Not connected
   settings:
