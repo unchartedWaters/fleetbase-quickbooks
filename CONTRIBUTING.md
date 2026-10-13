@@ -12,6 +12,11 @@ This package syncs Fleetbase customers, invoices, payments, and wallets (QuickBo
 ## Behavior
 
 - Activity lists batch counts. Errors are shown on the line under the row.
+- Server messages come from `translations/en-us.yaml`, the same file the
+  console uses. Keys are under `quickbooks.messages` and
+  `quickbooks.validation`. API messages use the signed-in user's console
+  language. Activity errors are stored as keys and shown in the reader's
+  language. Rows saved before this change keep their English text.
 - The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires a connection and a saved Client ID and Client secret. A public https redirect is required to connect, not to run Sync now.
 - Organization settings lists QuickBooks Setup
   (`/settings/quickbooks-setup?view=index`) and QuickBooks Activity

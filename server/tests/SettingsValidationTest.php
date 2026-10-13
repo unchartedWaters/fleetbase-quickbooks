@@ -79,12 +79,12 @@ test('a stored report conflict does not write and cannot be saved', function () 
         ->and($globalChoice)->not->toHaveKey('override');
 
     $validator = new SettingsValidator();
-    $rejected  = $validator->errors(validAuth(), qbSettings([
+    $rejected  = qbTexts($validator->errors(validAuth(), qbSettings([
         'customer_conflict' => 'report',
         'invoice_conflict'  => 'report',
         'payment_conflict'  => 'report',
         'wallet_conflict'   => 'report',
-    ]));
+    ])));
 
     expect($rejected['customer_conflict'])->toBe('Choose Fleetbase or QuickBooks as Primary for Customers.')
         ->and($rejected['invoice_conflict'])->toBe('Choose Fleetbase or QuickBooks as Primary for Invoices.')
@@ -162,13 +162,13 @@ test('a missing entity enable flag resolves from the default and wallets default
 test('direction and the customer catalog interval are validated', function () {
     $validator = new SettingsValidator();
 
-    $invalid = $validator->errors(validAuth(), qbSettings([
+    $invalid = qbTexts($validator->errors(validAuth(), qbSettings([
         'customer_direction'      => 'sideways',
         'invoice_direction'       => 'sideways',
         'payment_direction'       => 'sideways',
         'wallet_direction'        => 'sideways',
         'periodic_interval_hours' => 0,
-    ]));
+    ])));
 
     expect($invalid['customer_direction'])->toBe('Choose Both, To QuickBooks, or From QuickBooks for Customers.')
         ->and($invalid['invoice_direction'])->toBe('Choose Both, To QuickBooks, or From QuickBooks for Invoices.')
@@ -196,9 +196,10 @@ test('settings are rejected when required values are missing or out of range', f
     $validator = new SettingsValidator();
 
     expect($validator->errors([], []))->toHaveKey('client_id')
-        ->and($validator->errors([], [])['client_id'])->toBe('Enter the Client ID from developer.intuit.com → your app '
+        ->and(qbText($validator->errors([], [])['client_id']))->toBe('Enter the Client ID from developer.intuit.com → '
+            . 'your app '
             . '→ Keys & credentials.')
-        ->and($validator->errors(['environment' => 'staging'], [])['environment'])->toBe('Choose Sandbox for '
+        ->and(qbText($validator->errors(['environment' => 'staging'], [])['environment']))->toBe('Choose Sandbox for '
             . 'Development keys, or Production for your live company.')
         ->and($validator->errors([], []))->toHaveKey('redirect_uri');
 
@@ -213,10 +214,11 @@ test('settings are rejected when required values are missing or out of range', f
     expect($errors)->toHaveKey('redirect_uri')
         ->and($errors)->toHaveKey('client_secret')
         ->and($errors)->toHaveKey('interval_minutes')
-        ->and($errors['default_backoff_seconds'])->toBe('Enter a whole number of seconds for Retry delay, at least 5.')
+        ->and(qbText($errors['default_backoff_seconds']))->toBe('Enter a whole number of seconds for Retry delay, at '
+            . 'least 5.')
         ->and($errors)->not->toHaveKey('client_id');
 
-    expect($validator->errors(validAuth(), qbSettings(['retry_limit' => 0]))['retry_limit'])
+    expect(qbText($validator->errors(validAuth(), qbSettings(['retry_limit' => 0]))['retry_limit']))
         ->toBe('Enter a whole number of retry attempts, at least 1.');
 
     expect($validator->errors(validAuth(), qbSettings()))->toBe([]);
@@ -548,8 +550,10 @@ test('batch size must be from 1 to 100 when it is sent', function () {
         ->and($validator->errors(validAuth(), qbSettings(['batch_size' => 100])))->not->toHaveKey('batch_size')
         ->and($validator->errors(validAuth(), qbSettings(['batch_size' => '40'])))->not->toHaveKey('batch_size');
 
-    expect($validator->errors(validAuth(), qbSettings(['batch_size' => 0]))['batch_size'])->toBe('Enter a whole number from 1 to 100.')
-        ->and($validator->errors(validAuth(), qbSettings(['batch_size' => 101]))['batch_size'])->toBe('Enter a whole number from 1 to 100.')
+    $batchSize = 'Enter a whole number from 1 to 100.';
+    expect(qbText($validator->errors(validAuth(), qbSettings(['batch_size' => 0]))['batch_size']))->toBe($batchSize)
+        ->and(qbText($validator->errors(validAuth(), qbSettings(['batch_size' => 101]))['batch_size']))
+        ->toBe($batchSize)
         ->and($validator->errors(validAuth(), qbSettings(['batch_size' => '101'])))->toHaveKey('batch_size');
 
     $store = new MemorySettingsStore();

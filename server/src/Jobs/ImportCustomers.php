@@ -59,9 +59,8 @@ class ImportCustomers implements ShouldQueue
             : (is_array($connection) === true && empty($connection['needs_reauth']) === false);
 
         return $needsReauth === true
-            ? 'QuickBooks needs to be connected again before import can continue. '
-                . 'Choose Connect to QuickBooks on QuickBooks Setup.'
-            : 'QuickBooks is not connected. Connect from QuickBooks Setup.';
+            ? 'quickbooks.messages.import-reauth'
+            : 'quickbooks.messages.not-connected-connect';
     }
 
     public static function dispatch(string $companyUuid): void
@@ -98,7 +97,7 @@ class ImportCustomers implements ShouldQueue
             if ($this->scheduleLockWait() === true) {
                 return;
             }
-            $directory->saveSkipped($this->companyUuid, 'import', 'inbound', 'Another QuickBooks sync is already running.');
+            $directory->saveSkipped($this->companyUuid, 'import', 'inbound', 'quickbooks.messages.sync-running');
             $this->retryBusyContinuation();
 
             return;
@@ -200,7 +199,8 @@ class ImportCustomers implements ShouldQueue
         }
 
         if ($this->customersDisabled($settings, $store) === true) {
-            $directory->saveSkipped($this->companyUuid, 'import', 'inbound', 'Customers are turned off in Data Resolution, so they are not imported.');
+            $off = 'quickbooks.messages.import-customers-off';
+            $directory->saveSkipped($this->companyUuid, 'import', 'inbound', $off);
 
             return null;
         }

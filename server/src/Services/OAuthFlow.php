@@ -7,16 +7,13 @@ use Illuminate\Support\Facades\Cache;
 
 class OAuthFlow
 {
-    private const OTHER_USER_MESSAGE = 'This QuickBooks authorization was started by a different user or organization. '
-        . 'Connect again from QuickBooks Setup.';
+    private const OTHER_USER_MESSAGE = 'quickbooks.messages.oauth-other-user';
 
     private const REALM_PATTERN = '/^\d{6,20}\z/';
 
-    private const CONNECT_FAILED_MESSAGE = 'QuickBooks could not finish connecting. '
-        . 'Connect again from QuickBooks Setup.';
+    private const CONNECT_FAILED_MESSAGE = 'quickbooks.messages.oauth-connect-failed';
 
-    private const INVALID_LINK_MESSAGE = 'This QuickBooks authorization link is not valid. '
-        . 'Connect again from QuickBooks Setup.';
+    private const INVALID_LINK_MESSAGE = 'quickbooks.messages.oauth-invalid-link';
 
     public function __construct(private QuickBooksClient $client)
     {
@@ -55,12 +52,12 @@ class OAuthFlow
     {
         $stored = $this->validState(Cache::pull($this->key($state)));
         if (isset($stored['code']) === true) {
-            throw new QuickBooksException(400, 'QuickBooks authorization state is invalid or expired.');
+            throw new QuickBooksException(400, 'quickbooks.messages.oauth-state-invalid');
         }
 
         // The realm comes from a browser redirect. It is a number, and it becomes part of API URLs.
         if (preg_match(self::REALM_PATTERN, $realmId) !== 1) {
-            throw new QuickBooksException(400, 'QuickBooks authorization state is invalid or expired.');
+            throw new QuickBooksException(400, 'quickbooks.messages.oauth-state-invalid');
         }
 
         $handle             = bin2hex(random_bytes(16));
@@ -198,7 +195,7 @@ class OAuthFlow
     private function validState(mixed $stored): array
     {
         if (is_array($stored) === false || (int) ($stored['expires_at'] ?? 0) < time()) {
-            throw new QuickBooksException(400, 'QuickBooks authorization state is invalid or expired.');
+            throw new QuickBooksException(400, 'quickbooks.messages.oauth-state-invalid');
         }
 
         return $stored;

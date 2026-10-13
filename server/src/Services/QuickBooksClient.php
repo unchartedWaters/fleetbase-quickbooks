@@ -4,13 +4,16 @@ namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Support\NextDocNumber;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 
 class QuickBooksClient
 {
-    public const TRANSPORT_MESSAGE = 'QuickBooks could not be reached. Try again in a few minutes.';
+    public const TRANSPORT_MESSAGE = 'quickbooks.messages.transport';
+
+    private const QUERY_FAILED = 'quickbooks.messages.query-failed';
 
     public const BATCH_LIMIT = 30;
 
@@ -372,7 +375,9 @@ class QuickBooksClient
         foreach ($this->batch($connection, $items) as $result) {
             if (is_array($result) === false || empty($result['ok']) === true) {
                 $status  = is_array($result) === true ? (int) ($result['status'] ?? 400) : 400;
-                $message = is_array($result) === true ? (string) ($result['error'] ?? 'QuickBooks query failed.') : 'QuickBooks query failed.';
+                $message = is_array($result) === true
+                    ? (string) ($result['error'] ?? self::QUERY_FAILED)
+                    : self::QUERY_FAILED;
                 throw new QuickBooksException($status, $message);
             }
             foreach ($result['rows'] as $row) {
@@ -573,7 +578,7 @@ class QuickBooksClient
             ];
         }
 
-        return $this->rowsFromBatch($connection, $items, 'QuickBooks invoice lookup failed.');
+        return $this->rowsFromBatch($connection, $items, 'quickbooks.messages.invoice-lookup-failed');
     }
 
     /**
@@ -615,7 +620,7 @@ class QuickBooksClient
             ];
         }
 
-        return $this->rowsFromBatch($connection, $items, 'QuickBooks payment lookup failed.');
+        return $this->rowsFromBatch($connection, $items, 'quickbooks.messages.payment-lookup-failed');
     }
 
     /**
@@ -931,7 +936,9 @@ class QuickBooksClient
                 $page = $this->postBatch($connection, [['bId' => 'page-' . $start, 'query' => $query]]);
                 $one  = $page['page-' . $start] ?? null;
                 if (is_array($one) === false || empty($one['ok']) === true) {
-                    $message = is_array($one) === true ? (string) ($one['error'] ?? 'QuickBooks query failed.') : 'QuickBooks query failed.';
+                    $message = is_array($one) === true
+                        ? (string) ($one['error'] ?? self::QUERY_FAILED)
+                        : self::QUERY_FAILED;
                     $status  = is_array($one) === true ? (int) ($one['status'] ?? 400) : 400;
                     throw new QuickBooksException($status, $message);
                 }
@@ -1069,7 +1076,7 @@ class QuickBooksClient
                 'ok'     => false,
                 'body'   => [],
                 'rows'   => [],
-                'error'  => 'QuickBooks batch response did not include this item.',
+                'error'  => 'quickbooks.messages.batch-item-missing',
                 'status' => 400,
                 'halt'   => false,
             ];
@@ -1093,7 +1100,7 @@ class QuickBooksClient
         // a 401 (batch() decides whether a retry is safe). A partly refused chunk is not a 401,
         // because the items that were accepted would be written twice.
         if ($unauthorized !== [] && count($unauthorized) === count($results)) {
-            throw new QuickBooksException(401, 'QuickBooks request failed with status 401: the access token was refused.');
+            throw new QuickBooksException(401, 'quickbooks.messages.access-token-refused');
         }
 
         return $results;
@@ -1173,7 +1180,7 @@ class QuickBooksClient
             'ok'     => false,
             'body'   => [],
             'rows'   => [],
-            'error'  => 'QuickBooks batch item had no entity.',
+            'error'  => 'quickbooks.messages.batch-item-no-entity',
             'status' => 400,
             'halt'   => false,
         ];
@@ -1192,7 +1199,7 @@ class QuickBooksClient
             'ok'     => false,
             'body'   => [],
             'rows'   => [],
-            'error'  => $detail !== '' ? $detail : 'QuickBooks rejected this item.',
+            'error'  => $detail !== '' ? $detail : 'quickbooks.messages.item-rejected',
             'status' => 400,
             'halt'   => false,
         ];
@@ -1292,22 +1299,29 @@ class QuickBooksClient
             return;
         }
 
-        $message   = 'QuickBooks request failed with status ' . $response->status();
+        $details   = [];
         $fault     = $response->json('Fault.Error.0');
         $faultCode = null;
         if (is_array($fault) === true) {
-            $detail = trim((string) ($fault['Detail'] ?? $fault['Message'] ?? ''));
-            if ($detail !== '') {
-                $message .= ': ' . $detail;
-            }
+            $details[] = trim((string) ($fault['Detail'] ?? $fault['Message'] ?? ''));
             $faultCode = isset($fault['code']) === true ? (string) $fault['code'] : null;
         }
 
         // The OAuth token endpoint answers {"error":"invalid_grant"} with no Fault block. Keep only the short code, never error_description.
         $oauthError = $response->json('error');
         if (is_string($oauthError) === true && preg_match('/^[a-z_]{1,40}$/', $oauthError) === 1) {
-            $message .= ': ' . $oauthError;
+            $details[] = $oauthError;
         }
+
+        // Intuit's detail is its own English text, so it is a param and is shown as given.
+        $detail  = implode(': ', array_filter($details, static fn (string $part): bool => $part !== ''));
+        $status  = (string) $response->status();
+        $message = $detail === ''
+            ? Translation::encode('quickbooks.messages.request-failed', ['status' => $status])
+            : Translation::encode(
+                'quickbooks.messages.request-failed-detail',
+                ['status' => $status, 'detail' => $detail]
+            );
 
         throw new QuickBooksException($response->status(), $message, $response->header('Retry-After'), $faultCode);
     }

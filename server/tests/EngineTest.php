@@ -727,10 +727,10 @@ test('rows that fail without a quickbooks error record why and stop retrying', f
     $errors = array_column($ledger->attempts, 'error', 'local_uuid');
 
     expect($batch['failed'])->toBe(4)
-        ->and($errors['ghost-c'])->toBe('Customer no longer exists in Fleetbase.')
-        ->and($errors['ghost-w'])->toBe('Wallet no longer exists in Fleetbase.')
-        ->and($errors['ghost-i'])->toBe('Invoice no longer exists in Fleetbase.')
-        ->and($errors['loose'])->toBe('Invoice customer is not a Fleetbase customer.')
+        ->and(qbText($errors['ghost-c']))->toBe('Customer no longer exists in Fleetbase.')
+        ->and(qbText($errors['ghost-w']))->toBe('Wallet no longer exists in Fleetbase.')
+        ->and(qbText($errors['ghost-i']))->toBe('Invoice no longer exists in Fleetbase.')
+        ->and(qbText($errors['loose']))->toBe('Invoice customer is not a Fleetbase customer.')
         ->and(array_unique(array_column($ledger->pending, 'status')))->toBe(['failed'])
         ->and($client->calls)->toBe([]);
 });
@@ -747,7 +747,7 @@ test('an invoice without a service item creates one and fails clearly when quick
     $failed = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
     expect($failed['failed'])->toBe(1)
-        ->and($ledger->attempts[0]['error'])->toContain('Income account')
+        ->and(qbText($ledger->attempts[0]['error']))->toContain('Income account')
         ->and($client->calls)->toContain('ensureServiceItem')
         ->and($client->calls)->not->toContain('createInvoice');
 
@@ -774,7 +774,8 @@ test('an unknown home currency is read from quickbooks before the currency check
     expect($ledger->connections['company-uuid']['home_currency'])->toBe('USD')
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($client->calls)->toContain('homeCurrency')
-        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match the QuickBooks home currency '
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('Invoice currency EUR does not match the QuickBooks home '
+            . 'currency '
             . 'USD.')
         ->and($client->invoices)->toBeEmpty();
 });
@@ -928,7 +929,8 @@ test('a shared quickbooks payment is not rewritten from fleetbase', function () 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
     expect($batch['skipped'])->toBe(1)
-        ->and($ledger->attempts[0]['error'])->toBe('This QuickBooks payment also applies to other invoices, so Fleetbase left it unchanged.')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies to other invoices, '
+            . 'so Fleetbase left it unchanged.')
         ->and($client->calls)->not->toContain('updatePayment')
         ->and($client->payments['pay-shared']['TotalAmt'])->toBe(15)
         ->and($client->payments['pay-shared']['Line'])->toHaveCount(2);
@@ -985,7 +987,7 @@ test('a quickbooks payment is copied onto an invoice that is not paid yet', func
 
 test('a customer lookup failure does not create a customer', function () {
     [$engine, $client]           = qbEngine();
-    $client->failCustomerLookup  = new QuickBooksException(500, 'QuickBooks request failed with status 500');
+    $client->failCustomerLookup  = new QuickBooksException(500, qbRequestFailed(500));
     $ledger                      = engineLedger();
     $ledger->customers['cust-1'] = engineCustomer('cust-1');
     $ledger->pending[]           = enginePending('customer', 'cust-1');
@@ -995,7 +997,7 @@ test('a customer lookup failure does not create a customer', function () {
     expect($batch['failed'])->toBe(1)
         ->and($client->calls)->toContain('findCustomerByEmail')
         ->and($client->calls)->not->toContain('createCustomer')
-        ->and($ledger->attempts[0]['error'])->toBe('QuickBooks request failed with status 500')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('QuickBooks request failed with status 500')
         ->and($ledger->pending[0]['status'])->toBe('pending')
         ->and($ledger->pending[0]['attempts'])->toBe(1);
 });
@@ -1009,7 +1011,8 @@ test('a new wallet in a foreign currency is not created', function () {
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
     expect($batch['failed'])->toBe(1)
-        ->and($ledger->attempts[0]['error'])->toBe('Wallet currency EUR does not match the QuickBooks home currency '
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('Wallet currency EUR does not match the QuickBooks home '
+            . 'currency '
             . 'USD.')
         ->and($client->calls)->not->toContain('createAccount');
 });
@@ -1028,7 +1031,7 @@ test('an unexpected error on one row is recorded and the rest of the batch still
 
     expect($batch['failed'])->toBe(1)
         ->and($batch['created'])->toBe(1)
-        ->and($ledger->attempts[0]['error'])->toBe('Sync failed.')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('Sync failed.')
         ->and($ledger->pending[0]['status'])->toBe('pending')
         ->and($ledger->pending[0]['attempts'])->toBe(1);
 });
@@ -1036,7 +1039,8 @@ test('an unexpected error on one row is recorded and the rest of the batch still
 test('a quickbooks error message is stored on the attempt and the row is still retried', function () {
     [$engine, $client]           = qbEngine();
     $client->failOnCreate        = 1;
-    $client->failWith            = new QuickBooksException(400, 'QuickBooks request failed with status 400: The name supplied already exists.');
+    $client->failWith            = new QuickBooksException(400, qbRequestFailed(400, 'The name supplied already '
+        . 'exists.'));
     $ledger                      = engineLedger();
     $ledger->customers['cust-1'] = engineCustomer('cust-1');
     $ledger->pending[]           = enginePending('customer', 'cust-1');
@@ -1073,7 +1077,7 @@ test('sync now and reconcile during a rate limit record why they were skipped', 
     expect($forced['status'])->toBe('skipped')
         ->and($reconciled['status'])->toBe('skipped')
         ->and($ledger->batches)->toHaveCount(2)
-        ->and(array_column($ledger->attempts, 'error'))->toBe([
+        ->and(array_map('qbText', array_column($ledger->attempts, 'error')))->toBe([
             'QuickBooks asked Fleetbase to wait (rate limit). Try again in a few minutes.',
             'QuickBooks asked Fleetbase to wait (rate limit). Try again in a few minutes.',
         ])
@@ -1139,7 +1143,7 @@ test('customer sync off fails an invoice that still needs that customer', functi
     ]), time());
 
     expect($batch['failed'])->toBe(1)
-        ->and($ledger->attempts[0]['error'])->toBe('Customer sync is off, so this invoice cannot be synced.')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('Customer sync is off, so this invoice cannot be synced.')
         ->and($client->calls)->not->toContain('createCustomer')
         ->and($client->calls)->not->toContain('createInvoice');
 });
@@ -1388,7 +1392,7 @@ test('a failed payment flush is recorded on the invoice and a 401 leaves the res
     foreach (['inv-sent', 'inv-ok', 'inv-bad'] as $uuid) {
         $ledger->pending[] = enginePending('invoice', $uuid);
     }
-    $client->failPayment   = new QuickBooksException(400, 'QuickBooks request failed with status 400: The payment amount is invalid.');
+    $client->failPayment   = new QuickBooksException(400, qbRequestFailed(400, 'The payment amount is invalid.'));
     $client->failPaymentOn = 2;
 
     $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
@@ -1401,7 +1405,8 @@ test('a failed payment flush is recorded on the invoice and a 401 leaves the res
         ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'pay-1')['qbo_id'])->toBe('pay-1')
         ->and($rows['inv-bad']['status'])->toBe('pending')
         ->and($rows['inv-bad']['attempts'])->toBe(1)
-        ->and($errors['inv-bad'])->toBe('QuickBooks request failed with status 400: The payment amount is invalid.')
+        ->and(qbText($errors['inv-bad']))->toBe('QuickBooks request failed with status 400: The payment amount is '
+            . 'invalid.')
         ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'inv-bad'))->toBeNull()
         ->and($ledger->connections['company-uuid']['needs_reauth'])->toBeFalse();
 
@@ -1438,7 +1443,7 @@ test('a failed payment flush is recorded on the invoice and a 401 leaves the res
         ->and($rows['inv-sent']['status'])->toBe('done')
         ->and($errors['inv-sent'])->toBeNull()
         ->and($rows['inv-bad']['status'])->toBe('pending')
-        ->and($errors['inv-bad'])->toBe('Sync failed.');
+        ->and(qbText($errors['inv-bad']))->toBe('Sync failed.');
 
     $client = new class extends FakeQuickBooks {
         public int $paymentAttempts = 0;
@@ -1447,7 +1452,7 @@ test('a failed payment flush is recorded on the invoice and a 401 leaves the res
         {
             $this->paymentAttempts++;
             $this->calls[] = 'createPayment';
-            throw new QuickBooksException(401, 'QuickBooks request failed with status 401');
+            throw new QuickBooksException(401, qbRequestFailed(401));
         }
     };
     [$engine, $client]                 = qbEngine($client);
@@ -1511,7 +1516,7 @@ test('a failed customer lookup does not create a customer and a real miss checks
                         'ok'     => false,
                         'body'   => [],
                         'rows'   => [],
-                        'error'  => 'QuickBooks request failed with status 500',
+                        'error'  => qbRequestFailed(500),
                         'status' => 500,
                         'halt'   => false,
                     ];
@@ -1560,7 +1565,7 @@ test('a failed or short invoice or wallet read is not treated as missing', funct
                             'ok'     => false,
                             'body'   => [],
                             'rows'   => [],
-                            'error'  => 'QuickBooks request failed with status 500',
+                            'error'  => qbRequestFailed(500),
                             'status' => 500,
                             'halt'   => false,
                         ],
@@ -1631,7 +1636,7 @@ test('a failed or short invoice or wallet read is not treated as missing', funct
         {
             $this->calls[] = 'getInvoice:' . $id;
             if ($id === 'qb-a') {
-                throw new QuickBooksException(500, 'QuickBooks request failed with status 500');
+                throw new QuickBooksException(500, qbRequestFailed(500));
             }
 
             return $this->invoices[$id] ?? null;
@@ -1668,7 +1673,7 @@ test('a failed or short invoice or wallet read is not treated as missing', funct
                             'ok'     => false,
                             'body'   => [],
                             'rows'   => [],
-                            'error'  => 'QuickBooks request failed with status 500',
+                            'error'  => qbRequestFailed(500),
                             'status' => 500,
                             'halt'   => false,
                         ],
@@ -1850,7 +1855,7 @@ test('failed linked payment reads fail their invoices without creating replaceme
             if (str_contains((string) ($items[0]['query'] ?? ''), 'from Payment where Id IN') === true) {
                 return ['read-0-1' => [
                     'ok'     => false, 'body' => [], 'rows' => [],
-                    'error'  => 'QuickBooks request failed with status 500',
+                    'error'  => qbRequestFailed(500),
                     'status' => 500, 'halt' => false,
                 ]];
             }
@@ -1884,7 +1889,7 @@ test('an invoice link and quickbooks number survive a 401 during payment prefetc
     $client = new class extends FakeQuickBooks {
         public function getPayment(array $connection, string $id): ?array
         {
-            throw new QuickBooksException(401, 'QuickBooks request failed with status 401');
+            throw new QuickBooksException(401, qbRequestFailed(401));
         }
     };
     [$engine, $client]             = qbEngine($client);
@@ -1921,7 +1926,7 @@ test('a failed multi-id remote read is not applied as a miss', function () {
                             'ok'     => false,
                             'body'   => [],
                             'rows'   => [],
-                            'error'  => 'QuickBooks request failed with status 500',
+                            'error'  => qbRequestFailed(500),
                             'status' => 500,
                             'halt'   => false,
                         ],
@@ -1949,7 +1954,7 @@ test('a failed multi-id remote read is not applied as a miss', function () {
     ]);
 
     expect(fn () => $engine->acceptRemoteChanges($ledger, 'company-uuid', $entities, $remoteSettings, time()))
-        ->toThrow(QuickBooksException::class, 'QuickBooks request failed with status 500');
+        ->toThrow(QuickBooksException::class, qbRequestFailed(500));
 
     expect($ledger->customers['cust-1']['name'])->toBe('Local Ada')
         ->and($ledger->customers['cust-2']['name'])->toBe('Local Bea')
@@ -2098,7 +2103,7 @@ test('a failed display name lookup does not query quickbooks again per customer'
                         'ok'     => false,
                         'body'   => [],
                         'rows'   => [],
-                        'error'  => 'QuickBooks request failed with status 500',
+                        'error'  => qbRequestFailed(500),
                         'status' => 500,
                         'halt'   => false,
                     ];
@@ -2907,7 +2912,8 @@ test('a non-home currency fails the push instead of updating the invoice in the 
 
     expect($first['updated'])->toBe(0)
         ->and($first['failed'])->toBe(1)
-        ->and($ledger->attempts[0]['error'])->toBe('Invoice currency EUR does not match the QuickBooks home currency '
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('Invoice currency EUR does not match the QuickBooks home '
+            . 'currency '
             . 'USD.')
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and($client->invoices['qb-1'])->not->toHaveKey('PrivateNote')

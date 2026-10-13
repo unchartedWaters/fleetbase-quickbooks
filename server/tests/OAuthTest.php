@@ -1075,7 +1075,7 @@ test('completing a handle again is allowed only for the user who completed it an
     $handle = $flow->receive($begun['state'], 'code', '9341453000000001');
 
     expect(fn () => $flow->complete($handle, 'company-uuid', 'other-user', $credentials))
-        ->toThrow(QuickBooksException::class, 'different user or organization')
+        ->toThrow(QuickBooksException::class, 'quickbooks.messages.oauth-other-user')
         ->and($client->exchanges)->toBe(0);
 
     $connection = $flow->complete($handle, 'company-uuid', 'user-uuid', $credentials);
@@ -1088,9 +1088,9 @@ test('completing a handle again is allowed only for the user who completed it an
         ->and($client->challenge)->toBe($challenge)
         ->and($client->challenge)->not->toContain('=')
         ->and(fn () => $flow->complete($handle, 'company-uuid', 'other-user', $credentials))
-        ->toThrow(QuickBooksException::class, 'different user or organization')
+        ->toThrow(QuickBooksException::class, 'quickbooks.messages.oauth-other-user')
         ->and(fn () => $flow->complete($handle, 'other-company', 'user-uuid', $credentials))
-        ->toThrow(QuickBooksException::class, 'different user or organization')
+        ->toThrow(QuickBooksException::class, 'quickbooks.messages.oauth-other-user')
         ->and($client->exchanges)->toBe(1);
 });
 
@@ -1152,7 +1152,7 @@ test('a failed token exchange and an unreachable probe do not return transport t
     $composed = (new Fleetbase\Quickbooks\Services\ConnectionProbe(new class extends QuickBooksClient {
         public function companyInfo(array $connection): array
         {
-            throw new QuickBooksException(401, 'QuickBooks request failed with status 401');
+            throw new QuickBooksException(401, qbRequestFailed(401));
         }
     }))->probe([
         'realm_id'     => 'realm',
@@ -1185,8 +1185,7 @@ test('completing with the original state instead of the handle says the link is 
     $begun = $flow->begin('company-uuid', 'user-uuid', $credentials);
 
     expect(fn () => $flow->complete($begun['state'], 'company-uuid', 'user-uuid', $credentials))
-        ->toThrow(QuickBooksException::class, 'This QuickBooks authorization link is not valid. '
-            . 'Connect again from QuickBooks Setup.');
+        ->toThrow(QuickBooksException::class, 'quickbooks.messages.oauth-invalid-link');
 });
 
 test('a refresh persists the rotated refresh token', function () {

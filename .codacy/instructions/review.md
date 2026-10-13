@@ -75,6 +75,14 @@
 
 - PHP: php-cs-fixer `@Symfony` plus aligned `=>`/`=`, single quotes, one space
   around `.`. Boolean checks are written `=== true`/`=== false`, not `!`.
+- User-facing PHP text is a key in `translations/en-us.yaml`
+  (`quickbooks.messages.*`, `quickbooks.validation.*`), read through
+  `Support\Translation`. Flag hard-coded English in responses, validation
+  errors, notifications or Activity errors. Text that is stored or thrown
+  holds the key (`Translation::encode`) and is rendered where it reaches a
+  reader (`Translation::get`/`render`). Never build a key or a message by
+  concatenating English. Console output, logs and Intuit-facing webhook
+  replies stay English.
 - php-cs-fixer covers `server/src` and `server/tests`; PHPStan covers
   `server/src` only. New code must not add `phpstan-baseline.neon` entries.
 - Codacy runs Lizard's 50-line function limit on `server/src`; split long

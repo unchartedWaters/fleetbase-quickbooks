@@ -13,6 +13,7 @@ use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
+use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Database\Schema\Blueprint;
@@ -513,6 +514,38 @@ test('sync activity presents each batch with paired counts, its first three dist
             ->and($body['batches'][2]['trigger'])->toBe('import')
             ->and($body['batches'][2]['direction'])->toBe('outbound')
             ->and($body['batches'][2]['status'])->toBe('running');
+    });
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('sync activity renders stored message keys for the reader and keeps older english rows', function () {
+    pctWithBatchTables(function () {
+        pctBatch([
+            'uuid'         => 'batch-keys',
+            'status'       => 'failed',
+            'failed_count' => 4,
+            'created_at'   => Carbon::parse('2026-03-01 10:00:00'),
+            'updated_at'   => Carbon::parse('2026-03-01 10:00:00'),
+        ]);
+        $currency = Translation::encode(
+            'quickbooks.messages.wallet-currency-mismatch',
+            ['currency' => 'EUR', 'home' => 'USD']
+        );
+        pctAttempt('k1', 'batch-keys', 'quickbooks.messages.sync-failed', '2026-03-01 10:01:00');
+        pctAttempt('k2', 'batch-keys', 'Sync failed.', '2026-03-01 10:02:00');
+        pctAttempt('k3', 'batch-keys', $currency, '2026-03-01 10:03:00');
+        pctAttempt('k4', 'batch-keys', 'Duplicate Name Exists Error', '2026-03-01 10:04:00');
+
+        $controller = new ConnectionController(
+            new Authorizer(static fn () => true),
+            new OAuthFlow(new QuickBooksClient()),
+            new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
+            new MemorySettingsStore(),
+            new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
+        );
+        $body = $controller->batches(Request::create('/batches', 'GET'))->getData(true);
+
+        expect($body['batches'][0]['error'])->toBe('Sync failed.; Wallet currency EUR does not match the QuickBooks '
+            . 'home currency USD.; Duplicate Name Exists Error');
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 

@@ -1077,7 +1077,7 @@ test('sec targeted payment lookups trim ids read linked payments and fail loudly
 
     $client->failBatch = ['ok' => false, 'status' => 503];
     expect(fn () => $client->findPaymentsForCustomers($connection, ['qb-1' => 'cust-1', 'qb-2' => 'cust-1']))
-        ->toThrow(QuickBooksException::class, 'QuickBooks invoice lookup failed.');
+        ->toThrow(QuickBooksException::class, 'quickbooks.messages.invoice-lookup-failed');
     $thrown = null;
     try {
         $client->findPaymentsForCustomers($connection, ['qb-1' => 'cust-1', 'qb-2' => 'cust-1']);
@@ -1124,9 +1124,9 @@ test('sec batch item results map faults queries entity bodies and missing items'
     expect(array_keys($results))->toBe(['entity', 'fault-message', 'fault-empty', 'no-entity', 'missing', 'query-list', 'query-single', 'query-empty'])
         ->and($results['entity'])->toBe(array_merge($ok, ['body' => ['Id' => '1', 'SyncToken' => '0', 'DisplayName' => 'Ada']]))
         ->and($results['fault-message'])->toBe(array_merge($fail, ['error' => 'Only a message']))
-        ->and($results['fault-empty'])->toBe(array_merge($fail, ['error' => 'QuickBooks rejected this item.']))
-        ->and($results['no-entity'])->toBe(array_merge($fail, ['error' => 'QuickBooks batch item had no entity.']))
-        ->and($results['missing'])->toBe(array_merge($fail, ['error' => 'QuickBooks batch response did not include this item.']))
+        ->and($results['fault-empty'])->toBe(array_merge($fail, ['error' => 'quickbooks.messages.item-rejected']))
+        ->and($results['no-entity'])->toBe(array_merge($fail, ['error' => 'quickbooks.messages.batch-item-no-entity']))
+        ->and($results['missing'])->toBe(array_merge($fail, ['error' => 'quickbooks.messages.batch-item-missing']))
         ->and($results['query-list'])->toBe(array_merge($ok, ['rows' => [['Id' => 'a'], ['Id' => 'b']]]))
         ->and($results['query-single'])->toBe(array_merge($ok, ['rows' => [['Id' => 'solo', 'DocNumber' => 'S-1']]]))
         ->and($results['query-empty'])->toBe($ok);

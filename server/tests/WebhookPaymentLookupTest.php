@@ -86,7 +86,7 @@ class WplClient extends FakeQuickBooks
         }
         if ($this->rejectOldToken === true && $token === 'old-access') {
             $this->calls[] = 'batch';
-            throw new QuickBooksException(401, 'QuickBooks request failed with status 401');
+            throw new QuickBooksException(401, qbRequestFailed(401));
         }
         if ($this->batchFailure === 'throw') {
             $this->calls[] = 'batch';

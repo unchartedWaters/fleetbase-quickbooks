@@ -9,15 +9,18 @@ use Fleetbase\Quickbooks\Support\ContentHash;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 
 class SyncEngine
 {
-    private const RATE_LIMITED_MESSAGE = 'QuickBooks asked Fleetbase to wait (rate limit). Try again in a few minutes.';
+    private const RATE_LIMITED_MESSAGE = 'quickbooks.messages.rate-limited';
 
     public const TOKEN_REJECTED_MESSAGE = ConnectionTokens::REAUTH_MESSAGE;
 
-    private const SYNC_FAILED_MESSAGE = 'Sync failed.';
+    private const SYNC_FAILED_MESSAGE = 'quickbooks.messages.sync-failed';
+
+    private const ITEM_REJECTED_MESSAGE = 'quickbooks.messages.item-rejected';
 
     /**
      * QuickBooks returns at most this many rows unless the query asks for more.
@@ -787,7 +790,7 @@ class SyncEngine
 
         $customer = $ledger->customers[$uuid] ?? null;
         if ($customer === null) {
-            $this->lastError = 'Customer no longer exists in Fleetbase.';
+            $this->lastError = 'quickbooks.messages.customer-missing';
 
             return 'failed';
         }
@@ -936,7 +939,7 @@ class SyncEngine
 
         $wallet = $ledger->wallets[$uuid] ?? null;
         if ($wallet === null) {
-            $this->lastError = 'Wallet no longer exists in Fleetbase.';
+            $this->lastError = 'quickbooks.messages.wallet-missing';
 
             return 'failed';
         }
@@ -1014,7 +1017,12 @@ class SyncEngine
         }
         if ($remote === null) {
             if ($quickbooksPrimary === false) {
-                $this->lastError = $this->currencyError($ledger, $connection, (string) ($wallet['currency'] ?? ''), 'Wallet');
+                $this->lastError = $this->currencyError(
+                    $ledger,
+                    $connection,
+                    (string) ($wallet['currency'] ?? ''),
+                    'quickbooks.messages.wallet-currency-mismatch'
+                );
                 if ($this->lastError !== null) {
                     return 'failed';
                 }
@@ -1129,7 +1137,7 @@ class SyncEngine
 
         $invoice = $ledger->invoices[$uuid] ?? null;
         if ($invoice === null) {
-            $this->lastError = 'Invoice no longer exists in Fleetbase.';
+            $this->lastError = 'quickbooks.messages.invoice-missing';
 
             return 'failed';
         }
@@ -1142,18 +1150,18 @@ class SyncEngine
         }
         if ($customerUuid !== '' && $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $customerUuid) === null) {
             if ($this->entityPaused($settings, 'customer') === true) {
-                $this->lastError = 'Customer sync is off, so this invoice cannot be synced.';
+                $this->lastError = 'quickbooks.messages.invoice-customer-off';
 
                 return 'failed';
             }
             if ($this->customersPrepared === true) {
-                $this->lastError = 'Invoice customer could not be synced to QuickBooks.';
+                $this->lastError = 'quickbooks.messages.invoice-customer-failed';
 
                 return 'failed';
             }
             $customerOutcome = $this->syncCustomer($ledger, $connection, $customerUuid, $settings);
             if ($customerOutcome === 'failed') {
-                $this->lastError ??= 'Invoice customer could not be synced to QuickBooks.';
+                $this->lastError ??= 'quickbooks.messages.invoice-customer-failed';
 
                 return 'failed';
             }
@@ -1161,7 +1169,7 @@ class SyncEngine
 
         $customerLink = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $customerUuid);
         if ($customerLink === null) {
-            $this->lastError ??= 'Invoice customer is not a Fleetbase customer.';
+            $this->lastError ??= 'quickbooks.messages.invoice-customer-invalid';
 
             return 'failed';
         }
@@ -1170,7 +1178,7 @@ class SyncEngine
         $voided = in_array($status, ['void', 'voided', 'cancelled', 'canceled', 'deleted'], true) === true || empty($invoice['deleted_at']) === false;
         $itemId = $voided === true ? '' : $this->serviceItemId($ledger, $connection);
         if ($voided === false && $itemId === '') {
-            $this->lastError = 'QuickBooks has no item for invoice lines. Fleetbase could not create its "Fleetbase service" item; add an Income account in QuickBooks and try again.';
+            $this->lastError = 'quickbooks.messages.invoice-item-missing';
 
             return 'failed';
         }
@@ -1269,7 +1277,7 @@ class SyncEngine
                     ? ($this->reservedDocNumbers[$uuid] ?? null)
                     : $this->client->nextInvoiceDocNumber($connection);
                 if (is_string($next) === false || $next === '') {
-                    $this->lastError = 'QuickBooks did not confirm a free invoice number, so Fleetbase did not create this invoice.';
+                    $this->lastError = 'quickbooks.messages.invoice-number-unconfirmed';
 
                     return 'failed';
                 }
@@ -1471,14 +1479,14 @@ class SyncEngine
         }
 
         if (count($payments) !== 1) {
-            $this->lastError = 'This invoice has more than one QuickBooks payment, so Fleetbase left them unchanged.';
+            $this->lastError = 'quickbooks.messages.invoice-payments-multiple';
 
             return 'skipped';
         }
 
         $remote = $payments[0];
         if ($this->paymentCoversOtherInvoices($remote, $invoiceId) === true) {
-            $this->lastError = 'This QuickBooks payment also applies to other invoices, so Fleetbase left it unchanged.';
+            $this->lastError = 'quickbooks.messages.payment-shared';
 
             return 'skipped';
         }
@@ -1583,7 +1591,7 @@ class SyncEngine
      *
      * @param array<string, mixed> $connection
      */
-    private function currencyError(SyncLedger $ledger, array $connection, string $currency, string $label): ?string
+    private function currencyError(SyncLedger $ledger, array $connection, string $currency, string $key): ?string
     {
         $currency = strtoupper(trim($currency));
         if ($currency === '') {
@@ -1595,7 +1603,7 @@ class SyncEngine
             return null;
         }
 
-        return $label . ' currency ' . $currency . ' does not match the QuickBooks home currency ' . $home . '.';
+        return Translation::encode($key, ['currency' => $currency, 'home' => $home]);
     }
 
     /**
@@ -1606,7 +1614,7 @@ class SyncEngine
      */
     private function invoiceCurrencyError(SyncLedger $ledger, array $connection, string $currency): ?string
     {
-        $error = $this->currencyError($ledger, $connection, $currency, 'Invoice');
+        $error = $this->currencyError($ledger, $connection, $currency, 'quickbooks.messages.invoice-currency-mismatch');
         if ($error === null || $this->client->multiCurrencyEnabled($connection) === true) {
             return null;
         }
@@ -3181,7 +3189,7 @@ class SyncEngine
                 $customerOutcome                             = 'failed';
             }
             if ($customerOutcome === 'failed' && isset($this->customerLookupFailed[(string) $only]) === false) {
-                $this->lastError ??= 'Invoice customer could not be synced to QuickBooks.';
+                $this->lastError ??= 'quickbooks.messages.invoice-customer-failed';
             }
         } elseif (count($needed) > 1) {
             if ($this->syncCustomerBlock($ledger, $connection, array_values($needed), $settings, $batch, $now, $trigger, false) === true) {
@@ -3329,7 +3337,10 @@ class SyncEngine
                         $ledger,
                         $connection,
                         $plan['row'],
-                        new QuickBooksException((int) ($result['status'] ?? 400), (string) ($result['error'] ?? 'QuickBooks rejected this item.')),
+                        new QuickBooksException(
+                            (int) ($result['status'] ?? 400),
+                            (string) ($result['error'] ?? self::ITEM_REJECTED_MESSAGE)
+                        ),
                         $settings,
                         $now
                     );
@@ -3577,7 +3588,10 @@ class SyncEngine
                     $ledger,
                     $connection,
                     $item['row'],
-                    new QuickBooksException((int) ($result['status'] ?? 400), $message !== '' ? $message : 'QuickBooks rejected this item.'),
+                    new QuickBooksException(
+                        (int) ($result['status'] ?? 400),
+                        $message !== '' ? $message : self::ITEM_REJECTED_MESSAGE
+                    ),
                     $settings,
                     $now
                 );
@@ -4266,7 +4280,7 @@ class SyncEngine
                 'Payment:update'  => $this->client->updatePayment($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
                 'Account:create'  => $this->client->createAccount($connection, $payload),
                 'Account:update'  => $this->client->updateAccount($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
-                default           => throw new QuickBooksException(400, 'Unsupported batch item.'),
+                default           => throw new QuickBooksException(400, 'quickbooks.messages.batch-item-unsupported'),
             };
 
             return ['ok' => true, 'body' => $body, 'rows' => [], 'error' => null, 'status' => 200, 'halt' => false];
@@ -4301,7 +4315,7 @@ class SyncEngine
      */
     private function batchItemAttemptError(string $error, int $status): string
     {
-        if ($error === '' || str_starts_with($error, 'QuickBooks ') === true || $status === 400) {
+        if ($error === '' || Translation::isMessage($error) === true || $status === 400) {
             return $error;
         }
 

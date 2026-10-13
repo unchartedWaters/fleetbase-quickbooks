@@ -569,7 +569,8 @@ test('a busy company lock skips the run and records it only for a non scheduled 
     }
 
     expect($nowRun['result'])->toBe(['trigger' => 'now', 'status' => 'skipped', 'reason' => 'busy'])
-        ->and($now['directory']->memory->attempts[0]['error'])->toBe('Another QuickBooks sync is already running.')
+        ->and(qbText($now['directory']->memory->attempts[0]['error']))->toBe('Another QuickBooks sync is already '
+            . 'running.')
         ->and($now['directory']->events)->toBe(['saveSkipped:free', 'save:free'])
         ->and($now['engine']->calls)->toBe([])
         ->and($scheduledRun['result'])->toBe(['trigger' => 'scheduled', 'status' => 'skipped', 'reason' => 'busy'])

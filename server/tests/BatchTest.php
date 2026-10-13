@@ -52,12 +52,12 @@ test('a company is skipped when the interval has not elapsed the rate limit is a
 
     $forced = $engine->runScheduled($reauth, 'company-uuid', $settings, $now, true);
     expect($forced['status'])->toBe('skipped')
-        ->and(end($reauth->attempts)['error'])->toBe('QuickBooks needs to be connected again. '
+        ->and(qbText(end($reauth->attempts)['error']))->toBe('QuickBooks needs to be connected again. '
             . 'Choose Connect to QuickBooks on QuickBooks Setup.');
 
     $reconcile = $engine->reconcile($reauth, 'company-uuid', $settings, $now);
     expect($reconcile['status'])->toBe('skipped')
-        ->and(end($reauth->attempts)['error'])->toBe('QuickBooks needs to be connected again. '
+        ->and(qbText(end($reauth->attempts)['error']))->toBe('QuickBooks needs to be connected again. '
             . 'Choose Connect to QuickBooks on QuickBooks Setup.');
 });
 
@@ -119,7 +119,7 @@ test('the rest of the chunk stays pending when a 429 arrives mid batch', functio
 test('a 401 mid batch stops the batch keeps the rows pending without using attempts and marks the connection for reauth', function () {
     [$engine, $client]    = qbEngine();
     $client->failOnCreate = 2;
-    $client->failWith     = new Fleetbase\Quickbooks\Support\QuickBooksException(401, 'QuickBooks request failed with status 401');
+    $client->failWith     = new Fleetbase\Quickbooks\Support\QuickBooksException(401, qbRequestFailed(401));
     $ledger               = batchLedger();
     foreach (['cust-1', 'cust-2', 'cust-3'] as $uuid) {
         $ledger->customers[$uuid] = array_merge(customerRow($uuid), ['name' => 'Customer ' . $uuid, 'email' => $uuid . '@example.test']);
@@ -509,7 +509,8 @@ test('a block create fails when quickbooks does not confirm a free invoice numbe
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($rows['inv-1']['status'])->not->toBe('done')
         ->and($rows['inv-2']['status'])->not->toBe('done')
-        ->and($ledger->attempts[0]['error'])->toBe('QuickBooks did not confirm a free invoice number, so Fleetbase did not create this invoice.')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('QuickBooks did not confirm a free invoice number, so '
+            . 'Fleetbase did not create this invoice.')
         ->and($ledger->invoices['inv-1']['number'])->toBe('LOCAL-1');
 });
 

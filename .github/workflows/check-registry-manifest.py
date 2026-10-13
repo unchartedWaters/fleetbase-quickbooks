@@ -19,6 +19,7 @@ REQUIRED = (
     "server/src/Providers/QuickbooksServiceProvider.php",
     "server/src/routes.php",
     "server/src/Auth/Schemas/Quickbooks.php",
+    "translations/en-us.yaml",
 )
 
 REQUIRED_PREFIXES = ("server/migrations/",)

@@ -7,10 +7,9 @@ namespace Fleetbase\Quickbooks\Services;
  */
 class ConnectionTokens
 {
-    public const REAUTH_MESSAGE = 'QuickBooks needs to be connected again. '
-        . 'Choose Connect to QuickBooks on QuickBooks Setup.';
+    public const REAUTH_MESSAGE = 'quickbooks.messages.reauth';
 
-    public const ALREADY_RUNNING = 'This run was skipped because Fleetbase is already renewing the QuickBooks sign-in.';
+    public const ALREADY_RUNNING = 'quickbooks.messages.refresh-running';
 
     public function __construct(
         private TokenRefresher $refresher,
