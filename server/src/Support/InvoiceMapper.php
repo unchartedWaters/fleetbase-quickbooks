@@ -222,6 +222,10 @@ class InvoiceMapper
                 continue;
             }
             if ($detail === 'DiscountLineDetail' || $detail === 'SubTotalLineDetail') {
+                // QuickBooks sends an empty detail as {}, which decodes to []. Sent back as [], the update is refused.
+                if (($line[$detail] ?? null) === []) {
+                    $line[$detail] = new \stdClass();
+                }
                 $extra[] = $line;
             }
         }
