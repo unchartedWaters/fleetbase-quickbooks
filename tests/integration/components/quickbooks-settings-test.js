@@ -513,6 +513,15 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         await fillIn("[data-test-field='webhook_verifier']", 'new-verifier');
         assert.dom("[data-test-field='webhook_verifier']").hasAttribute('type', 'text', 'each field has its own toggle');
         assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-label', 'Hide Webhook verifier token');
+        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-pressed', 'true');
+        await click("[data-test-toggle-visibility='webhook_verifier']");
+        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('type', 'password');
+        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-label', 'Show Webhook verifier token');
+        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-pressed', 'false');
+        assert.dom("[data-test-field='client_secret']").hasAttribute('type', 'password', 'hiding the verifier leaves the secret as it was');
+        await click("[data-test-toggle-visibility='webhook_verifier']");
+        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('type', 'text');
+        assert.dom("[data-test-field='webhook_verifier']").hasValue('new-verifier');
 
         await click(saveButton());
         assert.dom("[data-test-field='client_secret']").hasValue('');
