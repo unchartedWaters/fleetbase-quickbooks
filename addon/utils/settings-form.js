@@ -65,8 +65,8 @@ function wholeNumber(value, minimum) {
 }
 
 // syncOnly is the organization screen: credentials are global and are not checked there.
-// A saved secret belongs to savedClientId, so a changed Client ID needs its own secret.
-export function validateSettings({ auth, sync, secretSet, savedClientId, syncOnly = false }) {
+// A saved secret or verifier belongs to savedClientId, so a changed Client ID needs its own.
+export function validateSettings({ auth, sync, secretSet, verifierSet = false, savedClientId, syncOnly = false }) {
     const errors = {};
     if (!syncOnly) {
         const environment = auth?.environment || DEFAULT_ENVIRONMENT;
@@ -81,9 +81,13 @@ export function validateSettings({ auth, sync, secretSet, savedClientId, syncOnl
 
         const savedClient = String(savedClientId || '').trim();
         // A blank Client ID has its own error, so the saved secret is not flagged as well.
-        const secretKept = secretSet && (!savedClient || !clientId || clientId === savedClient);
-        if (!String(auth?.client_secret || '').trim() && !secretKept) {
+        const sameClient = !savedClient || !clientId || clientId === savedClient;
+        if (!String(auth?.client_secret || '').trim() && !(secretSet && sameClient)) {
             errors.client_secret = 'quickbooks.validation.client-secret';
+        }
+        // With no saved verifier, webhooks stay optional.
+        if (verifierSet && !sameClient && !String(auth?.webhook_verifier || '').trim()) {
+            errors.webhook_verifier = 'quickbooks.validation.webhook-verifier';
         }
     }
 

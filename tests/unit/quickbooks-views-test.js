@@ -188,6 +188,26 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.strictEqual(check('new-id', ''), undefined);
     });
 
+    test('a saved webhook verifier is kept only for the Client ID it was saved with', (assert) => {
+        const sync = { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 };
+        const check = (clientId, savedClientId, verifier = '', verifierSet = true) =>
+            validateSettings({
+                auth: { client_id: clientId, environment: 'sandbox', client_secret: 'secret', webhook_verifier: verifier },
+                sync,
+                secretSet: true,
+                verifierSet,
+                savedClientId,
+            }).webhook_verifier;
+
+        assert.strictEqual(check('id', 'id'), undefined);
+        assert.strictEqual(check('new-id', 'id'), 'quickbooks.validation.webhook-verifier');
+        assert.strictEqual(check('new-id', 'id', 'new-verifier'), undefined);
+        // With no saved verifier, webhooks stay optional.
+        assert.strictEqual(check('new-id', 'id', '', false), undefined);
+        assert.strictEqual(check('', 'id'), undefined);
+        assert.strictEqual(check('new-id', ''), undefined);
+    });
+
     test('connection state treats a realm without reauth as connected', function (assert) {
         assert.strictEqual(connectionState(null), 'disconnected');
         assert.strictEqual(connectionState({ realm_id: '1', environment: 'sandbox' }), 'connected');

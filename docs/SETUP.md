@@ -106,7 +106,8 @@ blank. Environment may fall back to `QUICKBOOKS_ENVIRONMENT`, which defaults to
 
 Client ID and Client secret are required together. A blank Client secret keeps
 the saved one only while the Client ID stays the same. A changed Client ID needs
-its own Client secret, or the save is refused.
+its own Client secret, or the save is refused. If a webhook verifier is saved,
+a changed Client ID also needs that app's Verifier Token from its Webhooks page.
 
 A saved Client secret or webhook verifier shows as dots and its last four
 characters, such as `••••••••a1b2`; the full value is never sent back. A value

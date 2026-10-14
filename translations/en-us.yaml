@@ -164,6 +164,7 @@ quickbooks:
     client-id: "Enter the Client ID from developer.intuit.com → your app → Keys & credentials."
     environment: "Choose Sandbox for Development keys, or Production for your live company."
     client-secret: "Enter the Client secret shown next to the Client ID on Keys & credentials."
+    webhook-verifier: "Enter the Verifier Token from developer.intuit.com → your app → Webhooks. A new Client ID needs its own token."
     interval-minutes: Enter a whole number of minutes, at least 1.
     periodic-interval-hours: Enter a whole number of hours, at least 1.
     retry-limit: Enter a whole number of retry attempts, at least 1.
