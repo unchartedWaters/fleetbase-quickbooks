@@ -2,19 +2,20 @@ export function fieldState(settings, key) {
     return { value: settings?.[key] ?? '' };
 }
 
-function savedSecretPresentation(set) {
+function savedSecretPresentation(set, hint) {
     return {
         value: '',
         set: Boolean(set),
+        hint: typeof hint === 'string' ? hint : '',
     };
 }
 
 export function secretPresentation(settings) {
-    return savedSecretPresentation(settings?.client_secret_set);
+    return savedSecretPresentation(settings?.client_secret_set, settings?.client_secret_hint);
 }
 
 export function webhookVerifierPresentation(settings) {
-    return savedSecretPresentation(settings?.webhook_verifier_set);
+    return savedSecretPresentation(settings?.webhook_verifier_set, settings?.webhook_verifier_hint);
 }
 
 export const DEFAULT_ENVIRONMENT = 'production';

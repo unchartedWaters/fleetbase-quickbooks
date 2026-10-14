@@ -151,6 +151,12 @@ export default class QuickbooksSettingsComponent extends Component {
     @tracked draft = {};
     @tracked errors = {};
     @tracked saving = false;
+    // A typed secret shows in plain text until it is saved or hidden with the eye button.
+    @tracked visibleSecrets = {};
+
+    secretVisible(key) {
+        return this.visibleSecrets[key] ?? true;
+    }
 
     // The organization screen edits sync options only: no credentials, no URLs.
     get syncOnly() {
@@ -281,11 +287,14 @@ export default class QuickbooksSettingsComponent extends Component {
         if (this.draft.client_secret !== null && this.draft.client_secret !== undefined) {
             presentation.value = this.draft.client_secret;
         }
+        // An empty field has nothing to show, so its button offers Show.
+        presentation.visible = Boolean(presentation.value) && this.secretVisible('client_secret');
         // The fields template already receives this object, so the verifier rides along with the same blank-keeps-saved shape.
         presentation.verifier = webhookVerifierPresentation(this.args.settings);
         if (this.draft.webhook_verifier !== null && this.draft.webhook_verifier !== undefined) {
             presentation.verifier.value = this.draft.webhook_verifier;
         }
+        presentation.verifier.visible = Boolean(presentation.verifier.value) && this.secretVisible('webhook_verifier');
 
         return presentation;
     }
@@ -359,6 +368,11 @@ export default class QuickbooksSettingsComponent extends Component {
             min: MINIMUMS[key] ?? null,
             ...state,
         };
+    }
+
+    @action
+    toggleVisibility(key) {
+        this.visibleSecrets = { ...this.visibleSecrets, [key]: !this.secretVisible(key) };
     }
 
     @action
@@ -472,6 +486,7 @@ export default class QuickbooksSettingsComponent extends Component {
             this.notifications.success(this.intl.t('quickbooks.settings.saved'));
             this.primaryTouched.clear();
             this.draft = {};
+            this.visibleSecrets = {};
             this.errors = {};
         } catch (error) {
             const serverErrors = error?.errors;

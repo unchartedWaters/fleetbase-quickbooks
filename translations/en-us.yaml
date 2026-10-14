@@ -117,11 +117,12 @@ quickbooks:
     entity-sync-direction: "{entity} Sync direction"
     client-secret: Client secret
     client-secret-help: "On Keys & credentials, next to the Client ID. Stored encrypted."
-    client-secret-placeholder: A secret is saved
     client-secret-saved: A Client secret is already saved. Leave this blank to keep it.
     verifier: Webhook verifier token
     verifier-help: Intuit signs webhooks with this token. Stored encrypted.
-    verifier-placeholder: A verifier token is saved
+    secret-mask: "••••••••{hint}"
+    show-value: "Show {field}"
+    hide-value: "Hide {field}"
     verifier-saved: A verifier token is already saved. Leave this blank to keep it.
     fields:
       client-id: Client ID

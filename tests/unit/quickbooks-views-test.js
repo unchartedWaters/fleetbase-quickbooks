@@ -66,7 +66,8 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.deepEqual(fieldState({ client_id: 'company-id' }, 'client_id'), { value: 'company-id' });
         assert.deepEqual(fieldState({}, 'client_id'), { value: '' });
 
-        assert.deepEqual(secretPresentation({ client_secret_set: true }), { value: '', set: true });
+        assert.deepEqual(secretPresentation({ client_secret_set: true }), { value: '', set: true, hint: '' });
+        assert.deepEqual(secretPresentation({ client_secret_set: true, client_secret_hint: 'a1b2' }), { value: '', set: true, hint: 'a1b2' });
 
         const withoutAuth = validateSettings({ auth: {}, sync: {}, secretSet: false });
         assert.ok(withoutAuth.client_id);

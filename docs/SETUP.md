@@ -43,7 +43,7 @@ organizations. Credentials, the webhook verifier, environment, and URLs are
 global and admin-only.
 
 ![Admin, QuickBooks, Settings: the template note, then Authentication
-with Environment, Client ID, saved secret and verifier, and the webhook and
+with Environment, Client ID, masked secret and verifier, and the webhook and
 OAuth URLs][admin-settings]
 
 Organization settings → QuickBooks Setup uses `scope=company` (the default). It
@@ -107,6 +107,11 @@ blank. Environment may fall back to `QUICKBOOKS_ENVIRONMENT`, which defaults to
 Client ID and Client secret are required together. A blank Client secret keeps
 the saved one only while the Client ID stays the same. A changed Client ID needs
 its own Client secret, or the save is refused.
+
+A saved Client secret or webhook verifier shows as dots and its last four
+characters, such as `••••••••a1b2`; the full value is never sent back. A value
+shorter than 16 characters shows only dots. A key you type or paste stays
+visible until you save; the eye button next to the field hides or shows it.
 
 The settings form does not ask for a batch size and does not send `batch_size`.
 

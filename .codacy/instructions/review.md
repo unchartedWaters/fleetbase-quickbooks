@@ -119,7 +119,9 @@
   `SettingsKeys::SYNC_FIELDS`.
 - Secrets: OAuth tokens and secrets are encrypted at rest and never returned.
   Client secret and webhook verifier surface only as
-  `client_secret_set`/`webhook_verifier_set`. A blank Client secret keeps the
+  `client_secret_set`/`webhook_verifier_set`, plus `client_secret_hint`/
+  `webhook_verifier_hint` (last four characters of a value 16 or longer) on
+  the admin view only. A blank Client secret keeps the
   saved one only while the Client ID is unchanged; a changed Client ID needs
   its own secret, in the form and on the server.
 - Logging: context carries ids, exception class and code only, never tokens,
