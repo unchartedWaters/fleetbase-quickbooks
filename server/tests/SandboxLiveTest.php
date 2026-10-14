@@ -97,7 +97,9 @@ function sandboxConnection(): array
 function sandboxNoteRotation(string $refreshToken): void
 {
     if ($refreshToken !== '' && $refreshToken !== (string) getenv('QB_SANDBOX_REFRESH_TOKEN')) {
-        fwrite(STDERR, "Intuit rotated the sandbox refresh token. Update QB_SANDBOX_REFRESH_TOKEN from the OAuth 2.0 Playground before the old one stops working.\n");
+        $variable = 'QB_SANDBOX_REFRESH_TOKEN';
+        fwrite(STDERR, "Intuit rotated the sandbox refresh token. Update {$variable} from the OAuth 2.0 Playground"
+            . " before the old one stops working.\n");
     }
 }
 
@@ -232,7 +234,10 @@ test('starting a connection sends the browser to Intuit sign-in with the request
         $page = Http::withOptions(['allow_redirects' => ['max' => 10, 'track_redirects' => true]])->get($url);
     } catch (Throwable $exception) {
         // A new exception with no previous one, so the link and its client id stay out of the output.
-        throw new RuntimeException('Intuit sign-in could not be reached (' . get_class($exception) . '). Check that the environment allows appcenter.intuit.com and accounts.intuit.com.');
+        $hosts = 'appcenter.intuit.com and accounts.intuit.com';
+        $why   = 'Intuit sign-in could not be reached (' . get_class($exception) . ').';
+        $why .= " Check that the environment allows {$hosts}.";
+        throw new RuntimeException($why);
     }
     $history = $page->toPsrResponse()->getHeader('X-Guzzle-Redirect-History');
     $landed  = (string) end($history);
@@ -244,7 +249,9 @@ test('starting a connection sends the browser to Intuit sign-in with the request
         ->and(parse_url($landed, PHP_URL_HOST))->toBe('accounts.intuit.com')
         ->and(parse_url($landed, PHP_URL_PATH))->toBe('/app/sign-in')
         ->and(parse_url($back, PHP_URL_HOST))->toBe('appcenter.intuit.com');
-    foreach (['client_id', 'redirect_uri', 'scope', 'response_type', 'state', 'code_challenge', 'code_challenge_method'] as $key) {
+    $carried   = ['client_id', 'redirect_uri', 'scope', 'response_type', 'state', 'code_challenge'];
+    $carried[] = 'code_challenge_method';
+    foreach ($carried as $key) {
         expect($resumed[$key] ?? null)->toBe($sent[$key] ?? null);
     }
 })->group('sandbox');
