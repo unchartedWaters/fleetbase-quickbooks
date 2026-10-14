@@ -182,7 +182,9 @@ class SettingController extends QuickbooksController
         }
         $secret = $incomingAuth['client_secret'] ?? '';
         if (is_string($secret) === false || $secret === '') {
-            $mergedAuth['client_secret'] = $existingAuth['client_secret'] ?? '';
+            // A saved secret belongs to the saved Client ID, so a changed Client ID needs its own secret.
+            $sameClient                  = trim((string) ($mergedAuth['client_id'] ?? '')) === trim((string) ($existingAuth['client_id'] ?? ''));
+            $mergedAuth['client_secret'] = $sameClient === true ? ($existingAuth['client_secret'] ?? '') : '';
         } else {
             $mergedAuth['client_secret'] = $secret;
         }

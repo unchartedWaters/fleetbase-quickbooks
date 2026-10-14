@@ -407,7 +407,7 @@ test('the admin scope saves the global rows and never an organization row', func
 
     $response = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'new-global-id'],
+        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => 'new-global-secret'],
         'sync'  => qbSettings(['interval_minutes' => 20]),
     ], true));
 
@@ -416,6 +416,32 @@ test('the admin scope saves the global rows and never an organization row', func
         ->and($store->rows[SettingsKeys::adminSync()]['interval_minutes'])->toBe(20)
         ->and(array_key_exists(SettingsKeys::companySync('company-a'), $store->rows))->toBeFalse()
         ->and(array_key_exists(SettingsKeys::companyAuth('company-a'), $store->rows))->toBeFalse();
+});
+
+test('a changed Client ID needs its Client secret, and an unchanged one keeps the saved secret', function () {
+    $store      = orgApiStore();
+    $before     = $store->rows;
+    $controller = orgApiController($store, new Authorizer(static fn (): bool => false));
+
+    $refused = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => ''],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($refused->getStatusCode())->toBe(422)
+        ->and(array_keys($refused->getData(true)['errors']))->toBe(['client_secret'])
+        ->and($store->rows)->toBe($before);
+
+    $kept = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => 'global-client-id', 'client_secret' => ''],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($kept->getStatusCode())->toBe(200)
+        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['client_secret']))
+        ->toBe('global-secret-value');
 });
 
 test('queueing diffs effective settings, so first saving values equal to the template queues nothing', function () {

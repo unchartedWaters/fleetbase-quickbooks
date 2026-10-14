@@ -12,7 +12,7 @@ const MINIMUMS = {
     retry_limit: 1,
     default_backoff_seconds: 5,
 };
-const AUTH_FIELDS = ['client_id', 'environment'];
+const AUTH_FIELDS = ['environment', 'client_id'];
 const SYNC_FIELDS = ['interval_minutes', 'periodic_interval_hours', 'retry_limit', 'default_backoff_seconds'];
 const POLICY_FIELDS = [
     'customer_conflict',
@@ -44,8 +44,8 @@ const CHOICE_DEFAULTS = {
     wallet_direction: 'both',
 };
 const ERROR_FIELD_ORDER = [
-    'client_id',
     'environment',
+    'client_id',
     'client_secret',
     'webhook_verifier',
     'interval_minutes',
@@ -66,7 +66,7 @@ const ERROR_FIELD_ORDER = [
     'wallet_direction',
 ];
 
-const CREDENTIAL_FIELDS = ['client_id', 'environment', 'client_secret', 'webhook_verifier'];
+const CREDENTIAL_FIELDS = ['environment', 'client_id', 'client_secret', 'webhook_verifier'];
 
 function firstErrorKey(errors) {
     return ERROR_FIELD_ORDER.find((key) => errors?.[key]) || Object.keys(errors || {})[0] || null;
@@ -272,6 +272,11 @@ export default class QuickbooksSettingsComponent extends Component {
 
     get secret() {
         const presentation = secretPresentation(this.args.settings);
+        // A saved secret belongs to the saved Client ID, so it is not offered for a changed one.
+        const clientId = String(this.present('client_id').value || '').trim();
+        if (clientId !== String(this.args.settings?.client_id || '').trim()) {
+            presentation.set = false;
+        }
         if (this.draft.client_secret !== null && this.draft.client_secret !== undefined) {
             presentation.value = this.draft.client_secret;
         }
@@ -447,6 +452,7 @@ export default class QuickbooksSettingsComponent extends Component {
             auth: auth && { ...auth, client_secret: this.draft.client_secret || '' },
             sync,
             secretSet: Boolean(this.args.settings?.client_secret_set),
+            savedClientId: this.args.settings?.client_id ?? '',
             syncOnly: this.syncOnly,
         });
         this.errors = this.localizeErrors(errors);

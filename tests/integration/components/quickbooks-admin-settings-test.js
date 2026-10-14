@@ -102,6 +102,7 @@ module('Integration | Component | quickbooks-admin-settings', function (hooks) {
 
         await render(hbs`<QuickbooksAdminSettings />`);
         await fillIn('[data-test-field="client_id"]', 'new-id');
+        await fillIn('[data-test-field="client_secret"]', 'new-secret');
         await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
 
         const post = fetch.posts.at(-1);
@@ -109,6 +110,7 @@ module('Integration | Component | quickbooks-admin-settings', function (hooks) {
         assert.strictEqual(post.body.scope, 'admin');
         assert.strictEqual(post.body.company_uuid, 'company-uuid');
         assert.strictEqual(post.body.auth.client_id, 'new-id');
+        assert.strictEqual(post.body.auth.client_secret, 'new-secret');
         assert.strictEqual(post.body.sync.interval_minutes, 5);
         assert.false(Object.hasOwn(post.body, 'override'));
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);

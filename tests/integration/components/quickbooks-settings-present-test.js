@@ -141,6 +141,7 @@ module('Integration | Component | quickbooks-settings present characterization',
         `);
 
         await fillIn("[data-test-field='client_id']", ' drafted-id ');
+        await fillIn("[data-test-field='client_secret']", 'drafted-secret');
         await fillIn("[data-test-sync='interval_minutes']", '9');
         await fillIn("[data-test-sync='periodic_interval_hours']", '6');
         await fillIn("[data-test-sync='customer_conflict']", 'fleetbase');
