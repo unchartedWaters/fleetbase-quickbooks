@@ -230,6 +230,8 @@ class SettingController extends QuickbooksController
         );
         $browser                                  = $this->settings->forBrowser($resolved);
         $browser['client_secret_set']             = $this->secretIsSet($resolved);
+        $browser['client_secret_hint']            = self::secretHint($resolved['client_secret'] ?? null);
+        $browser['webhook_verifier_hint']         = self::secretHint($resolved['webhook_verifier'] ?? null);
         $browser['sources']                       = is_array($resolved['sources'] ?? null) === true ? $resolved['sources'] : [];
         $webhook                                  = self::internalWebhookReceiverUrl();
         $oauth                                    = self::internalOAuthRedirectUrl();
@@ -515,6 +517,19 @@ class SettingController extends QuickbooksController
         }
 
         $subscriptions->apply('admin', $companyUuid);
+    }
+
+    /**
+     * The last four characters of a saved secret, so an admin can tell which one is saved.
+     * A short value would give away too much of itself, so it gets no hint.
+     */
+    private static function secretHint(mixed $secret): ?string
+    {
+        if (is_string($secret) === false || strlen($secret) < 16) {
+            return null;
+        }
+
+        return substr($secret, -4);
     }
 
     /**
