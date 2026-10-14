@@ -99,6 +99,9 @@ quickbooks:
     reset-done: Sync settings reset to the global defaults.
     authentication: Authentication
     credentials-title: Getting your QuickBooks credentials
+    credentials-create-app-before: "No QuickBooks app yet? Start with "
+    credentials-create-app-link: Intuit's guide to creating a QuickBooks app
+    credentials-create-app-after: "."
     credentials-step-keys-before: "Sign in at "
     credentials-step-keys-link: developer.intuit.com
     credentials-step-keys-after: " and open Keys & credentials."

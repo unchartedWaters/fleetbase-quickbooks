@@ -29,6 +29,51 @@ Unknown QuickBooks invoices are not imported. An invoice is synced from QuickBoo
 
 Money is stored as integer minor units. QuickBooks major-unit amounts are converted with `Amounts::toMinorUnits` before they are saved, and a PHP float is rejected. Unit price on an invoice line is an integer minor-unit value. When it is sent to QuickBooks it is formatted as a decimal string, not a float.
 
+## Create a QuickBooks app
+
+The extension connects through an app that you create on the Intuit Developer
+Portal. One app serves the whole install. Intuit's own guides cover each step:
+
+1. Create a developer account and an app: [Create and start developing your
+   app][intuit-create-app]. When Intuit asks for scopes, choose Accounting.
+   Connect asks only for `com.intuit.quickbooks.accounting` ([Learn about
+   scopes][intuit-scopes]), so Payments is not needed. Intuit creates a sandbox
+   company to test with: [Create and test with a sandbox
+   company][intuit-sandbox].
+2. On Admin → QuickBooks → Settings, set Public OAuth Redirect URL and Public
+   Webhook Receiver URL to your public https host and save. A blank field shows
+   the internal URL, which Intuit cannot reach on a private install. Intuit
+   allows `localhost` for sandbox apps, but this extension requires a public
+   https URL (see [Developing locally](#developing-locally)).
+3. Copy the Client ID and Client secret from the app's Keys & credentials:
+   [Get the Client ID and Client Secret][intuit-keys]. Development keys work
+   only with sandbox companies; choose Sandbox for Environment. Production keys
+   need Intuit's production App Details and an approved App Assessment
+   Questionnaire: [Publish your app][intuit-publish]. Listing on the QuickBooks
+   App Store is not required. Environment defaults to Production; after
+   switching it, each organization connects again.
+4. Add the Public OAuth Redirect URL to the app's Redirect URIs, under
+   Development or Production to match the keys: [Set app redirect
+   URIs][intuit-redirect].
+5. If any type syncs From QuickBooks or Both, open Webhooks under the same
+   Development or Production tab, enter the Public Webhook Receiver URL as the
+   Endpoint URL, choose the entities (see [Webhooks](#webhooks)), and copy that
+   tab's Verifier Token into **Webhook verifier token**: [Configure
+   webhooks][intuit-webhooks]. The receiver reads Intuit's older
+   `eventNotifications` payload. Intuit's guide now describes a CloudEvents
+   payload, which the receiver does not accept yet.
+6. Save the keys on Admin → QuickBooks → Settings. The API also needs
+   `CONSOLE_HOST` (see [Connect and disconnect](#connect-and-disconnect)), and
+   webhooks need running queue workers.
+
+[intuit-create-app]: https://developer.intuit.com/app/developer/qbo/docs/get-started/start-developing-your-app
+[intuit-sandbox]: https://developer.intuit.com/app/developer/qbo/docs/develop/sandboxes/manage-your-sandboxes
+[intuit-keys]: https://developer.intuit.com/app/developer/qbo/docs/get-started/get-client-id-and-client-secret
+[intuit-publish]: https://developer.intuit.com/app/developer/qbo/docs/go-live/publish-app
+[intuit-redirect]: https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/set-redirect-uri
+[intuit-webhooks]: https://developer.intuit.com/app/developer/qbo/docs/develop/webhooks/configure-webhooks
+[intuit-scopes]: https://developer.intuit.com/app/developer/qbo/docs/learn/scopes
+
 ## Settings
 
 Global settings are Client ID, Client secret, Redirect URI, environment, webhook

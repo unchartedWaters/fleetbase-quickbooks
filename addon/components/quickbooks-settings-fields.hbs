@@ -3,8 +3,14 @@
     <ContentPanel @title={{t "quickbooks.settings.authentication"}} @open={{true}} @wrapperClass="bordered-classic">
         <InfoBlock @type="info" @icon="circle-info" class="mb-4" data-test-credentials-guidance>
             <div class="font-semibold">{{t "quickbooks.settings.credentials-title"}}</div>
+            <p class="mt-1" data-test-create-app-step>{{t "quickbooks.settings.credentials-create-app-before"}}<a
+                    href="https://developer.intuit.com/app/developer/qbo/docs/get-started/start-developing-your-app"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="quickbooks-guidance-link text-inherit cursor-pointer underline"
+                >{{t "quickbooks.settings.credentials-create-app-link"}}</a>{{t "quickbooks.settings.credentials-create-app-after"}}</p>
             <ol class="mt-1 list-decimal space-y-1 pl-5">
-                <li>{{t "quickbooks.settings.credentials-step-keys-before"}}<a
+                <li data-test-keys-step>{{t "quickbooks.settings.credentials-step-keys-before"}}<a
                         href="https://developer.intuit.com"
                         target="_blank"
                         rel="noopener noreferrer"
