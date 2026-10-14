@@ -14,6 +14,10 @@ Package names:
 
 Composer package names and npm scopes are lowercase, so those two fields use `unchartedwaters`. The GitHub organization is `unchartedWaters`. The PHP namespace stays `Fleetbase\Quickbooks`.
 
+The screenshots in this guide use placeholder values (an example Client ID,
+company number, and URLs) and sample activity. They show the extension's own
+screens without the surrounding Fleetbase console menus.
+
 ## What syncs
 
 - **Customers** — name, email, phone, notes, and billing address.
@@ -37,6 +41,10 @@ The sync options on that screen are strictly a template. Changing them has no
 effect on any organization's sync settings, and a global save queues nothing for
 organizations. Credentials, the webhook verifier, environment, and URLs are
 global and admin-only.
+
+![Admin, QuickBooks, Settings: the template note, then Authentication
+with Client ID, Environment, saved secret and verifier, and the webhook and
+OAuth URLs][admin-settings]
 
 Organization settings → QuickBooks Setup uses `scope=company` (the default). It
 shows the connection controls and the organization's own sync options. An
@@ -62,6 +70,9 @@ roles). Every sync reader (schedule, Sync now, webhooks, customer import, remote
 changes) uses the organization's own copy of the sync settings. An organization
 with no copy yet uses the global row over the built-in defaults.
 
+![QuickBooks Setup for a QuickBooks Operator: the sync settings are
+read-only, with a note and a disabled Save Changes][setup-read-only]
+
 An organization gets its own complete copy of the sync settings in three cases.
 It gets one when it connects (before its existing records are queued), when it
 saves its settings, and when it uses **Reset to global defaults**, which is a
@@ -69,6 +80,9 @@ one-time copy of the current template. Reconnecting keeps the existing copy.
 There is no override switch and no per-field inheritance. Before an organization
 has a copy, its settings screen shows the current global defaults as starting
 values.
+
+![QuickBooks Setup before connecting: Connect to QuickBooks, and a note
+that the settings shown are the current global defaults][setup-not-connected]
 
 To upgrade, run `php artisan migrate`. The new migration gives every existing
 organization (with a QuickBooks connection or an organization settings row) a
@@ -119,6 +133,9 @@ queues nothing. An install that already saved a value keeps it; an install that
 never saved settings and relied on the old default must switch wallets on again.
 Primary and Sync direction are required while the switch is on. Off means that
 type is not synced.
+
+![Data Resolution: Customers, Invoices, and Payments switched on with
+Primary and Sync direction; Accounts / Wallets off][setup-data-resolution]
 
 | Switch | Stored direction | Meaning |
 | --- | --- | --- |
@@ -174,6 +191,12 @@ Before a company is connected it offers **Connect to QuickBooks**. Once
 connected it offers **Sync now** and **Disconnect**. When QuickBooks must be
 connected again it offers **Connect to QuickBooks** and **Disconnect**. An
 action the user lacks permission for stays visible but disabled.
+
+![QuickBooks Setup when connected: company, environment, home currency
+notes, Sync now, and Disconnect][setup-connected]
+
+![QuickBooks Setup when QuickBooks must be connected again: a red
+message, Connect to QuickBooks, and Disconnect][setup-reconnect]
 
 Connect uses PKCE (`S256`). The API stores a code verifier with the OAuth state and sends the code challenge on `https://appcenter.intuit.com/connect/oauth2` with scope `com.intuit.quickbooks.accounting`.
 
@@ -258,7 +281,13 @@ Sync now with no connection returns HTTP 422 and does not save an activity row. 
 
 Activity rows show created, updated, aligned, linked, skipped, unmatched, voided, and failed. Aligned counts inbound matches as well as outbound ones, including an inbound customer or invoice that already matched and was not written. A From QuickBooks run that changes nothing can show aligned. Linked is the customer-import count.
 
+![QuickBooks Activity: one row per run with trigger, status, direction,
+and counts; a failed run shows its error under the row][activity]
+
 The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires `quickbooks reconcile sync` or an installation administrator, plus a connection and a saved Client ID and Client secret. It does not require a Redirect URI. OAuth connect still needs the public https redirect.
+
+![QuickBooks Sync widget: Connected, last sync time, records waiting,
+and Sync now][dashboard-widget]
 
 ## Webhooks
 
@@ -375,3 +404,12 @@ pnpm test:ember
 ```
 
 `npm run test:ember` is the same command.
+
+[admin-settings]: images/admin-settings.png
+[setup-read-only]: images/setup-read-only.png
+[setup-not-connected]: images/setup-not-connected.png
+[setup-data-resolution]: images/setup-data-resolution.png
+[setup-connected]: images/setup-connected.png
+[setup-reconnect]: images/setup-reconnect.png
+[activity]: images/activity.png
+[dashboard-widget]: images/dashboard-widget.png
