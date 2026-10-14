@@ -161,7 +161,7 @@ test('a delivery that fails while processing is not remembered as a replay', fun
     });
 });
 
-test('a successfully processed delivery is still rejected when the same body arrives again', function () {
+test('a successfully processed delivery is acknowledged without dispatching again when the same body arrives', function () {
     $body       = whrBody();
     $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
 
@@ -170,7 +170,7 @@ test('a successfully processed delivery is still rejected when the same body arr
         $replay = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
 
         expect($first->getStatusCode())->toBe(200)
-            ->and($replay->getStatusCode())->toBe(401)
+            ->and($replay->getStatusCode())->toBe(200)
             ->and($seen)->toHaveCount(1);
     });
 });
@@ -206,7 +206,7 @@ test('an invalid signature is still 401 whether or not the realm has a connectio
     });
 });
 
-test('a delivery older than ten minutes is rejected by default and one inside the window is accepted', function () {
+test('a delivery older than ten minutes is acknowledged without dispatching by default and one inside the window is applied', function () {
     $stale = whrBody(whrStamp(700));
     $fresh = whrBody(whrStamp(500));
 
@@ -219,7 +219,7 @@ test('a delivery older than ten minutes is rejected by default and one inside th
             $old     = $controller->handle(whrRequest($stale, whrSign($stale, 'verifier-token')));
             $current = $controller->handle(whrRequest($fresh, whrSign($fresh, 'verifier-token')));
 
-            expect($old->getStatusCode())->toBe(401)
+            expect($old->getStatusCode())->toBe(200)
                 ->and($current->getStatusCode())->toBe(200)
                 ->and($seen)->toHaveCount(1);
         });
@@ -240,7 +240,7 @@ test('the maximum delivery age is configurable and drives the replay cache lifet
             $replay   = $controller->handle(whrRequest($oldDelivery, whrSign($oldDelivery, 'verifier-token')));
 
             expect($accepted->getStatusCode())->toBe(200)
-                ->and($replay->getStatusCode())->toBe(401)
+                ->and($replay->getStatusCode())->toBe(200)
                 ->and($seen)->toHaveCount(1);
         });
 
@@ -252,7 +252,7 @@ test('the maximum delivery age is configurable and drives the replay cache lifet
             $rejected = $controller->handle(whrRequest($tooOld, whrSign($tooOld, 'verifier-token')));
             $accepted = $controller->handle(whrRequest($inside, whrSign($inside, 'verifier-token')));
 
-            expect($rejected->getStatusCode())->toBe(401)
+            expect($rejected->getStatusCode())->toBe(200)
                 ->and($accepted->getStatusCode())->toBe(200)
                 ->and($seen)->toHaveCount(1);
         });
@@ -314,19 +314,19 @@ test('the replay key is held briefly while processing and for the configured max
     expect($ttls)->toBe([['add', 120], ['put', 1234]]);
 });
 
-test('a stale delivery for a realm with no connection is refused like any stale delivery', function () {
+test('a stale delivery for a realm with no connection is acknowledged like any stale delivery', function () {
     $stale      = whrBody(whrStamp(700));
     $controller = whrController(whrSettings(), whrStore(), []);
 
     whrWithEvents(function (array &$seen) use ($controller, $stale) {
         $response = $controller->handle(whrRequest($stale, whrSign($stale, 'verifier-token')));
 
-        expect($response->getStatusCode())->toBe(401)
+        expect($response->getStatusCode())->toBe(200)
             ->and($seen)->toBe([]);
     });
 });
 
-test('a delivery that is still being processed is refused as a replay', function () {
+test('a delivery that is still being processed gets 409 so Intuit retries it later', function () {
     $body       = whrBody();
     $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
 
@@ -339,7 +339,7 @@ test('a delivery that is still being processed is refused as a replay', function
         $first = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
 
         expect($first->getStatusCode())->toBe(200)
-            ->and($during)->toBe(401)
+            ->and($during)->toBe(409)
             ->and($seen)->toHaveCount(1);
     });
 });
@@ -401,7 +401,7 @@ test('a cloudevents delivery dispatches one event per in-scope entity on each co
     });
 });
 
-test('a cloudevents delivery older than the maximum age is rejected and a fresh one is accepted', function () {
+test('a cloudevents delivery older than the maximum age is acknowledged without dispatching and a fresh one is applied', function () {
     $stale = json_encode([whrCloudEvent('qbo.customer.updated.v1', '77', 'realm-whr', whrStamp(700))]);
     // Intuit sends fractional seconds with up to nine digits.
     $fresh = json_encode([whrCloudEvent('qbo.customer.updated.v1', '77', 'realm-whr', gmdate('Y-m-d\TH:i:s', time() - 30) . '.179851517Z')]);
@@ -415,7 +415,7 @@ test('a cloudevents delivery older than the maximum age is rejected and a fresh 
             $old     = $controller->handle(whrRequest($stale, whrSign($stale, 'verifier-token')));
             $current = $controller->handle(whrRequest($fresh, whrSign($fresh, 'verifier-token')));
 
-            expect($old->getStatusCode())->toBe(401)
+            expect($old->getStatusCode())->toBe(200)
                 ->and($current->getStatusCode())->toBe(200)
                 ->and($seen)->toHaveCount(1);
         });

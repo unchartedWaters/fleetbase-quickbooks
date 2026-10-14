@@ -24,18 +24,26 @@ class WebhookReplayGuard
     private const PROCESSING_SECONDS = 120;
 
     /**
-     * ok the first time this raw body is seen. replay when the same bytes were
-     * stored already. unavailable when the replay store cannot be written.
+     * ok the first time this raw body is seen. done when the same bytes were processed
+     * already, processing while another request is still working on them. unavailable
+     * when the replay store cannot be written.
      */
     public function remember(string $rawBody): string
     {
         try {
-            $added = Cache::add($this->key($rawBody), 1, self::PROCESSING_SECONDS);
+            $added = Cache::add($this->key($rawBody), 'processing', self::PROCESSING_SECONDS);
         } catch (\Throwable) {
             return 'unavailable';
         }
+        if ($added === true) {
+            return 'ok';
+        }
 
-        return $added === true ? 'ok' : 'replay';
+        try {
+            return Cache::get($this->key($rawBody)) === 'done' ? 'done' : 'processing';
+        } catch (\Throwable) {
+            return 'processing';
+        }
     }
 
     /**
@@ -45,7 +53,7 @@ class WebhookReplayGuard
     public function keep(string $rawBody): void
     {
         try {
-            Cache::put($this->key($rawBody), 1, $this->maxAgeSeconds());
+            Cache::put($this->key($rawBody), 'done', $this->maxAgeSeconds());
         } catch (\Throwable) {
             // The work is queued; only the replay window is shorter.
         }

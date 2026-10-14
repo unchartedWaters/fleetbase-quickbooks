@@ -2048,7 +2048,7 @@ test('fleetbase primary does not queue a quickbooks copy and still queues the fl
     });
 });
 
-test('a signed webhook older than ten minutes is rejected and a down replay store returns 503', function () {
+test('a signed webhook older than ten minutes is acknowledged without dispatching and a down replay store returns 503', function () {
     $settings = qboChangedSettings();
     $staleAt  = (new DateTimeImmutable('@' . (time() - 700)))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:sO');
     $freshAt  = (new DateTimeImmutable('@' . time()))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:sO');
@@ -2063,7 +2063,7 @@ test('a signed webhook older than ten minutes is rejected and a down replay stor
 
         try {
             $rejected = $controller->handle(qboChangedRequest($stale, qboChangedSignature($stale, 'verifier-token')));
-            expect($rejected->getStatusCode())->toBe(401)
+            expect($rejected->getStatusCode())->toBe(200)
                 ->and(qboChangedSeen())->toBe([]);
 
             $previous = Cache::getFacadeRoot();
@@ -2088,7 +2088,7 @@ test('a signed webhook older than ten minutes is rejected and a down replay stor
     });
 });
 
-test('the same signed webhook body is rejected on replay and a bad signature is not cached', function () {
+test('the same signed webhook body is acknowledged without dispatching on replay and a bad signature is not cached', function () {
     $settings = qboChangedSettings();
     $body     = '{"eventNotifications":[{"realmId":"realm-replay","dataChangeEvent":{"entities":[{"name":"Customer","id":"77","operation":"Create"}]}}]}';
     $other    = '{"eventNotifications":[{"realmId":"realm-replay","dataChangeEvent":{"entities":[{"name":"Customer","id":"78","operation":"Update"}]}}]}';
@@ -2111,7 +2111,7 @@ test('the same signed webhook body is rejected on replay and a bad signature is 
             $replay = $controller->handle(qboChangedRequest($body, qboChangedSignature($body, 'verifier-token')));
             $again  = $controller->handle(qboChangedRequest($other, qboChangedSignature($other, 'verifier-token')));
 
-            expect($replay->getStatusCode())->toBe(401)
+            expect($replay->getStatusCode())->toBe(200)
                 ->and(qboChangedSeen())->toHaveCount(1)
                 ->and(qboChangedSeen()[0]->quickbooksId)->toBe('78')
                 ->and($again->getStatusCode())->toBe(200);

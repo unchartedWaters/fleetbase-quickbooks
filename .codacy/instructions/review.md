@@ -19,7 +19,10 @@
   the same row twice.
 - Inbound: `WebhookController` checks the Intuit signature against the
   install-wide verifier, then stale/replay checks, then queues work for every
-  organization connected to that realm.
+  organization connected to that realm. `WebhookPayload` reads Intuit's
+  CloudEvents array and the older `eventNotifications` body. Only a missing or
+  bad signature gets 401; a signed stale or already processed delivery gets 200
+  and is not applied, because Intuit retries any other answer for days.
 - Global settings (installation admin only, `scope=admin`) are credentials and
   a sync template. An organization (`scope=company`, rows marked
   `scope: organization`) has its own complete copy of the sync options, made

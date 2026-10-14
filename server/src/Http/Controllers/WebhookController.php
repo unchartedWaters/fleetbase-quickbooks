@@ -8,6 +8,7 @@ use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
+use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\WebhookPayload;
 use Fleetbase\Quickbooks\Support\WebhookReplayGuard;
 use Fleetbase\Quickbooks\Support\WebhookSignature;
@@ -56,10 +57,14 @@ class WebhookController extends Controller
         if ($matched === null) {
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
-        // HMAC already matched. A captured body is not accepted once its
-        // entity timestamps are older than the configured maximum age.
+        // HMAC already matched. A captured body is not applied once its change
+        // timestamps are older than the configured maximum age. It is still answered
+        // with 200: Intuit retries anything else for days and may hold back later
+        // deliveries until this one is acknowledged.
         if ($this->replay->isStale($rawBody, time()) === true) {
-            return response()->json(['message' => 'Invalid signature.'], 401);
+            SafeLog::warning('QuickBooks webhook delivery is older than the maximum age and was not applied.');
+
+            return response()->json(['ok' => true]);
         }
 
         // The signature is genuine, but no organization is connected to these realms
@@ -69,12 +74,16 @@ class WebhookController extends Controller
             return response()->json(['ok' => true]);
         }
 
-        // Remember this exact body for a short time and reject a second delivery
-        // of it. The check does not replace the signature test. A down replay
-        // store is not an invalid signature.
+        // Remember this exact body and do not apply it twice. A body that was already
+        // processed is acknowledged. One that another request is still processing is
+        // answered 409 so Intuit retries it, in case that request fails. The check does
+        // not replace the signature test. A down replay store is not an invalid signature.
         $replay = $this->replay->remember($rawBody);
-        if ($replay === 'replay') {
-            return response()->json(['message' => 'Invalid signature.'], 401);
+        if ($replay === 'done') {
+            return response()->json(['ok' => true]);
+        }
+        if ($replay === 'processing') {
+            return response()->json(['message' => 'Webhook delivery is still being processed.'], 409);
         }
         if ($replay === 'unavailable') {
             return response()->json(['message' => 'Webhook delivery could not be recorded.'], 503);
