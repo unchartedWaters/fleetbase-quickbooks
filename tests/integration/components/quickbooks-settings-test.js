@@ -213,7 +213,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-credentials-guidance] a').hasClass('quickbooks-guidance-link');
         assert
             .dom('[data-test-credentials-guidance] li:nth-child(2)')
-            .hasText('Copy the Client ID and Client secret from Keys & credentials into the fields below, and choose the matching Environment.');
+            .hasText('Choose the Environment, then copy its Client ID and Client secret from Keys & credentials into the fields below.');
         assert.dom('[data-test-redirect-step]').hasText('Under Redirect URIs, paste the Public OAuth Redirect URL.');
         assert.dom('[data-test-webhook-step]').hasText('Paste the Public Webhook Receiver URL into Intuit and save the webhook verifier.');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
@@ -338,6 +338,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-error='client_id']").exists();
         assert.dom("[data-test-error='client_id']").hasClass('dark:text-red-400');
         assert.dom("[data-test-error='redirect_uri']").doesNotExist();
+        assert.dom("[data-test-error='client_secret']").doesNotExist();
         assertFieldError(assert, "[data-test-field='client_id']", 'client_id');
         assert.dom("[data-test-field='environment']").doesNotHaveClass('border-red-500');
         assert.dom("[data-test-field='environment']").doesNotHaveAttribute('aria-describedby');

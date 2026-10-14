@@ -102,7 +102,7 @@ quickbooks:
     credentials-step-keys-before: "Sign in at "
     credentials-step-keys-link: developer.intuit.com
     credentials-step-keys-after: " and open Keys & credentials."
-    credentials-step-form: Copy the Client ID and Client secret from Keys & credentials into the fields below, and choose the matching Environment.
+    credentials-step-form: Choose the Environment, then copy its Client ID and Client secret from Keys & credentials into the fields below.
     credentials-step-redirect: Under Redirect URIs, paste the Public OAuth Redirect URL.
     credentials-step-webhook: Paste the Public Webhook Receiver URL into Intuit and save the webhook verifier.
     credentials-step-save: Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.

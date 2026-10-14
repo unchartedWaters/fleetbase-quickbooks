@@ -78,7 +78,9 @@ export function validateSettings({ auth, sync, secretSet, savedClientId, syncOnl
             errors.client_id = 'quickbooks.validation.client-id';
         }
 
-        const secretKept = secretSet && (savedClientId === undefined || clientId === String(savedClientId || '').trim());
+        const savedClient = String(savedClientId || '').trim();
+        // A blank Client ID has its own error, so the saved secret is not flagged as well.
+        const secretKept = secretSet && (!savedClient || !clientId || clientId === savedClient);
         if (!String(auth?.client_secret || '').trim() && !secretKept) {
             errors.client_secret = 'quickbooks.validation.client-secret';
         }

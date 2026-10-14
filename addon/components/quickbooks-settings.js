@@ -273,8 +273,9 @@ export default class QuickbooksSettingsComponent extends Component {
     get secret() {
         const presentation = secretPresentation(this.args.settings);
         // A saved secret belongs to the saved Client ID, so it is not offered for a changed one.
+        const savedClientId = String(this.args.settings?.client_id || '').trim();
         const clientId = String(this.present('client_id').value || '').trim();
-        if (clientId !== String(this.args.settings?.client_id || '').trim()) {
+        if (savedClientId && clientId && clientId !== savedClientId) {
             presentation.set = false;
         }
         if (this.draft.client_secret !== null && this.draft.client_secret !== undefined) {
