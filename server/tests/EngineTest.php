@@ -2774,7 +2774,9 @@ test('extra quickbooks sales lines stay and one update aligns the invoice', func
         'Description'         => 'Subtotal',
         'SubTotalLineDetail'  => [],
     ];
-    $discount = [
+    // An empty detail goes back to QuickBooks as {} (QuickBooks refuses []).
+    $subtotalSent = array_merge($subtotal, ['SubTotalLineDetail' => new stdClass()]);
+    $discount     = [
         'Amount'             => '0.00',
         'DetailType'         => 'DiscountLineDetail',
         'Description'        => 'Discount',
@@ -2802,7 +2804,7 @@ test('extra quickbooks sales lines stay and one update aligns the invoice', func
         ->and($client->invoices['qb-1']['Line'][0]['Id'])->toBe('9')
         ->and($client->invoices['qb-1']['Line'][0]['Description'])->toBe('Evening delivery')
         ->and($client->invoices['qb-1']['Line'][1])->toBe($warehouse)
-        ->and($client->invoices['qb-1']['Line'][2])->toBe($subtotal)
+        ->and($client->invoices['qb-1']['Line'][2])->toEqual($subtotalSent)
         ->and($client->invoices['qb-1']['Line'][3])->toBe($discount)
         ->and($ledger->invoices['inv-1']['items'][0]['qbo_line_id'])->toBe('9');
 
@@ -2813,7 +2815,7 @@ test('extra quickbooks sales lines stay and one update aligns the invoice', func
         ->and($second['updated'])->toBe(0)
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1)
         ->and($client->invoices['qb-1']['Line'][1])->toBe($warehouse)
-        ->and($client->invoices['qb-1']['Line'][2])->toBe($subtotal)
+        ->and($client->invoices['qb-1']['Line'][2])->toEqual($subtotalSent)
         ->and($client->invoices['qb-1']['Line'][3])->toBe($discount);
 });
 

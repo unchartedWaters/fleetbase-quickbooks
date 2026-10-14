@@ -656,15 +656,24 @@ test('withExistingLineIds pairs kept ids first, fills the rest in order and keep
 
     expect(array_keys($merged))->toBe(['CustomerRef', 'Line', 'DocNumber'])
         ->and($merged['DocNumber'])->toBe('INV-1')
-        ->and($merged['Line'])->toBe([
+        ->and(array_slice($merged['Line'], 0, 6))->toBe([
             pctSalesLine('r2', '5.00', 'Has r2', 'item-l'),
             pctSalesLine(null, '6.00', 'No id', 'item-l') + ['Id' => 'r1'],
             pctSalesLine(null, '7.00', 'Third', 'item-l'),
             pctSalesLine(null, '0.75', InvoiceMapper::TAX_LINE_DESCRIPTION, 'item-l') + ['Id' => 't9'],
             'not-a-line',
             $discount,
-            $subtotal,
-        ]);
+        ])
+        // QuickBooks sends the subtotal detail as {}; it must go back as {}, not [], or the update is refused.
+        ->and(json_encode(array_slice($merged['Line'], 6)))->toBe('[{"Amount":"20.00","DetailType":"SubTotalLineDetail","SubTotalLineDetail":{}}]');
+});
+
+test('withExistingLineIds sends an empty discount detail back as an object', function () {
+    $remote = ['Line' => [['Amount' => '1.00', 'DetailType' => 'DiscountLineDetail', 'DiscountLineDetail' => []]]];
+
+    $merged = (new InvoiceMapper())->withExistingLineIds(['Line' => []], $remote);
+
+    expect(json_encode($merged['Line']))->toBe('[{"Amount":"1.00","DetailType":"DiscountLineDetail","DiscountLineDetail":{}}]');
 });
 
 test('withExistingLineIds zeroes a cleared tax line and appends unpaired remote sales lines', function () {

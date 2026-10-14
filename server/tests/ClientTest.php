@@ -252,6 +252,40 @@ test('a 400 with fault code 610 on a read is treated as not found', function () 
     expect((new QuickBooksClient())->getInvoice(clientConnection(), '42'))->toBeNull();
 });
 
+test('a 400 with fault code 2010 is not found only on a customer read', function () {
+    // The live sandbox answers a GET for a customer id that does not exist this way, not with 610.
+    Http::fake([
+        'sandbox-quickbooks.api.intuit.com/*' => Http::response([
+            'Fault' => ['Error' => [['Message' => 'Request has invalid or unsupported property', 'Detail' => 'Request has invalid or unsupported property', 'code' => '2010']], 'type' => 'ValidationFault'],
+        ], 400),
+    ]);
+
+    expect((new QuickBooksClient())->getCustomer(clientConnection(), '999999999'))->toBeNull();
+
+    try {
+        (new QuickBooksClient())->getInvoice(clientConnection(), '999999999');
+        expect(false)->toBeTrue();
+    } catch (QuickBooksException $exception) {
+        expect($exception->faultCode)->toBe('2010');
+    }
+});
+
+test('a 400 with fault code 2010 on a write still throws', function () {
+    Http::fake([
+        'sandbox-quickbooks.api.intuit.com/*' => Http::response([
+            'Fault' => ['Error' => [['Message' => 'Request has invalid or unsupported property', 'Detail' => 'Request has invalid or unsupported property', 'code' => '2010']], 'type' => 'ValidationFault'],
+        ], 400),
+    ]);
+
+    try {
+        (new QuickBooksClient())->createCustomer(clientConnection(), ['DisplayName' => 'Ada']);
+        expect(false)->toBeTrue();
+    } catch (QuickBooksException $exception) {
+        expect($exception->faultCode)->toBe('2010')
+            ->and($exception->isNotFound())->toBeFalse();
+    }
+});
+
 test('any other 400 on a read still throws', function () {
     Http::fake([
         'sandbox-quickbooks.api.intuit.com/*' => Http::response([

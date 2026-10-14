@@ -1029,7 +1029,9 @@ class QuickBooksClient
         try {
             $response = $this->accounting($connection, 'get', $path);
         } catch (QuickBooksException $exception) {
-            if ($exception->isNotFound() === true) {
+            // QuickBooks answers a GET for a customer id that does not exist with 2010, not 610.
+            $missingCustomer = $key === 'Customer' && $exception->status === 400 && $exception->faultCode === '2010';
+            if ($exception->isNotFound() === true || $missingCustomer === true) {
                 return null;
             }
 
