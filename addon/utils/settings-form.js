@@ -64,19 +64,24 @@ function wholeNumber(value, minimum) {
 }
 
 // syncOnly is the organization screen: credentials are global and are not checked there.
-export function validateSettings({ auth, sync, secretSet, syncOnly = false }) {
+// A saved secret belongs to savedClientId, so a changed Client ID needs its own secret.
+export function validateSettings({ auth, sync, secretSet, savedClientId, syncOnly = false }) {
     const errors = {};
     if (!syncOnly) {
-        if (!String(auth?.client_id || '').trim()) {
-            errors.client_id = 'quickbooks.validation.client-id';
-        }
-
         const environment = auth?.environment || DEFAULT_ENVIRONMENT;
         if (!['sandbox', 'production'].includes(environment)) {
             errors.environment = 'quickbooks.validation.environment';
         }
 
-        if (!String(auth?.client_secret || '').trim() && !secretSet) {
+        const clientId = String(auth?.client_id || '').trim();
+        if (!clientId) {
+            errors.client_id = 'quickbooks.validation.client-id';
+        }
+
+        const savedClient = String(savedClientId || '').trim();
+        // A blank Client ID has its own error, so the saved secret is not flagged as well.
+        const secretKept = secretSet && (!savedClient || !clientId || clientId === savedClient);
+        if (!String(auth?.client_secret || '').trim() && !secretKept) {
             errors.client_secret = 'quickbooks.validation.client-secret';
         }
     }

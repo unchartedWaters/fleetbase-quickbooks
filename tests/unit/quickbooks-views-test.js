@@ -172,6 +172,21 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.deepEqual(disabledCustomer, {});
     });
 
+    test('a saved Client secret is kept only for the Client ID it was saved with', (assert) => {
+        const sync = { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 };
+        const check = (clientId, savedClientId, secret = '') =>
+            validateSettings({ auth: { client_id: clientId, environment: 'sandbox', client_secret: secret }, sync, secretSet: true, savedClientId }).client_secret;
+
+        assert.strictEqual(check('id', 'id'), undefined);
+        assert.strictEqual(check(' id ', 'id'), undefined);
+        assert.strictEqual(check('new-id', 'id'), 'quickbooks.validation.client-secret');
+        assert.strictEqual(check('new-id', 'id', 'new-secret'), undefined);
+        // A blank Client ID shows only its own error.
+        assert.strictEqual(check('', 'id'), undefined);
+        // A secret saved before any Client ID has no Client ID to belong to, so it is kept.
+        assert.strictEqual(check('new-id', ''), undefined);
+    });
+
     test('connection state treats a realm without reauth as connected', function (assert) {
         assert.strictEqual(connectionState(null), 'disconnected');
         assert.strictEqual(connectionState({ realm_id: '1', environment: 'sandbox' }), 'connected');

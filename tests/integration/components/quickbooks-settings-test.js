@@ -213,7 +213,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-credentials-guidance] a').hasClass('quickbooks-guidance-link');
         assert
             .dom('[data-test-credentials-guidance] li:nth-child(2)')
-            .hasText('Copy the Client ID and Client secret from Keys & credentials into the fields below, and choose the matching Environment.');
+            .hasText('Choose the Environment, then copy its Client ID and Client secret from Keys & credentials into the fields below.');
         assert.dom('[data-test-redirect-step]').hasText('Under Redirect URIs, paste the Public OAuth Redirect URL.');
         assert.dom('[data-test-webhook-step]').hasText('Paste the Public Webhook Receiver URL into Intuit and save the webhook verifier.');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
@@ -275,7 +275,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-field='client_id']").hasValue('org-id');
         assert.dom("[data-test-field='client_id']").isNotDisabled();
         assert.dom(this.element.querySelector("[data-test-field='client_id']").closest('.input-group').querySelector('label')).hasClass('required');
-        assert.dom(this.element.querySelector("[data-test-field='client_secret']").closest('.input-group').querySelector('label')).doesNotHaveClass('required');
+        assert.dom(this.element.querySelector("[data-test-field='client_secret']").closest('.input-group').querySelector('label')).hasClass('required');
         assert.dom("[data-test-sync-field='interval_minutes'] label").hasText('Sync frequency (minutes)');
         const syncFrequencyHelp = 'Minutes between scheduled syncs of waiting changes. 20 or more waiting changes start one sooner.';
         assert.dom("[data-test-sync-field='interval_minutes'] [data-test-field-help='interval_minutes']").hasText(syncFrequencyHelp);
@@ -338,6 +338,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-error='client_id']").exists();
         assert.dom("[data-test-error='client_id']").hasClass('dark:text-red-400');
         assert.dom("[data-test-error='redirect_uri']").doesNotExist();
+        assert.dom("[data-test-error='client_secret']").doesNotExist();
         assertFieldError(assert, "[data-test-field='client_id']", 'client_id');
         assert.dom("[data-test-field='environment']").doesNotHaveClass('border-red-500');
         assert.dom("[data-test-field='environment']").doesNotHaveAttribute('aria-describedby');
@@ -346,12 +347,12 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-save]', document).doesNotHaveClass('btn-is-loading');
         assert.strictEqual(this.saved, null);
 
-        await fillIn("[data-test-field='client_id']", 'changed-id');
+        await fillIn("[data-test-field='client_id']", 'org-id');
         await fillIn("[data-test-field='public_webhook_receiver_url']", 'https://edited.example/hooks');
         await fillIn("[data-test-field='public_oauth_redirect_url']", 'https://edited.example/oauth');
         await fillIn("[data-test-sync='customer_conflict']", 'quickbooks');
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.client_id, 'changed-id');
+        assert.strictEqual(this.saved.auth.client_id, 'org-id');
         assert.strictEqual(this.saved.auth.environment, 'sandbox');
         assert.strictEqual(this.saved.sync.enabled, undefined);
         assert.strictEqual(this.saved.sync.interval_minutes, 5);
@@ -438,6 +439,47 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
     });
 
+    test('environment comes first, then Client ID and Client secret next to each other', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', { interval_minutes: 5, retry_limit: 5, default_backoff_seconds: 30 });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
+
+        const order = [...this.element.querySelectorAll('[data-test-field]')].map((element) => element.dataset.testField);
+        assert.deepEqual(order.slice(0, 4), ['environment', 'client_id', 'client_secret', 'webhook_verifier']);
+    });
+
+    test('a changed Client ID needs its Client secret, and an unchanged one keeps the saved secret', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
+
+        assert.dom('[data-test-secret-set]').exists();
+        await fillIn("[data-test-field='client_id']", 'new-id');
+        assert.dom('[data-test-secret-set]').doesNotExist();
+        assert.dom("[data-test-field='client_secret']").hasAttribute('placeholder', '');
+        await click(saveButton());
+        assert.strictEqual(this.saved, null);
+        assert.dom("[data-test-error='client_secret']").hasText('Enter the Client secret shown next to the Client ID on Keys & credentials.');
+        assert.dom("[data-test-error='client_id']").doesNotExist();
+        assert.dom('[data-test-secret-set]').doesNotExist();
+
+        await fillIn("[data-test-field='client_id']", 'id');
+        await click(saveButton());
+        assert.strictEqual(this.saved.auth.client_id, 'id');
+        assert.strictEqual(this.saved.auth.client_secret, undefined);
+
+        this.set('saved', null);
+        await fillIn("[data-test-field='client_id']", 'new-id');
+        await fillIn("[data-test-field='client_secret']", 'new-secret');
+        await click(saveButton());
+        assert.strictEqual(this.saved.auth.client_id, 'new-id');
+        assert.strictEqual(this.saved.auth.client_secret, 'new-secret');
+    });
+
     test('save shows a success notification when settings are stored', async function (assert) {
         this.set('settings', {
             client_id: 'id',
@@ -453,7 +495,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         `);
 
         assert.dom(this.element.querySelector("[data-test-field='client_id']").closest('.input-group').querySelector('label')).hasClass('required');
-        assert.dom(this.element.querySelector("[data-test-field='client_secret']").closest('.input-group').querySelector('label')).doesNotHaveClass('required');
+        assert.dom(this.element.querySelector("[data-test-field='client_secret']").closest('.input-group').querySelector('label')).hasClass('required');
 
         await click(saveButton());
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
@@ -1000,9 +1042,9 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
 
-        const clientId = this.element.querySelector("[data-test-field='client_id']");
+        const environment = this.element.querySelector("[data-test-field='environment']");
         const scrolled = [];
-        clientId.scrollIntoView = (options) => scrolled.push(options);
+        environment.scrollIntoView = (options) => scrolled.push(options);
         await click(saveButton());
 
         assertFieldError(assert, "[data-test-field='client_id']", 'client_id');
@@ -1011,7 +1053,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assertFieldError(assert, "[data-test-sync='interval_minutes']", 'interval_minutes');
         assert.dom("[data-test-sync='retry_limit']").doesNotHaveClass('border-red-500');
         assert.dom("[data-test-sync='retry_limit']").doesNotHaveAttribute('aria-describedby');
-        assert.strictEqual(document.activeElement, clientId);
+        assert.strictEqual(document.activeElement, environment);
         assert.deepEqual(scrolled, [{ block: 'center' }]);
 
         await fillIn("[data-test-field='client_id']", 'id');

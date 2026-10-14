@@ -130,7 +130,7 @@ test('saving settings keeps stored auth fields that were not sent', function () 
     session(['company' => 'company-uuid']);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'     => 'old-id',
+        'client_id'     => 'kept-id',
         'client_secret' => 'kept-secret',
         'redirect_uri'  => 'https://example.com/callback',
         'environment'   => 'sandbox',
@@ -139,14 +139,14 @@ test('saving settings keeps stored auth fields that were not sent', function () 
     try {
         $response = securitySettingController($store)->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
-            'auth'  => ['client_id' => 'new-id', 'client_secret' => ''],
+            'auth'  => ['client_id' => 'kept-id', 'client_secret' => ''],
             'sync'  => qbSettings(['override' => true]),
         ]));
         $stored = $store->rows[SettingsKeys::adminAuth()];
 
         expect($response->getStatusCode())->toBe(200)
             ->and($response->getContent())->not->toContain('kept-secret')
-            ->and($stored['client_id'])->toBe('new-id')
+            ->and($stored['client_id'])->toBe('kept-id')
             ->and($stored['client_secret'])->not->toBe('kept-secret')
             ->and((new SecretCipher())->decrypt($stored['client_secret']))->toBe('kept-secret')
             ->and($stored['redirect_uri'])->toBe('https://example.com/callback')

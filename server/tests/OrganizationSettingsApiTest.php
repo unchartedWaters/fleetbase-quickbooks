@@ -401,13 +401,41 @@ test('the admin scope is for installation administrators only', function () {
         ->and($shown)->toHaveKeys(['sync', 'internal_webhook_receiver_url', 'public_oauth_redirect_url']);
 });
 
+test('the admin view shows only the last four characters of a long saved secret', function () {
+    $store      = orgApiStore();
+    $controller = orgApiController($store, new Authorizer(static fn (): bool => false));
+
+    $response = $controller->show(orgApiGet(['scope' => 'admin'], true));
+    $shown    = $response->getData(true);
+
+    expect($shown['auth']['client_secret_hint'])->toBe('alue')
+        ->and($shown['auth']['webhook_verifier_hint'])->toBe('alue')
+        ->and($response->getContent())->not->toContain('global-secret-value')
+        ->and($response->getContent())->not->toContain('global-verifier-value');
+
+    $store->rows[SettingsKeys::adminAuth()]['client_secret']    = (new SecretCipher())->encrypt('short-secret');
+    $store->rows[SettingsKeys::adminAuth()]['webhook_verifier'] = '';
+
+    $short = $controller->show(orgApiGet(['scope' => 'admin'], true))->getData(true);
+
+    // A short value would give away too much of itself, so it gets no hint.
+    expect($short['auth']['client_secret_set'])->toBeTrue()
+        ->and($short['auth']['client_secret_hint'])->toBeNull()
+        ->and($short['auth']['webhook_verifier_hint'])->toBeNull();
+
+    $operator = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
+    $company  = $operator->show(orgApiGet())->getContent();
+
+    expect($company)->not->toContain('_hint');
+});
+
 test('the admin scope saves the global rows and never an organization row', function () {
     $store      = orgApiStore();
     $controller = orgApiController($store, new Authorizer(static fn (): bool => false));
 
     $response = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'new-global-id'],
+        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => 'new-global-secret'],
         'sync'  => qbSettings(['interval_minutes' => 20]),
     ], true));
 
@@ -416,6 +444,59 @@ test('the admin scope saves the global rows and never an organization row', func
         ->and($store->rows[SettingsKeys::adminSync()]['interval_minutes'])->toBe(20)
         ->and(array_key_exists(SettingsKeys::companySync('company-a'), $store->rows))->toBeFalse()
         ->and(array_key_exists(SettingsKeys::companyAuth('company-a'), $store->rows))->toBeFalse();
+});
+
+test('a changed Client ID needs its Client secret, and an unchanged one keeps the saved secret', function () {
+    $store      = orgApiStore();
+    $before     = $store->rows;
+    $controller = orgApiController($store, new Authorizer(static fn (): bool => false));
+
+    $refused = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => ''],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($refused->getStatusCode())->toBe(422)
+        ->and(array_keys($refused->getData(true)['errors']))->toBe(['client_secret'])
+        ->and($store->rows)->toBe($before);
+
+    $kept = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => 'global-client-id', 'client_secret' => ''],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($kept->getStatusCode())->toBe(200)
+        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['client_secret']))
+        ->toBe('global-secret-value');
+
+    // A blank Client ID reports only its own error, not one for the saved secret.
+    $blank = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => '', 'client_secret' => ''],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($blank->getStatusCode())->toBe(422)
+        ->and(array_keys($blank->getData(true)['errors']))->toBe(['client_id']);
+});
+
+test('a secret saved before any Client ID is kept when a Client ID is first entered', function () {
+    $store = orgApiStore();
+    unset($store->rows[SettingsKeys::adminAuth()]['client_id']);
+    $controller = orgApiController($store, new Authorizer(static fn (): bool => false));
+
+    $saved = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => 'first-id', 'client_secret' => ''],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($saved->getStatusCode())->toBe(200)
+        ->and($store->rows[SettingsKeys::adminAuth()]['client_id'])->toBe('first-id')
+        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['client_secret']))
+        ->toBe('global-secret-value');
 });
 
 test('queueing diffs effective settings, so first saving values equal to the template queues nothing', function () {

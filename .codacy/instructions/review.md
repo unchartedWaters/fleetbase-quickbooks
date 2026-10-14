@@ -119,7 +119,9 @@
   `SettingsKeys::SYNC_FIELDS`.
 - Secrets: OAuth tokens and secrets are encrypted at rest and never returned.
   Client secret and webhook verifier surface only as
-  `client_secret_set`/`webhook_verifier_set`.
+  `client_secret_set`/`webhook_verifier_set`. A blank Client secret keeps the
+  saved one only while the Client ID is unchanged; a changed Client ID needs
+  its own secret, in the form and on the server.
 - Logging: context carries ids, exception class and code only, never tokens,
   payloads or DB error messages (they contain SQL and customer data). The
   `getMessage()` log in `FleetbaseDirectory` lease release is not a precedent.

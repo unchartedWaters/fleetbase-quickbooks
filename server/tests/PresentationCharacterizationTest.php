@@ -188,16 +188,20 @@ test('save merges a missing redirect from the stored row and recomputes an unusa
             'redirect_uri'  => 'https://8.8.8.8/callback',
             'environment'   => 'sandbox',
         ];
-        $kept = pctSave($controller, ['client_id' => 'new-id'], pctSync());
+        $kept = pctSave($controller, ['client_id' => 'stored-id'], pctSync());
 
         expect($kept->getStatusCode())->toBe(200)
             ->and($store->rows[SettingsKeys::adminAuth()]['redirect_uri'])->toBe('https://8.8.8.8/callback')
-            ->and($store->rows[SettingsKeys::adminAuth()]['client_id'])->toBe('new-id')
+            ->and($store->rows[SettingsKeys::adminAuth()]['client_id'])->toBe('stored-id')
             ->and($store->rows[SettingsKeys::adminAuth()]['environment'])->toBe('sandbox')
             ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['client_secret']))->toBe('stored-secret');
 
         $store->rows[SettingsKeys::adminAuth()]['redirect_uri']  = 'http://localhost:8000/callback';
-        $recomputed                                              = pctSave($controller, ['client_id' => 'new-id'], pctSync());
+        $recomputed                                              = pctSave(
+            $controller,
+            ['client_id' => 'stored-id'],
+            pctSync()
+        );
 
         expect($recomputed->getStatusCode())->toBe(200)
             ->and($store->rows[SettingsKeys::adminAuth()]['redirect_uri'])->toBe($callback);
