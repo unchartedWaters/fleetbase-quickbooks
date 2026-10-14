@@ -442,6 +442,33 @@ test('a changed Client ID needs its Client secret, and an unchanged one keeps th
     expect($kept->getStatusCode())->toBe(200)
         ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['client_secret']))
         ->toBe('global-secret-value');
+
+    // A blank Client ID reports only its own error, not one for the saved secret.
+    $blank = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => '', 'client_secret' => ''],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($blank->getStatusCode())->toBe(422)
+        ->and(array_keys($blank->getData(true)['errors']))->toBe(['client_id']);
+});
+
+test('a secret saved before any Client ID is kept when a Client ID is first entered', function () {
+    $store = orgApiStore();
+    unset($store->rows[SettingsKeys::adminAuth()]['client_id']);
+    $controller = orgApiController($store, new Authorizer(static fn (): bool => false));
+
+    $saved = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => 'first-id', 'client_secret' => ''],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($saved->getStatusCode())->toBe(200)
+        ->and($store->rows[SettingsKeys::adminAuth()]['client_id'])->toBe('first-id')
+        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['client_secret']))
+        ->toBe('global-secret-value');
 });
 
 test('queueing diffs effective settings, so first saving values equal to the template queues nothing', function () {
