@@ -18,14 +18,27 @@
 // Keep secrets out of stack traces however php.ini is set.
 ini_set('zend.exception_ignore_args', '1');
 
+use Fleetbase\Quickbooks\Http\Controllers\ConnectionController;
+use Fleetbase\Quickbooks\Services\ConnectionProbe;
+use Fleetbase\Quickbooks\Services\OAuthFlow;
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
+use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Services\TokenRefresher;
+use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
+use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\SecretCipher;
+use Fleetbase\Quickbooks\Support\SettingsKeys;
+use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WalletMapper;
+use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 
 const SANDBOX_VARIABLES = ['QB_SANDBOX_CLIENT_ID', 'QB_SANDBOX_CLIENT_SECRET', 'QB_SANDBOX_REFRESH_TOKEN', 'QB_SANDBOX_REALM_ID'];
 
@@ -63,9 +76,7 @@ function sandboxConnection(): array
 
             throw new RuntimeException($failure);
         }
-        if ($tokens['refresh_token'] !== '' && $tokens['refresh_token'] !== $stored) {
-            fwrite(STDERR, "Intuit rotated the sandbox refresh token. Update QB_SANDBOX_REFRESH_TOKEN from the OAuth 2.0 Playground before the old one stops working.\n");
-        }
+        sandboxNoteRotation($tokens['refresh_token']);
         $connection = [
             'company_uuid'  => 'sandbox-company',
             'realm_id'      => trim((string) getenv('QB_SANDBOX_REALM_ID')),
@@ -78,6 +89,16 @@ function sandboxConnection(): array
     }
 
     return $connection;
+}
+
+/**
+ * The suite cannot change QB_SANDBOX_REFRESH_TOKEN, so a rotated token is only reported, never shown.
+ */
+function sandboxNoteRotation(string $refreshToken): void
+{
+    if ($refreshToken !== '' && $refreshToken !== (string) getenv('QB_SANDBOX_REFRESH_TOKEN')) {
+        fwrite(STDERR, "Intuit rotated the sandbox refresh token. Update QB_SANDBOX_REFRESH_TOKEN from the OAuth 2.0 Playground before the old one stops working.\n");
+    }
 }
 
 /**
@@ -140,6 +161,92 @@ test('the refresh token yields an access token for the sandbox company', functio
     expect($connection['access_token'] !== '')->toBeTrue()
         ->and($connection['refresh_token'] !== '')->toBeTrue()
         ->and($connection['expires_in'])->toBeGreaterThan(0);
+})->group('sandbox');
+
+test('the app refreshes with the newest refresh token and keeps the one Intuit returns', function () {
+    // Uses the newest token this run holds, the way the app does, so the stored variable is not spent twice.
+    $connection = sandboxConnection();
+    $refreshed  = (new TokenRefresher(new QuickBooksClient()))->refresh($connection, sandboxCredentials());
+
+    expect($refreshed['needs_reauth'])->toBeFalse()
+        ->and($refreshed)->not->toHaveKey('refresh_error')
+        ->and((string) $refreshed['refresh_token'])->not->toBe('')
+        ->and((string) $refreshed['access_token'])->not->toBe('')
+        ->and($refreshed['token_expires_at'])->toBeGreaterThan(time());
+
+    sandboxNoteRotation((string) $refreshed['refresh_token']);
+
+    $info = (new QuickBooksClient())->companyInfo($refreshed);
+    expect((string) ($info['CompanyName'] ?? ''))->not->toBe('');
+})->group('sandbox');
+
+test('a refresh token Intuit does not recognize asks the user to reconnect', function () {
+    $connection = array_merge(sandboxConnection(), ['refresh_token' => 'not-a-real-refresh-token']);
+    $refreshed  = (new TokenRefresher(new QuickBooksClient()))->refresh($connection, sandboxCredentials());
+
+    expect($refreshed['needs_reauth'])->toBeTrue()
+        ->and($refreshed)->not->toHaveKey('refresh_error')
+        // Compared as booleans so a failure never prints a live token.
+        ->and($refreshed['access_token'] === $connection['access_token'])->toBeTrue()
+        ->and($refreshed['refresh_token'] === 'not-a-real-refresh-token')->toBeTrue();
+})->group('sandbox');
+
+test('starting a connection sends the browser to Intuit sign-in with the request intact', function () {
+    session(['company' => 'sandbox-company', 'user' => 'sandbox-user']);
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'                 => sandboxCredentials()['client_id'],
+        'client_secret'             => (new SecretCipher())->encrypt(sandboxCredentials()['client_secret']),
+        'environment'               => 'sandbox',
+        'public_oauth_redirect_url' => sandboxCredentials()['redirect_uri'],
+    ];
+    $controller = new ConnectionController(
+        new Authorizer(static fn () => true),
+        new OAuthFlow(new QuickBooksClient()),
+        new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
+        $store,
+        new ConnectionProbe(new QuickBooksClient())
+    );
+
+    try {
+        $started = $controller->start(Request::create('/oauth/start', 'POST', ['company_uuid' => 'sandbox-company']));
+    } finally {
+        session(['company' => null, 'user' => null]);
+    }
+
+    expect($started->getStatusCode())->toBe(200);
+    $url = (string) ($started->getData(true)['url'] ?? '');
+    parse_str((string) parse_url($url, PHP_URL_QUERY), $sent);
+
+    expect(parse_url($url, PHP_URL_HOST))->toBe('appcenter.intuit.com')
+        ->and($sent['client_id'] ?? null)->toBe(sandboxCredentials()['client_id'])
+        ->and($sent['redirect_uri'] ?? null)->toBe(sandboxCredentials()['redirect_uri'])
+        ->and($sent['scope'] ?? null)->toBe('com.intuit.quickbooks.accounting')
+        ->and($sent['response_type'] ?? null)->toBe('code')
+        ->and($sent['code_challenge'] ?? '')->not->toBe('')
+        ->and($sent['code_challenge_method'] ?? null)->toBe('S256')
+        ->and($sent['state'] ?? null)->toBe($started->getData(true)['state'] ?? '');
+
+    // Intuit checks the app only after someone signs in, so this follows the link as far as its sign-in page.
+    try {
+        $page = Http::withOptions(['allow_redirects' => ['max' => 10, 'track_redirects' => true]])->get($url);
+    } catch (Throwable $exception) {
+        // A new exception with no previous one, so the link and its client id stay out of the output.
+        throw new RuntimeException('Intuit sign-in could not be reached (' . get_class($exception) . '). Check that the environment allows appcenter.intuit.com and accounts.intuit.com.');
+    }
+    $history = $page->toPsrResponse()->getHeader('X-Guzzle-Redirect-History');
+    $landed  = (string) end($history);
+    parse_str((string) parse_url($landed, PHP_URL_QUERY), $signIn);
+    $back = (string) ($signIn['redirect_uri'] ?? '');
+    parse_str((string) parse_url($back, PHP_URL_QUERY), $resumed);
+
+    expect($page->status())->toBe(200)
+        ->and(parse_url($landed, PHP_URL_HOST))->toBe('accounts.intuit.com')
+        ->and(parse_url($landed, PHP_URL_PATH))->toBe('/app/sign-in')
+        ->and(parse_url($back, PHP_URL_HOST))->toBe('appcenter.intuit.com');
+    foreach (['client_id', 'redirect_uri', 'scope', 'response_type', 'state', 'code_challenge', 'code_challenge_method'] as $key) {
+        expect($resumed[$key] ?? null)->toBe($sent[$key] ?? null);
+    }
 })->group('sandbox');
 
 test('company info and preferences are read from the sandbox', function () {
