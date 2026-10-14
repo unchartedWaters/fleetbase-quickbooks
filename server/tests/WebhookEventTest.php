@@ -2048,7 +2048,7 @@ test('fleetbase primary does not queue a quickbooks copy and still queues the fl
     });
 });
 
-test('a signed webhook older than ten minutes is acknowledged without dispatching and a down replay store returns 503', function () {
+test('a signed webhook older than ten minutes is not applied and a down replay store returns 503', function () {
     $settings = qboChangedSettings();
     $staleAt  = (new DateTimeImmutable('@' . (time() - 700)))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:sO');
     $freshAt  = (new DateTimeImmutable('@' . time()))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:sO');
@@ -2088,7 +2088,7 @@ test('a signed webhook older than ten minutes is acknowledged without dispatchin
     });
 });
 
-test('the same signed webhook body is acknowledged without dispatching on replay and a bad signature is not cached', function () {
+test('a replayed signed webhook body is not applied again and a bad signature is not cached', function () {
     $settings = qboChangedSettings();
     $body     = '{"eventNotifications":[{"realmId":"realm-replay","dataChangeEvent":{"entities":[{"name":"Customer","id":"77","operation":"Create"}]}}]}';
     $other    = '{"eventNotifications":[{"realmId":"realm-replay","dataChangeEvent":{"entities":[{"name":"Customer","id":"78","operation":"Update"}]}}]}';

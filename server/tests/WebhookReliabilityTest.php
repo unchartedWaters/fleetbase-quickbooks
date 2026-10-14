@@ -161,7 +161,7 @@ test('a delivery that fails while processing is not remembered as a replay', fun
     });
 });
 
-test('a successfully processed delivery is acknowledged without dispatching again when the same body arrives', function () {
+test('a processed delivery is acknowledged and not dispatched again when the same body arrives', function () {
     $body       = whrBody();
     $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
 
@@ -206,7 +206,7 @@ test('an invalid signature is still 401 whether or not the realm has a connectio
     });
 });
 
-test('a delivery older than ten minutes is acknowledged without dispatching by default and one inside the window is applied', function () {
+test('a delivery older than ten minutes is acknowledged but not applied, one inside the window is', function () {
     $stale = whrBody(whrStamp(700));
     $fresh = whrBody(whrStamp(500));
 
@@ -387,7 +387,13 @@ test('a cloudevents delivery dispatches one event per in-scope entity on each co
         $response = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
 
         $summary = array_map(
-            fn (QuickBooksEntityChanged $event) => [$event->companyUuid, $event->realmId, $event->entityType, $event->quickbooksId, $event->operation],
+            fn (QuickBooksEntityChanged $event) => [
+                $event->companyUuid,
+                $event->realmId,
+                $event->entityType,
+                $event->quickbooksId,
+                $event->operation,
+            ],
             $seen
         );
         expect($response->getStatusCode())->toBe(200)
@@ -401,10 +407,11 @@ test('a cloudevents delivery dispatches one event per in-scope entity on each co
     });
 });
 
-test('a cloudevents delivery older than the maximum age is acknowledged without dispatching and a fresh one is applied', function () {
+test('a stale cloudevents delivery is acknowledged but not applied and a fresh one is applied', function () {
     $stale = json_encode([whrCloudEvent('qbo.customer.updated.v1', '77', 'realm-whr', whrStamp(700))]);
     // Intuit sends fractional seconds with up to nine digits.
-    $fresh = json_encode([whrCloudEvent('qbo.customer.updated.v1', '77', 'realm-whr', gmdate('Y-m-d\TH:i:s', time() - 30) . '.179851517Z')]);
+    $freshAt = gmdate('Y-m-d\TH:i:s', time() - 30) . '.179851517Z';
+    $fresh   = json_encode([whrCloudEvent('qbo.customer.updated.v1', '77', 'realm-whr', $freshAt)]);
 
     $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
     $previous   = config('quickbooks.webhook.max_age_seconds');
@@ -424,7 +431,7 @@ test('a cloudevents delivery older than the maximum age is acknowledged without 
     }
 });
 
-test('a cloudevents delivery needs a valid signature and a signed body with no known realm is acknowledged', function () {
+test('a cloudevents delivery needs a valid signature and a signed body with no realm is acknowledged', function () {
     $body    = json_encode([whrCloudEvent('qbo.customer.created.v1', '77', 'realm-whr')]);
     $noRealm = json_encode([['specversion' => '1.0', 'type' => 'qbo.customer.created.v1', 'intuitentityid' => '77']]);
 
