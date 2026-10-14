@@ -668,6 +668,14 @@ test('withExistingLineIds pairs kept ids first, fills the rest in order and keep
         ->and(json_encode(array_slice($merged['Line'], 6)))->toBe('[{"Amount":"20.00","DetailType":"SubTotalLineDetail","SubTotalLineDetail":{}}]');
 });
 
+test('withExistingLineIds sends an empty discount detail back as an object', function () {
+    $remote = ['Line' => [['Amount' => '1.00', 'DetailType' => 'DiscountLineDetail', 'DiscountLineDetail' => []]]];
+
+    $merged = (new InvoiceMapper())->withExistingLineIds(['Line' => []], $remote);
+
+    expect(json_encode($merged['Line']))->toBe('[{"Amount":"1.00","DetailType":"DiscountLineDetail","DiscountLineDetail":{}}]');
+});
+
 test('withExistingLineIds zeroes a cleared tax line and appends unpaired remote sales lines', function () {
     $mapper = new InvoiceMapper();
     $remote = ['Line' => [
