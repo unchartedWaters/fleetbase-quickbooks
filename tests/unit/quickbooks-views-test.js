@@ -172,7 +172,7 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.deepEqual(disabledCustomer, {});
     });
 
-    test('a saved Client secret is kept only for the Client ID it was saved with', function (assert) {
+    test('a saved Client secret is kept only for the Client ID it was saved with', (assert) => {
         const sync = { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 };
         const check = (clientId, savedClientId, secret = '') =>
             validateSettings({ auth: { client_id: clientId, environment: 'sandbox', client_secret: secret }, sync, secretSet: true, savedClientId }).client_secret;

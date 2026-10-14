@@ -197,7 +197,11 @@ test('save merges a missing redirect from the stored row and recomputes an unusa
             ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['client_secret']))->toBe('stored-secret');
 
         $store->rows[SettingsKeys::adminAuth()]['redirect_uri']  = 'http://localhost:8000/callback';
-        $recomputed                                              = pctSave($controller, ['client_id' => 'stored-id'], pctSync());
+        $recomputed                                              = pctSave(
+            $controller,
+            ['client_id' => 'stored-id'],
+            pctSync()
+        );
 
         expect($recomputed->getStatusCode())->toBe(200)
             ->and($store->rows[SettingsKeys::adminAuth()]['redirect_uri'])->toBe($callback);
