@@ -2,17 +2,24 @@
 
 /*
  * Live tests against a real QuickBooks sandbox company. They run only through
- * `composer test:sandbox`, which sets QB_SANDBOX_RUN=1, and need these variables:
- * QB_SANDBOX_CLIENT_ID, QB_SANDBOX_CLIENT_SECRET, QB_SANDBOX_REFRESH_TOKEN, QB_SANDBOX_REALM_ID.
+ * `composer test:sandbox`, which sets QB_SANDBOX_RUN=1, and always need QB_SANDBOX_REALM_ID.
  * Without QB_SANDBOX_RUN every test here is skipped, so the default suite and CI never call
  * Intuit. With it, a missing variable fails every test and names the variable, so an
  * incomplete setup never passes as all-skipped.
  *
+ * Tokens come one of two ways:
+ * - The environment signs requests to Intuit itself (a network secret on the cloud
+ *   environment). Leave the three token variables unset; the tests then send a placeholder
+ *   bearer token for the environment to replace.
+ * - QB_SANDBOX_CLIENT_ID, QB_SANDBOX_CLIENT_SECRET and QB_SANDBOX_REFRESH_TOKEN are all set,
+ *   and the tests refresh once per run. Intuit rotates refresh tokens about once a day; when
+ *   the stored one stops working the run fails with invalid_grant and a new one is needed
+ *   from Intuit's OAuth 2.0 Playground.
+ * Setting only some of the three token variables fails the run.
+ *
  * Each run creates its own customers, invoices, payments and accounts, named with a run tag,
- * in the sandbox company. Intuit rotates refresh tokens about once a day; when the stored one
- * stops working the run fails with invalid_grant and a new one is needed from Intuit's
- * OAuth 2.0 Playground. Tokens stay in memory and are never printed. The sandbox company must
- * not use automated sales tax, or the invoice totals asserted here will include tax.
+ * in the sandbox company. Tokens stay in memory and are never printed. The sandbox company
+ * must not use automated sales tax, or the invoice totals asserted here will include tax.
  */
 
 // Keep secrets out of stack traces however php.ini is set.
@@ -27,17 +34,41 @@ use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 
-const SANDBOX_VARIABLES = ['QB_SANDBOX_CLIENT_ID', 'QB_SANDBOX_CLIENT_SECRET', 'QB_SANDBOX_REFRESH_TOKEN', 'QB_SANDBOX_REALM_ID'];
+const SANDBOX_TOKEN_VARIABLES = ['QB_SANDBOX_CLIENT_ID', 'QB_SANDBOX_CLIENT_SECRET', 'QB_SANDBOX_REFRESH_TOKEN'];
+
+const SANDBOX_INJECTED_TOKEN = 'environment-signs-this-request';
 
 beforeEach(function () {
     if (getenv('QB_SANDBOX_RUN') !== '1') {
         $this->markTestSkipped('QuickBooks sandbox tests run only through composer test:sandbox.');
     }
-    $missing = array_values(array_filter(SANDBOX_VARIABLES, fn (string $name): bool => trim((string) getenv($name)) === ''));
+    $missing = sandboxUnset(['QB_SANDBOX_REALM_ID']);
+    $tokens  = sandboxUnset(SANDBOX_TOKEN_VARIABLES);
+    if ($tokens !== [] && count($tokens) < count(SANDBOX_TOKEN_VARIABLES)) {
+        $missing = array_merge($missing, $tokens);
+    }
     if ($missing !== []) {
         $this->fail('Missing sandbox variables: ' . implode(', ', $missing));
     }
 });
+
+/**
+ * @param array<int, string> $names
+ *
+ * @return array<int, string>
+ */
+function sandboxUnset(array $names): array
+{
+    return array_values(array_filter($names, fn (string $name): bool => trim((string) getenv($name)) === ''));
+}
+
+/**
+ * Whether the cloud environment signs requests to Intuit instead of this run holding tokens.
+ */
+function sandboxEnvironmentSigns(): bool
+{
+    return count(sandboxUnset(SANDBOX_TOKEN_VARIABLES)) === count(SANDBOX_TOKEN_VARIABLES);
+}
 
 /**
  * The sandbox connection, with an access token from one refresh per test run.
@@ -50,6 +81,17 @@ function sandboxConnection(): array
     static $failure    = null;
     if ($failure !== null) {
         throw new RuntimeException($failure);
+    }
+    if ($connection === null && sandboxEnvironmentSigns() === true) {
+        $connection = [
+            'company_uuid'  => 'sandbox-company',
+            'realm_id'      => trim((string) getenv('QB_SANDBOX_REALM_ID')),
+            'environment'   => 'sandbox',
+            'needs_reauth'  => false,
+            'access_token'  => SANDBOX_INJECTED_TOKEN,
+            'refresh_token' => '',
+            'expires_in'    => 3600,
+        ];
     }
     if ($connection === null) {
         $stored = (string) getenv('QB_SANDBOX_REFRESH_TOKEN');
@@ -135,6 +177,9 @@ function sandboxTag(): string
 }
 
 test('the refresh token yields an access token for the sandbox company', function () {
+    if (sandboxEnvironmentSigns() === true) {
+        $this->markTestSkipped('The environment signs requests to Intuit, so this run does not refresh tokens.');
+    }
     $connection = sandboxConnection();
 
     expect($connection['access_token'] !== '')->toBeTrue()
@@ -212,6 +257,9 @@ test('reads of missing records come back empty instead of failing', function () 
 })->group('sandbox');
 
 test('a refused access token is reported as unauthorized', function () {
+    if (sandboxEnvironmentSigns() === true) {
+        $this->markTestSkipped('The environment replaces the access token, so a refused one cannot be sent.');
+    }
     $connection = array_merge(sandboxConnection(), ['access_token' => 'not-a-real-token']);
 
     try {

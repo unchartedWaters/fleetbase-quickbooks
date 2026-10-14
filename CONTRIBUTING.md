@@ -118,18 +118,24 @@ composer test:types
 
 `composer test:sandbox` runs the live tests in
 `server/tests/SandboxLiveTest.php` against a real QuickBooks sandbox company.
-`composer test:unit` and CI leave them out. They need four environment
-variables: `QB_SANDBOX_CLIENT_ID` and `QB_SANDBOX_CLIENT_SECRET` from the
-sandbox app, and `QB_SANDBOX_REFRESH_TOKEN` and `QB_SANDBOX_REALM_ID` from
-Intuit's OAuth 2.0 Playground for that app. The run fails and names any that
-are missing. The machine must reach `oauth.platform.intuit.com` and
-`sandbox-quickbooks.api.intuit.com`.
+`composer test:unit` and CI leave them out. They always need
+`QB_SANDBOX_REALM_ID`, the sandbox company ID. Tokens come one of two ways:
+
+- The cloud environment signs requests to Intuit with a network secret. Leave
+  the token variables unset.
+- `QB_SANDBOX_CLIENT_ID` and `QB_SANDBOX_CLIENT_SECRET` from the sandbox app,
+  and `QB_SANDBOX_REFRESH_TOKEN` from Intuit's OAuth 2.0 Playground for that
+  app. Set all three.
+
+The run fails and names any variable that is missing. The machine must reach
+`oauth.platform.intuit.com` and `sandbox-quickbooks.api.intuit.com`.
 
 Each run adds its own customers, invoices, payments and accounts to the
 sandbox company, so an empty company works. Turn off automated sales tax there,
 or the invoice totals will not match. Intuit replaces the refresh token about
-once a day and the old one then stops working. When a run fails with
-`invalid_grant`, get a new refresh token from the Playground.
+once a day and the old one then stops working. When a run with the token
+variables fails with `invalid_grant`, get a new refresh token from the
+Playground.
 
 Front end: run `pnpm install --frozen-lockfile`, then `pnpm lint` and `pnpm test:ember`. Ember tests need Chrome. Skip them when Chrome is not installed.
 
