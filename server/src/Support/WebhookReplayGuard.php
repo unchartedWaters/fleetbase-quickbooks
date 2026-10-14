@@ -5,7 +5,7 @@ namespace Fleetbase\Quickbooks\Support;
 use Illuminate\Support\Facades\Cache;
 
 /**
- * Age and replay checks for signed QuickBooks webhook deliveries. A delivery whose entity
+ * Age and replay checks for signed QuickBooks webhook deliveries. A delivery whose change
  * timestamps are older than quickbooks.webhook.max_age_seconds is stale. A body is remembered
  * briefly while it is processed and for the maximum age once it was processed, so a repeat is
  * refused while a failed or interrupted delivery can still be retried by Intuit.
@@ -65,53 +65,24 @@ class WebhookReplayGuard
     }
 
     /**
-     * True when a signed entity timestamp is older than the maximum delivery age.
+     * True when a signed change timestamp (CloudEvents time, or the older lastUpdated) is
+     * older than the maximum delivery age.
      * A body with no timestamp is left to the replay store.
      */
     public function isStale(string $rawBody, int $now): bool
     {
         $maxAge = $this->maxAgeSeconds();
-        foreach ($this->entities($rawBody) as $entity) {
-            if (array_key_exists('lastUpdated', $entity) === false) {
+        foreach (WebhookPayload::changes($rawBody) as $change) {
+            if (array_key_exists('time', $change) === false) {
                 continue;
             }
-            $timestamp = $this->timestamp($entity['lastUpdated']);
+            $timestamp = $this->timestamp($change['time']);
             if ($timestamp === null || ($now - $timestamp) > $maxAge) {
                 return true;
             }
         }
 
         return false;
-    }
-
-    /**
-     * Every entity array in the delivery's notifications.
-     *
-     * @return array<int, array<mixed>>
-     */
-    private function entities(string $rawBody): array
-    {
-        $decoded       = json_decode($rawBody, true);
-        $notifications = is_array($decoded) === true ? ($decoded['eventNotifications'] ?? null) : null;
-        if (is_array($notifications) === false) {
-            return [];
-        }
-
-        $found = [];
-        foreach ($notifications as $notification) {
-            $change   = is_array($notification) === true ? ($notification['dataChangeEvent'] ?? null) : null;
-            $entities = is_array($change) === true ? ($change['entities'] ?? null) : null;
-            if (is_array($entities) === false) {
-                continue;
-            }
-            foreach ($entities as $entity) {
-                if (is_array($entity) === true) {
-                    $found[] = $entity;
-                }
-            }
-        }
-
-        return $found;
     }
 
     private function key(string $rawBody): string

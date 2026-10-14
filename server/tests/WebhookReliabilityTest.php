@@ -343,3 +343,106 @@ test('a delivery that is still being processed is refused as a replay', function
             ->and($seen)->toHaveCount(1);
     });
 });
+
+/**
+ * One event in Intuit's CloudEvents webhook format.
+ *
+ * @return array<string, mixed>
+ */
+function whrCloudEvent(string $type, string $entityId, string $realmId, ?string $time = null): array
+{
+    $event = [
+        'specversion'     => '1.0',
+        'id'              => 'event-' . $type . '-' . $entityId,
+        'source'          => 'intuit.test',
+        'type'            => $type,
+        'datacontenttype' => 'application/json',
+        'intuitentityid'  => $entityId,
+        'intuitaccountid' => $realmId,
+    ];
+    if ($time !== null) {
+        $event['time'] = $time;
+    }
+
+    return $event;
+}
+
+test('a cloudevents delivery dispatches one event per in-scope entity on each connected realm', function () {
+    $body = json_encode([
+        whrCloudEvent('qbo.customer.created.v1', '55', 'realm-whr'),
+        whrCloudEvent('qbo.vendor.created.v1', '9', 'realm-whr'),
+        whrCloudEvent('qbo.invoice.updated.v1', '8', 'realm-whr'),
+        whrCloudEvent('qbo.invoice.emailed.v1', '8', 'realm-whr'),
+        whrCloudEvent('qbo.payment.created.v1', '3', 'realm-unknown'),
+        whrCloudEvent('qbo.account.merged.v1', '7', 'realm-whr'),
+        whrCloudEvent('qbo.payment.voided.v1', '4', 'realm-two'),
+        whrCloudEvent('qbo.invoice.deleted.v1', '6', 'realm-two'),
+    ]);
+    $controller = whrController(whrSettings(), whrStore(), [
+        'realm-whr' => 'company-a',
+        'realm-two' => 'company-b',
+    ]);
+
+    whrWithEvents(function (array &$seen) use ($controller, $body) {
+        $response = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+
+        $summary = array_map(
+            fn (QuickBooksEntityChanged $event) => [$event->companyUuid, $event->realmId, $event->entityType, $event->quickbooksId, $event->operation],
+            $seen
+        );
+        expect($response->getStatusCode())->toBe(200)
+            ->and($summary)->toBe([
+                ['company-a', 'realm-whr', 'customer', '55', 'create'],
+                ['company-a', 'realm-whr', 'invoice', '8', 'update'],
+                ['company-a', 'realm-whr', 'wallet', '7', 'update'],
+                ['company-b', 'realm-two', 'payment', '4', 'delete'],
+                ['company-b', 'realm-two', 'invoice', '6', 'delete'],
+            ]);
+    });
+});
+
+test('a cloudevents delivery older than the maximum age is rejected and a fresh one is accepted', function () {
+    $stale = json_encode([whrCloudEvent('qbo.customer.updated.v1', '77', 'realm-whr', whrStamp(700))]);
+    // Intuit sends fractional seconds with up to nine digits.
+    $fresh = json_encode([whrCloudEvent('qbo.customer.updated.v1', '77', 'realm-whr', gmdate('Y-m-d\TH:i:s', time() - 30) . '.179851517Z')]);
+
+    $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+    $previous   = config('quickbooks.webhook.max_age_seconds');
+    config()->set('quickbooks.webhook.max_age_seconds', null);
+
+    try {
+        whrWithEvents(function (array &$seen) use ($controller, $stale, $fresh) {
+            $old     = $controller->handle(whrRequest($stale, whrSign($stale, 'verifier-token')));
+            $current = $controller->handle(whrRequest($fresh, whrSign($fresh, 'verifier-token')));
+
+            expect($old->getStatusCode())->toBe(401)
+                ->and($current->getStatusCode())->toBe(200)
+                ->and($seen)->toHaveCount(1);
+        });
+    } finally {
+        config()->set('quickbooks.webhook.max_age_seconds', $previous);
+    }
+});
+
+test('a cloudevents delivery needs a valid signature and a signed body with no known realm is acknowledged', function () {
+    $body    = json_encode([whrCloudEvent('qbo.customer.created.v1', '77', 'realm-whr')]);
+    $noRealm = json_encode([['specversion' => '1.0', 'type' => 'qbo.customer.created.v1', 'intuitentityid' => '77']]);
+
+    whrWithEvents(function (array &$seen) use ($body, $noRealm) {
+        $connected = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+        $missing   = whrController(whrSettings(), whrStore(), []);
+
+        $badSignature = $connected->handle(whrRequest($body, whrSign($body, 'other-token')));
+        $unsigned     = $connected->handle(whrRequest($body, null));
+        $realmless    = $connected->handle(whrRequest($noRealm, whrSign($noRealm, 'verifier-token')));
+        $empty        = $connected->handle(whrRequest('[]', whrSign('[]', 'verifier-token')));
+        $notConnected = $missing->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+
+        expect($badSignature->getStatusCode())->toBe(401)
+            ->and($unsigned->getStatusCode())->toBe(401)
+            ->and($realmless->getStatusCode())->toBe(200)
+            ->and($empty->getStatusCode())->toBe(200)
+            ->and($notConnected->getStatusCode())->toBe(200)
+            ->and($seen)->toBe([]);
+    });
+});
