@@ -122,8 +122,13 @@ composer test:types
 variables: `QB_SANDBOX_CLIENT_ID` and `QB_SANDBOX_CLIENT_SECRET` from the
 sandbox app, and `QB_SANDBOX_REFRESH_TOKEN` and `QB_SANDBOX_REALM_ID` from
 Intuit's OAuth 2.0 Playground for that app. The run fails and names any that
-are missing. The machine must reach `oauth.platform.intuit.com` and
-`sandbox-quickbooks.api.intuit.com`.
+are missing. The machine must reach `oauth.platform.intuit.com`,
+`sandbox-quickbooks.api.intuit.com`, `appcenter.intuit.com` and
+`accounts.intuit.com`.
+
+The connect test follows the link the Connect button opens as far as Intuit's
+sign-in page. Intuit checks the app's keys and redirect URL only after someone
+signs in, so the test cannot catch a wrong key or an unregistered redirect URL.
 
 Each run adds its own customers, invoices, payments and accounts to the
 sandbox company, so an empty company works. Turn off automated sales tax there,
