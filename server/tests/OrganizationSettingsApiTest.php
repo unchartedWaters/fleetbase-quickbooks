@@ -435,7 +435,11 @@ test('the admin scope saves the global rows and never an organization row', func
 
     $response = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => 'new-global-secret', 'webhook_verifier' => 'new-global-verifier'],
+        'auth'  => [
+            'client_id'        => 'new-global-id',
+            'client_secret'    => 'new-global-secret',
+            'webhook_verifier' => 'new-global-verifier',
+        ],
         'sync'  => qbSettings(['interval_minutes' => 20]),
     ], true));
 
@@ -500,7 +504,11 @@ test('a changed Client ID needs its webhook verifier too, when one is saved', fu
 
     $saved = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => 'new-secret-value', 'webhook_verifier' => 'new-verifier-value'],
+        'auth'  => [
+            'client_id'        => 'new-global-id',
+            'client_secret'    => 'new-secret-value',
+            'webhook_verifier' => 'new-verifier-value',
+        ],
         'sync'  => qbSettings(),
     ], true));
 
@@ -533,7 +541,10 @@ test('a changed Client ID needs its webhook verifier too, when one is saved', fu
 test('a changed Client ID needs no webhook verifier when none is saved', function () {
     $store                                                      = orgApiStore();
     $store->rows[SettingsKeys::adminAuth()]['webhook_verifier'] = '';
-    $controller                                                 = orgApiController($store, new Authorizer(static fn (): bool => false));
+    $controller                                                 = orgApiController(
+        $store,
+        new Authorizer(static fn (): bool => false)
+    );
 
     $saved = $controller->save(orgApiPost([
         'scope' => 'admin',
