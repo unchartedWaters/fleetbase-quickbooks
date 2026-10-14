@@ -572,6 +572,35 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', '', 'no mask for a verifier that belongs to another Client ID');
     });
 
+    test('the webhook verifier is hidden and shown independently of the Client secret', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true, webhook_verifier_set: true });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
+
+        const type = (key) => document.querySelector(`[data-test-field='${key}']`).getAttribute('type');
+        const toggle = (key) => click(`[data-test-toggle-visibility='${key}']`);
+        await fillIn("[data-test-field='client_secret']", 'typed-secret');
+        await fillIn("[data-test-field='webhook_verifier']", 'typed-verifier');
+        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['text', 'text']);
+
+        await toggle('webhook_verifier');
+        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['text', 'password'], 'hiding the verifier leaves the secret shown');
+
+        await toggle('client_secret');
+        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['password', 'password']);
+
+        await toggle('webhook_verifier');
+        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['password', 'text'], 'showing the verifier leaves the secret hidden');
+
+        await toggle('client_secret');
+        await toggle('client_secret');
+        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['password', 'text'], 'toggling the secret leaves the verifier shown');
+        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-pressed', 'true');
+        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-pressed', 'false');
+        assert.dom("[data-test-field='webhook_verifier']").hasValue('typed-verifier');
+    });
+
     test('save shows a success notification when settings are stored', async function (assert) {
         this.set('settings', {
             client_id: 'id',
