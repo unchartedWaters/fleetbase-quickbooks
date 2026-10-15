@@ -12,6 +12,8 @@ test('the setup guide names every environment variable the server reads', functi
     $names = DocsSource::environmentVariables();
 
     expect($names)->toContain('QUICKBOOKS_ENVIRONMENT')
+        ->and($names)->toContain('QUICKBOOKS_SKIP_MIGRATE')
+        ->and($names)->not->toContain('PACKAGE')
         ->and(DocsSource::missing('docs/SETUP.md', $names))->toBe([]);
 });
 
@@ -30,7 +32,9 @@ test('the setup guide names every config key that is not a stored sync setting',
     expect($needed)->toContain('`quickbooks.sync.claim_seconds`')
         ->and($needed)->toContain('`quickbooks.retention.pending_days`')
         ->and($needed)->not->toContain('`quickbooks.environment`')
-        ->and(DocsSource::missing('docs/SETUP.md', $needed))->toBe([]);
+        ->and(DocsSource::missing('docs/SETUP.md', $needed))->toBe([])
+        // The guide also says how to set them, since the package does not publish its config file.
+        ->and(DocsSource::missing('docs/SETUP.md', ['`config/quickbooks.php`']))->toBe([]);
 });
 
 test('the setup guide gives the full path of every route Intuit calls without a session', function () {
