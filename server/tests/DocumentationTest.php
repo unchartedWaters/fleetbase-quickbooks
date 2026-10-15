@@ -103,10 +103,10 @@ test('the setup guide names every console command and the install commands', fun
     foreach ((new ReflectionClass(QuickbooksServiceProvider::class))->getDefaultProperties()['commands'] as $command) {
         $needed[] = '`' . strtok((string) (new ReflectionClass($command))->getDefaultProperties()['signature'], ' ') . '`';
     }
-    if ((glob(docsRoot() . '/server/migrations/*.php') ?: []) !== []) {
+    if (count(glob(docsRoot() . '/server/migrations/*.php') ?: []) > 0) {
         $needed[] = '`php artisan migrate`';
     }
-    if ((glob(docsRoot() . '/server/src/Auth/Schemas/*.php') ?: []) !== []) {
+    if (count(glob(docsRoot() . '/server/src/Auth/Schemas/*.php') ?: []) > 0) {
         $needed[] = '`php artisan fleetbase:create-permissions`';
     }
 
