@@ -45,12 +45,14 @@ class MarkdownLinks
      */
     public static function anchors(string $file): array
     {
-        preg_match_all('/^ {0,3}#{1,6}[ \t]+(.+?)[ \t#]*$/m', self::withoutFences((string) file_get_contents($file)), $headings);
+        $source = self::withoutFences((string) file_get_contents($file));
+        preg_match_all('/^ {0,3}#{1,6}[ \t]+(.+?)[ \t#]*$/m', $source, $headings);
         $anchors = [];
         $seen    = [];
         foreach ($headings[1] as $heading) {
             $text        = (string) preg_replace('/\[([^\]]*)\]\([^)]*\)/', '$1', $heading);
-            $slug        = str_replace(' ', '-', (string) preg_replace('/[^\p{L}\p{N}\p{Mn} _-]/u', '', mb_strtolower($text)));
+            $kept        = (string) preg_replace('/[^\p{L}\p{N}\p{Mn} _-]/u', '', mb_strtolower($text));
+            $slug        = str_replace(' ', '-', $kept);
             $anchors[]   = isset($seen[$slug]) === true ? $slug . '-' . $seen[$slug] : $slug;
             $seen[$slug] = ($seen[$slug] ?? 0) + 1;
         }
@@ -70,7 +72,11 @@ class MarkdownLinks
             return 'missing file ' . $target;
         }
 
-        if ($anchor !== '' && str_ends_with(strtolower($resolved), '.md') === true && in_array(strtolower($anchor), self::anchors($resolved), true) === false) {
+        if ($anchor === '' || str_ends_with(strtolower($resolved), '.md') === false) {
+            return null;
+        }
+
+        if (in_array(strtolower($anchor), self::anchors($resolved), true) === false) {
             return 'missing heading ' . $target;
         }
 
