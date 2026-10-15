@@ -12,6 +12,13 @@ class DocsSource
         return dirname(__DIR__, 3) . ($file === '' ? '' : '/' . $file);
     }
 
+    public static function hasFiles(string $pattern): bool
+    {
+        $files = glob(self::path($pattern));
+
+        return is_array($files) === true && count($files) > 0;
+    }
+
     public static function text(string $file): string
     {
         return (string) file_get_contents(self::path($file));

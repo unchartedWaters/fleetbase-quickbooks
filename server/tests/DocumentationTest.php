@@ -53,10 +53,10 @@ test('the setup guide names every console command and the install commands', fun
         $signature = (string) (new ReflectionClass($command))->getDefaultProperties()['signature'];
         $needed[]  = '`' . strtok($signature, ' ') . '`';
     }
-    if (count(glob(DocsSource::path('server/migrations/*.php')) ?: []) > 0) {
+    if (DocsSource::hasFiles('server/migrations/*.php') === true) {
         $needed[] = '`php artisan migrate`';
     }
-    if (count(glob(DocsSource::path('server/src/Auth/Schemas/*.php')) ?: []) > 0) {
+    if (DocsSource::hasFiles('server/src/Auth/Schemas/*.php') === true) {
         $needed[] = '`php artisan fleetbase:create-permissions`';
     }
 
