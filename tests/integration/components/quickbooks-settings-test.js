@@ -204,13 +204,19 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-credentials-guidance]').hasClass('ui-input-info-block');
         assert.dom('[data-test-credentials-guidance]').includesText('Getting your QuickBooks credentials');
         assert.dom('[data-test-credentials-guidance]').includesText('Sign in at developer.intuit.com and open Keys & credentials.');
-        assert.dom('[data-test-credentials-guidance] a').hasAttribute('href', 'https://developer.intuit.com');
-        assert.dom('[data-test-credentials-guidance] a').hasAttribute('target', '_blank');
-        assert.dom('[data-test-credentials-guidance] a').hasAttribute('rel', 'noopener noreferrer');
-        assert.dom('[data-test-credentials-guidance] a').hasText('developer.intuit.com');
-        assert.dom('[data-test-credentials-guidance] a').hasClass('underline');
+        assert.dom('[data-test-keys-step] a').hasAttribute('href', 'https://developer.intuit.com');
+        assert.dom('[data-test-keys-step] a').hasAttribute('target', '_blank');
+        assert.dom('[data-test-keys-step] a').hasAttribute('rel', 'noopener noreferrer');
+        assert.dom('[data-test-keys-step] a').hasText('developer.intuit.com');
+        assert.dom('[data-test-keys-step] a').hasClass('underline');
         // The theme's link color would make a link unreadable on the dark info block, so it takes the block's text color.
-        assert.dom('[data-test-credentials-guidance] a').hasClass('quickbooks-guidance-link');
+        assert.dom('[data-test-keys-step] a').hasClass('quickbooks-guidance-link');
+        assert.dom('[data-test-create-app-step]').hasText("No QuickBooks app yet? Start with Intuit's guide to creating a QuickBooks app.");
+        assert.dom('[data-test-create-app-step] a').hasAttribute('href', 'https://developer.intuit.com/app/developer/qbo/docs/get-started/start-developing-your-app');
+        assert.dom('[data-test-create-app-step] a').hasAttribute('target', '_blank');
+        assert.dom('[data-test-create-app-step] a').hasAttribute('rel', 'noopener noreferrer');
+        assert.dom('[data-test-create-app-step] a').hasClass('quickbooks-guidance-link');
+        assert.dom('[data-test-create-app-step] a').hasClass('underline');
         assert
             .dom('[data-test-credentials-guidance] li:nth-child(2)')
             .hasText('Choose the Environment, then copy its Client ID and Client secret from Keys & credentials into the fields below.');
