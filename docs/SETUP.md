@@ -29,6 +29,49 @@ Unknown QuickBooks invoices are not imported. An invoice is synced from QuickBoo
 
 Money is stored as integer minor units. QuickBooks major-unit amounts are converted with `Amounts::toMinorUnits` before they are saved, and a PHP float is rejected. Unit price on an invoice line is an integer minor-unit value. When it is sent to QuickBooks it is formatted as a decimal string, not a float.
 
+## Create a QuickBooks app
+
+The extension connects through an app that you create on the Intuit Developer
+Portal. One app serves the whole install. Intuit's own guides cover each step:
+
+1. Create a developer account and an app: [Create and start developing your
+   app][intuit-create-app]. When Intuit asks for scopes, choose Accounting.
+   Connect asks only for `com.intuit.quickbooks.accounting` ([Learn about
+   scopes][intuit-scopes]), so Payments is not needed. Intuit creates a sandbox
+   company to test with: [Create and test with a sandbox
+   company][intuit-sandbox].
+2. On Admin → QuickBooks → Settings, set Public OAuth Redirect URL and Public
+   Webhook Receiver URL to your public https host and save. A blank field shows
+   the internal URL, which Intuit cannot reach on a private install. Intuit
+   allows `localhost` for sandbox apps, but this extension requires a public
+   https URL (see [Developing locally](#developing-locally)).
+3. Copy the Client ID and Client secret from the app's Keys & credentials:
+   [Get the Client ID and Client Secret][intuit-keys]. Development keys work
+   only with sandbox companies; choose Sandbox for Environment. Production keys
+   need Intuit's production App Details and an approved App Assessment
+   Questionnaire: [Publish your app][intuit-publish]. Listing on the QuickBooks
+   App Store is not required. Environment defaults to Production; after
+   switching it, each organization connects again.
+4. Add the Public OAuth Redirect URL to the app's Redirect URIs, under
+   Development or Production to match the keys: [Set app redirect
+   URIs][intuit-redirect].
+5. If any type syncs From QuickBooks or Both, open Webhooks under the same
+   Development or Production tab, enter the Public Webhook Receiver URL as the
+   Endpoint URL, choose the entities (see [Webhooks](#webhooks)), and copy that
+   tab's Verifier Token into **Webhook verifier token**: [Configure
+   webhooks][intuit-webhooks].
+6. Save the keys on Admin → QuickBooks → Settings. The API also needs
+   `CONSOLE_HOST` (see [Connect and disconnect](#connect-and-disconnect)), and
+   webhooks need running queue workers.
+
+[intuit-create-app]: https://developer.intuit.com/app/developer/qbo/docs/get-started/start-developing-your-app
+[intuit-sandbox]: https://developer.intuit.com/app/developer/qbo/docs/develop/sandboxes/manage-your-sandboxes
+[intuit-keys]: https://developer.intuit.com/app/developer/qbo/docs/get-started/get-client-id-and-client-secret
+[intuit-publish]: https://developer.intuit.com/app/developer/qbo/docs/go-live/publish-app
+[intuit-redirect]: https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/set-redirect-uri
+[intuit-webhooks]: https://developer.intuit.com/app/developer/qbo/docs/develop/webhooks/configure-webhooks
+[intuit-scopes]: https://developer.intuit.com/app/developer/qbo/docs/learn/scopes
+
 ## Settings
 
 Global settings are Client ID, Client secret, Redirect URI, environment, webhook
@@ -43,7 +86,7 @@ organizations. Credentials, the webhook verifier, environment, and URLs are
 global and admin-only.
 
 ![Admin, QuickBooks, Settings: the template note, then Authentication
-with Environment, Client ID, saved secret and verifier, and the webhook and
+with Environment, Client ID, masked secret and verifier, and the webhook and
 OAuth URLs][admin-settings]
 
 Organization settings → QuickBooks Setup uses `scope=company` (the default). It
@@ -106,7 +149,13 @@ blank. Environment may fall back to `QUICKBOOKS_ENVIRONMENT`, which defaults to
 
 Client ID and Client secret are required together. A blank Client secret keeps
 the saved one only while the Client ID stays the same. A changed Client ID needs
-its own Client secret, or the save is refused.
+its own Client secret, or the save is refused. If a webhook verifier is saved,
+a changed Client ID also needs that app's Verifier Token from its Webhooks page.
+
+A saved Client secret or webhook verifier shows as dots and its last four
+characters, such as `••••••••a1b2`; the full value is never sent back. A value
+shorter than 16 characters shows only dots. A key you type or paste stays
+visible until you save; the eye button next to the field hides or shows it.
 
 The settings form does not ask for a batch size and does not send `batch_size`.
 
@@ -295,9 +344,49 @@ and Sync now][dashboard-widget]
 
 ## Webhooks
 
-There is one public receiver: `POST /quickbooks/int/v1/webhooks`. It is outside the session and does not use CSRF. Intuit signs the raw body. Intuit's `intuit-signature` is checked against the install-wide system webhook verifier. If that verifier is not saved, the webhook is rejected with HTTP 401. An organization verifier and `QUICKBOOKS_WEBHOOK_VERIFIER` are not accepted. Unsigned posts are HTTP 401 and do not dispatch events. A valid signature returns HTTP 200 after events are dispatched. A valid signature for a realm with no connection (for example after a disconnect) also returns HTTP 200 and does nothing. If processing fails, the request returns a 5xx and Intuit's retry of the same body is processed. While a delivery is being processed its body is remembered for 120 seconds only, so a worker that dies mid-request does not block Intuit's retry; once processed, an exact repeat is HTTP 401 for `quickbooks.webhook.max_age_seconds` (default 600). A delivery whose entity `lastUpdated` is older than that age is rejected with HTTP 401, whether or not its realm is connected. The request itself does not call QuickBooks: payment lookups run in the queued job `ResolveWebhookPayments`, so queue workers must be running.
+There is one public receiver: `POST /quickbooks/int/v1/webhooks`. It is outside
+the session and does not use CSRF. Intuit signs the raw body. Intuit's
+`intuit-signature` is checked against the install-wide system webhook verifier.
+If that verifier is not saved, the webhook is rejected with HTTP 401. An
+organization verifier and `QUICKBOOKS_WEBHOOK_VERIFIER` are not accepted.
+Unsigned posts are HTTP 401 and do not dispatch events. A valid signature
+returns HTTP 200 after events are dispatched. A valid signature for a realm with
+no connection (for example after a disconnect), or for a body that names no
+realm, also returns HTTP 200 and does nothing. The signature is checked before
+the body is parsed. If processing fails, the request returns a 5xx and Intuit's
+retry of the same body is processed. While a delivery is being processed its
+body is remembered for 120 seconds only, so a worker that dies mid-request does
+not block Intuit's retry; a repeat that arrives during processing gets HTTP 409,
+so Intuit retries it. Once processed, an exact repeat is answered HTTP 200 and
+not applied again for `quickbooks.webhook.max_age_seconds` (default 600). A
+delivery whose event `time` (or `lastUpdated` in the older format) is older than
+that age is answered HTTP 200 and not applied, whether or not its realm is
+connected, and a warning is logged. These answer 200 because Intuit retries any
+other answer for days and may hold back later deliveries until the first one is
+acknowledged. The request itself does not call QuickBooks: payment lookups run
+in the queued job `ResolveWebhookPayments`, so queue workers must be running.
 
-After the signature check, each notification is applied to Fleetbase organizations connected to that `realmId`. Direction `outbound` or `off` does not sync that type. The event is still dispatched. This also applies to deletes and voids. A delete or void in QuickBooks changes Fleetbase (void the invoice, remove the customer, close and remove the wallet, unmark the paid invoice for a deleted payment) only when the type is enabled, the direction takes inbound, and QuickBooks is primary (or the direction is `inbound`). Otherwise Fleetbase keeps its record and the deletion is ignored. A wallet whose balance is not zero is never closed from QuickBooks, whether by a delete or by an account that is made inactive: it stays open and linked, its pending sync is finished so the deleted account is not reactivated at once, and a warning is logged with its id. A later change to that wallet in Fleetbase pushes it again and makes the account active. Move the balance out first if the wallet should close.
+Intuit sends a JSON array of CloudEvents. Each event's `type` names the entity
+and event (for example `qbo.invoice.updated.v1`), `intuitentityid` is the
+QuickBooks id, and `intuitaccountid` is the realm. Events `created`, `updated`,
+and `deleted` are applied, `voided` is treated as a delete if Intuit sends it,
+and `merged` is treated as an update of the surviving record (the merged-away id
+in `data.deletedid` is not handled). Other events, such as `emailed`, and other
+entities are ignored. The older `eventNotifications` body is still accepted.
+
+After the signature check, each event is applied to Fleetbase organizations
+connected to its realm. Direction `outbound` or `off` does not sync that type.
+The event is still dispatched. This also applies to deletes and voids. A delete
+or void in QuickBooks changes Fleetbase (void the invoice, remove the customer,
+close and remove the wallet, unmark the paid invoice for a deleted payment) only
+when the type is enabled, the direction takes inbound, and QuickBooks is primary
+(or the direction is `inbound`). Otherwise Fleetbase keeps its record and the
+deletion is ignored. A wallet whose balance is not zero is never closed from
+QuickBooks, whether by a delete or by an account that is made inactive: it stays
+open and linked, its pending sync is finished so the deleted account is not
+reactivated at once, and a warning is logged with its id. A later change to that
+wallet in Fleetbase pushes it again and makes the account active. Move the
+balance out first if the wallet should close.
 
 Internal Webhook Receiver URL is computed from the configured origin and is not stored. Public Webhook Receiver URL is saved on the install-wide settings row when you set it. When that field is blank, the value shown is the internal URL. Paste the public URL into the Intuit Endpoint URL. The internal path stays `/quickbooks/int/v1/webhooks`. Saving settings does not register the URL with Intuit.
 

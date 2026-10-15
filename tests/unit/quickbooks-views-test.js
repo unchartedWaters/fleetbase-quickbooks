@@ -66,7 +66,8 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.deepEqual(fieldState({ client_id: 'company-id' }, 'client_id'), { value: 'company-id' });
         assert.deepEqual(fieldState({}, 'client_id'), { value: '' });
 
-        assert.deepEqual(secretPresentation({ client_secret_set: true }), { value: '', set: true });
+        assert.deepEqual(secretPresentation({ client_secret_set: true }), { value: '', set: true, hint: '' });
+        assert.deepEqual(secretPresentation({ client_secret_set: true, client_secret_hint: 'a1b2' }), { value: '', set: true, hint: 'a1b2' });
 
         const withoutAuth = validateSettings({ auth: {}, sync: {}, secretSet: false });
         assert.ok(withoutAuth.client_id);
@@ -184,6 +185,26 @@ module('Unit | QuickBooks views', function (hooks) {
         // A blank Client ID shows only its own error.
         assert.strictEqual(check('', 'id'), undefined);
         // A secret saved before any Client ID has no Client ID to belong to, so it is kept.
+        assert.strictEqual(check('new-id', ''), undefined);
+    });
+
+    test('a saved webhook verifier is kept only for the Client ID it was saved with', (assert) => {
+        const sync = { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 };
+        const check = (clientId, savedClientId, verifier = '', verifierSet = true) =>
+            validateSettings({
+                auth: { client_id: clientId, environment: 'sandbox', client_secret: 'secret', webhook_verifier: verifier },
+                sync,
+                secretSet: true,
+                verifierSet,
+                savedClientId,
+            }).webhook_verifier;
+
+        assert.strictEqual(check('id', 'id'), undefined);
+        assert.strictEqual(check('new-id', 'id'), 'quickbooks.validation.webhook-verifier');
+        assert.strictEqual(check('new-id', 'id', 'new-verifier'), undefined);
+        // With no saved verifier, webhooks stay optional.
+        assert.strictEqual(check('new-id', 'id', '', false), undefined);
+        assert.strictEqual(check('', 'id'), undefined);
         assert.strictEqual(check('new-id', ''), undefined);
     });
 

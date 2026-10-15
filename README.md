@@ -18,6 +18,11 @@ From the Fleetbase directory, install the Fleetbase QuickBooks extension from th
 flb install @unchartedwaters/quickbooks-engine
 ```
 
+You also need a QuickBooks app on the Intuit Developer Portal. Intuit's guide is
+[Create and start developing your app](https://developer.intuit.com/app/developer/qbo/docs/get-started/start-developing-your-app),
+and [docs/SETUP.md](docs/SETUP.md#create-a-quickbooks-app) lists the app
+settings the extension needs.
+
 As an installation administrator, open Admin → QuickBooks → Settings and save
 the Intuit Client ID and Client secret. Then open Organization settings →
 QuickBooks Setup and connect.

@@ -5,7 +5,7 @@ namespace Fleetbase\Quickbooks\Support;
 use Illuminate\Support\Facades\Cache;
 
 /**
- * Age and replay checks for signed QuickBooks webhook deliveries. A delivery whose entity
+ * Age and replay checks for signed QuickBooks webhook deliveries. A delivery whose change
  * timestamps are older than quickbooks.webhook.max_age_seconds is stale. A body is remembered
  * briefly while it is processed and for the maximum age once it was processed, so a repeat is
  * refused while a failed or interrupted delivery can still be retried by Intuit.
@@ -24,18 +24,26 @@ class WebhookReplayGuard
     private const PROCESSING_SECONDS = 120;
 
     /**
-     * ok the first time this raw body is seen. replay when the same bytes were
-     * stored already. unavailable when the replay store cannot be written.
+     * ok the first time this raw body is seen. done when the same bytes were processed
+     * already, processing while another request is still working on them. unavailable
+     * when the replay store cannot be written.
      */
     public function remember(string $rawBody): string
     {
         try {
-            $added = Cache::add($this->key($rawBody), 1, self::PROCESSING_SECONDS);
+            $added = Cache::add($this->key($rawBody), 'processing', self::PROCESSING_SECONDS);
         } catch (\Throwable) {
             return 'unavailable';
         }
+        if ($added === true) {
+            return 'ok';
+        }
 
-        return $added === true ? 'ok' : 'replay';
+        try {
+            return Cache::get($this->key($rawBody)) === 'done' ? 'done' : 'processing';
+        } catch (\Throwable) {
+            return 'processing';
+        }
     }
 
     /**
@@ -45,7 +53,7 @@ class WebhookReplayGuard
     public function keep(string $rawBody): void
     {
         try {
-            Cache::put($this->key($rawBody), 1, $this->maxAgeSeconds());
+            Cache::put($this->key($rawBody), 'done', $this->maxAgeSeconds());
         } catch (\Throwable) {
             // The work is queued; only the replay window is shorter.
         }
@@ -65,53 +73,24 @@ class WebhookReplayGuard
     }
 
     /**
-     * True when a signed entity timestamp is older than the maximum delivery age.
+     * True when a signed change timestamp (CloudEvents time, or the older lastUpdated) is
+     * older than the maximum delivery age.
      * A body with no timestamp is left to the replay store.
      */
     public function isStale(string $rawBody, int $now): bool
     {
         $maxAge = $this->maxAgeSeconds();
-        foreach ($this->entities($rawBody) as $entity) {
-            if (array_key_exists('lastUpdated', $entity) === false) {
+        foreach (WebhookPayload::changes($rawBody) as $change) {
+            if (array_key_exists('time', $change) === false) {
                 continue;
             }
-            $timestamp = $this->timestamp($entity['lastUpdated']);
+            $timestamp = $this->timestamp($change['time']);
             if ($timestamp === null || ($now - $timestamp) > $maxAge) {
                 return true;
             }
         }
 
         return false;
-    }
-
-    /**
-     * Every entity array in the delivery's notifications.
-     *
-     * @return array<int, array<mixed>>
-     */
-    private function entities(string $rawBody): array
-    {
-        $decoded       = json_decode($rawBody, true);
-        $notifications = is_array($decoded) === true ? ($decoded['eventNotifications'] ?? null) : null;
-        if (is_array($notifications) === false) {
-            return [];
-        }
-
-        $found = [];
-        foreach ($notifications as $notification) {
-            $change   = is_array($notification) === true ? ($notification['dataChangeEvent'] ?? null) : null;
-            $entities = is_array($change) === true ? ($change['entities'] ?? null) : null;
-            if (is_array($entities) === false) {
-                continue;
-            }
-            foreach ($entities as $entity) {
-                if (is_array($entity) === true) {
-                    $found[] = $entity;
-                }
-            }
-        }
-
-        return $found;
     }
 
     private function key(string $rawBody): string

@@ -8,6 +8,8 @@ use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
+use Fleetbase\Quickbooks\Support\SafeLog;
+use Fleetbase\Quickbooks\Support\WebhookPayload;
 use Fleetbase\Quickbooks\Support\WebhookReplayGuard;
 use Fleetbase\Quickbooks\Support\WebhookSignature;
 use Illuminate\Http\JsonResponse;
@@ -55,10 +57,14 @@ class WebhookController extends Controller
         if ($matched === null) {
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
-        // HMAC already matched. A captured body is not accepted once its
-        // entity timestamps are older than the configured maximum age.
+        // HMAC already matched. A captured body is not applied once its change
+        // timestamps are older than the configured maximum age. It is still answered
+        // with 200: Intuit retries anything else for days and may hold back later
+        // deliveries until this one is acknowledged.
         if ($this->replay->isStale($rawBody, time()) === true) {
-            return response()->json(['message' => 'Invalid signature.'], 401);
+            SafeLog::warning('QuickBooks webhook delivery is older than the maximum age and was not applied.');
+
+            return response()->json(['ok' => true]);
         }
 
         // The signature is genuine, but no organization is connected to these realms
@@ -68,12 +74,16 @@ class WebhookController extends Controller
             return response()->json(['ok' => true]);
         }
 
-        // Remember this exact body for a short time and reject a second delivery
-        // of it. The check does not replace the signature test. A down replay
-        // store is not an invalid signature.
+        // Remember this exact body and do not apply it twice. A body that was already
+        // processed is acknowledged. One that another request is still processing is
+        // answered 409 so Intuit retries it, in case that request fails. The check does
+        // not replace the signature test. A down replay store is not an invalid signature.
         $replay = $this->replay->remember($rawBody);
-        if ($replay === 'replay') {
-            return response()->json(['message' => 'Invalid signature.'], 401);
+        if ($replay === 'done') {
+            return response()->json(['ok' => true]);
+        }
+        if ($replay === 'processing') {
+            return response()->json(['message' => 'Webhook delivery is still being processed.'], 409);
         }
         if ($replay === 'unavailable') {
             return response()->json(['message' => 'Webhook delivery could not be recorded.'], 503);
@@ -97,25 +107,20 @@ class WebhookController extends Controller
 
     /**
      * Connections on the delivery's realms when the intuit-signature header matches. Null when
-     * the header is missing, the body names no realm, or the signature does not match.
+     * the header is missing or the signature does not match. The signature is checked before
+     * the body is parsed, and a signed body that names no realm has no connections.
      *
      * @return array<string, array<int, Connection>>|null
      */
     private function verifiedConnections(Request $request, string $rawBody): ?array
     {
-        // Realm ids choose which connections to apply.
         $signature = $request->headers->get('intuit-signature');
         $signature = is_string($signature) === true ? trim($signature) : '';
         if ($signature === '') {
             return null;
         }
 
-        $realmIds = $this->realmIds($rawBody);
-        if ($realmIds === []) {
-            return null;
-        }
-
-        return $this->matchingConnections($rawBody, $signature, $realmIds);
+        return $this->matchingConnections($rawBody, $signature);
     }
 
     /**
@@ -125,41 +130,26 @@ class WebhookController extends Controller
      */
     private function realmIds(string $rawBody): array
     {
-        $decoded = json_decode($rawBody, true);
-        if (is_array($decoded) === false) {
-            return [];
-        }
-        $notifications = $decoded['eventNotifications'] ?? null;
-        if (is_array($notifications) === false) {
-            return [];
-        }
-
         $ids = [];
-        foreach ($notifications as $notification) {
-            if (is_array($notification) === false) {
-                continue;
+        foreach (WebhookPayload::realms($rawBody) as $realm) {
+            $realmId = $this->stringId($realm);
+            if ($realmId !== null) {
+                $ids[$realmId] = true;
             }
-            $realmId = $this->stringId($notification['realmId'] ?? null);
-            if ($realmId === null || in_array($realmId, $ids, true) === true) {
-                continue;
-            }
-            $ids[] = $realmId;
         }
 
-        return $ids;
+        return array_map('strval', array_keys($ids));
     }
 
     /**
-     * Connections on the named realms when the install-wide verifier matches.
+     * Connections on the body's realms when the install-wide verifier matches.
      * An organization verifier is not consulted, and a second organization's
      * secret is not a fallback. Null means the signature did not match. An empty
-     * array means it matched but no organization is connected to those realms.
-     *
-     * @param array<int, string> $realmIds
+     * array means it matched but the body names no realm with a connection.
      *
      * @return array<string, array<int, Connection>>|null
      */
-    private function matchingConnections(string $rawBody, string $signature, array $realmIds): ?array
+    private function matchingConnections(string $rawBody, string $signature): ?array
     {
         $verifiers = $this->settings->webhookVerifiersFor($this->store, '');
         if ($this->signatures->accepts($rawBody, $signature, $verifiers) === false) {
@@ -167,7 +157,7 @@ class WebhookController extends Controller
         }
 
         $matched = [];
-        foreach ($realmIds as $realmId) {
+        foreach ($this->realmIds($rawBody) as $realmId) {
             foreach ($this->connectionsForRealm($realmId) as $connection) {
                 if ((string) $connection->company_uuid === '') {
                     continue;
@@ -184,39 +174,17 @@ class WebhookController extends Controller
      */
     private function entitiesByRealm(string $rawBody): array
     {
-        $decoded = json_decode($rawBody, true);
-        if (is_array($decoded) === false) {
-            return [];
-        }
-        $notifications = $decoded['eventNotifications'] ?? null;
-        if (is_array($notifications) === false) {
-            return [];
-        }
-
         $groups = [];
-        foreach ($notifications as $notification) {
-            if (is_array($notification) === false) {
-                continue;
-            }
-            $realmId = $this->stringId($notification['realmId'] ?? null);
+        foreach (WebhookPayload::changes($rawBody) as $change) {
+            $realmId = $this->stringId($change['realm']);
             if ($realmId === null) {
                 continue;
             }
-            $change   = $notification['dataChangeEvent'] ?? null;
-            $entities = is_array($change) === true ? ($change['entities'] ?? null) : null;
-            if (is_array($entities) === false) {
+            $mapped = $this->mapEntity($change);
+            if ($mapped === null) {
                 continue;
             }
-            foreach ($entities as $entity) {
-                if (is_array($entity) === false) {
-                    continue;
-                }
-                $mapped = $this->mapEntity($entity);
-                if ($mapped === null) {
-                    continue;
-                }
-                $this->addEntity($groups, $realmId, $mapped);
-            }
+            $this->addEntity($groups, $realmId, $mapped);
         }
 
         return $groups;

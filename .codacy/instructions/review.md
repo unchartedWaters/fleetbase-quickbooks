@@ -19,7 +19,10 @@
   the same row twice.
 - Inbound: `WebhookController` checks the Intuit signature against the
   install-wide verifier, then stale/replay checks, then queues work for every
-  organization connected to that realm.
+  organization connected to that realm. `WebhookPayload` reads Intuit's
+  CloudEvents array and the older `eventNotifications` body. Only a missing or
+  bad signature gets 401; a signed stale or already processed delivery gets 200
+  and is not applied, because Intuit retries any other answer for days.
 - Global settings (installation admin only, `scope=admin`) are credentials and
   a sync template. An organization (`scope=company`, rows marked
   `scope: organization`) has its own complete copy of the sync options, made
@@ -122,9 +125,12 @@
   `SettingsKeys::SYNC_FIELDS`.
 - Secrets: OAuth tokens and secrets are encrypted at rest and never returned.
   Client secret and webhook verifier surface only as
-  `client_secret_set`/`webhook_verifier_set`. A blank Client secret keeps the
+  `client_secret_set`/`webhook_verifier_set`, plus `client_secret_hint`/
+  `webhook_verifier_hint` (last four characters of a value 16 or longer) on
+  the admin view only. A blank Client secret keeps the
   saved one only while the Client ID is unchanged; a changed Client ID needs
-  its own secret, in the form and on the server.
+  its own secret, in the form and on the server. The same holds for a saved
+  webhook verifier; with none saved, the verifier stays optional.
 - Logging: context carries ids, exception class and code only, never tokens,
   payloads or DB error messages (they contain SQL and customer data). The
   `getMessage()` log in `FleetbaseDirectory` lease release is not a precedent.

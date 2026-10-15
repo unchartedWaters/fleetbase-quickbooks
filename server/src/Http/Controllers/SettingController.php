@@ -83,6 +83,9 @@ class SettingController extends QuickbooksController
         [$mergedAuth, $incomingAuth, $mergedSync] = $this->mergeSavedSettings($existingAuth, $incomingAuth, $existingSync, $incomingSync);
 
         $errors = (new SettingsValidator())->errors($mergedAuth, $mergedSync);
+        if (self::verifierNeeded($existingAuth, $incomingAuth, $mergedAuth) === true) {
+            $errors['webhook_verifier'] = 'quickbooks.validation.webhook-verifier';
+        }
         if ($errors !== []) {
             return $this->invalid($errors);
         }
@@ -183,10 +186,8 @@ class SettingController extends QuickbooksController
         $secret = $incomingAuth['client_secret'] ?? '';
         if (is_string($secret) === false || $secret === '') {
             // A saved secret belongs to the saved Client ID, so a changed Client ID needs its own secret.
-            $savedClient                 = trim((string) ($existingAuth['client_id'] ?? ''));
-            $client                      = trim((string) ($mergedAuth['client_id'] ?? ''));
-            $sameClient                  = $savedClient === '' || $client === '' || $client === $savedClient;
-            $mergedAuth['client_secret'] = $sameClient === true ? ($existingAuth['client_secret'] ?? '') : '';
+            $kept                        = self::clientChanged($existingAuth, $mergedAuth) === false;
+            $mergedAuth['client_secret'] = $kept === true ? ($existingAuth['client_secret'] ?? '') : '';
         } else {
             $mergedAuth['client_secret'] = $secret;
         }
@@ -197,6 +198,38 @@ class SettingController extends QuickbooksController
         $this->normalizeDirections($mergedSync);
 
         return [$mergedAuth, $incomingAuth, $mergedSync];
+    }
+
+    /**
+     * True when both Client IDs are filled in and differ. A blank one has its own error.
+     *
+     * @param array<string, mixed> $existingAuth
+     * @param array<string, mixed> $mergedAuth
+     */
+    private static function clientChanged(array $existingAuth, array $mergedAuth): bool
+    {
+        $savedClient = trim((string) ($existingAuth['client_id'] ?? ''));
+        $client      = trim((string) ($mergedAuth['client_id'] ?? ''));
+
+        return $savedClient !== '' && $client !== '' && $client !== $savedClient;
+    }
+
+    /**
+     * A saved webhook verifier belongs to the saved Client ID's app, so a changed Client ID needs its own verifier.
+     * With no saved verifier, webhooks stay optional.
+     *
+     * @param array<string, mixed> $existingAuth
+     * @param array<string, mixed> $incomingAuth
+     * @param array<string, mixed> $mergedAuth
+     */
+    private static function verifierNeeded(array $existingAuth, array $incomingAuth, array $mergedAuth): bool
+    {
+        $saved    = $existingAuth['webhook_verifier'] ?? '';
+        $incoming = $incomingAuth['webhook_verifier'] ?? '';
+        $hasSaved = is_string($saved) === true && $saved !== '';
+        $hasNew   = is_string($incoming) === true && trim($incoming) !== '';
+
+        return $hasSaved === true && $hasNew === false && self::clientChanged($existingAuth, $mergedAuth) === true;
     }
 
     public function show(Request $request): JsonResponse
