@@ -435,7 +435,11 @@ test('the admin scope saves the global rows and never an organization row', func
 
     $response = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => 'new-global-secret'],
+        'auth'  => [
+            'client_id'        => 'new-global-id',
+            'client_secret'    => 'new-global-secret',
+            'webhook_verifier' => 'new-global-verifier',
+        ],
         'sync'  => qbSettings(['interval_minutes' => 20]),
     ], true));
 
@@ -458,7 +462,7 @@ test('a changed Client ID needs its Client secret, and an unchanged one keeps th
     ], true));
 
     expect($refused->getStatusCode())->toBe(422)
-        ->and(array_keys($refused->getData(true)['errors']))->toBe(['client_secret'])
+        ->and(array_keys($refused->getData(true)['errors']))->toBe(['client_secret', 'webhook_verifier'])
         ->and($store->rows)->toBe($before);
 
     $kept = $controller->save(orgApiPost([
@@ -480,6 +484,76 @@ test('a changed Client ID needs its Client secret, and an unchanged one keeps th
 
     expect($blank->getStatusCode())->toBe(422)
         ->and(array_keys($blank->getData(true)['errors']))->toBe(['client_id']);
+});
+
+test('a changed Client ID needs its webhook verifier too, when one is saved', function () {
+    $store      = orgApiStore();
+    $before     = $store->rows;
+    $controller = orgApiController($store, new Authorizer(static fn (): bool => false));
+
+    $refused = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => 'new-secret-value', 'webhook_verifier' => ''],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($refused->getStatusCode())->toBe(422)
+        ->and(array_keys($refused->getData(true)['errors']))->toBe(['webhook_verifier'])
+        ->and($refused->getData(true)['errors']['webhook_verifier'])->toContain('Verifier')
+        ->and($store->rows)->toBe($before);
+
+    $saved = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => [
+            'client_id'        => 'new-global-id',
+            'client_secret'    => 'new-secret-value',
+            'webhook_verifier' => 'new-verifier-value',
+        ],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($saved->getStatusCode())->toBe(200)
+        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['webhook_verifier']))
+        ->toBe('new-verifier-value');
+
+    // A verifier of spaces is blank.
+    $spaces = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => 'third-id', 'client_secret' => 'third-secret-value', 'webhook_verifier' => '   '],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($spaces->getStatusCode())->toBe(422)
+        ->and(array_keys($spaces->getData(true)['errors']))->toBe(['webhook_verifier']);
+
+    // An unchanged Client ID keeps the saved verifier.
+    $kept = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => '', 'webhook_verifier' => ''],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($kept->getStatusCode())->toBe(200)
+        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['webhook_verifier']))
+        ->toBe('new-verifier-value');
+});
+
+test('a changed Client ID needs no webhook verifier when none is saved', function () {
+    $store                                                      = orgApiStore();
+    $store->rows[SettingsKeys::adminAuth()]['webhook_verifier'] = '';
+    $controller                                                 = orgApiController(
+        $store,
+        new Authorizer(static fn (): bool => false)
+    );
+
+    $saved = $controller->save(orgApiPost([
+        'scope' => 'admin',
+        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => 'new-secret-value'],
+        'sync'  => qbSettings(),
+    ], true));
+
+    expect($saved->getStatusCode())->toBe(200)
+        ->and($store->rows[SettingsKeys::adminAuth()])->not->toHaveKey('webhook_verifier');
 });
 
 test('a secret saved before any Client ID is kept when a Client ID is first entered', function () {

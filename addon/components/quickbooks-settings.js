@@ -151,6 +151,12 @@ export default class QuickbooksSettingsComponent extends Component {
     @tracked draft = {};
     @tracked errors = {};
     @tracked saving = false;
+    // A typed secret shows in plain text until it is saved or hidden with the eye button.
+    @tracked visibleSecrets = {};
+
+    secretVisible(key) {
+        return this.visibleSecrets[key] ?? true;
+    }
 
     // The organization screen edits sync options only: no credentials, no URLs.
     get syncOnly() {
@@ -272,20 +278,27 @@ export default class QuickbooksSettingsComponent extends Component {
 
     get secret() {
         const presentation = secretPresentation(this.args.settings);
-        // A saved secret belongs to the saved Client ID, so it is not offered for a changed one.
+        // A saved secret or verifier belongs to the saved Client ID, so neither is offered for a changed one.
         const savedClientId = String(this.args.settings?.client_id || '').trim();
         const clientId = String(this.present('client_id').value || '').trim();
-        if (savedClientId && clientId && clientId !== savedClientId) {
+        const clientChanged = Boolean(savedClientId && clientId && clientId !== savedClientId);
+        if (clientChanged) {
             presentation.set = false;
         }
         if (this.draft.client_secret !== null && this.draft.client_secret !== undefined) {
             presentation.value = this.draft.client_secret;
         }
+        // An empty field has nothing to show, so its button offers Show.
+        presentation.visible = Boolean(presentation.value) && this.secretVisible('client_secret');
         // The fields template already receives this object, so the verifier rides along with the same blank-keeps-saved shape.
         presentation.verifier = webhookVerifierPresentation(this.args.settings);
+        if (clientChanged) {
+            presentation.verifier.set = false;
+        }
         if (this.draft.webhook_verifier !== null && this.draft.webhook_verifier !== undefined) {
             presentation.verifier.value = this.draft.webhook_verifier;
         }
+        presentation.verifier.visible = Boolean(presentation.verifier.value) && this.secretVisible('webhook_verifier');
 
         return presentation;
     }
@@ -359,6 +372,11 @@ export default class QuickbooksSettingsComponent extends Component {
             min: MINIMUMS[key] ?? null,
             ...state,
         };
+    }
+
+    @action
+    toggleVisibility(key) {
+        this.visibleSecrets = { ...this.visibleSecrets, [key]: !this.secretVisible(key) };
     }
 
     @action
@@ -450,9 +468,10 @@ export default class QuickbooksSettingsComponent extends Component {
         });
 
         const errors = validateSettings({
-            auth: auth && { ...auth, client_secret: this.draft.client_secret || '' },
+            auth: auth && { ...auth, client_secret: this.draft.client_secret || '', webhook_verifier: this.draft.webhook_verifier || '' },
             sync,
             secretSet: Boolean(this.args.settings?.client_secret_set),
+            verifierSet: Boolean(this.args.settings?.webhook_verifier_set),
             savedClientId: this.args.settings?.client_id ?? '',
             syncOnly: this.syncOnly,
         });
@@ -472,6 +491,7 @@ export default class QuickbooksSettingsComponent extends Component {
             this.notifications.success(this.intl.t('quickbooks.settings.saved'));
             this.primaryTouched.clear();
             this.draft = {};
+            this.visibleSecrets = {};
             this.errors = {};
         } catch (error) {
             const serverErrors = error?.errors;

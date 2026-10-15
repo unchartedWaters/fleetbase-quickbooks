@@ -480,6 +480,127 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.strictEqual(this.saved.auth.client_secret, 'new-secret');
     });
 
+    test('a changed Client ID needs its webhook verifier when one is saved', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true, webhook_verifier_set: true, webhook_verifier_hint: 'v1v2' });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
+
+        assert.dom('[data-test-verifier-set]').exists();
+        await fillIn("[data-test-field='client_id']", 'new-id');
+        await fillIn("[data-test-field='client_secret']", 'new-secret');
+        assert.dom('[data-test-verifier-set]').doesNotExist();
+        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', '');
+        await click(saveButton());
+        assert.strictEqual(this.saved, null);
+        assert.dom("[data-test-error='webhook_verifier']").hasText('Enter the Verifier Token from developer.intuit.com → your app → Webhooks. A new Client ID needs its own token.');
+
+        await fillIn("[data-test-field='webhook_verifier']", 'new-verifier');
+        await click(saveButton());
+        assert.strictEqual(this.saved.auth.client_id, 'new-id');
+        assert.strictEqual(this.saved.auth.webhook_verifier, 'new-verifier');
+    });
+
+    test('a changed Client ID needs no webhook verifier when none is saved', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true, webhook_verifier_set: false });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
+
+        await fillIn("[data-test-field='client_id']", 'new-id');
+        await fillIn("[data-test-field='client_secret']", 'new-secret');
+        await click(saveButton());
+        assert.strictEqual(this.saved.auth.client_id, 'new-id');
+        assert.strictEqual(this.saved.auth.webhook_verifier, undefined);
+    });
+
+    test('a saved secret shows as dots and its last four characters, and a typed key stays visible until saved or hidden', async function (assert) {
+        this.set('settings', {
+            client_id: 'id',
+            environment: 'sandbox',
+            client_secret_set: true,
+            client_secret_hint: 'a1b2',
+            webhook_verifier_set: true,
+            webhook_verifier_hint: null,
+        });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+        this.set('onSave', () => Promise.resolve());
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
+
+        assert.dom("[data-test-field='client_secret']").hasValue('');
+        assert.dom("[data-test-field='client_secret']").hasAttribute('placeholder', '••••••••a1b2');
+        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', '••••••••');
+        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-label', 'Show Client secret', 'an empty field offers Show');
+
+        await fillIn("[data-test-field='client_secret']", 'new-secret');
+        assert.dom("[data-test-field='client_secret']").hasAttribute('type', 'text', 'a typed key stays visible until it is saved');
+        assert.dom("[data-test-field='client_secret']").hasAttribute('spellcheck', 'false');
+        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-label', 'Hide Client secret');
+        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-pressed', 'true');
+
+        await click("[data-test-toggle-visibility='client_secret']");
+        assert.dom("[data-test-field='client_secret']").hasAttribute('type', 'password');
+        assert.dom("[data-test-field='client_secret']").hasValue('new-secret');
+        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-label', 'Show Client secret');
+        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-pressed', 'false');
+        await fillIn("[data-test-field='webhook_verifier']", 'new-verifier');
+        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('type', 'text', 'each field has its own toggle');
+        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-label', 'Hide Webhook verifier token');
+        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-pressed', 'true');
+        await click("[data-test-toggle-visibility='webhook_verifier']");
+        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('type', 'password');
+        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-label', 'Show Webhook verifier token');
+        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-pressed', 'false');
+        assert.dom("[data-test-field='client_secret']").hasAttribute('type', 'password', 'hiding the verifier leaves the secret as it was');
+        await click("[data-test-toggle-visibility='webhook_verifier']");
+        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('type', 'text');
+        assert.dom("[data-test-field='webhook_verifier']").hasValue('new-verifier');
+
+        await click(saveButton());
+        assert.dom("[data-test-field='client_secret']").hasValue('');
+        assert.dom("[data-test-field='client_secret']").hasAttribute('placeholder', '••••••••a1b2');
+        await fillIn("[data-test-field='client_secret']", 'next-secret');
+        assert.dom("[data-test-field='client_secret']").hasAttribute('type', 'text', 'after a save the next typed key is visible again');
+
+        await fillIn("[data-test-field='client_id']", 'other-id');
+        assert.dom("[data-test-field='client_secret']").hasAttribute('placeholder', '', 'no hint for a secret that belongs to another Client ID');
+        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', '', 'no mask for a verifier that belongs to another Client ID');
+    });
+
+    test('the webhook verifier is hidden and shown independently of the Client secret', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true, webhook_verifier_set: true });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
+
+        const type = (key) => document.querySelector(`[data-test-field='${key}']`).getAttribute('type');
+        const toggle = (key) => click(`[data-test-toggle-visibility='${key}']`);
+        await fillIn("[data-test-field='client_secret']", 'typed-secret');
+        await fillIn("[data-test-field='webhook_verifier']", 'typed-verifier');
+        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['text', 'text']);
+
+        await toggle('webhook_verifier');
+        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['text', 'password'], 'hiding the verifier leaves the secret shown');
+
+        await toggle('client_secret');
+        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['password', 'password']);
+
+        await toggle('webhook_verifier');
+        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['password', 'text'], 'showing the verifier leaves the secret hidden');
+
+        await toggle('client_secret');
+        await toggle('client_secret');
+        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['password', 'text'], 'toggling the secret leaves the verifier shown');
+        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-pressed', 'true');
+        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-pressed', 'false');
+        assert.dom("[data-test-field='webhook_verifier']").hasValue('typed-verifier');
+    });
+
     test('save shows a success notification when settings are stored', async function (assert) {
         this.set('settings', {
             client_id: 'id',
@@ -715,12 +836,12 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         `);
 
         assert.dom("[data-test-field='webhook_verifier']").hasValue('');
-        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', 'A verifier token is saved');
+        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', '••••••••');
         assert.dom('[data-test-verifier-set]').hasText('A verifier token is already saved. Leave this blank to keep it.');
         this.set('verifierErrors', { webhook_verifier: 'The webhook verifier is not valid.' });
         this.set('noop', () => {});
         await render(
-            hbs`<QuickbooksSettingsFields @secret={{this.verifierSecret}} @errors={{this.verifierErrors}} @syncOnly={{false}} @onUpdate={{this.noop}} @onSetEntityEnabled={{this.noop}} />`
+            hbs`<QuickbooksSettingsFields @secret={{this.verifierSecret}} @errors={{this.verifierErrors}} @syncOnly={{false}} @onUpdate={{this.noop}} @onSetEntityEnabled={{this.noop}} @onToggleVisibility={{this.noop}} />`
         );
         assert.dom('[data-test-error="webhook_verifier"]').hasText('The webhook verifier is not valid.');
         assert.dom('[data-test-verifier-set]').hasText('A verifier token is already saved. Leave this blank to keep it.', 'an error does not hide how to keep the saved token');
