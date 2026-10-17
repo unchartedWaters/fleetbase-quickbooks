@@ -453,6 +453,26 @@ As an installation administrator, open Admin → QuickBooks → Settings and sav
 the Intuit Client ID and Client secret. Then open Organization settings →
 QuickBooks Setup and connect.
 
+### Server configuration
+
+The `quickbooks.*` values in this guide, such as
+`quickbooks.sync.claim_seconds` and `quickbooks.retention.attempt_days`, come
+from the package's `server/config/quickbooks.php`. The package does not publish
+that file. To change a value, add `config/quickbooks.php` to the Fleetbase API.
+Laravel merges it with the package file only one level deep, so a section you
+set (such as `sync` or `retention`) replaces that whole section. Copy every key
+of the section from the package file, then change the one you need. If the API
+caches its config, run `php artisan config:cache` again afterwards. A Docker
+install that runs the stock API image loses files added inside the container,
+so mount the file at `/fleetbase/api/config/quickbooks.php` in the
+`application`, `queue`, and `scheduler` containers.
+
+The Client secret, the webhook verifier, and each organization's QuickBooks
+tokens are stored encrypted with the Fleetbase `APP_KEY`. Keep the same
+`APP_KEY` on every API, queue, and scheduler container and across upgrades. If
+it changes, those values can no longer be read: save the Client secret and the
+webhook verifier again, and connect each organization again.
+
 ### Developer checkout
 
 On this machine the repository is checked out at `/opt/fleetbase-quickbooks` on `main`, next to Fleetbase, not inside the Fleetbase tree. `application`, `queue`, and `scheduler` use the published `fleetbase/fleetbase-api:latest` image. That image does not contain this package. Do not build a custom API image for it. The running console bakes this engine into its image. A change in this checkout shows up in the API through the read-only mount. The console UI stays at that image build until the console image is rebuilt.
@@ -461,7 +481,15 @@ On this machine the repository is checked out at `/opt/fleetbase-quickbooks` on 
 2. Point the Fleetbase app at that directory. Composer path repository `../../fleetbase-quickbooks`, console dependency `link:../../fleetbase-quickbooks`, and a read-only mount of `/opt/fleetbase-quickbooks` at `/fleetbase/packages/quickbooks`. A symlink at `packages/quickbooks` can point at the same checkout. These Fleetbase edits stay local and are not committed to `fleetbase/fleetbase`.
 3. Put the existing Fleetbase `APP_KEY` in `api/.env`. Use the key that already decrypts this install.
 4. Start the stack with Docker Compose. `docker-compose.yml` mounts `./api/.env` into `application`, `queue`, and `scheduler`, so all three read the same `APP_KEY`. It mounts `/opt/fleetbase-quickbooks` read-only at `/fleetbase/packages/quickbooks`. The entrypoint for those three services is `/fleetbase/packages/quickbooks/docker/ensure-quickbooks-extension.sh`. Console and API image builds take the package from a BuildKit context named `quickbooks`, not from a copy inside the Fleetbase tree.
-5. On start, that script exits with an error if `/fleetbase/packages/quickbooks` is missing. It Composer-requires `unchartedwaters/quickbooks-api:0.0.2` when the provider is not installed, or when the mounted `composer.json` version or `require` entries differ from the installed package. Only `application` runs `php artisan migrate --force`. `queue` and `scheduler` do not migrate on startup. A later application start skips the require when the installed package still matches, and migrate applies only pending migrations.
+5. On start, that script exits with an error if `/fleetbase/packages/quickbooks`
+   is missing. It Composer-requires `unchartedwaters/quickbooks-api:0.0.2` when
+   the provider is not installed, or when the mounted `composer.json` version or
+   `require` entries differ from the installed package. It then runs
+   `php artisan migrate --force` unless `QUICKBOOKS_SKIP_MIGRATE` is `1`.
+   `queue` and `scheduler` set `QUICKBOOKS_SKIP_MIGRATE=1`, so only
+   `application` migrates on startup. A later application start skips the
+   require when the installed package still matches, and migrate applies only
+   pending migrations.
 6. Install console dependencies from `console/`. `console/package.json` links `@unchartedwaters/quickbooks-engine` to `../../fleetbase-quickbooks`. `console/fleetbase.config.json` lists `@unchartedwaters/quickbooks-engine` in `EXTENSIONS`. The running console bakes the engine into the image at `/usr/share/nginx/html/engines-dist/@unchartedwaters/quickbooks-engine`, from the BuildKit context named `quickbooks`. That container's bind is `console/fleetbase.config.json`.
 
 ### Developing locally

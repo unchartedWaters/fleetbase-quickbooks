@@ -93,6 +93,9 @@
 - JS: Prettier from the `prettier` key in `package.json` (4 spaces, width 190,
   single quotes in JS), ESLint `plugin:ember/recommended`.
 - Behavior changes update `CONTRIBUTING.md` (Behavior) and `docs/SETUP.md`.
+  `server/tests/DocumentationTest.php` fails when an environment variable, a
+  public route, a console command, a config key, a package version or a
+  relative link or anchor in the docs does not match the code.
 
 ## PR-specific rules
 
