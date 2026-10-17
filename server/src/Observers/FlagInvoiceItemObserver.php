@@ -98,8 +98,8 @@ class FlagInvoiceItemObserver
     }
 
     /**
-     * PHP-FPM and the queue worker reuse this process, so the set is cleared
-     * when the request terminates and when a job finishes.
+     * PHP-FPM, Octane and the queue worker reuse this process, so the set is cleared
+     * when a request is handled or terminates and when a job finishes.
      */
     private static function listenForEndOfScope(): void
     {
@@ -133,6 +133,8 @@ class FlagInvoiceItemObserver
         $events->listen(JobProcessed::class, $forget);
         $events->listen(JobFailed::class, $forget);
         $events->listen(Looping::class, $forget);
+        // Octane keeps this dispatcher across requests, but the terminating hook above reaches only the first one.
+        $events->listen('Illuminate\\Foundation\\Http\\Events\\RequestHandled', $forget);
         self::$jobHooked = true;
     }
 

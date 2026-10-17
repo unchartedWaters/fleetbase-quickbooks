@@ -44,6 +44,6 @@ test('a webhook change is queued on the listener of the container serving the re
             ->and(webhookListenerQueued($booted))->toBe([]);
     } finally {
         Container::setInstance($base);
-        $base->forgetInstance(EnqueueWebhookSync::class);
+        $base->offsetUnset(EnqueueWebhookSync::class);
     }
 });

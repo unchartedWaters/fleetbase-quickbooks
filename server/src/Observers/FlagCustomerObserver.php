@@ -13,10 +13,27 @@ class FlagCustomerObserver
 
     public function saved(object $customer): void
     {
-        if (SyncSuppressor::paused() === true || method_exists($customer, 'wasChanged') === false || $customer->wasChanged(self::WATCHED) === false) {
+        if (method_exists($customer, 'wasChanged') === false || $customer->wasChanged(self::WATCHED) === false) {
             return;
         }
-        // This also observes Contact, which holds drivers and vendors too.
+
+        $this->flag($customer);
+    }
+
+    /**
+     * Eloquent records changes only on update, so saved() never sees a new customer.
+     */
+    public function created(object $customer): void
+    {
+        $this->flag($customer);
+    }
+
+    private function flag(object $customer): void
+    {
+        if (SyncSuppressor::paused() === true) {
+            return;
+        }
+        // This also observes Contact, which holds plain contacts as well as customers.
         if ((string) ($customer->type ?? 'customer') !== 'customer') {
             return;
         }

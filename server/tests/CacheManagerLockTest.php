@@ -30,14 +30,19 @@ test('the company lock is available when the cache facade is the cache manager',
 
     $lock = BatchRunner::lock('company-uuid');
 
-    expect($lock)->not->toBeNull()
-        ->and($lock->get())->toBeTrue();
+    try {
+        expect($lock)->not->toBeNull()
+            ->and($lock->get())->toBeTrue();
 
-    $other = $this->manager->store()->lock('quickbooks.batch.company-uuid', BatchRunner::LOCK_SECONDS);
-    expect($other->get())->toBeFalse();
+        $other = $this->manager->store()->lock('quickbooks.batch.company-uuid', BatchRunner::LOCK_SECONDS);
+        expect($other->get())->toBeFalse();
 
-    $lock->release();
+        $lock->release();
 
-    expect($other->get())->toBeTrue();
-    $other->release();
+        expect($other->get())->toBeTrue();
+        $other->release();
+    } finally {
+        // A held lock is remembered by BatchRunner, so a failed expectation must not leave it behind.
+        $lock?->release();
+    }
 });

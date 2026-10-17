@@ -61,6 +61,11 @@
   `ember-engines` is a peer and dev dependency only: as a runtime dependency
   it bundles ember-asset-loader into the engine, which then fails to boot in
   the console.
+- Fleetbase serves the API with Octane: a request runs on a copy of the
+  container, but the event dispatcher and statics outlive it. Listeners that
+  keep state resolve from `Container::getInstance()` inside a closure, not as
+  `[Class::class, 'handle']`. The Fleet-Ops console saves customers as
+  `Contact` (type `customer`), so customer observers cover both models.
 - Tooling: php-cs-fixer, PHPStan (level max), PHPMD (`phpmd.xml`), ESLint +
   Prettier, ember-template-lint, Stylelint; Codacy (`.codacy.yml`).
 
