@@ -105,6 +105,17 @@ test('links, images and anchors in the docs point at something that exists', fun
     expect(MarkdownLinks::broken(DocsSource::path($file)))->toBe([]);
 })->with(['README.md', 'docs/SETUP.md', 'CONTRIBUTING.md']);
 
+// Markdown is wrapped at 80 columns, so a needed phrase can break across lines.
+test('a needed phrase is found when a line wrap splits it', function () {
+    $text = "This package needs `fleetbase/fleetops-api`\n`^0.6.73`, and   `fleetbase/ledger-api` `^0.0.13`.";
+
+    expect(DocsSource::absentFrom($text, [
+        '`fleetbase/fleetops-api` `^0.6.73`',
+        '`fleetbase/ledger-api` `^0.0.13`',
+        '`fleetbase/core-api` `^1.6`',
+    ]))->toBe(['`fleetbase/core-api` `^1.6`']);
+});
+
 test('the link check reports a missing file, heading or reference', function () {
     $file = sys_get_temp_dir() . '/' . uniqid('qbdocs', true) . '.md';
     file_put_contents($file, implode("\n", [
