@@ -4,8 +4,8 @@ const ENGINE = '@unchartedwaters/quickbooks-engine';
 
 // ember-asset-loader's app modules read a meta tag the Fleetbase console never renders.
 // Bundled into this engine, they stop the lazy engine from booting and every QuickBooks screen stays blank.
-module('Unit | engine build', function () {
-    test('the engine bundle does not carry ember-asset-loader modules', function (assert) {
+module('Unit | engine build', () => {
+    test('the engine bundle does not carry ember-asset-loader modules', (assert) => {
         const entries = window.requirejs.entries;
 
         assert.ok(entries[`${ENGINE}/extension`], 'engine modules are part of this build');
