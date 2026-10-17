@@ -19,6 +19,7 @@ use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Fleetbase\Support\NotificationRegistry;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Event;
 
 if (class_exists(CoreServiceProvider::class) === false) {
@@ -99,7 +100,10 @@ class QuickbooksServiceProvider extends CoreServiceProvider
         Event::listen('Fleetbase\\Ledger\\Events\\InvoiceCreated', [FlagInvoiceListener::class, 'handle']);
         Event::listen('Fleetbase\\Ledger\\Events\\InvoicePaid', [FlagInvoiceListener::class, 'handle']);
         $this->app->singleton(EnqueueWebhookSync::class);
-        EnqueueWebhookSync::listen(Event::getFacadeRoot());
+        $events = Event::getFacadeRoot();
+        if ($events instanceof Dispatcher === true) {
+            EnqueueWebhookSync::listen($events);
+        }
 
         $this->observeFleetbase();
     }

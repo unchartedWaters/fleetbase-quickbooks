@@ -41,19 +41,22 @@ class EnqueueWebhookSync
     }
 
     /**
-     * Let this run read payments from QuickBooks. Used by the queued job, never by the request.
-     */
-    /**
      * Under Octane each request runs on a copy of the container, but the dispatcher keeps the one it
      * was built with. Resolve the listener from the current container, which WebhookController flushes.
      */
     public static function listen(Dispatcher $events): void
     {
         $events->listen(QuickBooksEntityChanged::class, static function (QuickBooksEntityChanged $event): void {
-            Container::getInstance()->make(self::class)->handle($event);
+            $listener = Container::getInstance()->make(self::class);
+            if ($listener instanceof self === true) {
+                $listener->handle($event);
+            }
         });
     }
 
+    /**
+     * Let this run read payments from QuickBooks. Used by the queued job, never by the request.
+     */
     public function readingQuickBooks(): static
     {
         $this->readsQuickBooks = true;
