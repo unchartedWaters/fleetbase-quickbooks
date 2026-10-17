@@ -16,6 +16,10 @@ class FlagCustomerObserver
         if (SyncSuppressor::paused() === true || method_exists($customer, 'wasChanged') === false || $customer->wasChanged(self::WATCHED) === false) {
             return;
         }
+        // This also observes Contact, which holds drivers and vendors too.
+        if ((string) ($customer->type ?? 'customer') !== 'customer') {
+            return;
+        }
 
         // A failure here must never fail the customer save.
         FlagGuard::run(static function () use ($customer): void {

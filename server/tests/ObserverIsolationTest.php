@@ -204,6 +204,18 @@ test('a company with a connection is flagged on every save and is never remember
         ->and($directory->lookups)->toBe($lookups);
 });
 
+test('a contact that is not a customer costs no lookup and is not flagged', function () {
+    $directory = isolationDirectory(['company_uuid' => 'company-uuid', 'realm_id' => 'realm-1']);
+    isolationBind($directory);
+    $driver       = isolationRecord('contact-1', 'email');
+    $driver->type = 'driver';
+
+    (new FlagCustomerObserver())->saved($driver);
+
+    expect($directory->lookups)->toBe(0)
+        ->and($directory->written)->toBe([]);
+});
+
 test('a place edit does not look up customers for a company without a connection', function () {
     $directory = isolationDirectory(null);
     isolationBind($directory);

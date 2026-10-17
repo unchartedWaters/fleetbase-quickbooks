@@ -570,6 +570,10 @@ class BatchRunner
         if (is_object($cache) === false) {
             return null;
         }
+        // A Laravel app resolves the facade to the CacheManager, which reaches the store only through store().
+        if ($cache instanceof \Illuminate\Contracts\Cache\Factory) {
+            $cache = $cache->store();
+        }
 
         $store = method_exists($cache, 'getStore') === true ? $cache->getStore() : null;
         if ($store instanceof \Illuminate\Contracts\Cache\LockProvider) {
