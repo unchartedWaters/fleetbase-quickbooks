@@ -39,9 +39,21 @@ class DocsSource
      */
     public static function missing(string $file, array $needed): array
     {
-        $text = self::text($file);
+        return self::absentFrom(self::text($file), $needed);
+    }
 
-        $absent = fn (string $item): bool => str_contains($text, $item) === false;
+    /**
+     * Compares with runs of whitespace collapsed, so a phrase split by a line wrap still counts.
+     *
+     * @param array<int, string> $needed
+     *
+     * @return array<int, string> the needed items the text does not mention
+     */
+    public static function absentFrom(string $text, array $needed): array
+    {
+        $flat   = static fn (string $value): string => (string) preg_replace('/\s+/', ' ', $value);
+        $text   = $flat($text);
+        $absent = fn (string $item): bool => str_contains($text, $flat($item)) === false;
 
         return array_values(array_filter(array_unique($needed), $absent));
     }
