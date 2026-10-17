@@ -13,6 +13,8 @@ use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Support\QuickBooksPaymentReader;
 use Fleetbase\Quickbooks\Support\WebhookPaymentInvoices;
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Events\Dispatcher;
 
 class EnqueueWebhookSync
 {
@@ -36,6 +38,20 @@ class EnqueueWebhookSync
 
     public function __construct(private SettingsService $settings)
     {
+    }
+
+    /**
+     * Under Octane each request runs on a copy of the container, but the dispatcher keeps the one it
+     * was built with. Resolve the listener from the current container, which WebhookController flushes.
+     */
+    public static function listen(Dispatcher $events): void
+    {
+        $events->listen(QuickBooksEntityChanged::class, static function (QuickBooksEntityChanged $event): void {
+            $listener = Container::getInstance()->make(self::class);
+            if ($listener instanceof self === true) {
+                $listener->handle($event);
+            }
+        });
     }
 
     /**

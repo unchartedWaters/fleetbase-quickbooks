@@ -57,6 +57,20 @@ test('a second save after the job finishes loads the parent again', function () 
         ->and($directory->written)->toHaveCount(2);
 });
 
+// Under Octane the terminating callback is registered on the first request's copy of the container only.
+test('a second save after the HTTP request is handled loads the parent again', function () {
+    [$observer, $directory] = itemObserverHarness();
+
+    $observer->updated(invoiceLine('inv-1', ['description']));
+
+    Container::getInstance()->make('events')->dispatch('Illuminate\\Foundation\\Http\\Events\\RequestHandled');
+
+    $observer->updated(invoiceLine('inv-1', ['unit_price']));
+
+    expect($observer->loads)->toBe(2)
+        ->and($directory->written)->toHaveCount(2);
+});
+
 test('an unwatched line change does not load the parent', function () {
     [$observer, $directory] = itemObserverHarness();
 

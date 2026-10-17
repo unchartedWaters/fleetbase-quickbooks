@@ -204,6 +204,50 @@ test('a company with a connection is flagged on every save and is never remember
         ->and($directory->lookups)->toBe($lookups);
 });
 
+test('a contact that is not a customer costs no lookup and is not flagged', function () {
+    $directory = isolationDirectory(['company_uuid' => 'company-uuid', 'realm_id' => 'realm-1']);
+    isolationBind($directory);
+    $driver       = isolationRecord('contact-1', 'email');
+    $driver->type = 'driver';
+
+    (new FlagCustomerObserver())->saved($driver);
+
+    expect($directory->lookups)->toBe(0)
+        ->and($directory->written)->toBe([]);
+});
+
+// Eloquent records changes only on update, so a new record reports nothing changed when it is saved.
+test('a new customer is flagged when it is created', function () {
+    $directory = isolationDirectory(['company_uuid' => 'company-uuid', 'realm_id' => 'realm-1']);
+    isolationBind($directory);
+    $customer = isolationRecord('cust-new', 'none');
+
+    (new FlagCustomerObserver())->saved($customer);
+    expect($directory->written)->toBe([]);
+
+    (new FlagCustomerObserver())->created($customer);
+
+    expect(array_column($directory->written, 'local_uuid'))->toBe(['cust-new']);
+});
+
+test('a new contact that is not a customer, or a customer created while syncing is paused, is not flagged', function () {
+    $directory = isolationDirectory(['company_uuid' => 'company-uuid', 'realm_id' => 'realm-1']);
+    isolationBind($directory);
+    $contact       = isolationRecord('contact-new', 'none');
+    $contact->type = 'contact';
+
+    (new FlagCustomerObserver())->created($contact);
+    SyncSuppressor::pause();
+    try {
+        (new FlagCustomerObserver())->created(isolationRecord('cust-imported', 'none'));
+    } finally {
+        SyncSuppressor::resume();
+    }
+
+    expect($directory->lookups)->toBe(0)
+        ->and($directory->written)->toBe([]);
+});
+
 test('a place edit does not look up customers for a company without a connection', function () {
     $directory = isolationDirectory(null);
     isolationBind($directory);

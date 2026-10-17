@@ -5,7 +5,6 @@ namespace Fleetbase\Quickbooks\Providers;
 use Fleetbase\Providers\CoreServiceProvider;
 use Fleetbase\Quickbooks\Console\Commands\PruneQuickbooks;
 use Fleetbase\Quickbooks\Console\Commands\SyncQuickbooks;
-use Fleetbase\Quickbooks\Events\QuickBooksEntityChanged;
 use Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync;
 use Fleetbase\Quickbooks\Listeners\FlagCustomerListener;
 use Fleetbase\Quickbooks\Listeners\FlagInvoiceListener;
@@ -20,6 +19,7 @@ use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Fleetbase\Support\NotificationRegistry;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Event;
 
 if (class_exists(CoreServiceProvider::class) === false) {
@@ -100,16 +100,21 @@ class QuickbooksServiceProvider extends CoreServiceProvider
         Event::listen('Fleetbase\\Ledger\\Events\\InvoiceCreated', [FlagInvoiceListener::class, 'handle']);
         Event::listen('Fleetbase\\Ledger\\Events\\InvoicePaid', [FlagInvoiceListener::class, 'handle']);
         $this->app->singleton(EnqueueWebhookSync::class);
-        Event::listen(QuickBooksEntityChanged::class, [EnqueueWebhookSync::class, 'handle']);
+        $events = Event::getFacadeRoot();
+        if ($events instanceof Dispatcher === true) {
+            EnqueueWebhookSync::listen($events);
+        }
 
         $this->observeFleetbase();
     }
 
     private function observeFleetbase(): void
     {
-        $customer = 'Fleetbase\\FleetOps\\Models\\Customer';
-        if (class_exists($customer) === true) {
-            $customer::observe(FlagCustomerObserver::class);
+        // The Fleet-Ops console saves customers as a Contact with type "customer"; the flagger skips other types.
+        foreach (['Fleetbase\\FleetOps\\Models\\Customer', 'Fleetbase\\FleetOps\\Models\\Contact'] as $customer) {
+            if (class_exists($customer) === true) {
+                $customer::observe(FlagCustomerObserver::class);
+            }
         }
 
         $place = 'Fleetbase\\FleetOps\\Models\\Place';
