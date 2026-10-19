@@ -366,11 +366,23 @@ retry of the same body is processed. While a delivery is being processed its
 body is remembered for 120 seconds only, so a worker that dies mid-request does
 not block Intuit's retry; a repeat that arrives during processing gets HTTP 409,
 so Intuit retries it. Once processed, an exact repeat is answered HTTP 200 and
-not applied again for `quickbooks.webhook.max_age_seconds` (default 600). A
-delivery whose event `time` (or `lastUpdated` in the older format) is older than
-that age is answered HTTP 200 and not applied, whether or not its realm is
-connected, and a warning is logged. These answer 200 because Intuit retries any
-other answer for days and may hold back later deliveries until the first one is
+not applied again for `quickbooks.webhook.max_age_seconds` (default 600).
+
+A delivery whose event `time` (or `lastUpdated` in the older format) is older
+than that age is stale. Intuit can deliver late, so a stale delivery is still
+used, but only to read the current record: its creates and updates make
+Fleetbase read that record from QuickBooks as usual, while its deletes, voids
+and merged-away records are not applied, and a warning is logged. Reading the
+record back cannot stand in for those: a deleted or merged-away record reads as
+gone, a voided invoice reads as an invoice with no lines, and the record may
+have been restored since. The surviving record of a merge is still read. A
+processed stale delivery is remembered for
+`quickbooks.webhook.stale_replay_seconds` (default 604800, 7 days) so it is not
+used twice. A delivery older than that window is answered HTTP 200 and not
+applied at all. Set the window to 0 (or anything up to the maximum age) to
+apply no stale delivery, as before. Stale and too-old deliveries answer 200
+whether or not their realm is connected, because Intuit retries any other
+answer for days and may hold back later deliveries until the first one is
 acknowledged. The request itself does not call QuickBooks: payment lookups run
 in the queued job `ResolveWebhookPayments`, so queue workers must be running.
 

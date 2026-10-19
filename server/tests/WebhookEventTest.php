@@ -2141,11 +2141,11 @@ test('fleetbase primary does not queue a quickbooks copy and still queues the fl
     });
 });
 
-test('a signed webhook older than ten minutes is not applied and a down replay store returns 503', function () {
+test('a signed webhook delete older than ten minutes is not applied and a down replay store returns 503', function () {
     $settings = qboChangedSettings();
     $staleAt  = (new DateTimeImmutable('@' . (time() - 700)))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:sO');
     $freshAt  = (new DateTimeImmutable('@' . time()))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:sO');
-    $stale    = '{"eventNotifications":[{"realmId":"realm-replay","dataChangeEvent":{"entities":[{"name":"Customer","id":"77","operation":"Create","lastUpdated":"' . $staleAt . '"}]}}]}';
+    $stale    = '{"eventNotifications":[{"realmId":"realm-replay","dataChangeEvent":{"entities":[{"name":"Customer","id":"77","operation":"Delete","lastUpdated":"' . $staleAt . '"}]}}]}';
     $fresh    = '{"eventNotifications":[{"realmId":"realm-replay","dataChangeEvent":{"entities":[{"name":"Customer","id":"78","operation":"Update","lastUpdated":"' . $freshAt . '"}]}}]}';
 
     qboChangedWithoutVerifier(function () use ($settings, $stale, $fresh) {
