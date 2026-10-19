@@ -76,6 +76,7 @@ quickbooks:
     refresh: Refresh QuickBooks status
     loading: Loading QuickBooks status.
     unavailable: QuickBooks status is unavailable.
+    no-access: You do not have permission to view the QuickBooks sync status.
     last-sync: Last sync
     no-sync: No sync yet
     records-waiting: Records waiting

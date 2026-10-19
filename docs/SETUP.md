@@ -342,6 +342,10 @@ and counts; a failed run shows its error under the row][activity]
 
 The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires `quickbooks reconcile sync` or an installation administrator, plus a connection and a saved Client ID and Client secret. It does not require a Redirect URI. OAuth connect still needs the public https redirect.
 
+The widget reads its status only for users with `quickbooks view sync` (both
+QuickBooks roles) or installation administrators. Other Ledger users see a
+short no-permission note instead, and the widget makes no QuickBooks request.
+
 ![QuickBooks Sync widget: Connected, last sync time, records waiting,
 and Sync now][dashboard-widget]
 

@@ -3,7 +3,7 @@ import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
 import { inject as service } from '@ember/service';
 import { connectionState } from '../../utils/connection-view';
-import { canConnect, canRunSyncNow } from '../../utils/sync-access';
+import { canConnect, canRunSyncNow, canViewSync } from '../../utils/sync-access';
 
 const NAMESPACE = 'quickbooks/int/v1';
 
@@ -83,9 +83,14 @@ export default class WidgetQuickbooksSyncComponent extends Component {
         return this.busy || !this.canSync || !this.isConnected || !this.credentialsConfigured;
     }
 
+    // Ledger shows this widget to every Ledger user. Without the view permission the summary would only answer 403.
+    get noAccess() {
+        return !canViewSync(this.abilities);
+    }
+
     // Null summary with no error means the request has not settled. A failure sets error and must not read as Not connected.
     get isLoading() {
-        return this.summary === null && !this.error;
+        return !this.noAccess && this.summary === null && !this.error;
     }
 
     get statusLabel() {
@@ -104,6 +109,10 @@ export default class WidgetQuickbooksSyncComponent extends Component {
 
     @action
     async refresh() {
+        if (this.noAccess) {
+            return;
+        }
+
         this.busy = true;
         this.error = null;
         try {
