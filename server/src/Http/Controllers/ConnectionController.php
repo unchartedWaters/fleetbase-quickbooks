@@ -24,6 +24,7 @@ use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\PublicHttps;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -468,12 +469,17 @@ class ConnectionController extends QuickbooksController
     }
 
     /**
-     * The realm of the current connection, or after a disconnect the realm of the links it kept.
+     * The realm of the current connection. After a disconnect, the realm the organization last
+     * connected, or for a connection made before that was remembered, the realm of its links.
      */
     protected function lastRealm(string $companyUuid): ?string
     {
         $connection = $this->latestConnection($companyUuid);
         $realm      = $connection instanceof Connection === true ? (string) $connection->realm_id : '';
+        if ($realm === '') {
+            $remembered = $this->store->get(SettingsKeys::companyLastRealm($companyUuid));
+            $realm      = is_string($remembered['realm_id'] ?? null) === true ? $remembered['realm_id'] : '';
+        }
         if ($realm === '') {
             $realm = (string) Link::query()
                 ->where('company_uuid', $companyUuid)
@@ -508,6 +514,7 @@ class ConnectionController extends QuickbooksController
         }
         $model->fill($connection);
         $model->save();
+        $this->store->put(SettingsKeys::companyLastRealm($companyUuid), ['realm_id' => (string) $model->realm_id]);
         FleetbaseDirectory::forgetReauthNotice($companyUuid);
     }
 

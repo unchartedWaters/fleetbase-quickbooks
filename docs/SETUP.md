@@ -195,7 +195,9 @@ from `server/src/Auth/Schemas/Quickbooks.php`.
 
 A QuickBooks Operator can connect again only to the QuickBooks company the
 organization already uses: the realm of its connection or, after a
-disconnect, the realm on its kept links. Connecting a different company, or a
+disconnect, the realm it last connected (remembered in the organization's
+settings; for a connection made before this was remembered, the realm on its
+kept links). Connecting a different company, or a
 first connection, needs `quickbooks change-company connection`, which the
 Administrator gets from `quickbooks * connection`. Otherwise finishing the
 connection returns HTTP 403, and nothing is saved or queued. On an existing

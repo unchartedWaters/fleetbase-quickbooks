@@ -313,3 +313,42 @@ test('an operator may reconnect the connected realm, or after a disconnect the n
             ->and($controller->realmFor('company-uuid'))->toBeNull();
     });
 });
+
+test('after a disconnect an operator may reconnect only the company the organization last connected, even before it has links', function () {
+    revokeWithDatabase(function () {
+        revokeSeed();
+        Http::swap(new Illuminate\Http\Client\Factory());
+        Http::fake(['developer.api.intuit.com/*' => Http::response('', 200)]);
+        session(['company' => 'company-uuid']);
+        $authorizer = new Authorizer(static fn () => true);
+        $flow       = new OAuthFlow(new QuickBooksClient());
+        $settings   = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
+        $probe      = new ConnectionProbe(new QuickBooksClient());
+        $controller = new class($authorizer, $flow, $settings, revokeStore(), $probe) extends ConnectionController {
+            public function realmFor(string $companyUuid): ?string
+            {
+                return $this->lastRealm($companyUuid);
+            }
+
+            /** @param array<string, mixed> $connection */
+            public function persistForTest(array $connection): void
+            {
+                $this->persist($connection);
+            }
+        };
+        // The organization's links are on the old company. An administrator connects a new one.
+        DB::table('quickbooks_links')->where('company_uuid', 'company-uuid')->update(['realm_id' => '9341453000000001']);
+        Connection::query()->where('company_uuid', 'company-uuid')->delete();
+        $controller->persistForTest([
+            'uuid'         => 'conn-new',
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => '9341453000000005',
+            'environment'  => 'sandbox',
+            'needs_reauth' => false,
+        ]);
+
+        $controller->disconnect(Request::create('/disconnect', 'POST'));
+
+        expect($controller->realmFor('company-uuid'))->toBe('9341453000000005');
+    });
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
