@@ -21,7 +21,7 @@ class LedgerPaymentDates
      * is a date without a time (a QuickBooks payment date saved by this package), so it keeps
      * its day; shifting it would move the date QuickBooks already has.
      */
-    public function day(ConnectionInterface $db, string $companyUuid, mixed $value): string
+    public function day(ConnectionInterface $database, string $companyUuid, mixed $value): string
     {
         $time = $this->appTime($value);
         if ($time === null) {
@@ -31,7 +31,7 @@ class LedgerPaymentDates
             return $time->toDateString();
         }
 
-        return $time->setTimezone($this->zone($db, $companyUuid))->toDateString();
+        return $time->setTimezone($this->zone($database, $companyUuid))->toDateString();
     }
 
     /**
@@ -42,14 +42,14 @@ class LedgerPaymentDates
      *
      * @return array<string, string>
      */
-    public function lastPaymentDays(ConnectionInterface $db, string $companyUuid, array $invoiceUuids): array
+    public function lastPaymentDays(ConnectionInterface $database, string $companyUuid, array $invoiceUuids): array
     {
         if ($invoiceUuids === []) {
             return [];
         }
 
         try {
-            $rows = $db->table('transactions')
+            $rows = $database->table('transactions')
                 ->where('company_uuid', $companyUuid)
                 ->where('type', 'invoice_payment')
                 ->whereIn('subject_uuid', $invoiceUuids)
@@ -71,7 +71,9 @@ class LedgerPaymentDates
             /** @var \stdClass $row */
             $paid = $this->appTime($row->paid ?? null);
             if ($paid !== null) {
-                $days[(string) $row->subject_uuid] = $paid->setTimezone($this->zone($db, $companyUuid))->toDateString();
+                $days[(string) $row->subject_uuid] = $paid
+                    ->setTimezone($this->zone($database, $companyUuid))
+                    ->toDateString();
             }
         }
 
@@ -81,7 +83,7 @@ class LedgerPaymentDates
     /**
      * The company's timezone, or the app timezone when it has none or an unknown one.
      */
-    private function zone(ConnectionInterface $db, string $companyUuid): string
+    private function zone(ConnectionInterface $database, string $companyUuid): string
     {
         if (isset($this->zones[$companyUuid]) === true) {
             return $this->zones[$companyUuid];
@@ -89,7 +91,7 @@ class LedgerPaymentDates
 
         $zone = '';
         try {
-            $zone = trim((string) $db->table('companies')->where('uuid', $companyUuid)->value('timezone'));
+            $zone = trim((string) $database->table('companies')->where('uuid', $companyUuid)->value('timezone'));
         } catch (\Throwable) {
             $zone = '';
         }
