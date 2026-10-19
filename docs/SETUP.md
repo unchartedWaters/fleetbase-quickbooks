@@ -326,7 +326,11 @@ does not list every invoice in the QuickBooks company.
 QuickBooks update operations are posted in chunks of 20. Queries, creates, and
 voids are posted in chunks of at most 30. Updates and the other items are
 grouped separately, so new and edited invoices in one run share a few chunks
-instead of each starting a new one.
+instead of each starting a new one. Every write (and every batch with a write)
+carries Intuit's `requestid`, a hash of the company, the request and the UTC
+day. A write that timed out after QuickBooks saved it is then answered with the
+saved record when the same payload is sent again that day, instead of being
+saved twice. Reads carry none.
 
 Sync frequency is minutes (`interval_minutes`, default 5). Full sync frequency
 (hours) (`periodic_interval_hours`, default 24) limits only the customer

@@ -1302,6 +1302,10 @@ class QuickBooksClient
         $url       = $base . '/v3/company/' . rawurlencode((string) $connection['realm_id']) . '/' . $path;
         $separator = str_contains($url, '?') === true ? '&' : '?';
         $url .= $separator . 'minorversion=75';
+        $requestId = self::requestId((string) $connection['realm_id'], $method, $path, $payload);
+        if ($requestId !== null) {
+            $url .= '&requestid=' . $requestId;
+        }
 
         try {
             $pending  = Http::withToken((string) $connection['access_token'])->acceptJson();
@@ -1313,6 +1317,43 @@ class QuickBooksClient
         $this->throwIfFailed($response);
 
         return $response;
+    }
+
+    /**
+     * Intuit applies a write whose requestid it has already seen only once and answers with
+     * the first result, so a create that timed out after QuickBooks saved it is not saved
+     * again when the run retries it. The id is a hash of the realm, method, path and body:
+     * a retry of the same payload reuses it and a changed payload gets a new one. The UTC
+     * day is part of it, so the same write sent on a later day (a record deleted in
+     * QuickBooks and created again) is applied instead of answered with the old record.
+     * Reads, including a batch of queries only, carry none, so they always return fresh data.
+     *
+     * @param array<string, mixed>|null $payload
+     */
+    private static function requestId(string $realmId, string $method, string $path, ?array $payload): ?string
+    {
+        if ($method === 'get' || ($path === 'batch' && self::batchWrites($payload ?? []) === false)) {
+            return null;
+        }
+
+        $body = json_encode($payload ?? []);
+
+        return sha1(implode("\n", [$realmId, $method, $path, is_string($body) === true ? $body : '', gmdate('Y-m-d')]));
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private static function batchWrites(array $payload): bool
+    {
+        $requests = $payload['BatchItemRequest'] ?? [];
+        foreach (is_array($requests) === true ? $requests : [] as $request) {
+            if (is_array($request) === true && isset($request['operation']) === true) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function throwIfFailed(Response $response): void
