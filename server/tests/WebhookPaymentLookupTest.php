@@ -16,6 +16,7 @@ use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
+use Fleetbase\Quickbooks\Support\WebhookRetry;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Cache\ArrayStore;
@@ -91,6 +92,11 @@ class WplClient extends FakeQuickBooks
         if ($this->batchFailure === 'throw') {
             $this->calls[] = 'batch';
             throw new RuntimeException('batch read failed');
+        }
+        if (in_array($this->batchFailure, ['429', '503', '0'], true) === true) {
+            $this->calls[] = 'batch';
+            $status        = (int) $this->batchFailure;
+            throw new QuickBooksException($status, qbRequestFailed($status), $status === 429 ? '90' : null);
         }
         if ($this->batchFailure === 'fault') {
             $this->calls[] = 'batch';
@@ -767,3 +773,113 @@ test('the request retires a direct payment delete with its linked invoices and a
             ['realm_id' => 'realm-1', 'local_type' => 'payment', 'qbo_id' => '9', 'local_uuid' => null, 'invoice_uuids' => [], 'invoices_from_payment' => false],
         ]]);
 })->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a payment read quickbooks could not answer queues the job again and nothing else', function (
+    string $failure,
+    int $delay,
+) {
+    $client                = new WplClient();
+    $client->batchFailure  = $failure;
+    $client->payments['4'] = wplPayment('4', ['10']);
+    $client->payments['5'] = wplPayment('5', ['10']);
+    $directory             = wplDirectory();
+    $tokens                = wplTokens($client, $directory);
+    $events                = [wplPayload('4'), wplPayload('5')];
+    $links                 = [
+        wplLink('pay-4', 'payment', '4', 'Payment', '4'),
+        wplLink('pay-5', 'payment', '5', 'Payment', '5'),
+    ];
+    $run = function ($dispatcher) use ($directory, $tokens, $events) {
+        wplRunJob($events, wplStore(), $directory, $tokens);
+
+        return $dispatcher->jobs;
+    };
+
+    $jobs = wplWithTables($links, [], fn () => wplWithServices($client, $directory, $tokens, $run));
+
+    expect($client->calls)->toBe(['batch'])
+        ->and(wplJobs($jobs))->toBe([['resolve', $events]])
+        ->and($jobs[0]->quickbooksAttempt)->toBe(1)
+        ->and($jobs[0]->delay)->toBe($delay)
+        ->and($directory->released)->toBe([])
+        ->and($directory->memory->batches)->toBe([]);
+})->with([
+    'rate limited'        => ['429', 90],
+    'service unavailable' => ['503', 30],
+    'no response'         => ['0', 30],
+])->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a payment read refused with a 429 stores the rate limit on the connection', function () {
+    $client               = new WplClient();
+    $client->batchFailure = '429';
+    $directory            = wplDirectory();
+    $tokens               = wplTokens($client, $directory);
+    $links                = [
+        wplLink('pay-4', 'payment', '4', 'Payment', '4'),
+        wplLink('pay-5', 'payment', '5', 'Payment', '5'),
+    ];
+    $before = time();
+    $run    = function () use ($directory, $tokens) {
+        wplRunJob([wplPayload('4'), wplPayload('5')], wplStore(), $directory, $tokens);
+    };
+
+    wplWithTables($links, [], fn () => wplWithServices($client, $directory, $tokens, $run));
+    $connection = $directory->memory->connections['company-a'];
+
+    expect($connection['last_rate_limit_wait'])->toBe(90)
+        ->and($connection['rate_limited_until'])->toBeGreaterThanOrEqual($before + 90)
+        ->and($connection['access_token'])->toBe('old-access');
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a payment read that still fails after the last retry is recorded as a failed sync', function () {
+    $client               = new WplClient();
+    $client->batchFailure = '503';
+    $directory            = wplDirectory();
+    $tokens               = wplTokens($client, $directory);
+    $links                = [
+        wplLink('pay-4', 'payment', '4', 'Payment', '4'),
+        wplLink('pay-5', 'payment', '5', 'Payment', '5'),
+    ];
+    $run = function ($dispatcher) use ($directory, $tokens) {
+        $job                    = new ResolveWebhookPayments('company-a', [wplPayload('4'), wplPayload('5')]);
+        $job->quickbooksAttempt = WebhookRetry::LIMIT;
+        $job->handle(wplSettings(), wplStore(), $directory, $tokens);
+
+        return $dispatcher->jobs;
+    };
+
+    $jobs     = wplWithTables($links, [], fn () => wplWithServices($client, $directory, $tokens, $run));
+    $batches  = $directory->memory->batches;
+    $attempts = $directory->memory->attempts;
+
+    expect($jobs)->toBe([])
+        ->and($batches)->toHaveCount(1)
+        ->and($batches[0]['trigger'])->toBe('webhook')
+        ->and($batches[0]['status'])->toBe('failed')
+        ->and($batches[0]['failed'])->toBe(1)
+        ->and($attempts[0]['outcome'])->toBe('failed')
+        ->and(qbText($attempts[0]['error']))->toStartWith('Fleetbase could not read a change from QuickBooks');
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('the payment job does not read quickbooks while the connection is rate limited', function () {
+    $client                = new WplClient();
+    $client->payments['4'] = wplPayment('4', ['10']);
+    $directory             = wplDirectory();
+    $tokens                = wplTokens($client, $directory);
+    $events                = [wplPayload('4')];
+
+    $directory->memory->connections['company-a']['rate_limited_until'] = time() + 200;
+
+    $jobs = wplWithServices($client, $directory, $tokens, function ($dispatcher) use ($directory, $tokens, $events) {
+        wplRunJob($events, wplStore(), $directory, $tokens);
+
+        return $dispatcher->jobs;
+    });
+
+    expect($client->calls)->toBe([])
+        ->and($client->refreshes)->toBe(0)
+        ->and(wplJobs($jobs))->toBe([['resolve', $events]])
+        ->and($jobs[0]->quickbooksAttempt)->toBe(1)
+        ->and($jobs[0]->delay)->toBeGreaterThanOrEqual(199)
+        ->and($jobs[0]->delay)->toBeLessThanOrEqual(201);
+});

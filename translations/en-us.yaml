@@ -212,6 +212,7 @@ quickbooks:
     rate-limited: QuickBooks asked Fleetbase to wait (rate limit). Try again in a few minutes.
     sync-failed: Sync failed.
     save-failed: Fleetbase could not save the results of this sync. The records in it are tried again later.
+    webhook-read-failed: Fleetbase could not read a change from QuickBooks after several tries, so it was not applied. Save the record in QuickBooks again to send it again.
     failed-count: "{count} failed."
     transport: QuickBooks could not be reached. Try again in a few minutes.
     request-failed: "QuickBooks request failed with status {status}"

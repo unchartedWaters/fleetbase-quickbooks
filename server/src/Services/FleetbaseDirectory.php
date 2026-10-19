@@ -813,6 +813,39 @@ class FleetbaseDirectory
     }
 
     /**
+     * Record a run that stopped before it synced anything as failed, with its reason.
+     */
+    public function saveFailed(string $companyUuid, string $trigger, string $direction, string $message): void
+    {
+        $ledger = $this->memory ?? new SyncLedger();
+        $ledger->fail($companyUuid, $trigger, $direction, $message, time());
+        $this->save($ledger);
+    }
+
+    /**
+     * Persist the rate limit QuickBooks asked for on this connection right away.
+     *
+     * @param array<string, mixed> $connection
+     */
+    public function saveRateLimit(array $connection): void
+    {
+        $fields = ['rate_limited_until', 'last_rate_limit_wait'];
+        if ($this->memory !== null) {
+            $companyUuid = (string) ($connection['company_uuid'] ?? '');
+            if (isset($this->memory->connections[$companyUuid]) === true) {
+                $limit   = array_intersect_key($connection, array_flip($fields));
+                $current = $this->memory->connections[$companyUuid];
+
+                $this->memory->connections[$companyUuid] = array_merge($current, $limit);
+            }
+
+            return;
+        }
+
+        $this->updateConnection($connection, $fields);
+    }
+
+    /**
      * @param array<string, mixed> $row
      * @param array<int, string>   $fields
      *

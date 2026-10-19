@@ -374,6 +374,18 @@ other answer for days and may hold back later deliveries until the first one is
 acknowledged. The request itself does not call QuickBooks: payment lookups run
 in the queued job `ResolveWebhookPayments`, so queue workers must be running.
 
+Intuit does not send a delivery again once it got HTTP 200, so the queued jobs
+that read QuickBooks (`ApplyRemoteChange` and `ResolveWebhookPayments`) queue
+themselves again when QuickBooks answers HTTP 429 or 5xx, or does not answer.
+After a 429 the job waits for Intuit's `Retry-After` (or twice the last
+rate-limit wait, or 60 seconds) and stores that wait on the connection, so the
+scheduled sync waits too. After a 5xx or no answer it waits 30 seconds, doubled
+on each retry. While the connection is rate limited the jobs do not call
+QuickBooks; they queue themselves for after the wait. After 5 retries the change
+is dropped, a warning is logged, and Activity shows a failed webhook sync: save
+the record in QuickBooks again to send it again. Laravel's own retries stay off
+(`$tries = 1`). Other QuickBooks errors are not retried.
+
 Intuit sends a JSON array of CloudEvents. Each event's `type` names the entity
 and event (for example `qbo.invoice.updated.v1`), `intuitentityid` is the
 QuickBooks id, and `intuitaccountid` is the realm. Events `created`, `updated`,
