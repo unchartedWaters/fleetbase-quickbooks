@@ -314,6 +314,12 @@ work, the command holds the next start for 60 seconds.
 
 An organization with nothing due does not sync. The schedule does not read a stored batch size. Each run still stops after one page. That page is the stored `batch_size` when an older settings row has one, otherwise 100. The settings form does not send `batch_size`.
 
+Intuit's refresh token lapses after about 100 days without use. A connection
+whose access token expired more than 7 days ago therefore gets a scheduled run
+even with nothing due and Customers off; with nothing pending, that run only
+refreshes the token. If that refresh fails for now, it is tried again an hour
+later.
+
 **Sync now** is on QuickBooks Setup. It uses the pending queue and does not load
 the whole organization. It processes one pending page and does not drain the
 rest of the queue. Leftover rows wait for the schedule above. Drain is chained
