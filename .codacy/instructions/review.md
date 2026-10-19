@@ -55,8 +55,8 @@
 ## Stack
 
 - PHP 8.2 (CI), Laravel via `fleetbase/core-api ^1.6`,
-  `fleetbase/fleetops-api ^0.6.73`, `fleetbase/ledger-api ^0.0.13`. QuickBooks
-  HTTP goes through Laravel's `Http` client in `QuickBooksClient`.
+  `fleetbase/fleetops-api ^0.6.73`, `fleetbase/ledger-api >=0.0.13 <0.1`.
+  QuickBooks HTTP goes through Laravel's `Http` client in `QuickBooksClient`.
 - Ember 4.8 engine (`ember-engines`, Glimmer), Node 22+, pnpm.
   `ember-engines` is a peer and dev dependency only: as a runtime dependency
   it bundles ember-asset-loader into the engine, which then fails to boot in
