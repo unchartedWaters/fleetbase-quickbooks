@@ -456,7 +456,9 @@ After a 429 the job waits for Intuit's `Retry-After` (or twice the last
 rate-limit wait, or 60 seconds) and stores that wait on the connection, so the
 scheduled sync waits too. After a 5xx or no answer it waits 30 seconds, doubled
 on each retry. While the connection is rate limited the jobs do not call
-QuickBooks; they queue themselves for after the wait. After 5 retries the change
+QuickBooks; they queue themselves for after the wait. Each queued retry wakes up
+to a tenth of its wait later (at most 60 seconds), so jobs held by one rate
+limit do not all call QuickBooks at the same moment. After 5 retries the change
 is dropped, a warning is logged, and Activity shows a failed webhook sync: save
 the record in QuickBooks again to send it again. Laravel's own retries stay off
 (`$tries = 1`). Other QuickBooks errors are not retried.

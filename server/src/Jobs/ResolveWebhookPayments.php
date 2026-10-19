@@ -175,7 +175,7 @@ class ResolveWebhookPayments implements ShouldQueue
 
         $retry                    = new self($this->companyUuid, $this->events, $this->attempt);
         $retry->quickbooksAttempt = $this->quickbooksAttempt + 1;
-        $retry->delay($wait);
+        $retry->delay(WebhookRetry::spread($wait));
         $dispatcher = Container::getInstance()->make(Dispatcher::class);
         if ($dispatcher instanceof Dispatcher === true) {
             $dispatcher->dispatch($retry);

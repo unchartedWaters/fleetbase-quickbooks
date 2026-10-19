@@ -28,7 +28,8 @@ test('a remote change refused with a 429 waits for retry-after and stores the ra
         ->and($jobs[0]->entities)->toBe($job->entities)
         ->and($jobs[0]->quickbooksAttempt)->toBe(1)
         ->and($jobs[0]->lockAttempt)->toBe(0)
-        ->and($jobs[0]->delay)->toBe(120)
+        ->and($jobs[0]->delay)->toBeGreaterThanOrEqual(120)
+        ->and($jobs[0]->delay)->toBeLessThanOrEqual(132)
         ->and($connection['last_rate_limit_wait'])->toBe(120)
         ->and($connection['rate_limited_until'])->toBeGreaterThanOrEqual($before + 120)
         ->and($directory->batches())->toBe([]);
@@ -46,11 +47,13 @@ test('a remote change that quickbooks could not answer is queued again with a gr
 
     expect($firstJobs)->toHaveCount(1)
         ->and($firstJobs[0]->quickbooksAttempt)->toBe(1)
-        ->and($firstJobs[0]->delay)->toBe(WebhookRetry::BASE_DELAY_SECONDS)
+        ->and($firstJobs[0]->delay)->toBeGreaterThanOrEqual(WebhookRetry::BASE_DELAY_SECONDS)
+        ->and($firstJobs[0]->delay)->toBeLessThanOrEqual(WebhookRetry::BASE_DELAY_SECONDS + 3)
         ->and($laterJobs)->toHaveCount(1)
         ->and($laterJobs[0]->quickbooksAttempt)->toBe(3)
         ->and($laterJobs[0]->lockAttempt)->toBe(1)
-        ->and($laterJobs[0]->delay)->toBe(WebhookRetry::BASE_DELAY_SECONDS * 4)
+        ->and($laterJobs[0]->delay)->toBeGreaterThanOrEqual(WebhookRetry::BASE_DELAY_SECONDS * 4)
+        ->and($laterJobs[0]->delay)->toBeLessThanOrEqual(WebhookRetry::BASE_DELAY_SECONDS * 4 + 12)
         ->and($directory->saved[0]->connections['company-uuid'])->not->toHaveKey('rate_limited_until')
         ->and($directory->batches())->toBe([]);
 })->with(['service unavailable' => 503, 'no response' => 0]);
@@ -95,7 +98,7 @@ test('a remote change is not read from quickbooks while the connection is rate l
         ->and($jobs)->toHaveCount(1)
         ->and($jobs[0]->quickbooksAttempt)->toBe(1)
         ->and($jobs[0]->delay)->toBeGreaterThanOrEqual(299)
-        ->and($jobs[0]->delay)->toBeLessThanOrEqual(301);
+        ->and($jobs[0]->delay)->toBeLessThanOrEqual(331);
 });
 
 test('a remote change refused for a reason a retry does not fix still fails the job', function () {
@@ -122,4 +125,17 @@ test('a remote change queued before retries were counted starts at the first ret
     expect($revived)->toBeInstanceOf(ApplyRemoteChange::class)
         ->and($revived->lockAttempt)->toBe(2)
         ->and($revived->quickbooksAttempt)->toBe(0);
+});
+
+test('a queued retry wakes a little after the wait, so jobs held by one rate limit do not all call quickbooks at once', function () {
+    $draws = [];
+    for ($index = 0; $index < 50; $index++) {
+        $draws[] = WebhookRetry::spread(300);
+    }
+
+    expect(min($draws))->toBeGreaterThanOrEqual(300)
+        ->and(max($draws))->toBeLessThanOrEqual(330)
+        ->and(count(array_unique($draws)))->toBeGreaterThan(1)
+        ->and(WebhookRetry::spread(0))->toBe(0)
+        ->and(WebhookRetry::spread(5))->toBeLessThanOrEqual(6);
 });

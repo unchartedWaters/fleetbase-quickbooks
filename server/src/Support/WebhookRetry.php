@@ -60,6 +60,20 @@ class WebhookRetry
     }
 
     /**
+     * The queue delay for a retry: the wait plus up to a tenth of it (at most 60 seconds), so
+     * jobs held by the same rate limit wake at slightly different times instead of all calling
+     * QuickBooks at the same moment and running into a new 429.
+     */
+    public static function spread(int $wait): int
+    {
+        if ($wait < 1) {
+            return 0;
+        }
+
+        return $wait + random_int(0, max(1, min(60, intdiv($wait, 10))));
+    }
+
+    /**
      * The connection with the rate limit a 429 asks for, so the scheduled sync and the
      * other webhook jobs also wait it out. Other failures leave the connection unchanged.
      *

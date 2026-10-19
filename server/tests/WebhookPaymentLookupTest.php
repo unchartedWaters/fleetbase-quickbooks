@@ -800,7 +800,8 @@ test('a payment read quickbooks could not answer queues the job again and nothin
     expect($client->calls)->toBe(['batch'])
         ->and(wplJobs($jobs))->toBe([['resolve', $events]])
         ->and($jobs[0]->quickbooksAttempt)->toBe(1)
-        ->and($jobs[0]->delay)->toBe($delay)
+        ->and($jobs[0]->delay)->toBeGreaterThanOrEqual($delay)
+        ->and($jobs[0]->delay)->toBeLessThanOrEqual($delay + max(1, intdiv($delay, 10)))
         ->and($directory->released)->toBe([])
         ->and($directory->memory->batches)->toBe([]);
 })->with([
@@ -881,5 +882,5 @@ test('the payment job does not read quickbooks while the connection is rate limi
         ->and(wplJobs($jobs))->toBe([['resolve', $events]])
         ->and($jobs[0]->quickbooksAttempt)->toBe(1)
         ->and($jobs[0]->delay)->toBeGreaterThanOrEqual(199)
-        ->and($jobs[0]->delay)->toBeLessThanOrEqual(201);
+        ->and($jobs[0]->delay)->toBeLessThanOrEqual(221);
 });
