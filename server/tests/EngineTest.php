@@ -3365,6 +3365,58 @@ test('outbound quickbooks primary sends a cleared wallet description once', func
         ->and(array_count_values($client->calls)['updateAccount'] ?? 0)->toBe(1);
 });
 
+test('a customer name with a colon or a line break is sent in a form quickbooks accepts and the next sync is aligned', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => "Acme: North\tDepot\nEast"]);
+    $ledger->pending[]           = enginePending('customer', 'cust-1');
+    $settings                    = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    $ledger->connections['company-uuid']['last_batch_at'] = null;
+    $ledger->pending[0]['status']                         = 'pending';
+    $second                                               = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
+
+    expect($first['created'])->toBe(1)
+        ->and($client->customers['1']['DisplayName'])->toBe('Acme- North Depot East')
+        ->and($second['aligned'])->toBe(1)
+        ->and($second['updated'])->toBe(0)
+        ->and($client->calls)->not->toContain('updateCustomer')
+        ->and($ledger->customers['cust-1']['name'])->toBe("Acme: North\tDepot\nEast");
+
+    // The webhook echo of that create, with QuickBooks primary, does not rewrite the Fleetbase name.
+    $inbound = qbSettings(['interval_minutes' => 1, 'customer_conflict' => 'quickbooks']);
+    $engine->acceptRemoteChanges($ledger, 'company-uuid', [['entity' => 'Customer', 'id' => '1', 'operation' => 'Update']], $inbound, time());
+
+    expect($ledger->customers['cust-1']['name'])->toBe("Acme: North\tDepot\nEast");
+});
+
+foreach ([1 => 'on its own', 2 => 'in a batch'] as $nameTakenCount => $nameTakenLabel) {
+    test('a customer name quickbooks already uses for another record is reported by name ' . $nameTakenLabel, function () use ($nameTakenCount) {
+        [$engine, $client]           = qbEngine();
+        $client->failOnCreate        = 1;
+        $duplicate                   = qbRequestFailed(400, 'Duplicate Name Exists Error');
+        $client->failWith            = new QuickBooksException(400, $duplicate, null, '6240');
+        $ledger                      = engineLedger();
+        $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => 'Acme: North']);
+        $ledger->pending[]           = enginePending('customer', 'cust-1');
+        if ($nameTakenCount === 2) {
+            $ledger->customers['cust-2'] = engineCustomer('cust-2', ['name' => 'Beta', 'email' => 'beta@example.test']);
+            $ledger->pending[]           = enginePending('customer', 'cust-2');
+        }
+
+        $batch  = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+        $errors = array_column($ledger->attempts, 'error', 'local_uuid');
+
+        expect($batch['failed'])->toBe(1)
+            ->and(qbText($errors['cust-1']))->toBe(
+                'QuickBooks did not accept customer "Acme- North": a QuickBooks customer, vendor or employee'
+                . ' already uses that name. Rename one of them, then sync again.'
+            );
+    });
+}
+
 function engineLedger(): SyncLedger
 {
     $ledger                              = new SyncLedger();

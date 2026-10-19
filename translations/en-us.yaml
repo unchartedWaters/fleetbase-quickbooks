@@ -226,6 +226,7 @@ quickbooks:
     import-customers-off: Customers are turned off in Data Resolution, so they are not imported.
     import-failed: Customer import failed.
     customer-missing: Customer no longer exists in Fleetbase.
+    customer-name-taken: 'QuickBooks did not accept customer "{name}": a QuickBooks customer, vendor or employee already uses that name. Rename one of them, then sync again.'
     wallet-missing: Wallet no longer exists in Fleetbase.
     remote-delete-kept:
       customer: "A customer deleted in QuickBooks (ID {id}) was kept in Fleetbase. The customer sync settings do not let QuickBooks remove Fleetbase records."

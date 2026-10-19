@@ -342,6 +342,9 @@ class FakeQuickBooks extends QuickBooksClient
                         'status' => $exception->status,
                         'halt'   => $halt,
                     ];
+                    if ($exception->faultCode !== null) {
+                        $results[$bId]['code'] = $exception->faultCode;
+                    }
                     if ($halt === true) {
                         return $results;
                     }

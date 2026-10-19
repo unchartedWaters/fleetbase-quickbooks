@@ -647,3 +647,48 @@ test('an expired re-flag lease does not keep a later save from finishing the row
         $restore();
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a customer catalog page whose only failure quickbooks will refuse again still completes', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        $client               = new ClaimProbeQuickBooks();
+        $client->failOnCreate = 1;
+        $duplicate            = qbRequestFailed(400, 'Duplicate Name Exists Error');
+        $client->failWith     = new QuickBooksException(400, $duplicate, null, '6240');
+        [$runner, $directory] = claimRunner($client);
+
+        $batch = $runner->run('company-1', 'catalog');
+
+        $failed = DB::table('quickbooks_sync_attempts')->where('outcome', 'failed')->get();
+        expect($batch['failed'])->toBe(1)
+            ->and($batch['created'])->toBe(1)
+            ->and($failed)->toHaveCount(1)
+            ->and($failed[0]->local_uuid)->toBe('cust-1')
+            ->and(qbText($failed[0]->error))->toContain('already uses that name')
+            ->and(Cache::get('quickbooks.customer-catalog-after.company-1'))->toBeNull()
+            ->and($directory->customerCatalogStamp('company-1'))->not->toBeNull();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a customer catalog page with a failure that may pass on retry is kept for the next run', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        $client               = new ClaimProbeQuickBooks();
+        $client->failOnCreate = 1;
+        $client->failWith     = new QuickBooksException(503, qbRequestFailed(503));
+        [$runner, $directory] = claimRunner($client);
+
+        $batch = $runner->run('company-1', 'catalog');
+
+        expect($batch['failed'])->toBe(1)
+            ->and($directory->customerCatalogStamp('company-1'))->toBeNull();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');

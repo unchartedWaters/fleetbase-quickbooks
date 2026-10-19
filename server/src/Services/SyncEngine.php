@@ -38,7 +38,21 @@ class SyncEngine
      */
     private const QUERY_PAGE_SIZE = 100;
 
+    /**
+     * Intuit fault code for "Duplicate Name Exists": a customer, vendor or employee already has the name.
+     */
+    private const DUPLICATE_NAME_FAULT = '6240';
+
     private ?string $lastError = null;
+
+    /**
+     * Rows of the current run, by company, whose failure QuickBooks would give again for the
+     * same data: a 4xx validation fault, or a check Fleetbase made before sending. Sending
+     * them again soon does not help, so the customer catalog moves past them.
+     *
+     * @var array<string, array<string, true>>
+     */
+    private array $permanentFailures = [];
 
     /** @var array<string, bool> */
     private array $customTxnNumbers = [];
@@ -293,6 +307,29 @@ class SyncEngine
     public function refreshFailed(string $companyUuid): bool
     {
         return isset($this->refreshFailed[$companyUuid]);
+    }
+
+    /**
+     * How many rows of the last run for this company failed in a way that sending the same
+     * data again would not fix. Every other failed row may pass on a retry.
+     */
+    public function permanentFailures(string $companyUuid): int
+    {
+        return count($this->permanentFailures[$companyUuid] ?? []);
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private function notePermanence(string $companyUuid, array $row, bool $permanent): void
+    {
+        $key = (string) ($row['local_type'] ?? '') . '|' . (string) ($row['local_uuid'] ?? '');
+        if ($permanent === true) {
+            $this->permanentFailures[$companyUuid][$key] = true;
+
+            return;
+        }
+        unset($this->permanentFailures[$companyUuid][$key]);
     }
 
     /**
@@ -679,6 +716,7 @@ class SyncEngine
         $companyUuid             = (string) $connection['company_uuid'];
         // A worker can reuse this engine, so a refresh that failed in an earlier run is tried again.
         unset($this->refreshFailed[$companyUuid]);
+        $this->permanentFailures[$companyUuid] = [];
         $ledger->rebuildIndex();
         $connection = $this->processRows($ledger, $connection, $rows, $settings, $batch, $now, $trigger, $companyUuid);
 
@@ -926,10 +964,7 @@ class SyncEngine
         }
 
         if ($reference === 'quickbooks' && $copy === true) {
-            $name = trim((string) ($remote['DisplayName'] ?? ''));
-            if ($name !== '') {
-                $ledger->customers[$uuid]['name'] = $name;
-            }
+            $this->copyCustomerName($ledger, $uuid, $remote);
             $payload = $this->customers->toQuickBooks($this->customers->fromParty($ledger->customers[$uuid]), $pushClears);
         }
 
@@ -1703,6 +1738,10 @@ class SyncEngine
     private function failure(SyncLedger $ledger, array $connection, array $row, \Throwable $exception, array $settings, int $now): string
     {
         $companyUuid = (string) $connection['company_uuid'];
+        $permanent   = $exception instanceof QuickBooksException
+            && $exception->isTransient() === false
+            && $exception->isUnauthorized() === false;
+        $this->notePermanence($companyUuid, $row, $permanent);
         if ($exception instanceof QuickBooksException && $exception->isRateLimit() === true) {
             $previous                                                  = isset($connection['last_rate_limit_wait']) === true ? (int) $connection['last_rate_limit_wait'] : null;
             $wait                                                      = $this->backoff->rateLimitWait($exception->retryAfter, $previous);
@@ -2296,7 +2335,7 @@ class SyncEngine
     {
         $local = [
             'email' => $this->comparableEmail((string) ($payload['PrimaryEmailAddr']['Address'] ?? '')),
-            'name'  => (string) ($payload['DisplayName'] ?? ''),
+            'name'  => CustomerMapper::displayName((string) ($payload['DisplayName'] ?? '')),
             'phone' => $this->comparablePhone((string) ($payload['PrimaryPhone']['FreeFormNumber'] ?? '')),
         ];
         if (array_key_exists('Notes', $payload) === true) {
@@ -2315,7 +2354,7 @@ class SyncEngine
 
         $other = [
             'email' => $this->comparableEmail((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')),
-            'name'  => (string) ($remote['DisplayName'] ?? ''),
+            'name'  => CustomerMapper::displayName((string) ($remote['DisplayName'] ?? '')),
             'phone' => $this->comparablePhone((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')),
         ];
         if (array_key_exists('notes', $local) === true) {
@@ -2459,14 +2498,27 @@ class SyncEngine
     }
 
     /**
+     * Copy the QuickBooks name onto the Fleetbase customer. A name that only differs by what
+     * QuickBooks cannot store (a colon sent as a hyphen, a line break as a space) is the
+     * same name and is kept, so the echo of Fleetbase's own push does not rewrite it.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function copyCustomerName(SyncLedger $ledger, string $uuid, array $remote): void
+    {
+        $name  = trim((string) ($remote['DisplayName'] ?? ''));
+        $local = (string) ($ledger->customers[$uuid]['name'] ?? '');
+        if ($name !== '' && CustomerMapper::displayName($local) !== CustomerMapper::displayName($name)) {
+            $ledger->customers[$uuid]['name'] = $name;
+        }
+    }
+
+    /**
      * @param array<string, mixed> $remote
      */
     private function applyCustomerFromRemote(SyncLedger $ledger, string $uuid, array $remote): void
     {
-        $name = trim((string) ($remote['DisplayName'] ?? ''));
-        if ($name !== '') {
-            $ledger->customers[$uuid]['name'] = $name;
-        }
+        $this->copyCustomerName($ledger, $uuid, $remote);
         $email = (string) ($remote['PrimaryEmailAddr']['Address'] ?? '');
         if ($email !== '') {
             $ledger->customers[$uuid]['email'] = $email;
@@ -2590,7 +2642,7 @@ class SyncEngine
             }
         }
 
-        $name = trim($displayName);
+        $name = CustomerMapper::displayName($displayName);
         if ($name === '') {
             return null;
         }
@@ -3426,7 +3478,13 @@ class SyncEngine
                 return;
             }
             $retryError = $this->exceptionError($exception);
-            $outcome    = $this->failure($ledger, $connection, $row, $exception, $settings, $now);
+            if ($exception instanceof QuickBooksException) {
+                $type       = (string) $row['local_type'];
+                $uuid       = (string) $row['local_uuid'];
+                $nameTaken  = $this->customerNameTakenError($ledger, $type, $uuid, $exception->faultCode);
+                $retryError = $nameTaken ?? $retryError;
+            }
+            $outcome = $this->failure($ledger, $connection, $row, $exception, $settings, $now);
         }
         $connection = $ledger->connection($companyUuid) ?? $connection;
         $this->recordRow($ledger, $connection, $row, $outcome, $batch, $trigger, $retryError);
@@ -3720,7 +3778,12 @@ class SyncEngine
                         $settings,
                         $now
                     );
-                    $error = $this->batchItemAttemptError((string) ($result['error'] ?? ''), (int) ($result['status'] ?? 0));
+                    $code  = (string) ($result['code'] ?? '');
+                    $error = $this->customerNameTakenError($ledger, $kind, (string) $uuid, $code)
+                        ?? $this->batchItemAttemptError(
+                            (string) ($result['error'] ?? ''),
+                            (int) ($result['status'] ?? 0)
+                        );
                 } elseif (is_array($result['body'] ?? null) === true && ($result['body']['Id'] ?? '') !== '') {
                     $localType = $kind === 'wallet' ? 'wallet' : $kind;
                     $entity    = match ($kind) {
@@ -4656,7 +4719,7 @@ class SyncEngine
      * @param array<string, mixed>                                                                 $connection
      * @param array{bId: string, operation: string, entity: string, payload: array<string, mixed>} $op
      *
-     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}
+     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool, code?: string}
      */
     private function executeOneWrite(array $connection, array $op): array
     {
@@ -4677,7 +4740,7 @@ class SyncEngine
 
             return ['ok' => true, 'body' => $body, 'rows' => [], 'error' => null, 'status' => 200, 'halt' => false];
         } catch (QuickBooksException $exception) {
-            return [
+            $result = [
                 'ok'     => false,
                 'body'   => [],
                 'rows'   => [],
@@ -4685,7 +4748,27 @@ class SyncEngine
                 'status' => $exception->status,
                 'halt'   => $exception->isUnauthorized() === true || $exception->isRateLimit() === true,
             ];
+            if ($exception->faultCode !== null && $exception->faultCode !== '') {
+                $result['code'] = $exception->faultCode;
+            }
+
+            return $result;
         }
+    }
+
+    /**
+     * QuickBooks fault 6240: the name is already used by another customer, a vendor or an
+     * employee (DisplayName is unique across all three). Intuit's own text does not say
+     * which customer or what to do, so this names the customer. Null for any other result.
+     */
+    private function customerNameTakenError(SyncLedger $ledger, string $kind, string $uuid, ?string $faultCode): ?string
+    {
+        if ($kind !== 'customer' || $faultCode !== self::DUPLICATE_NAME_FAULT) {
+            return null;
+        }
+        $name = CustomerMapper::displayName((string) ($ledger->customers[$uuid]['name'] ?? ''));
+
+        return Translation::encode('quickbooks.messages.customer-name-taken', ['name' => $name]);
     }
 
     /**
@@ -5307,6 +5390,11 @@ class SyncEngine
             'outcome'      => $outcome,
             'error'        => $this->lastError ?? $retryError,
         ];
+        // A failure Fleetbase decided itself (lastError) is final for this data. A failure
+        // from QuickBooks was classified by failure(). A row that did not fail is not counted.
+        if ($outcome !== 'failed' || $this->lastError !== null) {
+            $this->notePermanence((string) $connection['company_uuid'], $row, $outcome === 'failed');
+        }
         $tracksPending = in_array($trigger, ['scheduled', 'now', 'manual', 'catalog'], true);
         if ($this->lastError !== null && $tracksPending === true) {
             $ledger->updatePending((string) $connection['company_uuid'], (string) $row['local_type'], (string) $row['local_uuid'], [

@@ -421,9 +421,12 @@ class BatchRunner
     }
 
     /**
-     * A catalog cursor is a page commit marker. Failed or halted rows
-     * leave it untouched so the whole page is retried from the previous marker.
-     * A skipped row is an intended no-op and does not block the commit.
+     * A catalog cursor is a page commit marker. A halted row, or one that failed in a way a
+     * retry may fix (rate limit, QuickBooks server error, no connection), leaves it untouched
+     * so the whole page is retried from the previous marker. A row QuickBooks refused for its
+     * data (for example a duplicate name) is recorded as a failed attempt and does not block
+     * the commit: it would fail the same way on every retry and stall the rest of the catalog.
+     * A skipped row is an intended no-op and does not block the commit either.
      *
      * @param array<string, mixed> $batch
      */
@@ -437,10 +440,11 @@ class BatchRunner
         $completed = (int) ($batch['created'] ?? 0)
             + (int) ($batch['updated'] ?? 0)
             + (int) ($batch['aligned'] ?? 0);
+        $failed = (int) ($batch['failed'] ?? 0);
 
         return ($batch['status'] ?? null) === 'finished'
-            && (int) ($batch['failed'] ?? 0) === 0
-            && $completed + (int) ($batch['skipped'] ?? 0) === $expected;
+            && $failed === $this->engine->permanentFailures($companyUuid)
+            && $completed + $failed + (int) ($batch['skipped'] ?? 0) === $expected;
     }
 
     private function reconcileCursorKey(string $companyUuid): string

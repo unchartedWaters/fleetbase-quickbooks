@@ -325,7 +325,12 @@ QuickBooks update operations are posted in chunks of 20. Queries, creates, and v
 
 Sync frequency is minutes (`interval_minutes`, default 5). Full sync frequency
 (hours) (`periodic_interval_hours`, default 24) limits only the customer
-catalog, and that catalog is skipped when Customers is unchecked. Customer
+catalog, and that catalog is skipped when Customers is unchecked. The catalog
+walks the customers one page at a time. A page moves on when each customer on
+it synced, or QuickBooks refused it for its data (for example a duplicate
+name). A refused customer is a failed Activity row and is tried again on the
+next full sync. A page with a failure that can pass on retry (rate limit,
+QuickBooks server error, QuickBooks not reached) is sent again. Customer
 import reads QuickBooks in pages of at most 100 records and stores the next
 start in `quickbooks_connections.customer_import_start`, so a run that stops at
 the 600 second organization lock continues there.
@@ -446,6 +451,12 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 - **Shared QuickBooks company.** Several Fleetbase organizations can connect to the same QuickBooks company (realm). `quickbooks_connections` is unique per organization, not per realm, and a webhook for a realm is applied to every organization connected to it (`WebhookController`). Intuit app credentials, the redirect, and the webhook verifier are install-wide, so every organization on the install uses the same Intuit app.
 - **Links.** `quickbooks_links` holds links for customers, invoices, and wallets, and also for payments. A payment link is keyed by the Fleetbase invoice uuid, or by the QuickBooks payment id when the payment was found in QuickBooks.
 - **Customer matching.** A Fleetbase customer is matched to an existing QuickBooks customer by email first, then by display name. When Primary is Fleetbase, a name match is rejected if both sides have an email and the emails differ, so that customer is not matched. Names are the only key when there is no email, so two different customers with the same name are treated as one.
+- **Customer names.** QuickBooks does not accept a colon, tab or line break in
+  a customer's display name. Fleetbase sends a colon as `-` and a tab or line
+  break as a space, and compares names the same way. The Fleetbase name is not
+  changed. A display name is unique across QuickBooks customers, vendors and
+  employees, so a name one of them already uses fails with a message that names
+  the customer.
 
 ## Overlapping syncs and history
 

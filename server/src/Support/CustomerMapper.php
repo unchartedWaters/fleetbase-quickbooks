@@ -8,6 +8,21 @@ namespace Fleetbase\Quickbooks\Support;
 class CustomerMapper
 {
     /**
+     * The customer name in a form QuickBooks accepts as a DisplayName. QuickBooks rejects a
+     * colon (it separates a sub-customer from its parent) and tabs or line breaks. A colon
+     * becomes a hyphen and each control character a space. Compare local and QuickBooks
+     * names through this too, or every sync sees a difference and sends the name again.
+     */
+    public static function displayName(string $name): string
+    {
+        $name = str_replace(':', '-', $name);
+
+        // Byte-wise, so a name that is not valid UTF-8 is still kept. These bytes never
+        // occur inside a multibyte UTF-8 character.
+        return trim(preg_replace('/[\x00-\x1F\x7F]/', ' ', $name) ?? $name);
+    }
+
+    /**
      * @param array<string, mixed> $customer
      * @param bool                 $pushClears include an empty note and billing address so a Fleetbase clear is sent
      *
@@ -16,7 +31,7 @@ class CustomerMapper
     public function toQuickBooks(array $customer, bool $pushClears = false): array
     {
         $payload = [
-            'DisplayName' => (string) ($customer['name'] ?? 'Customer'),
+            'DisplayName' => self::displayName((string) ($customer['name'] ?? 'Customer')),
         ];
 
         $email = trim((string) ($customer['email'] ?? ''));

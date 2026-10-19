@@ -24,6 +24,16 @@ class QuickBooksException extends \RuntimeException
     }
 
     /**
+     * A failure that can pass when the same request is sent again later: QuickBooks could
+     * not be reached (status 0), timed out (408), asked Fleetbase to wait (429), or failed
+     * on its side (5xx). A 4xx validation fault, such as a duplicate name, is not transient.
+     */
+    public function isTransient(): bool
+    {
+        return $this->status === 0 || $this->status === 408 || $this->status === 429 || $this->status >= 500;
+    }
+
+    /**
      * QuickBooks answers a read of a deleted or missing entity with 400 and fault code 610.
      */
     public function isNotFound(): bool
