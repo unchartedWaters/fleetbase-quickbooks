@@ -29,6 +29,9 @@ Unknown QuickBooks invoices are not imported. An invoice is synced from QuickBoo
 
 Money is stored as integer minor units. QuickBooks major-unit amounts are converted with `Amounts::toMinorUnits` before they are saved, and a PHP float is rejected. Unit price on an invoice line is an integer minor-unit value. When it is sent to QuickBooks it is formatted as a decimal string, not a float.
 
+Zero-decimal currencies such as JPY, KRW and CLP (`Amounts::ZERO_DECIMAL`) are
+stored in whole units, as Fleetbase does: ¥5,000 is sent as `5000.00`.
+
 ## Create a QuickBooks app
 
 The extension connects through an app that you create on the Intuit Developer
@@ -437,7 +440,8 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   Primary, whether or not multi-currency is on. With multi-currency on,
   QuickBooks applies its own exchange rate because no `ExchangeRate` is sent.
   Invoices that were posted in the home currency by an earlier version stay
-  aligned until a push is attempted.
+  aligned until a push is attempted. Earlier versions sent zero-decimal
+  currency amounts (such as JPY) at 1/100; check those invoices in QuickBooks.
 - **Invoice numbers.** With `invoice_reference=quickbooks`, a QuickBooks DocNumber that another Fleetbase invoice (any organization) already uses is not copied. The invoice keeps its number and the Activity row shows a note. The note repeats on each sync until the duplicate is resolved.
 - **Quantities.** Fleetbase invoice line quantities are whole numbers. A fractional QuickBooks quantity imports as 1 unit at the line amount.
 - **Tax.** Invoice tax is sent as an ordinary sales line whose description is `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No `TxnTaxDetail` or tax code is sent. A QuickBooks company that uses automated sales tax can show different tax and totals than Fleetbase. On the way back, only that synthetic line is read as tax.

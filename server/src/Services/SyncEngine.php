@@ -541,8 +541,10 @@ class SyncEngine
         if ($total === null || $total === '' || $balance === null || $balance === '') {
             return false;
         }
-        $before                                             = $invoice;
-        $paid                                               = $this->majorUnits($total) - $this->majorUnits($balance);
+        $before   = $invoice;
+        $currency = (string) ($invoice['currency'] ?? '');
+        $paid     = $this->majorUnits($total, $currency) - $this->majorUnits($balance, $currency);
+
         $ledger->invoices[$uuid]['amount_paid']             = max(0, $paid);
         $ledger->invoices[$uuid]['payment_from_quickbooks'] = true;
         $this->applyPaymentStatus($ledger, $uuid);
@@ -1448,7 +1450,7 @@ class SyncEngine
             $partyChanged = $this->copyInvoiceCustomerAndCurrency($ledger, $uuid, $remote);
         }
         $invoice     = $ledger->invoices[$uuid];
-        $remoteCents = $this->majorUnits($remote['TotalAmt'] ?? 0);
+        $remoteCents = $this->majorUnits($remote['TotalAmt'] ?? 0, (string) ($invoice['currency'] ?? ''));
         $localCents  = (int) ($invoice['total'] ?? 0);
         $currencyOk  = $this->invoiceCurrencyError($ledger, $connection, (string) ($invoice['currency'] ?? '')) === null;
         // QuickBooks replaces the Fleetbase line set only when this sync copies remote lines.
@@ -1473,7 +1475,7 @@ class SyncEngine
         if ($matched === true) {
             $outcome = ($numberChanged === true || $partyChanged === true) ? 'updated' : 'aligned';
             $items   = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
-            $paired  = $this->invoices->pairedLineIds($items, $remote, $removed, $mapped);
+            $paired  = $this->invoiceMapper($invoice)->pairedLineIds($items, $remote, $removed, $mapped);
             $this->recordLineMap($ledger, $uuid, $connection, (string) $remote['Id'], $paired, $stored['uuids']);
             if ($this->writeBuffer !== null) {
                 return $outcome;
@@ -1525,7 +1527,8 @@ class SyncEngine
             return 'failed';
         }
         $this->keepFleetbaseDocNumber($payload, $ledger->invoices[$uuid], $remote, $reference);
-        $payload = $this->invoices->withExistingLineIds($payload, $remote, $removed, $mapped);
+        $payload = $this->invoiceMapper($ledger->invoices[$uuid])
+            ->withExistingLineIds($payload, $remote, $removed, $mapped);
         $this->rememberPushedLineIds($ledger, $uuid, $payload);
 
         if ($this->writeBuffer !== null) {
@@ -1604,7 +1607,8 @@ class SyncEngine
             if ($amountCents <= 0) {
                 return null;
             }
-            $payload = $this->invoices->payment($customerRef, $invoiceId, $amountCents, $this->paymentDate($invoice));
+            $payload = $this->invoiceMapper($invoice)
+                ->payment($customerRef, $invoiceId, $amountCents, $this->paymentDate($invoice));
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
                     'bId'       => 'payment:' . $uuid,
@@ -1674,7 +1678,8 @@ class SyncEngine
         if ($amountCents <= 0) {
             return null;
         }
-        $payload = $this->invoices->payment($customerRef, $invoiceId, $amountCents, $this->paymentDate($invoice));
+        $payload = $this->invoiceMapper($invoice)
+            ->payment($customerRef, $invoiceId, $amountCents, $this->paymentDate($invoice));
         if ($this->writeBuffer !== null) {
             $payload['Id']        = (string) $remote['Id'];
             $payload['SyncToken'] = (string) $remote['SyncToken'];
@@ -1966,7 +1971,8 @@ class SyncEngine
         if ($ignoreExtraSalesLines === true) {
             $removed     = $lines['removed'] ?? [];
             $mapped      = $lines['mapped'] ?? false;
-            $limited     = $this->invoices->withoutUnmatchedSalesLines($localItems, $remote, $removed, $mapped);
+            $limited     = $this->invoiceMapper($invoice)
+                ->withoutUnmatchedSalesLines($localItems, $remote, $removed, $mapped);
             $compared    = $limited['remote'];
             $remoteCents -= $limited['omitted_cents'];
         }
@@ -2000,7 +2006,7 @@ class SyncEngine
                 $other['currency'] = $remoteCurrency;
             }
         }
-        $mapped         = $this->invoices->fromQuickBooks($compared);
+        $mapped         = $this->invoiceMapper($invoice)->fromQuickBooks($compared);
         $local['items'] = $this->hashableInvoiceItems($localItems);
         $local['tax']   = (int) ($invoice['tax'] ?? 0);
         $other['items'] = $mapped['items'];
@@ -2236,7 +2242,10 @@ class SyncEngine
         return $name === self::INVOICE_PAYMENTS ? 'Invoice' : $name;
     }
 
-    private function majorUnits(mixed $amount): int
+    /**
+     * A QuickBooks amount in Fleetbase units of the invoice currency (whole units when zero-decimal).
+     */
+    private function majorUnits(mixed $amount, string $currency = ''): int
     {
         if (is_float($amount) === true) {
             throw new \InvalidArgumentException('Money must not be a float.');
@@ -2245,7 +2254,17 @@ class SyncEngine
             return 0;
         }
 
-        return Amounts::toMinorUnits($amount);
+        return Amounts::toMinorUnits($amount, $currency);
+    }
+
+    /**
+     * The invoice mapper for this Fleetbase invoice's currency.
+     *
+     * @param array<string, mixed> $invoice
+     */
+    private function invoiceMapper(array $invoice): InvoiceMapper
+    {
+        return $this->invoices->forCurrency((string) ($invoice['currency'] ?? ''));
     }
 
     /**
@@ -2434,7 +2453,7 @@ class SyncEngine
             $changed                          = true;
         }
 
-        $mapped  = $this->invoices->fromQuickBooks($remote);
+        $mapped  = $this->invoiceMapper($ledger->invoices[$uuid])->fromQuickBooks($remote);
         $current = $ledger->invoices[$uuid]['items'] ?? [];
         $current = is_array($current) === true ? $current : [];
         if ($mapped['items'] !== [] && $mapped['items'] !== $this->hashableInvoiceItems($current)) {
@@ -3117,7 +3136,7 @@ class SyncEngine
      */
     private function paymentMatches(array $invoice, array $remote, string $invoiceId): bool
     {
-        $remoteCents = $this->amountOnInvoice($remote, $invoiceId);
+        $remoteCents = $this->amountOnInvoice($remote, $invoiceId, (string) ($invoice['currency'] ?? ''));
         if ($remoteCents === null || $remoteCents !== $this->paymentAmountCents($invoice)) {
             return false;
         }
@@ -3140,7 +3159,7 @@ class SyncEngine
         if (count($payments) === 1) {
             return $this->paymentMatches($invoice, $payments[0], $invoiceId);
         }
-        $remoteCents = $this->summedOnInvoice($payments, $invoiceId);
+        $remoteCents = $this->summedOnInvoice($payments, $invoiceId, (string) ($invoice['currency'] ?? ''));
 
         return $remoteCents !== null && $remoteCents === $this->paymentAmountCents($invoice);
     }
@@ -3184,7 +3203,7 @@ class SyncEngine
         if ($latest !== '') {
             $ledger->invoices[$uuid]['paid_at'] = $latest;
         }
-        $amount = $this->summedOnInvoice($payments, $invoiceId);
+        $amount = $this->summedOnInvoice($payments, $invoiceId, (string) ($ledger->invoices[$uuid]['currency'] ?? ''));
         if ($amount !== null) {
             $ledger->invoices[$uuid]['amount_paid'] = $amount;
         }
@@ -3197,7 +3216,7 @@ class SyncEngine
      *
      * @param array<int, array<string, mixed>> $payments
      */
-    private function summedOnInvoice(array $payments, string $invoiceId): ?int
+    private function summedOnInvoice(array $payments, string $invoiceId, string $currency = ''): ?int
     {
         if ($payments === []) {
             return null;
@@ -3205,7 +3224,7 @@ class SyncEngine
 
         $sum = 0;
         foreach ($payments as $remote) {
-            $amount = $this->amountOnInvoice($remote, $invoiceId);
+            $amount = $this->amountOnInvoice($remote, $invoiceId, $currency);
             if ($amount === null) {
                 return null;
             }
@@ -3222,9 +3241,9 @@ class SyncEngine
      *
      * @param array<string, mixed> $remote
      */
-    private function amountOnInvoice(array $remote, string $invoiceId): ?int
+    private function amountOnInvoice(array $remote, string $invoiceId, string $currency = ''): ?int
     {
-        $applied = $this->linkedLineCents($remote, $invoiceId);
+        $applied = $this->linkedLineCents($remote, $invoiceId, $currency);
         if ($applied !== null) {
             return $applied;
         }
@@ -3232,13 +3251,13 @@ class SyncEngine
             return null;
         }
 
-        return $this->majorUnits($remote['TotalAmt']);
+        return $this->majorUnits($remote['TotalAmt'], $currency);
     }
 
     /**
      * @param array<string, mixed> $remote
      */
-    private function linkedLineCents(array $remote, string $invoiceId): ?int
+    private function linkedLineCents(array $remote, string $invoiceId, string $currency = ''): ?int
     {
         $lines = $remote['Line'] ?? null;
         if (is_array($lines) === false || $invoiceId === '') {
@@ -3252,7 +3271,7 @@ class SyncEngine
                 continue;
             }
             $found = true;
-            $sum += $this->majorUnits($line['Amount'] ?? 0);
+            $sum += $this->majorUnits($line['Amount'] ?? 0, $currency);
         }
 
         return $found === true ? $sum : null;

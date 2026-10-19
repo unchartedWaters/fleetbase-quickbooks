@@ -10,6 +10,22 @@ class InvoiceMapper
     public const TAX_LINE_DESCRIPTION = "\u{2060}Tax";
 
     /**
+     * The invoice currency amounts are read and written in. See Amounts::ZERO_DECIMAL.
+     */
+    private string $currency = '';
+
+    /**
+     * A mapper for one invoice currency. A zero-decimal currency is whole units in Fleetbase.
+     */
+    public function forCurrency(?string $currency): self
+    {
+        $mapper           = clone $this;
+        $mapper->currency = strtoupper(trim((string) $currency));
+
+        return $mapper;
+    }
+
+    /**
      * @param array<string, mixed> $invoice
      * @param bool                 $pushClears include an empty note and due date so a Fleetbase clear is sent
      *
@@ -17,19 +33,20 @@ class InvoiceMapper
      */
     public function toQuickBooks(array $invoice, string $customerRef, string $itemId, bool $pushClears = false): array
     {
-        $lines = [];
-        $items = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
+        $lines    = [];
+        $items    = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
+        $currency = (string) ($invoice['currency'] ?? '');
         foreach ($items as $item) {
             $amountCents = (int) ($item['amount'] ?? 0);
             $qty         = (int) ($item['quantity'] ?? 1);
             $line        = [
-                'Amount'              => Amounts::centsToDecimal($amountCents),
+                'Amount'              => Amounts::centsToDecimal($amountCents, $currency),
                 'DetailType'          => 'SalesItemLineDetail',
                 'Description'         => (string) ($item['description'] ?? ''),
                 'SalesItemLineDetail' => [
                     'ItemRef'   => ['value' => $itemId],
                     'Qty'       => $qty,
-                    'UnitPrice' => Amounts::unitPriceDecimal($amountCents, $qty),
+                    'UnitPrice' => Amounts::unitPriceDecimal($amountCents, $qty, $currency),
                 ],
             ];
             $lineId = trim((string) ($item['qbo_line_id'] ?? ''));
@@ -42,13 +59,13 @@ class InvoiceMapper
         $tax = (int) ($invoice['tax'] ?? 0);
         if ($tax > 0) {
             $lines[] = [
-                'Amount'              => Amounts::centsToDecimal($tax),
+                'Amount'              => Amounts::centsToDecimal($tax, $currency),
                 'DetailType'          => 'SalesItemLineDetail',
                 'Description'         => self::TAX_LINE_DESCRIPTION,
                 'SalesItemLineDetail' => [
                     'ItemRef'   => ['value' => $itemId],
                     'Qty'       => 1,
-                    'UnitPrice' => Amounts::centsToDecimal($tax),
+                    'UnitPrice' => Amounts::centsToDecimal($tax, $currency),
                 ],
             ];
         }
@@ -139,7 +156,7 @@ class InvoiceMapper
             $wanted[]  = [
                 'id'          => trim((string) ($line['Id'] ?? '')),
                 'description' => (string) ($line['Description'] ?? ''),
-                'amount'      => self::lineAmount($line['Amount'] ?? 0),
+                'amount'      => $this->lineAmount($line['Amount'] ?? 0),
             ];
             $itemId    = self::itemRef($line) ?? $itemId;
         }
@@ -299,7 +316,7 @@ class InvoiceMapper
             if (isset($paired[$cursor]) === true) {
                 $kept[] = $line;
             } else {
-                $omitted += self::lineAmount($line['Amount'] ?? 0);
+                $omitted += $this->lineAmount($line['Amount'] ?? 0);
             }
             $cursor++;
         }
@@ -422,7 +439,7 @@ class InvoiceMapper
     private function sameContent(array $local, array $line): bool
     {
         return $local['description'] === (string) ($line['Description'] ?? '')
-            && $local['amount'] === self::lineAmount($line['Amount'] ?? 0);
+            && $local['amount'] === $this->lineAmount($line['Amount'] ?? 0);
     }
 
     /**
@@ -590,7 +607,7 @@ class InvoiceMapper
             }
 
             $description = (string) ($line['Description'] ?? '');
-            $amountCents = self::lineAmount($line['Amount'] ?? 0);
+            $amountCents = $this->lineAmount($line['Amount'] ?? 0);
             if ($description === self::TAX_LINE_DESCRIPTION) {
                 $tax += $amountCents;
                 continue;
@@ -610,7 +627,7 @@ class InvoiceMapper
                 continue;
             }
             $unitCents = array_key_exists('UnitPrice', $detail) === true
-                ? self::lineAmount($detail['UnitPrice'])
+                ? $this->lineAmount($detail['UnitPrice'])
                 : ($quantity > 0 ? intdiv($amountCents, max($quantity, 1)) : $amountCents);
             $items[] = [
                 'description' => $description,
@@ -623,7 +640,7 @@ class InvoiceMapper
         return [
             'items' => $items,
             'tax'   => $tax,
-            'total' => self::lineAmount($remote['TotalAmt'] ?? 0),
+            'total' => $this->lineAmount($remote['TotalAmt'] ?? 0),
         ];
     }
 
@@ -648,7 +665,7 @@ class InvoiceMapper
         return 1;
     }
 
-    private static function lineAmount(mixed $amount): int
+    private function lineAmount(mixed $amount): int
     {
         if (is_float($amount) === true) {
             throw new \InvalidArgumentException('Money must not be a float.');
@@ -657,7 +674,7 @@ class InvoiceMapper
             return 0;
         }
 
-        return Amounts::toMinorUnits($amount);
+        return Amounts::toMinorUnits($amount, $this->currency);
     }
 
     /**
@@ -665,7 +682,7 @@ class InvoiceMapper
      */
     public function payment(string $customerRef, string $invoiceId, int $amountCents, ?string $txnDate = null): array
     {
-        $amount  = Amounts::centsToDecimal($amountCents);
+        $amount  = Amounts::centsToDecimal($amountCents, $this->currency);
         $payload = [
             'TotalAmt'    => $amount,
             'CustomerRef' => ['value' => $customerRef],
