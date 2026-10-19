@@ -83,7 +83,7 @@ test('a failure of the first chunk still throws so nothing is recorded as writte
     ];
 
     expect(fn () => (new QuickBooksClient())->batch($chunkFaultConnection, $items))
-        ->toThrow(Fleetbase\Quickbooks\Support\QuickBooksException::class);
+        ->toThrow(QuickBooksException::class);
 });
 
 test('a later chunk of a read-only batch that fails is still thrown, because reading again repeats no write', function () use ($chunkFaultConnection) {
@@ -106,7 +106,7 @@ test('a later chunk of a read-only batch that fails is still thrown, because rea
     }
 
     expect(fn () => (new QuickBooksClient())->batch($chunkFaultConnection, $items))
-        ->toThrow(Fleetbase\Quickbooks\Support\QuickBooksException::class);
+        ->toThrow(QuickBooksException::class);
 });
 
 test('with quickbooks numbering a failed second chunk keeps the first chunk links and the next run creates only the rest', function (int $status) {
@@ -187,7 +187,7 @@ test('a batch item that fails with a quickbooks server fault or a stale sync tok
         $items[] = ['bId' => $bId, 'operation' => 'update', 'entity' => 'Customer', 'payload' => ['Id' => '1', 'SyncToken' => '0']];
     }
 
-    $results = (new QuickBooksClient())->batch($chunkFaultConnection, $items);
+    $results   = (new QuickBooksClient())->batch($chunkFaultConnection, $items);
     $transient = fn (string $bId) => (new QuickBooksException($results[$bId]['status'], 'x'))->isTransient();
 
     expect($transient('server'))->toBeTrue()
