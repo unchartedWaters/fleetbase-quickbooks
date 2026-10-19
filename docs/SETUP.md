@@ -477,6 +477,9 @@ Pass `--path` with the Fleetbase directory when that directory is not the curren
 
 `.github/workflows/deploy.yml` publishes this package to the Fleetbase registry with `flb publish` when a `v*` tag is pushed. The tag has to contain that workflow, and the GitHub secrets named in it have to exist.
 
+It publishes only when the tagged commit is on `main` and the PHP and Ember
+test workflows it calls (`server.yml`, `ember.yml`) pass.
+
 As an installation administrator, open Admin → QuickBooks → Settings and save
 the Intuit Client ID and Client secret. Then open Organization settings →
 QuickBooks Setup and connect.

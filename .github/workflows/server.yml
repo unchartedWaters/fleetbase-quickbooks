@@ -2,6 +2,7 @@ name: PHP CI
 
 # Registry listing and Composer publish run from deploy.yml on a v* tag.
 # This workflow stays on PHP tests. It does not run `flb install`.
+# deploy.yml also calls it (workflow_call) so a release waits for these tests.
 
 on:
   push:
@@ -10,6 +11,10 @@ on:
       - 'v*'
   pull_request:
     branches: [ main, develop ]
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   build:
