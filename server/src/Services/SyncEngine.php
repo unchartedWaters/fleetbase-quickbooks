@@ -4861,7 +4861,15 @@ class SyncEngine
      * @param array<string, mixed>                                                                 $connection
      * @param array{bId: string, operation: string, entity: string, payload: array<string, mixed>} $op
      *
-     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool, code?: string}
+     * @return array{
+     *     ok: bool,
+     *     body: array<string, mixed>,
+     *     rows: array<int, array<string, mixed>>,
+     *     error: string|null,
+     *     status: int,
+     *     halt: bool,
+     *     code?: string
+     * }
      */
     private function executeOneWrite(array $connection, array $op): array
     {

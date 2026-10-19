@@ -885,7 +885,13 @@ class QuickBooksClient
     }
 
     /**
-     * @param array<int, array{bId?: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     * @param array<int, array{
+     *     bId?: string,
+     *     operation?: string,
+     *     entity?: string,
+     *     payload?: array<string, mixed>,
+     *     query?: string
+     * }> $items
      */
     private static function hasWrites(array $items): bool
     {
@@ -1200,7 +1206,15 @@ class QuickBooksClient
     /**
      * @param array<string, mixed> $row
      *
-     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool, code?: string}
+     * @return array{
+     *     ok: bool,
+     *     body: array<string, mixed>,
+     *     rows: array<int, array<string, mixed>>,
+     *     error: string|null,
+     *     status: int,
+     *     halt: bool,
+     *     code?: string
+     * }
      */
     private function batchItemResult(array $row): array
     {
@@ -1238,7 +1252,15 @@ class QuickBooksClient
     /**
      * @param array<string, mixed> $fault
      *
-     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool, code?: string}
+     * @return array{
+     *     ok: bool,
+     *     body: array<string, mixed>,
+     *     rows: array<int, array<string, mixed>>,
+     *     error: string|null,
+     *     status: int,
+     *     halt: bool,
+     *     code?: string
+     * }
      */
     private function batchFaultResult(array $fault, string $type = ''): array
     {
@@ -1385,8 +1407,10 @@ class QuickBooksClient
             return null;
         }
         $isBatch = $path === 'batch';
-        if (($isBatch === true && self::batchWrites($payload ?? []) === false)
-            || ($isBatch === false && $this->writeKey === null)) {
+        if (
+            ($isBatch === true && self::batchWrites($payload ?? []) === false)
+            || ($isBatch === false && $this->writeKey === null)
+        ) {
             return null;
         }
 
