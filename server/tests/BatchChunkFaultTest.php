@@ -2,6 +2,7 @@
 
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Tests\Support\ChunkFaultQuickBooks;
 use Illuminate\Support\Facades\Http;
 
@@ -172,3 +173,25 @@ test('with quickbooks numbering a failed second chunk keeps the first chunk link
         ->and($client->invoices)->toHaveCount(40)
         ->and($invoiceLinks())->toBe(40);
 })->with([503, 429]);
+
+test('a batch item that fails with a quickbooks server fault or a stale sync token is marked as worth retrying', function () use ($chunkFaultConnection) {
+    Http::fake(function () {
+        return Http::response(['BatchItemResponse' => [
+            ['bId' => 'server', 'Fault' => ['type' => 'SystemFault', 'Error' => [['Message' => 'Internal error', 'code' => '10000']]]],
+            ['bId' => 'stale', 'Fault' => ['type' => 'ValidationFault', 'Error' => [['Message' => 'Stale Object Error', 'code' => '5010']]]],
+            ['bId' => 'name', 'Fault' => ['type' => 'ValidationFault', 'Error' => [['Message' => 'Duplicate Name Exists Error', 'code' => '6240']]]],
+        ]], 200);
+    });
+    $items = [];
+    foreach (['server', 'stale', 'name'] as $bId) {
+        $items[] = ['bId' => $bId, 'operation' => 'update', 'entity' => 'Customer', 'payload' => ['Id' => '1', 'SyncToken' => '0']];
+    }
+
+    $results = (new QuickBooksClient())->batch($chunkFaultConnection, $items);
+    $transient = fn (string $bId) => (new QuickBooksException($results[$bId]['status'], 'x'))->isTransient();
+
+    expect($transient('server'))->toBeTrue()
+        ->and($transient('stale'))->toBeTrue()
+        ->and($transient('name'))->toBeFalse()
+        ->and($results['name']['code'] ?? '')->toBe('6240');
+});

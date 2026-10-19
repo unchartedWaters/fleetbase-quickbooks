@@ -426,25 +426,26 @@ retry of the same body is processed. While a delivery is being processed its
 body is remembered for 120 seconds only, so a worker that dies mid-request does
 not block Intuit's retry; a repeat that arrives during processing gets HTTP 409,
 so Intuit retries it. Once processed, an exact repeat is answered HTTP 200 and
-not applied again for `quickbooks.webhook.max_age_seconds` (default 600).
+not applied again for `quickbooks.webhook.stale_replay_seconds` (default
+604800, 7 days, and never less than `quickbooks.webhook.max_age_seconds`), so a
+captured body cannot be replayed later as a stale one.
 
 A delivery whose event `time` (or `lastUpdated` in the older format) is older
-than that age is stale. Intuit can deliver late, so a stale delivery is still
-used, but only to read the current record: its creates and updates make
-Fleetbase read that record from QuickBooks as usual, while its deletes, voids
-and merged-away records are not applied, and a warning is logged. Reading the
-record back cannot stand in for those: a deleted or merged-away record reads as
-gone, a voided invoice reads as an invoice with no lines, and the record may
-have been restored since. The surviving record of a merge is still read. A
-processed stale delivery is remembered for
-`quickbooks.webhook.stale_replay_seconds` (default 604800, 7 days) so it is not
-used twice. A delivery older than that window is answered HTTP 200 and not
-applied at all. Set the window to 0 (or anything up to the maximum age) to
-apply no stale delivery, as before. Stale and too-old deliveries answer 200
-whether or not their realm is connected, because Intuit retries any other
-answer for days and may hold back later deliveries until the first one is
-acknowledged. The request itself does not call QuickBooks: payment lookups run
-in the queued job `ResolveWebhookPayments`, so queue workers must be running.
+than `quickbooks.webhook.max_age_seconds` (default 600) is stale. Intuit can
+deliver late, so a stale delivery is still used, but only to read the current
+record: its creates and updates make Fleetbase read that record from QuickBooks
+as usual, while its deletes, voids and merged-away records are not applied, and
+a warning is logged. Reading the record back cannot stand in for those: a
+deleted or merged-away record reads as gone, a voided invoice reads as an
+invoice with no lines, and the record may have been restored since. The
+surviving record of a merge is still read. A delivery older than the replay
+window is answered HTTP 200 and not applied at all. Set the window to 0 (or
+anything up to the maximum age) to apply no stale delivery, as before. Stale and
+too-old deliveries answer 200 whether or not their realm is connected, because
+Intuit retries any other answer for days and may hold back later deliveries
+until the first one is acknowledged. The request itself does not call
+QuickBooks: payment lookups run in the queued job `ResolveWebhookPayments`, so
+queue workers must be running.
 
 Intuit does not send a delivery again once it got HTTP 200, so the queued jobs
 that read QuickBooks (`ApplyRemoteChange` and `ResolveWebhookPayments`) queue

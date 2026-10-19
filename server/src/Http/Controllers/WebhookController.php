@@ -120,7 +120,7 @@ class WebhookController extends Controller
             throw $exception;
         }
         // A stale body is remembered for the longer stale replay window, as long as it is accepted.
-        $this->replay->keep($rawBody, $stale);
+        $this->replay->keep($rawBody);
 
         return response()->json(['ok' => true]);
     }

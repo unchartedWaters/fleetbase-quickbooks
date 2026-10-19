@@ -17,15 +17,13 @@ return [
     'webhook'       => [
         // The oldest signed webhook delivery that is applied in full, in seconds. A delivery
         // whose entity timestamps are older than this is stale (see stale_replay_seconds).
-        // The same number is how long a delivered body is remembered to stop a replay, so
-        // the two checks stay consistent.
-        // Raise it if Intuit retries a failed delivery after more than ten minutes.
         'max_age_seconds' => 600,
         // A signed delivery older than max_age_seconds but inside this window (7 days) is
         // still used, only to read the current record from QuickBooks: its creates and
-        // updates are applied, its deletes and merges are not. It is remembered for this
-        // long so it is not used twice. A delivery older than this is not applied. A value
-        // no larger than max_age_seconds (for example 0) turns this off.
+        // updates are applied, its deletes and merges are not. Every processed body is
+        // remembered for this long (at least max_age_seconds) so it is not used twice. A
+        // delivery older than this is not applied. A value no larger than max_age_seconds
+        // (for example 0) turns stale processing off.
         'stale_replay_seconds' => 604800,
     ],
     'sync'          => [

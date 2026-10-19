@@ -54,15 +54,15 @@ class WebhookReplayGuard
     }
 
     /**
-     * The body was processed: remember it for the full maximum age, or for the stale replay
-     * window when it was stale. If the store cannot be written, the short processing key
-     * still blocks an immediate repeat.
+     * The body was processed: remember it for the stale replay window, which is never shorter
+     * than the maximum age. A body is then remembered for as long as any copy of it, fresh or
+     * stale, would still be read, so a captured body is not processed twice. If the store
+     * cannot be written, the short processing key still blocks an immediate repeat.
      */
-    public function keep(string $rawBody, bool $stale = false): void
+    public function keep(string $rawBody): void
     {
-        $seconds = $stale === true ? $this->staleReplaySeconds() : $this->maxAgeSeconds();
         try {
-            Cache::put($this->key($rawBody), 'done', $seconds);
+            Cache::put($this->key($rawBody), 'done', $this->staleReplaySeconds());
         } catch (\Throwable) {
             // The work is queued; only the replay window is shorter.
         }

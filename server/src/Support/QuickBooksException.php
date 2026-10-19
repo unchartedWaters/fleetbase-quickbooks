@@ -25,12 +25,13 @@ class QuickBooksException extends \RuntimeException
 
     /**
      * A failure that can pass when the same request is sent again later: QuickBooks could
-     * not be reached (status 0), timed out (408), asked Fleetbase to wait (429), or failed
-     * on its side (5xx). A 4xx validation fault, such as a duplicate name, is not transient.
+     * not be reached (status 0), timed out (408), saw the record change after it was read
+     * (409, a stale SyncToken in a batch), asked Fleetbase to wait (429), or failed on its
+     * side (5xx). A 4xx validation fault, such as a duplicate name, is not transient.
      */
     public function isTransient(): bool
     {
-        return $this->status === 0 || $this->status === 408 || $this->status === 429 || $this->status >= 500;
+        return in_array($this->status, [0, 408, 409, 429], true) || $this->status >= 500;
     }
 
     /**

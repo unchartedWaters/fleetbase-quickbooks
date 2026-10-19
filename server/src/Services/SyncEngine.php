@@ -4863,7 +4863,7 @@ class SyncEngine
     {
         try {
             $payload = $op['payload'];
-            $body    = match ($op['entity'] . ':' . $op['operation']) {
+            $body    = $this->client->withWriteKey($op['bId'], fn () => match ($op['entity'] . ':' . $op['operation']) {
                 'Customer:create' => $this->client->createCustomer($connection, $payload),
                 'Customer:update' => $this->client->updateCustomer($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
                 'Invoice:create'  => $this->client->createInvoice($connection, $payload),
@@ -4874,7 +4874,7 @@ class SyncEngine
                 'Account:create'  => $this->client->createAccount($connection, $payload),
                 'Account:update'  => $this->client->updateAccount($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
                 default           => throw new QuickBooksException(400, 'quickbooks.messages.batch-item-unsupported'),
-            };
+            });
 
             return ['ok' => true, 'body' => $body, 'rows' => [], 'error' => null, 'status' => 200, 'halt' => false];
         } catch (QuickBooksException $exception) {

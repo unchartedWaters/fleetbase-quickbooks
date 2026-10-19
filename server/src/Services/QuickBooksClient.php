@@ -23,6 +23,27 @@ class QuickBooksClient
     private array $preferencesByRealm = [];
 
     /**
+     * The Fleetbase record a single write belongs to (for example invoice:<uuid>), set by
+     * withWriteKey. A single write without one carries no requestid.
+     */
+    private ?string $writeKey = null;
+
+    /**
+     * Run one write for a Fleetbase record, so its requestid names that record. Two records
+     * whose QuickBooks bodies happen to be identical then never share a requestid.
+     */
+    public function withWriteKey(string $key, callable $write): mixed
+    {
+        $previous       = $this->writeKey;
+        $this->writeKey = $key;
+        try {
+            return $write();
+        } finally {
+            $this->writeKey = $previous;
+        }
+    }
+
+    /**
      * QuickBooks query strings are single-quoted. A backslash and a quote inside
      * the value must both be escaped or the value closes the literal.
      */
@@ -1179,7 +1200,7 @@ class QuickBooksClient
     {
         $fault = $row['Fault']['Error'][0] ?? null;
         if (is_array($fault) === true) {
-            return $this->batchFaultResult($fault);
+            return $this->batchFaultResult($fault, (string) ($row['Fault']['type'] ?? ''));
         }
 
         if (isset($row['QueryResponse']) === true && is_array($row['QueryResponse']) === true) {
@@ -1213,25 +1234,39 @@ class QuickBooksClient
      *
      * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool, code?: string}
      */
-    private function batchFaultResult(array $fault): array
+    private function batchFaultResult(array $fault, string $type = ''): array
     {
         $detail = trim((string) ($fault['Detail'] ?? $fault['Message'] ?? ''));
+        $code   = trim((string) ($fault['code'] ?? ''));
 
         $result = [
             'ok'     => false,
             'body'   => [],
             'rows'   => [],
             'error'  => $detail !== '' ? $detail : 'quickbooks.messages.item-rejected',
-            'status' => 400,
+            'status' => self::batchFaultStatus($type, $code),
             'halt'   => false,
         ];
         // Intuit's fault code (for example 6240, duplicate name) lets the engine explain the fault.
-        $code = trim((string) ($fault['code'] ?? ''));
         if ($code !== '') {
             $result['code'] = $code;
         }
 
         return $result;
+    }
+
+    /**
+     * The HTTP status a refused batch item stands for. A QuickBooks server fault may pass on
+     * retry (503), and so may a stale SyncToken (5010), which only means the record changed in
+     * QuickBooks after it was read (409). Other faults are the request's own (400).
+     */
+    private static function batchFaultStatus(string $type, string $code): int
+    {
+        if (strtoupper($type) === 'SYSTEMFAULT') {
+            return 503;
+        }
+
+        return $code === '5010' ? 409 : 400;
     }
 
     /**
@@ -1309,7 +1344,7 @@ class QuickBooksClient
         $url       = $base . '/v3/company/' . rawurlencode((string) $connection['realm_id']) . '/' . $path;
         $separator = str_contains($url, '?') === true ? '&' : '?';
         $url .= $separator . 'minorversion=75';
-        $requestId = self::requestId((string) $connection['realm_id'], $method, $path, $payload);
+        $requestId = $this->requestId((string) $connection['realm_id'], $method, $path, $payload);
         if ($requestId !== null) {
             $url .= '&requestid=' . $requestId;
         }
@@ -1329,23 +1364,43 @@ class QuickBooksClient
     /**
      * Intuit applies a write whose requestid it has already seen only once and answers with
      * the first result, so a create that timed out after QuickBooks saved it is not saved
-     * again when the run retries it. The id is a hash of the realm, method, path and body:
-     * a retry of the same payload reuses it and a changed payload gets a new one. The UTC
-     * day is part of it, so the same write sent on a later day (a record deleted in
-     * QuickBooks and created again) is applied instead of answered with the old record.
-     * Reads, including a batch of queries only, carry none, so they always return fresh data.
+     * again when the run retries it. The id hashes the realm, the request, the Fleetbase
+     * record (the bIds of a batch, or the key set by withWriteKey) and the UTC day: a retry
+     * of the same write reuses it, while a changed body, another record or a later day (a
+     * record deleted in QuickBooks and created again) gets a new one. Reads, a batch of
+     * queries only, and a single write with no record key carry none. Intuit allows at most
+     * 36 characters on a batch, so the id is a UUID-shaped 36 characters.
      *
      * @param array<string, mixed>|null $payload
      */
-    private static function requestId(string $realmId, string $method, string $path, ?array $payload): ?string
+    private function requestId(string $realmId, string $method, string $path, ?array $payload): ?string
     {
-        if ($method === 'get' || ($path === 'batch' && self::batchWrites($payload ?? []) === false)) {
+        if ($method === 'get') {
+            return null;
+        }
+        $isBatch = $path === 'batch';
+        if (($isBatch === true && self::batchWrites($payload ?? []) === false)
+            || ($isBatch === false && $this->writeKey === null)) {
             return null;
         }
 
         $body = json_encode($payload ?? []);
+        $hash = sha1(implode("\n", [
+            $realmId,
+            $method,
+            $path,
+            $isBatch === true ? '' : (string) $this->writeKey,
+            is_string($body) === true ? $body : '',
+            gmdate('Y-m-d'),
+        ]));
 
-        return sha1(implode("\n", [$realmId, $method, $path, is_string($body) === true ? $body : '', gmdate('Y-m-d')]));
+        return implode('-', [
+            substr($hash, 0, 8),
+            substr($hash, 8, 4),
+            substr($hash, 12, 4),
+            substr($hash, 16, 4),
+            substr($hash, 20, 12),
+        ]);
     }
 
     /**

@@ -263,14 +263,16 @@ test('the maximum delivery age is configurable and drives the replay cache lifet
     }
 });
 
-test('the replay key is held briefly while processing and for the configured maximum age once processed', function () {
+test('the replay key is held briefly while processing and for the stale replay window once processed', function () {
     $body       = whrBody();
     $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
     $previous   = config('quickbooks.webhook.max_age_seconds');
+    $window     = config('quickbooks.webhook.stale_replay_seconds');
     $ttls       = [];
 
     try {
         config()->set('quickbooks.webhook.max_age_seconds', 1234);
+        config()->set('quickbooks.webhook.stale_replay_seconds', 5678);
         whrWithEvents(function (array &$seen) use ($controller, $body, &$ttls) {
             $real = Cache::getFacadeRoot();
             Cache::swap(new class($real, $ttls) {
@@ -310,10 +312,13 @@ test('the replay key is held briefly while processing and for the configured max
         });
     } finally {
         config()->set('quickbooks.webhook.max_age_seconds', $previous);
+        config()->set('quickbooks.webhook.stale_replay_seconds', $window);
     }
 
     // A worker that dies mid-request leaves only the short key, so Intuit's retry is processed.
-    expect($ttls)->toBe([['add', 120], ['put', 1234]]);
+    // A processed body is remembered for as long as a stale copy would still be read, so a
+    // captured fresh body cannot be replayed once it turns stale.
+    expect($ttls)->toBe([['add', 120], ['put', 5678]]);
 });
 
 test('a stale delivery for a realm with no connection is acknowledged like any stale delivery', function () {
