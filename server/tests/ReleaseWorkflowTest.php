@@ -50,3 +50,15 @@ test('release workflows grant least privilege and pin the registry tools', funct
         ->and($deploy['permissions'])->toBe(['contents' => 'read'])
         ->and($install)->toMatch('/^npm i -g @fleetbase\/cli@\d+\.\d+\.\d+ npm-cli-login@\d+\.\d+\.\d+$/');
 });
+
+test('the GitHub Release and the GitHub Packages publish also run only for a tag on main', function (string $file, string $job) {
+    $workflow = Yaml::parse(DocsSource::text('.github/workflows/' . $file));
+    $steps    = $workflow['jobs'][$job]['steps'];
+    $runs     = implode("\n", array_column($steps, 'run'));
+
+    expect($steps[0]['with']['fetch-depth'] ?? null)->toBe(0)
+        ->and($runs)->toContain('git merge-base --is-ancestor HEAD origin/main');
+})->with([
+    ['create-release.yml', 'create'],
+    ['ember.yml', 'github_publish'],
+]);
