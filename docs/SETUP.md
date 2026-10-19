@@ -419,9 +419,11 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 - `realmId` — QuickBooks realm id
 - `entityType` — `customer`, `invoice`, `payment`, or `wallet`
 - `quickbooksId` — QuickBooks id
-- `operation` — `create`, `update`, `delete`, or `merge` (the merged-away record)
+- `operation` — `create`, `update`, `delete`, or `merge` (the merged-away
+  record)
 - `localUuid` — Fleetbase uuid when a `quickbooks_links` row exists, otherwise null
-- `mergedInto` — for `merge`, the QuickBooks id of the surviving record, otherwise null
+- `mergedInto` — for `merge`, the QuickBooks id of the surviving record,
+  otherwise null
 
 `Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync` queues one job per organization for the entities it will sync.
 
