@@ -5,6 +5,7 @@ use Fleetbase\Quickbooks\Services\ConnectionTokens;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SyncEngine;
+use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Services\TokenRefresher;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
@@ -762,6 +763,56 @@ test('a failed save whose recovery also fails still reports the save error and f
             ->and(DB::table('quickbooks_pending_syncs')->where('attempts', 1)->count())->toBe(3)
             ->and(DB::table('quickbooks_pending_syncs')->whereNotNull('claimed_by')->count())->toBe(0)
             ->and(DB::table('quickbooks_sync_batches')->count())->toBe(0);
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('an imported customer whose write fails leaves no link to a customer that was never created', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        DB::statement(
+            'CREATE TRIGGER fail_contact_write BEFORE INSERT ON contacts'
+            . " BEGIN SELECT RAISE(ABORT, 'customer write failed'); END;"
+        );
+        DB::connection('sqlite')->getSchemaBuilder()->table('contacts', function (Blueprint $table) {
+            $table->string('public_id')->nullable();
+            $table->string('internal_id')->nullable();
+            $table->string('slug')->nullable();
+            $table->text('meta')->nullable();
+        });
+        $directory                        = new FleetbaseDirectory();
+        $ledger                           = new SyncLedger();
+        $ledger->connections['company-1'] = $directory->connection('company-1');
+        $ledger->customers['imported-1']  = [
+            'uuid'         => 'imported-1',
+            'company_uuid' => 'company-1',
+            'type'         => 'customer',
+            'name'         => 'Gamma Ltd',
+        ];
+        $ledger->putLink([
+            'company_uuid' => 'company-1',
+            'realm_id'     => 'realm-1',
+            'local_type'   => 'customer',
+            'local_uuid'   => 'imported-1',
+            'qbo_entity'   => 'Customer',
+            'qbo_id'       => '900',
+            'sync_token'   => '0',
+        ]);
+
+        $thrown = null;
+        try {
+            $directory->saveImport($ledger);
+        } catch (Throwable $exception) {
+            $thrown = $exception;
+        }
+
+        expect($thrown)->not->toBeNull()
+            ->and($thrown->getMessage())->toContain('customer write failed')
+            ->and(DB::table('quickbooks_links')->where('qbo_id', '900')->exists())->toBeFalse()
+            ->and(DB::table('contacts')->where('uuid', 'imported-1')->exists())->toBeFalse();
     } finally {
         $restore();
     }

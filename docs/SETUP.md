@@ -333,7 +333,10 @@ next full sync. A page with a failure that can pass on retry (rate limit,
 QuickBooks server error, QuickBooks not reached) is sent again. Customer
 import reads QuickBooks in pages of at most 100 records and stores the next
 start in `quickbooks_connections.customer_import_start`, so a run that stops at
-the 600 second organization lock continues there.
+the 600 second organization lock continues there. The start is stored only
+after the imported customers are saved, and the customers and their links are
+saved together, so a worker that stops before the save imports those pages
+again.
 
 Sync now with no connection returns HTTP 422 and does not save an activity row. The console shows that error. A stored realm that needs reconnect returns HTTP 422 and saves a skipped activity row.
 

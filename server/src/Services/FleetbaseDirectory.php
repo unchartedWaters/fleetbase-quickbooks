@@ -71,6 +71,11 @@ class FleetbaseDirectory
     private array $claimTokens = [];
 
     /**
+     * Set by saveImport(): links and records commit in one transaction.
+     */
+    private bool $linksWithRecords = false;
+
+    /**
      * Rows as loadLedger() read them, so save() writes only what the engine changed.
      *
      * @var array{connections: array<string, array<string, mixed>>, pending: array<string, array<string, mixed>>, customers: array<string, array<string, mixed>>, invoices: array<string, array<string, mixed>>, wallets: array<string, array<string, mixed>>, links: array<string, array<string, mixed>>}
@@ -347,6 +352,22 @@ class FleetbaseDirectory
         }
     }
 
+    /**
+     * Save a customer import. Its links point at Fleetbase customers created by this same
+     * save, not at records this run created in QuickBooks, so they commit together with
+     * those customers: a failed customer write leaves no link to a customer that does not
+     * exist (which would show that QuickBooks customer as linked for good).
+     */
+    public function saveImport(SyncLedger $ledger): void
+    {
+        $this->linksWithRecords = true;
+        try {
+            $this->save($ledger);
+        } finally {
+            $this->linksWithRecords = false;
+        }
+    }
+
     private function write(SyncLedger $ledger): void
     {
         $this->stampOwnedCompanies($ledger);
@@ -365,7 +386,16 @@ class FleetbaseDirectory
         // Pending rows, attempts and the Fleetbase rows then land together or not at all: a
         // failure leaves the rows pending, and the retry updates through the kept links.
         // Connection rows above stay outside: tokens and rate-limit state are saved either way.
+        // A customer import has created nothing in QuickBooks, so see saveImport().
         $database = (new Link())->getConnection();
+        if ($this->linksWithRecords === true) {
+            $database->transaction(function () use ($ledger, $skipped): void {
+                $this->writeLinks($ledger, $skipped);
+                $this->writeRecords($ledger, $skipped);
+            });
+
+            return;
+        }
         $database->transaction(function () use ($ledger, $skipped): void {
             $this->writeLinks($ledger, $skipped);
         });
