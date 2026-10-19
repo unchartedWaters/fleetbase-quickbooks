@@ -1010,6 +1010,33 @@ test('a quickbooks payment with an unapplied amount is not rewritten from fleetb
         ->and($client->payments['pay-over']['TotalAmt'])->toBe('12.00');
 });
 
+test('an invoice number longer than quickbooks allows fails the row before anything is sent', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', ['number' => 'ACME-LOGISTICS-2026-00042']);
+    $ledger->pending[]           = enginePending('invoice', 'inv-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['failed'])->toBe(1)
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('Invoice number ACME-LOGISTICS-2026-00042 has more than '
+            . 'the 21 characters QuickBooks accepts, so it was not sent. Use a shorter invoice number or prefix.');
+});
+
+test('a fleetbase invoice number longer than quickbooks allows is not sent on an update', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(['number' => 'ACME-LOGISTICS-2026-00042']);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['failed'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and($client->invoices['qb-1']['DocNumber'])->toBe('INV-1')
+        ->and(qbText($ledger->attempts[0]['error']))->toContain('ACME-LOGISTICS-2026-00042');
+});
+
 test('a part-paid invoice is dated by the payment ledger recorded', function () {
     [$engine, $client, $ledger] = engineLinkedInvoice(
         ['status' => 'partial', 'amount_paid' => 400, 'paid_at' => '', 'payment_date' => '2026-09-20'],

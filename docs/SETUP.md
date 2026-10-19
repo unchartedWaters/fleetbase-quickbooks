@@ -456,7 +456,26 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   QuickBooks applies its own exchange rate because no `ExchangeRate` is sent.
   Invoices that were posted in the home currency by an earlier version stay
   aligned until a push is attempted.
-- **Invoice numbers.** With `invoice_reference=quickbooks`, a QuickBooks DocNumber that another Fleetbase invoice (any organization) already uses is not copied. The invoice keeps its number and the Activity row shows a note. The note repeats on each sync until the duplicate is resolved.
+- **Invoice numbers.** With `invoice_reference=quickbooks`, a QuickBooks
+  DocNumber that another Fleetbase invoice (any organization) already uses is
+  not copied. The invoice keeps its number and the Activity row shows a note.
+  The note repeats on each sync until the duplicate is resolved. QuickBooks
+  accepts at most 21 characters in an invoice number, so a longer number (for
+  example from a long Ledger invoice prefix) is not sent: the row fails with a
+  message naming the number. With QuickBooks numbering, two organizations on the
+  same QuickBooks company can reserve the same next number at the same moment.
+  QuickBooks rejects a duplicate invoice number by default (Fleetbase never asks
+  it to allow one), so the later create fails once and the next sync reserves a
+  new number.
+  DocNumber that another Fleetbase invoice (any organization) already uses is
+  not copied. The invoice keeps its number and the Activity row shows a note.
+  The note repeats on each sync until the duplicate is resolved. QuickBooks
+  accepts at most 21 characters in an invoice number, so a longer number (for
+  example from a long Ledger invoice prefix) is not sent: the row fails with a
+  message naming the number. With QuickBooks numbering, two organizations on the
+  same QuickBooks company can reserve the same next number at the same moment.
+  QuickBooks refuses the second create as a duplicate number, the row fails
+  once, and the next sync reserves a new number.
 - **Quantities.** Fleetbase invoice line quantities are whole numbers. A fractional QuickBooks quantity imports as 1 unit at the line amount.
 - **Tax.** Invoice tax is sent as an ordinary sales line whose description is
   `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No

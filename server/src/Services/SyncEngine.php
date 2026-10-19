@@ -38,6 +38,11 @@ class SyncEngine
      */
     private const QUERY_PAGE_SIZE = 100;
 
+    /**
+     * QuickBooks rejects an invoice whose DocNumber is longer than this.
+     */
+    private const DOC_NUMBER_MAX = 21;
+
     private ?string $lastError = null;
 
     /** @var array<string, bool> */
@@ -1422,6 +1427,9 @@ class SyncEngine
                 }
                 $payload['DocNumber'] = $next;
             }
+            if ($this->rejectLongDocNumber($payload) === true) {
+                return 'failed';
+            }
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
                     'bId'       => 'invoice:' . $uuid,
@@ -1525,6 +1533,9 @@ class SyncEngine
             return 'failed';
         }
         $this->keepFleetbaseDocNumber($payload, $ledger->invoices[$uuid], $remote, $reference);
+        if ($this->rejectLongDocNumber($payload) === true) {
+            return 'failed';
+        }
         $payload = $this->invoices->withExistingLineIds($payload, $remote, $removed, $mapped);
         $this->rememberPushedLineIds($ledger, $uuid, $payload);
 
@@ -5307,6 +5318,26 @@ class SyncEngine
             return false;
         }
         $this->lastError = $error;
+
+        return true;
+    }
+
+    /**
+     * QuickBooks refuses the whole invoice when DocNumber is too long. Fail the row before
+     * sending, with a message that names the number.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function rejectLongDocNumber(array $payload): bool
+    {
+        $number = trim((string) ($payload['DocNumber'] ?? ''));
+        if (mb_strlen($number) <= self::DOC_NUMBER_MAX) {
+            return false;
+        }
+        $this->lastError = Translation::encode('quickbooks.messages.invoice-number-too-long', [
+            'number' => $number,
+            'max'    => (string) self::DOC_NUMBER_MAX,
+        ]);
 
         return true;
     }

@@ -247,6 +247,7 @@ quickbooks:
     invoice-number-unconfirmed: QuickBooks did not confirm a free invoice number, so Fleetbase did not create this invoice.
     invoice-number-taken: "QuickBooks invoice number {number} was not copied because another Fleetbase invoice already uses it."
     invoice-number-kept: "This invoice keeps {number}."
+    invoice-number-too-long: "Invoice number {number} has more than the {max} characters QuickBooks accepts, so it was not sent. Use a shorter invoice number or prefix."
     invoice-payments-multiple: This invoice has more than one QuickBooks payment, so Fleetbase left them unchanged.
     payment-shared: This QuickBooks payment also applies credits or other invoices, so Fleetbase left it unchanged. Change it in QuickBooks.
     wallet-currency-mismatch: "Wallet currency {currency} does not match the QuickBooks home currency {home}."
