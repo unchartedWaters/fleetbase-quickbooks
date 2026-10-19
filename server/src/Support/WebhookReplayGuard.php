@@ -6,9 +6,11 @@ use Illuminate\Support\Facades\Cache;
 
 /**
  * Age and replay checks for signed QuickBooks webhook deliveries. A delivery whose change
- * timestamps are older than quickbooks.webhook.max_age_seconds is stale. A body is remembered
- * briefly while it is processed and for the maximum age once it was processed, so a repeat is
- * refused while a failed or interrupted delivery can still be retried by Intuit.
+ * timestamps are older than quickbooks.webhook.max_age_seconds is stale, and one older than
+ * quickbooks.webhook.stale_replay_seconds is expired. A body is remembered briefly while it is
+ * processed, then for the maximum age (or, for a stale body, the stale replay window) once it
+ * was processed, so a repeat is refused while a failed or interrupted delivery can still be
+ * retried by Intuit. A processed body is remembered for as long as it would be accepted.
  */
 class WebhookReplayGuard
 {
@@ -16,6 +18,11 @@ class WebhookReplayGuard
      * Used when quickbooks.webhook.max_age_seconds is missing or not a positive number.
      */
     private const DEFAULT_MAX_AGE_SECONDS = 600;
+
+    /**
+     * Used when quickbooks.webhook.stale_replay_seconds is missing or not a number: 7 days.
+     */
+    private const DEFAULT_STALE_REPLAY_SECONDS = 604800;
 
     /**
      * How long a body is remembered while it is being processed, before it is committed for
@@ -47,13 +54,15 @@ class WebhookReplayGuard
     }
 
     /**
-     * The body was processed: remember it for the full maximum age. If the store cannot be
-     * written, the short processing key still blocks an immediate repeat.
+     * The body was processed: remember it for the full maximum age, or for the stale replay
+     * window when it was stale. If the store cannot be written, the short processing key
+     * still blocks an immediate repeat.
      */
-    public function keep(string $rawBody): void
+    public function keep(string $rawBody, bool $stale = false): void
     {
+        $seconds = $stale === true ? $this->staleReplaySeconds() : $this->maxAgeSeconds();
         try {
-            Cache::put($this->key($rawBody), 'done', $this->maxAgeSeconds());
+            Cache::put($this->key($rawBody), 'done', $seconds);
         } catch (\Throwable) {
             // The work is queued; only the replay window is shorter.
         }
@@ -79,13 +88,27 @@ class WebhookReplayGuard
      */
     public function isStale(string $rawBody, int $now): bool
     {
-        $maxAge = $this->maxAgeSeconds();
+        return $this->olderThan($rawBody, $now, $this->maxAgeSeconds());
+    }
+
+    /**
+     * True when a signed change timestamp is older than the stale replay window, or cannot
+     * be read. Such a delivery is not applied at all: the replay store no longer remembers
+     * a body that old, so applying it would let a captured body be replayed.
+     */
+    public function isExpired(string $rawBody, int $now): bool
+    {
+        return $this->olderThan($rawBody, $now, $this->staleReplaySeconds());
+    }
+
+    private function olderThan(string $rawBody, int $now, int $seconds): bool
+    {
         foreach (WebhookPayload::changes($rawBody) as $change) {
             if (array_key_exists('time', $change) === false) {
                 continue;
             }
             $timestamp = $this->timestamp($change['time']);
-            if ($timestamp === null || ($now - $timestamp) > $maxAge) {
+            if ($timestamp === null || ($now - $timestamp) > $seconds) {
                 return true;
             }
         }
@@ -110,6 +133,21 @@ class WebhookReplayGuard
         }
 
         return (int) $configured;
+    }
+
+    /**
+     * How long a processed stale body is remembered, and so the oldest delivery that is read
+     * again at all. Never shorter than the maximum age: a window no longer than the maximum
+     * age (for example 0) turns stale processing off.
+     */
+    private function staleReplaySeconds(): int
+    {
+        $configured = config('quickbooks.webhook.stale_replay_seconds', self::DEFAULT_STALE_REPLAY_SECONDS);
+        if (is_numeric($configured) === false) {
+            $configured = self::DEFAULT_STALE_REPLAY_SECONDS;
+        }
+
+        return max((int) $configured, $this->maxAgeSeconds());
     }
 
     private function timestamp(mixed $value): ?int

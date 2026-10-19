@@ -1,11 +1,21 @@
 <?php
 
+use Fleetbase\Quickbooks\Jobs\ImportCustomers;
 use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Services\CustomerImporter;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
+use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\CredentialResolver;
+use Fleetbase\Quickbooks\Support\SecretCipher;
+use Fleetbase\Quickbooks\Support\SettingsKeys;
+use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
+use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 function tenantSqlite(): callable
@@ -175,3 +185,85 @@ test('the customer import cursor is stored on the company own connection', funct
         $restore();
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a customer import that stops before its save does not move the stored cursor', function () {
+    $restore = tenantSqlite();
+    try {
+        tenantRows(true);
+        $client                = new FakeQuickBooks();
+        $client->customerPages = [1 => [['Id' => '1', 'SyncToken' => '0']], 2 => [['Id' => '2', 'SyncToken' => '0']]];
+        $importer              = new CustomerImporter($client, static fn (array $connection, array $remote): array => [
+            'uuid'         => 'local-' . $remote['Id'],
+            'company_uuid' => 'company-a',
+            'type'         => 'customer',
+        ]);
+        $connection                       = (new FleetbaseDirectory())->connection('company-a');
+        $ledger                           = new SyncLedger();
+        $ledger->connections['company-a'] = $connection;
+
+        // The deadline has passed, so the import stops after page one with the cursor at 2.
+        $batch = $importer->import($ledger, $connection, [], true, 1, time() - 1);
+
+        // The worker dies here: the customers of page one were never saved.
+        expect($batch['continue'])->toBeTrue()
+            ->and($ledger->connections['company-a'][CustomerImporter::CURSOR_COLUMN])->toBe(2)
+            ->and(tenantRow('company-a')->customer_import_start)->toBeNull();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+foreach (['succeeds' => 2, 'fails' => null] as $importSaveLabel => $importStoredCursor) {
+    test('the import job stores the cursor only after its customers are saved when the save ' . $importSaveLabel, function () use ($importStoredCursor) {
+        $restore       = tenantSqlite();
+        $previousCache = Cache::getFacadeRoot();
+        Cache::swap(new Repository(new ArrayStore()));
+        try {
+            tenantRows(true);
+            $client = new class extends FakeQuickBooks {
+                public function queryCustomers(array $connection, int $start, int $max): array
+                {
+                    if ($start > 1) {
+                        throw new RuntimeException('page two failed');
+                    }
+
+                    return [['Id' => '1', 'SyncToken' => '0']];
+                }
+            };
+            $importer = new CustomerImporter($client, static fn (array $connection, array $remote): array => [
+                'uuid'         => 'local-' . $remote['Id'],
+                'company_uuid' => 'company-a',
+                'type'         => 'customer',
+            ]);
+            $directory = new class($importStoredCursor === null) extends FleetbaseDirectory {
+                public function __construct(private bool $fails)
+                {
+                }
+
+                public function save(SyncLedger $ledger): void
+                {
+                    if ($this->fails === true) {
+                        throw new RuntimeException('customer write failed');
+                    }
+                }
+            };
+            $settings                               = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
+            $store                                  = new MemorySettingsStore();
+            $store->rows[SettingsKeys::adminSync()] = ['batch_size' => 1];
+
+            $thrown = null;
+            try {
+                (new ImportCustomers('company-a'))->handle($importer, $directory, null, $settings, $store);
+            } catch (RuntimeException $exception) {
+                $thrown = $exception;
+            }
+
+            $stored = tenantRow('company-a')->customer_import_start;
+            expect($thrown)->not->toBeNull()
+                ->and($stored === null ? null : (int) $stored)->toBe($importStoredCursor);
+        } finally {
+            Cache::swap($previousCache);
+            $restore();
+        }
+    })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+}

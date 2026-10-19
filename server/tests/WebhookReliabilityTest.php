@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WebhookSignature;
+use Fleetbase\Quickbooks\Tests\Support\CacheTtlRecorder;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -127,11 +128,12 @@ function whrStamp(int $secondsAgo): string
     return (new DateTimeImmutable('@' . (time() - $secondsAgo)))->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:sO');
 }
 
-function whrBody(string $lastUpdated = ''): string
+function whrBody(string $lastUpdated = '', string $operation = 'Create'): string
 {
     $extra = $lastUpdated === '' ? '' : ',"lastUpdated":"' . $lastUpdated . '"';
 
-    return '{"eventNotifications":[{"realmId":"realm-whr","dataChangeEvent":{"entities":[{"name":"Customer","id":"77","operation":"Create"' . $extra . '}]}}]}';
+    return '{"eventNotifications":[{"realmId":"realm-whr","dataChangeEvent":{"entities":[{"name":"Customer","id":"77",'
+        . '"operation":"' . $operation . '"' . $extra . '}]}}]}';
 }
 
 test('a delivery that fails while processing is not remembered as a replay', function () {
@@ -206,9 +208,9 @@ test('an invalid signature is still 401 whether or not the realm has a connectio
     });
 });
 
-test('a delivery older than ten minutes is acknowledged but not applied, one inside the window is', function () {
-    $stale = whrBody(whrStamp(700));
-    $fresh = whrBody(whrStamp(500));
+test('a delete older than ten minutes is acknowledged but not applied, one inside the window is', function () {
+    $stale = whrBody(whrStamp(700), 'Delete');
+    $fresh = whrBody(whrStamp(500), 'Delete');
 
     $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
     $previous   = config('quickbooks.webhook.max_age_seconds');
@@ -246,8 +248,8 @@ test('the maximum delivery age is configurable and drives the replay cache lifet
 
         config()->set('quickbooks.webhook.max_age_seconds', 120);
         whrWithEvents(function (array &$seen) use ($controller) {
-            $tooOld = whrBody(whrStamp(300));
-            $inside = whrBody(whrStamp(60));
+            $tooOld = whrBody(whrStamp(300), 'Delete');
+            $inside = whrBody(whrStamp(60), 'Delete');
 
             $rejected = $controller->handle(whrRequest($tooOld, whrSign($tooOld, 'verifier-token')));
             $accepted = $controller->handle(whrRequest($inside, whrSign($inside, 'verifier-token')));
@@ -407,11 +409,11 @@ test('a cloudevents delivery dispatches one event per in-scope entity on each co
     });
 });
 
-test('a stale cloudevents delivery is acknowledged but not applied and a fresh one is applied', function () {
-    $stale = json_encode([whrCloudEvent('qbo.customer.updated.v1', '77', 'realm-whr', whrStamp(700))]);
+test('a stale cloudevents delete is acknowledged but not applied and a fresh one is applied', function () {
+    $stale = json_encode([whrCloudEvent('qbo.customer.deleted.v1', '77', 'realm-whr', whrStamp(700))]);
     // Intuit sends fractional seconds with up to nine digits.
     $freshAt = gmdate('Y-m-d\TH:i:s', time() - 30) . '.179851517Z';
-    $fresh   = json_encode([whrCloudEvent('qbo.customer.updated.v1', '77', 'realm-whr', $freshAt)]);
+    $fresh   = json_encode([whrCloudEvent('qbo.customer.deleted.v1', '77', 'realm-whr', $freshAt)]);
 
     $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
     $previous   = config('quickbooks.webhook.max_age_seconds');
@@ -452,4 +454,89 @@ test('a cloudevents delivery needs a valid signature and a signed body with no r
             ->and($notConnected->getStatusCode())->toBe(200)
             ->and($seen)->toBe([]);
     });
+});
+
+test('a stale delivery applies its creates and updates as reads and skips its deletes and merges', function () {
+    $at     = whrStamp(700);
+    $merged = whrCloudEvent('qbo.customer.merged.v1', '12', 'realm-whr', $at);
+
+    $merged['data'] = ['deletedid' => '13'];
+
+    $body = json_encode([
+        whrCloudEvent('qbo.customer.created.v1', '55', 'realm-whr', $at),
+        whrCloudEvent('qbo.invoice.updated.v1', '8', 'realm-whr', $at),
+        whrCloudEvent('qbo.customer.deleted.v1', '9', 'realm-whr', $at),
+        whrCloudEvent('qbo.payment.voided.v1', '4', 'realm-whr', $at),
+        $merged,
+    ]);
+    $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+
+    whrWithEvents(function (array &$seen) use ($controller, $body) {
+        $response = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+        $summary  = array_map(
+            fn (QuickBooksEntityChanged $event) => [$event->entityType, $event->quickbooksId, $event->operation],
+            $seen
+        );
+
+        expect($response->getStatusCode())->toBe(200)
+            ->and($summary)->toBe([
+                ['customer', '55', 'create'],
+                ['invoice', '8', 'update'],
+                ['customer', '12', 'update'],
+            ]);
+    });
+});
+
+test('a processed stale delivery is remembered for the stale replay window and not applied twice', function () {
+    $stale      = whrBody(whrStamp(700), 'Update');
+    $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+    $previous   = config('quickbooks.webhook.stale_replay_seconds');
+
+    try {
+        config()->set('quickbooks.webhook.stale_replay_seconds', 86400);
+        $request = fn () => whrRequest($stale, whrSign($stale, 'verifier-token'));
+        whrWithEvents(function (array &$seen) use ($controller, $request) {
+            $ttls   = CacheTtlRecorder::during(fn () => $controller->handle($request()));
+            $repeat = $controller->handle($request());
+
+            expect($ttls)->toBe([['add', 120], ['put', 86400]])
+                ->and($repeat->getStatusCode())->toBe(200)
+                ->and($seen)->toHaveCount(1);
+        });
+
+        config()->set('quickbooks.webhook.stale_replay_seconds', null);
+        whrWithEvents(function () use ($controller, $request) {
+            $ttls = CacheTtlRecorder::during(fn () => $controller->handle($request()));
+
+            expect($ttls)->toBe([['add', 120], ['put', 604800]]);
+        });
+    } finally {
+        config()->set('quickbooks.webhook.stale_replay_seconds', $previous);
+    }
+});
+
+test('a delivery older than the stale replay window is acknowledged but not applied', function () {
+    $week       = whrBody(whrStamp(8 * 86400), 'Update');
+    $hours      = whrBody(whrStamp(7200), 'Update');
+    $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+    $previous   = config('quickbooks.webhook.stale_replay_seconds');
+
+    try {
+        whrWithEvents(function (array &$seen) use ($controller, $week, $hours) {
+            config()->set('quickbooks.webhook.stale_replay_seconds', null);
+            $old = $controller->handle(whrRequest($week, whrSign($week, 'verifier-token')));
+            config()->set('quickbooks.webhook.stale_replay_seconds', 3600);
+            $older = $controller->handle(whrRequest($hours, whrSign($hours, 'verifier-token')));
+            // A window no longer than the maximum age turns stale processing off.
+            config()->set('quickbooks.webhook.stale_replay_seconds', 0);
+            $off = $controller->handle(whrRequest($hours, whrSign($hours, 'verifier-token')));
+
+            expect($old->getStatusCode())->toBe(200)
+                ->and($older->getStatusCode())->toBe(200)
+                ->and($off->getStatusCode())->toBe(200)
+                ->and($seen)->toBe([]);
+        });
+    } finally {
+        config()->set('quickbooks.webhook.stale_replay_seconds', $previous);
+    }
 });

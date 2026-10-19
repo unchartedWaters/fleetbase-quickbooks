@@ -1173,7 +1173,7 @@ class QuickBooksClient
     /**
      * @param array<string, mixed> $row
      *
-     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}
+     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool, code?: string}
      */
     private function batchItemResult(array $row): array
     {
@@ -1211,13 +1211,13 @@ class QuickBooksClient
     /**
      * @param array<string, mixed> $fault
      *
-     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}
+     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool, code?: string}
      */
     private function batchFaultResult(array $fault): array
     {
         $detail = trim((string) ($fault['Detail'] ?? $fault['Message'] ?? ''));
 
-        return [
+        $result = [
             'ok'     => false,
             'body'   => [],
             'rows'   => [],
@@ -1225,6 +1225,13 @@ class QuickBooksClient
             'status' => 400,
             'halt'   => false,
         ];
+        // Intuit's fault code (for example 6240, duplicate name) lets the engine explain the fault.
+        $code = trim((string) ($fault['code'] ?? ''));
+        if ($code !== '') {
+            $result['code'] = $code;
+        }
+
+        return $result;
     }
 
     /**

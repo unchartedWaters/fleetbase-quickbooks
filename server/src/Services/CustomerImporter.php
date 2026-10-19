@@ -26,6 +26,13 @@ class CustomerImporter
     private ?array $companyCandidates = null;
 
     /**
+     * The resume position import() reached and storeSavedCursor() has not stored yet.
+     *
+     * @var array{company: string, start: int|null}|null
+     */
+    private ?array $unsavedCursor = null;
+
+    /**
      * @param callable|null $creator function(array $connection, array $remote): array
      */
     public function __construct(private QuickBooksClient $client, ?callable $creator = null)
@@ -62,6 +69,7 @@ class CustomerImporter
 
         $pageSize                = max(1, min(self::MAX_PAGE_SIZE, $pageSize));
         $this->companyCandidates = null;
+        $this->unsavedCursor     = null;
         $ledger->ensureIndex();
         $this->rememberFleetbaseCustomers($ledger, $fleetbaseCustomers);
 
@@ -189,7 +197,24 @@ class CustomerImporter
             $stored = $start;
         }
 
-        $this->storeCursor($companyUuid, $stored);
+        // Kept in memory until the customers of these pages are saved; see storeSavedCursor().
+        if ($companyUuid !== '') {
+            $this->unsavedCursor = ['company' => $companyUuid, 'start' => $stored];
+        }
+    }
+
+    /**
+     * Store the resume position the last import() reached. Call it only after the ledger that
+     * holds the imported customers was saved: the position skips those pages on the next run,
+     * so storing it first would lose them if the worker died before the save.
+     */
+    public function storeSavedCursor(): void
+    {
+        $cursor              = $this->unsavedCursor;
+        $this->unsavedCursor = null;
+        if ($cursor !== null) {
+            $this->storeCursor($cursor['company'], $cursor['start']);
+        }
     }
 
     private function storeCursor(string $companyUuid, ?int $start): void

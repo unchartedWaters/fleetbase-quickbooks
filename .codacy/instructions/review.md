@@ -21,8 +21,12 @@
   install-wide verifier, then stale/replay checks, then queues work for every
   organization connected to that realm. `WebhookPayload` reads Intuit's
   CloudEvents array and the older `eventNotifications` body. Only a missing or
-  bad signature gets 401; a signed stale or already processed delivery gets 200
-  and is not applied, because Intuit retries any other answer for days.
+  bad signature gets 401, because Intuit retries any other answer for days. A
+  signed already processed delivery gets 200 and is not applied. A signed stale
+  one (older than `max_age_seconds`) gets 200 and is used only to read current
+  records: creates and updates are applied, deletes and merges are not, and it
+  is remembered for `stale_replay_seconds`. One older than that window gets 200
+  and is not applied.
 - Global settings (installation admin only, `scope=admin`) are credentials and
   a sync template. An organization (`scope=company`, rows marked
   `scope: organization`) has its own complete copy of the sync options, made

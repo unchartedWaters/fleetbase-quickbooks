@@ -274,8 +274,11 @@ class ImportCustomers implements ShouldQueue
             return empty($batch['continue']) === false;
         } finally {
             // Saved even when a page query throws, so customers already created keep their links.
+            // The resume position is stored only once those customers are saved: a worker that
+            // dies first, or a save that fails, imports the same pages again on the next run.
             $this->ensureCompanyLock($lock);
-            $directory->save($ledger);
+            $directory->saveImport($ledger);
+            $importer->storeSavedCursor();
         }
     }
 

@@ -381,10 +381,18 @@ saved twice. Reads carry none.
 
 Sync frequency is minutes (`interval_minutes`, default 5). Full sync frequency
 (hours) (`periodic_interval_hours`, default 24) limits only the customer
-catalog, and that catalog is skipped when Customers is unchecked. Customer
+catalog, and that catalog is skipped when Customers is unchecked. The catalog
+walks the customers one page at a time. A page moves on when each customer on
+it synced, or QuickBooks refused it for its data (for example a duplicate
+name). A refused customer is a failed Activity row and is tried again on the
+next full sync. A page with a failure that can pass on retry (rate limit,
+QuickBooks server error, QuickBooks not reached) is sent again. Customer
 import reads QuickBooks in pages of at most 100 records and stores the next
 start in `quickbooks_connections.customer_import_start`, so a run that stops at
-the 600 second organization lock continues there.
+the 600 second organization lock continues there. The start is stored only
+after the imported customers are saved, and the customers and their links are
+saved together, so a worker that stops before the save imports those pages
+again.
 
 Sync now with no connection returns HTTP 422 and does not save an activity row. The console shows that error. A stored realm that needs reconnect returns HTTP 422 and saves a skipped activity row.
 
@@ -418,13 +426,37 @@ retry of the same body is processed. While a delivery is being processed its
 body is remembered for 120 seconds only, so a worker that dies mid-request does
 not block Intuit's retry; a repeat that arrives during processing gets HTTP 409,
 so Intuit retries it. Once processed, an exact repeat is answered HTTP 200 and
-not applied again for `quickbooks.webhook.max_age_seconds` (default 600). A
-delivery whose event `time` (or `lastUpdated` in the older format) is older than
-that age is answered HTTP 200 and not applied, whether or not its realm is
-connected, and a warning is logged. These answer 200 because Intuit retries any
-other answer for days and may hold back later deliveries until the first one is
+not applied again for `quickbooks.webhook.max_age_seconds` (default 600).
+
+A delivery whose event `time` (or `lastUpdated` in the older format) is older
+than that age is stale. Intuit can deliver late, so a stale delivery is still
+used, but only to read the current record: its creates and updates make
+Fleetbase read that record from QuickBooks as usual, while its deletes, voids
+and merged-away records are not applied, and a warning is logged. Reading the
+record back cannot stand in for those: a deleted or merged-away record reads as
+gone, a voided invoice reads as an invoice with no lines, and the record may
+have been restored since. The surviving record of a merge is still read. A
+processed stale delivery is remembered for
+`quickbooks.webhook.stale_replay_seconds` (default 604800, 7 days) so it is not
+used twice. A delivery older than that window is answered HTTP 200 and not
+applied at all. Set the window to 0 (or anything up to the maximum age) to
+apply no stale delivery, as before. Stale and too-old deliveries answer 200
+whether or not their realm is connected, because Intuit retries any other
+answer for days and may hold back later deliveries until the first one is
 acknowledged. The request itself does not call QuickBooks: payment lookups run
 in the queued job `ResolveWebhookPayments`, so queue workers must be running.
+
+Intuit does not send a delivery again once it got HTTP 200, so the queued jobs
+that read QuickBooks (`ApplyRemoteChange` and `ResolveWebhookPayments`) queue
+themselves again when QuickBooks answers HTTP 429 or 5xx, or does not answer.
+After a 429 the job waits for Intuit's `Retry-After` (or twice the last
+rate-limit wait, or 60 seconds) and stores that wait on the connection, so the
+scheduled sync waits too. After a 5xx or no answer it waits 30 seconds, doubled
+on each retry. While the connection is rate limited the jobs do not call
+QuickBooks; they queue themselves for after the wait. After 5 retries the change
+is dropped, a warning is logged, and Activity shows a failed webhook sync: save
+the record in QuickBooks again to send it again. Laravel's own retries stay off
+(`$tries = 1`). Other QuickBooks errors are not retried.
 
 Intuit sends a JSON array of CloudEvents. Each event's `type` names the entity
 and event (for example `qbo.invoice.updated.v1`), `intuitentityid` is the
@@ -530,10 +562,21 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 - **Shared QuickBooks company.** Several Fleetbase organizations can connect to the same QuickBooks company (realm). `quickbooks_connections` is unique per organization, not per realm, and a webhook for a realm is applied to every organization connected to it (`WebhookController`). Intuit app credentials, the redirect, and the webhook verifier are install-wide, so every organization on the install uses the same Intuit app.
 - **Links.** `quickbooks_links` holds links for customers, invoices, and wallets, and also for payments. A payment link is keyed by the Fleetbase invoice uuid, or by the QuickBooks payment id when the payment was found in QuickBooks.
 - **Customer matching.** A Fleetbase customer is matched to an existing QuickBooks customer by email first, then by display name. When Primary is Fleetbase, a name match is rejected if both sides have an email and the emails differ, so that customer is not matched. Names are the only key when there is no email, so two different customers with the same name are treated as one.
+- **Customer names.** QuickBooks does not accept a colon, tab or line break in
+  a customer's display name. Fleetbase sends a colon as `-` and a tab or line
+  break as a space, and compares names the same way. The Fleetbase name is not
+  changed. A display name is unique across QuickBooks customers, vendors and
+  employees, so a name one of them already uses fails with a message that names
+  the customer.
 
 ## Overlapping syncs and history
 
 A running sync leases the pending rows it loaded (`claimed_until`, `claimed_by` on `quickbooks_pending_syncs`) so a second run, such as the one a webhook starts while the first is waiting on QuickBooks, cannot send the same row again. A lease left by a killed worker expires after `quickbooks.sync.claim_seconds` (default 900; keep it above the 570 second job timeout). Run the migrations before enabling more than one queue worker; until the columns exist, runs work but are not protected against overlap. A Fleetbase change flagged while its row is leased marks the lease (`claimed_by` gets a `reflag:` prefix), so the running sync leaves that row pending (still recording the attempt and backoff) and the next run sends the new change. A mark left by a run that died stops counting once its lease expires.
+
+When a run cannot save its results (a database error), its leased rows still
+get one more attempt and the normal backoff, the lease is released, and
+Activity shows a failed run. A save error that keeps happening therefore stops
+at the retry limit like any other failure.
 
 A sync saves its links first, in their own transaction, then the pending rows, attempts and Fleetbase records together. If the second part fails, the links to records already created in QuickBooks are kept, the rows stay pending, and the retry updates those records instead of creating them again.
 

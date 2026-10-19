@@ -130,6 +130,7 @@ class QuickBooksPaymentReader
         try {
             return $this->readPayments($client, $connection, $paymentIds);
         } catch (QuickBooksException $exception) {
+            $this->throwIfTransient($exception);
             // The access token can expire between the refresh and this read. Refresh and read once more.
             $fresh = $exception->isUnauthorized() === true ? $this->rotatedConnection($connection) : null;
             if ($fresh === null) {
@@ -137,11 +138,26 @@ class QuickBooksPaymentReader
             }
             try {
                 return $this->readPayments($client, $fresh, $paymentIds);
+            } catch (QuickBooksException $retried) {
+                $this->throwIfTransient($retried);
+
+                return null;
             } catch (\Throwable) {
                 return null;
             }
         } catch (\Throwable) {
             return null;
+        }
+    }
+
+    /**
+     * A 429, a 5xx or no response is passed on, so the queued job tries the delivery again
+     * later instead of skipping its payments for good.
+     */
+    private function throwIfTransient(QuickBooksException $exception): void
+    {
+        if ($exception->isTransient() === true) {
+            throw $exception;
         }
     }
 

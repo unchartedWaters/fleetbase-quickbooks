@@ -5,6 +5,7 @@ use Fleetbase\Quickbooks\Services\ConnectionTokens;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SyncEngine;
+use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Services\TokenRefresher;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
@@ -643,6 +644,175 @@ test('an expired re-flag lease does not keep a later save from finishing the row
         $directory->save($ledger);
 
         expect(DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-cust-1')->value('status'))->toBe('done');
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a customer catalog page whose only failure quickbooks will refuse again still completes', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        $client               = new ClaimProbeQuickBooks();
+        $client->failOnCreate = 1;
+        $duplicate            = qbRequestFailed(400, 'Duplicate Name Exists Error');
+        $client->failWith     = new QuickBooksException(400, $duplicate, null, '6240');
+        [$runner, $directory] = claimRunner($client);
+
+        $batch = $runner->run('company-1', 'catalog');
+
+        $failed = DB::table('quickbooks_sync_attempts')->where('outcome', 'failed')->get();
+        expect($batch['failed'])->toBe(1)
+            ->and($batch['created'])->toBe(1)
+            ->and($failed)->toHaveCount(1)
+            ->and($failed[0]->local_uuid)->toBe('cust-1')
+            ->and(qbText($failed[0]->error))->toContain('already uses that name')
+            ->and(Cache::get('quickbooks.customer-catalog-after.company-1'))->toBeNull()
+            ->and($directory->customerCatalogStamp('company-1'))->not->toBeNull();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a customer catalog page with a failure that may pass on retry is kept for the next run', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        $client               = new ClaimProbeQuickBooks();
+        $client->failOnCreate = 1;
+        $client->failWith     = new QuickBooksException(503, qbRequestFailed(503));
+        [$runner, $directory] = claimRunner($client);
+
+        $batch = $runner->run('company-1', 'catalog');
+
+        expect($batch['failed'])->toBe(1)
+            ->and($directory->customerCatalogStamp('company-1'))->toBeNull();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a sync whose save fails backs its rows off, counts the attempt, frees them and records a failed batch', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-cust-2')->update(['attempts' => 5]);
+        DB::statement(
+            'CREATE TRIGGER fail_attempt_write BEFORE INSERT ON quickbooks_sync_attempts'
+            . " BEGIN SELECT RAISE(ABORT, 'attempt write failed'); END;"
+        );
+        [$runner] = claimRunner(new ClaimProbeQuickBooks());
+        $before   = time();
+
+        $thrown = null;
+        try {
+            $runner->run('company-1', 'now');
+        } catch (Throwable $exception) {
+            $thrown = $exception;
+        }
+
+        $rows  = DB::table('quickbooks_pending_syncs')->orderBy('uuid')->get()->keyBy('uuid');
+        $batch = DB::table('quickbooks_sync_batches')->first();
+        expect($thrown)->not->toBeNull()
+            ->and($thrown->getMessage())->toContain('attempt write failed')
+            ->and((int) $rows['pend-cust-1']->attempts)->toBe(1)
+            ->and($rows['pend-cust-1']->status)->toBe('pending')
+            ->and(strtotime($rows['pend-cust-1']->next_attempt_at . ' UTC'))->toBeGreaterThanOrEqual($before + 30)
+            ->and((int) $rows['pend-inv-1']->attempts)->toBe(1)
+            // Past retry_limit (5) the row stops, as it would after five failed sends.
+            ->and((int) $rows['pend-cust-2']->attempts)->toBe(6)
+            ->and($rows['pend-cust-2']->status)->toBe('failed')
+            ->and(DB::table('quickbooks_pending_syncs')->whereNotNull('claimed_by')->count())->toBe(0)
+            ->and($batch)->not->toBeNull()
+            ->and($batch->status)->toBe('failed')
+            ->and($batch->trigger)->toBe('now')
+            ->and((int) $batch->failed_count)->toBe(3)
+            ->and(BatchRunner::holds('company-1'))->toBeFalse();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a failed save whose recovery also fails still reports the save error and frees the rows', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        DB::statement(
+            'CREATE TRIGGER fail_attempt_write BEFORE INSERT ON quickbooks_sync_attempts'
+            . " BEGIN SELECT RAISE(ABORT, 'attempt write failed'); END;"
+        );
+        DB::statement(
+            'CREATE TRIGGER fail_batch_write BEFORE INSERT ON quickbooks_sync_batches'
+            . " BEGIN SELECT RAISE(ABORT, 'batch write failed'); END;"
+        );
+        [$runner] = claimRunner(new ClaimProbeQuickBooks());
+
+        $thrown = null;
+        try {
+            $runner->run('company-1', 'now');
+        } catch (Throwable $exception) {
+            $thrown = $exception;
+        }
+
+        expect($thrown)->not->toBeNull()
+            ->and($thrown->getMessage())->toContain('batch write failed')
+            ->and(DB::table('quickbooks_pending_syncs')->where('attempts', 1)->count())->toBe(3)
+            ->and(DB::table('quickbooks_pending_syncs')->whereNotNull('claimed_by')->count())->toBe(0)
+            ->and(DB::table('quickbooks_sync_batches')->count())->toBe(0);
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('an imported customer whose write fails leaves no link to a customer that was never created', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        DB::statement(
+            'CREATE TRIGGER fail_contact_write BEFORE INSERT ON contacts'
+            . " BEGIN SELECT RAISE(ABORT, 'customer write failed'); END;"
+        );
+        DB::connection('sqlite')->getSchemaBuilder()->table('contacts', function (Blueprint $table) {
+            $table->string('public_id')->nullable();
+            $table->string('internal_id')->nullable();
+            $table->string('slug')->nullable();
+            $table->text('meta')->nullable();
+        });
+        $directory                        = new FleetbaseDirectory();
+        $ledger                           = new SyncLedger();
+        $ledger->connections['company-1'] = $directory->connection('company-1');
+        $ledger->customers['imported-1']  = [
+            'uuid'         => 'imported-1',
+            'company_uuid' => 'company-1',
+            'type'         => 'customer',
+            'name'         => 'Gamma Ltd',
+        ];
+        $ledger->putLink([
+            'company_uuid' => 'company-1',
+            'realm_id'     => 'realm-1',
+            'local_type'   => 'customer',
+            'local_uuid'   => 'imported-1',
+            'qbo_entity'   => 'Customer',
+            'qbo_id'       => '900',
+            'sync_token'   => '0',
+        ]);
+
+        $thrown = null;
+        try {
+            $directory->saveImport($ledger);
+        } catch (Throwable $exception) {
+            $thrown = $exception;
+        }
+
+        expect($thrown)->not->toBeNull()
+            ->and($thrown->getMessage())->toContain('customer write failed')
+            ->and(DB::table('quickbooks_links')->where('qbo_id', '900')->exists())->toBeFalse()
+            ->and(DB::table('contacts')->where('uuid', 'imported-1')->exists())->toBeFalse();
     } finally {
         $restore();
     }
