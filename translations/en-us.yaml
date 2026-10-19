@@ -211,6 +211,7 @@ quickbooks:
     sync-running: Another QuickBooks sync is already running.
     rate-limited: QuickBooks asked Fleetbase to wait (rate limit). Try again in a few minutes.
     sync-failed: Sync failed.
+    save-failed: Fleetbase could not save the results of this sync. The records in it are tried again later.
     failed-count: "{count} failed."
     transport: QuickBooks could not be reached. Try again in a few minutes.
     request-failed: "QuickBooks request failed with status {status}"

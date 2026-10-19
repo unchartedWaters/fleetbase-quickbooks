@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
+use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\SafeLog;
@@ -1087,6 +1088,111 @@ class FleetbaseDirectory
         } catch (\Throwable $exception) {
             SafeLog::warning('QuickBooks could not release its pending-row lease; it will expire on its own.', ['error' => $exception->getMessage()]);
         }
+    }
+
+    /**
+     * save() threw, so nothing of this run's pending rows, attempts or batch was stored. Give
+     * the rows this run leased one more attempt and the normal backoff, release them, and
+     * record a failed batch. Without this a save error that repeats would send the same rows
+     * again each time the lease expires, with no attempt count and nothing in Activity.
+     * Each step is a separate small write, and none of them throws.
+     *
+     * @param array<string, mixed> $settings resolved sync settings (retry_limit, default_backoff_seconds)
+     */
+    public function recoverFailedSave(string $companyUuid, string $trigger, array $settings, int $now): void
+    {
+        if ($this->memory !== null) {
+            $this->releaseClaims();
+
+            return;
+        }
+
+        $deferred = 0;
+        try {
+            $deferred = $this->deferClaimedRows($settings, $now);
+        } catch (\Throwable $exception) {
+            SafeLog::warning(
+                'QuickBooks could not back off pending rows after a failed save.',
+                ['error' => $exception->getMessage()]
+            );
+        }
+        $this->releaseClaims();
+
+        try {
+            $this->recordFailedSave($companyUuid, $trigger, $deferred, $now);
+        } catch (\Throwable $exception) {
+            SafeLog::warning(
+                'QuickBooks could not record a failed save in Activity.',
+                ['error' => $exception->getMessage()]
+            );
+        }
+    }
+
+    /**
+     * One more attempt and the normal backoff for each row this directory leased, as a failed
+     * send gets. A row past retry_limit stops. A row flagged again while leased keeps its status
+     * so the new change is still sent. Returns how many rows were backed off.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private function deferClaimedRows(array $settings, int $now): int
+    {
+        if ($this->claimTokens === [] || $this->claimsSupported() === false) {
+            return 0;
+        }
+
+        $held = $this->claimTokens;
+        foreach ($this->claimTokens as $token) {
+            $held[] = self::REFLAG_PREFIX . $token;
+        }
+        $backoff = new BackoffPolicy();
+        $base    = (int) ($settings['default_backoff_seconds'] ?? 30);
+        $limit   = (int) ($settings['retry_limit'] ?? 5);
+        $groups  = [];
+        foreach (PendingSync::query()->whereIn('claimed_by', $held)->get(['uuid', 'attempts', 'claimed_by']) as $row) {
+            $attempts  = (int) $row->attempts + 1;
+            $reflagged = str_starts_with((string) $row->claimed_by, self::REFLAG_PREFIX);
+            $columns   = [
+                'attempts'        => $attempts,
+                'next_attempt_at' => Carbon::createFromTimestamp($now + $backoff->defaultWait($base, $attempts)),
+            ];
+            if ($reflagged === false && $attempts > $limit) {
+                $columns['status'] = 'failed';
+            }
+            $key                     = $attempts . '|' . ($reflagged === true ? 'reflag' : 'held');
+            $groups[$key]['columns'] = $columns;
+            $groups[$key]['uuids'][] = (string) $row->uuid;
+        }
+
+        $count = 0;
+        foreach ($groups as $group) {
+            PendingSync::query()->whereIn('uuid', $group['uuids'])->update($group['columns']);
+            $count += count($group['uuids']);
+        }
+
+        return $count;
+    }
+
+    private function recordFailedSave(string $companyUuid, string $trigger, int $deferred, int $now): void
+    {
+        $ledger            = new SyncLedger();
+        $ledger->batches[] = [
+            'company_uuid' => $companyUuid,
+            'trigger'      => $trigger,
+            'direction'    => 'outbound',
+            'status'       => 'failed',
+            'failed'       => $deferred,
+            'started_at'   => $now,
+            'finished_at'  => $now,
+        ];
+        $ledger->attempts[] = [
+            'company_uuid' => $companyUuid,
+            'local_type'   => 'connection',
+            'local_uuid'   => $companyUuid,
+            'outcome'      => 'failed',
+            'error'        => 'quickbooks.messages.save-failed',
+        ];
+        $this->insertBatchAttempts($ledger);
     }
 
     /**

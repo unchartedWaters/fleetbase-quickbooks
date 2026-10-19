@@ -692,3 +692,77 @@ test('a customer catalog page with a failure that may pass on retry is kept for 
         $restore();
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a sync whose save fails backs its rows off, counts the attempt, frees them and records a failed batch', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-cust-2')->update(['attempts' => 5]);
+        DB::statement(
+            'CREATE TRIGGER fail_attempt_write BEFORE INSERT ON quickbooks_sync_attempts'
+            . " BEGIN SELECT RAISE(ABORT, 'attempt write failed'); END;"
+        );
+        [$runner] = claimRunner(new ClaimProbeQuickBooks());
+        $before   = time();
+
+        $thrown = null;
+        try {
+            $runner->run('company-1', 'now');
+        } catch (Throwable $exception) {
+            $thrown = $exception;
+        }
+
+        $rows  = DB::table('quickbooks_pending_syncs')->orderBy('uuid')->get()->keyBy('uuid');
+        $batch = DB::table('quickbooks_sync_batches')->first();
+        expect($thrown)->not->toBeNull()
+            ->and($thrown->getMessage())->toContain('attempt write failed')
+            ->and((int) $rows['pend-cust-1']->attempts)->toBe(1)
+            ->and($rows['pend-cust-1']->status)->toBe('pending')
+            ->and(strtotime($rows['pend-cust-1']->next_attempt_at . ' UTC'))->toBeGreaterThanOrEqual($before + 30)
+            ->and((int) $rows['pend-inv-1']->attempts)->toBe(1)
+            // Past retry_limit (5) the row stops, as it would after five failed sends.
+            ->and((int) $rows['pend-cust-2']->attempts)->toBe(6)
+            ->and($rows['pend-cust-2']->status)->toBe('failed')
+            ->and(DB::table('quickbooks_pending_syncs')->whereNotNull('claimed_by')->count())->toBe(0)
+            ->and($batch)->not->toBeNull()
+            ->and($batch->status)->toBe('failed')
+            ->and($batch->trigger)->toBe('now')
+            ->and((int) $batch->failed_count)->toBe(3)
+            ->and(BatchRunner::holds('company-1'))->toBeFalse();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a failed save whose recovery also fails still reports the save error and frees the rows', function () {
+    [$restore] = claimSqlite();
+    try {
+        claimSchema();
+        claimRows();
+        DB::statement(
+            'CREATE TRIGGER fail_attempt_write BEFORE INSERT ON quickbooks_sync_attempts'
+            . " BEGIN SELECT RAISE(ABORT, 'attempt write failed'); END;"
+        );
+        DB::statement(
+            'CREATE TRIGGER fail_batch_write BEFORE INSERT ON quickbooks_sync_batches'
+            . " BEGIN SELECT RAISE(ABORT, 'batch write failed'); END;"
+        );
+        [$runner] = claimRunner(new ClaimProbeQuickBooks());
+
+        $thrown = null;
+        try {
+            $runner->run('company-1', 'now');
+        } catch (Throwable $exception) {
+            $thrown = $exception;
+        }
+
+        expect($thrown)->not->toBeNull()
+            ->and($thrown->getMessage())->toContain('batch write failed')
+            ->and(DB::table('quickbooks_pending_syncs')->where('attempts', 1)->count())->toBe(3)
+            ->and(DB::table('quickbooks_pending_syncs')->whereNotNull('claimed_by')->count())->toBe(0)
+            ->and(DB::table('quickbooks_sync_batches')->count())->toBe(0);
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');

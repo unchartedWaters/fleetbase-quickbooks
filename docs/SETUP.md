@@ -462,6 +462,11 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 
 A running sync leases the pending rows it loaded (`claimed_until`, `claimed_by` on `quickbooks_pending_syncs`) so a second run, such as the one a webhook starts while the first is waiting on QuickBooks, cannot send the same row again. A lease left by a killed worker expires after `quickbooks.sync.claim_seconds` (default 900; keep it above the 570 second job timeout). Run the migrations before enabling more than one queue worker; until the columns exist, runs work but are not protected against overlap. A Fleetbase change flagged while its row is leased marks the lease (`claimed_by` gets a `reflag:` prefix), so the running sync leaves that row pending (still recording the attempt and backoff) and the next run sends the new change. A mark left by a run that died stops counting once its lease expires.
 
+When a run cannot save its results (a database error), its leased rows still
+get one more attempt and the normal backoff, the lease is released, and
+Activity shows a failed run. A save error that keeps happening therefore stops
+at the retry limit like any other failure.
+
 A sync saves its links first, in their own transaction, then the pending rows, attempts and Fleetbase records together. If the second part fails, the links to records already created in QuickBooks are kept, the rows stay pending, and the retry updates those records instead of creating them again.
 
 `quickbooks:prune` runs daily and deletes sync attempts older than `quickbooks.retention.attempt_days` (90), finished or skipped batches older than `quickbooks.retention.batch_days` (180) that have no attempts left, and done pending rows older than `quickbooks.retention.pending_days` (30). A value of 0 keeps that history forever. Pending and failed rows and links are never pruned.

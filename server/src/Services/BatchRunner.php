@@ -201,12 +201,11 @@ class BatchRunner
             // Saved even when the engine throws, so links for records already created in QuickBooks are kept.
             if ($state['save'] === true && $state['ledger'] !== null) {
                 $this->ensureLock($lock, $companyUuid);
-                $this->directory->save($state['ledger']);
+                $this->saveOrRecover($companyUuid, $trigger, $resolved, $state['ledger']);
             }
             // The rows are saved (done, failed, or back to pending with a backoff), so the
-            // lease can go. When save() throws this line is skipped and the lease expires by
-            // itself. The links were committed before the failing part, so the retry updates
-            // the QuickBooks records instead of creating them again.
+            // lease can go. When save() throws, saveOrRecover() has already backed the rows
+            // off and released them before the error goes on.
             $this->directory->releaseClaims();
             if ($state['follow_up'] === true && Cache::get($this->reconcileOpenKey($companyUuid)) === true) {
                 $this->ensureLock($lock, $companyUuid);
@@ -222,6 +221,25 @@ class BatchRunner
             }
         }
         $this->dispatchFollowUps($companyUuid, $dispatchDrain, $dispatchCatalog);
+    }
+
+    /**
+     * A save that throws stores none of this run's pending rows, attempts or batch. Before the
+     * error goes on, the leased rows get one more attempt and the normal backoff in a separate
+     * small write, so a save error that repeats reaches retry_limit and shows in Activity
+     * instead of sending the same rows again every time the lease expires.
+     *
+     * @param array<string, mixed> $resolved
+     */
+    private function saveOrRecover(string $companyUuid, string $trigger, array $resolved, SyncLedger $ledger): void
+    {
+        try {
+            $this->directory->save($ledger);
+        } catch (\Throwable $exception) {
+            $this->directory->recoverFailedSave($companyUuid, $trigger, $resolved, time());
+
+            throw $exception;
+        }
     }
 
     private function dispatchFollowUps(string $companyUuid, bool $dispatchDrain, bool $dispatchCatalog): void
