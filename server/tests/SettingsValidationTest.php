@@ -580,6 +580,133 @@ test('batch size must be from 1 to 100 when it is sent', function () {
     }
 });
 
+// .invalid never resolves (RFC 6761), so these URLs fail the live public https check.
+test('a saved public URL is kept and shown without a new DNS lookup', function () {
+    $store = new MemorySettingsStore();
+    session(['company' => 'company-uuid']);
+    config()->set('app.url', 'https://api.example.test');
+    $webhook                                = 'https://hooks.invalid/quickbooks/int/v1/webhooks';
+    $oauth                                  = 'https://auth.invalid/quickbooks/int/v1/oauth/callback';
+    $store->rows[SettingsKeys::adminAuth()] = validAuth([
+        'public_webhook_receiver_url' => $webhook,
+        'public_oauth_redirect_url'   => $oauth,
+    ]);
+    $controller = new SettingController(
+        new Authorizer(static fn () => true),
+        new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
+        $store
+    );
+
+    try {
+        $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', ['scope' => 'admin']))
+            ->getData(true);
+        $same = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
+            'scope' => 'admin',
+            'auth'  => validAuth([
+                'public_webhook_receiver_url' => $webhook,
+                'public_oauth_redirect_url'   => ' ' . $oauth . ' ',
+            ]),
+            'sync' => qbSettings(['interval_minutes' => 9]),
+        ]));
+        $afterSame = $store->rows[SettingsKeys::adminAuth()];
+        $syncSame  = $store->rows[SettingsKeys::adminSync()];
+        $absent    = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
+            'scope' => 'admin',
+            'auth'  => validAuth(),
+            'sync'  => qbSettings(),
+        ]));
+        $afterAbsent = $store->rows[SettingsKeys::adminAuth()];
+
+        expect($shown['public_webhook_receiver_url'])->toBe($webhook)
+            ->and($shown['public_oauth_redirect_url'])->toBe($oauth)
+            ->and($same->getStatusCode())->toBe(200)
+            ->and($same->getData(true)['public_oauth_redirect_url'])->toBe($oauth)
+            ->and($afterSame['public_webhook_receiver_url'])->toBe($webhook)
+            ->and($afterSame['public_oauth_redirect_url'])->toBe($oauth)
+            ->and($syncSame['interval_minutes'])->toBe(9)
+            ->and($absent->getStatusCode())->toBe(200)
+            ->and($afterAbsent['public_webhook_receiver_url'])->toBe($webhook)
+            ->and($afterAbsent['public_oauth_redirect_url'])->toBe($oauth);
+    } finally {
+        session(['company' => null]);
+        config()->set('app.url', null);
+    }
+});
+
+test('a new public URL that fails the check is refused by field and nothing is saved', function () {
+    $store = new MemorySettingsStore();
+    session(['company' => 'company-uuid']);
+    config()->set('app.url', 'https://api.example.test');
+    $saved                                  = 'https://hooks.invalid/quickbooks/int/v1/webhooks';
+    $store->rows[SettingsKeys::adminAuth()] = validAuth(['public_webhook_receiver_url' => $saved]);
+    $store->rows[SettingsKeys::adminSync()] = qbSettings(['interval_minutes' => 5]);
+    $authBefore                             = $store->rows[SettingsKeys::adminAuth()];
+    $controller                             = new SettingController(
+        new Authorizer(static fn () => true),
+        new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
+        $store
+    );
+
+    try {
+        $refused = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
+            'scope' => 'admin',
+            'auth'  => validAuth([
+                'environment'                 => 'production',
+                'public_webhook_receiver_url' => 'https://other-hooks.invalid/quickbooks/int/v1/webhooks',
+                'public_oauth_redirect_url'   => 'https://auth.invalid/quickbooks/int/v1/oauth/callback',
+            ]),
+            'sync' => qbSettings(['interval_minutes' => 9]),
+        ]));
+        $body = $refused->getData(true);
+
+        expect($refused->getStatusCode())->toBe(422)
+            ->and($body['message'])->toBe('Some QuickBooks settings are missing or invalid.')
+            ->and($body['errors']['public_webhook_receiver_url'])->toContain('Public Webhook Receiver URL')
+            ->and($body['errors']['public_oauth_redirect_url'])->toContain('Public OAuth Redirect URL')
+            ->and($store->rows[SettingsKeys::adminAuth()])->toBe($authBefore)
+            ->and($store->rows[SettingsKeys::adminSync()]['interval_minutes'])->toBe(5);
+    } finally {
+        session(['company' => null]);
+        config()->set('app.url', null);
+    }
+});
+
+test('a blanked public URL is cleared and the computed address sent back is not stored', function () {
+    $store = new MemorySettingsStore();
+    session(['company' => 'company-uuid']);
+    // .test does not resolve either; the computed address is cleared without a check.
+    config()->set('app.url', 'https://api.example.test');
+    $store->rows[SettingsKeys::adminAuth()] = validAuth([
+        'public_webhook_receiver_url' => 'https://hooks.invalid/quickbooks/int/v1/webhooks',
+    ]);
+    $controller = new SettingController(
+        new Authorizer(static fn () => true),
+        new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
+        $store
+    );
+
+    try {
+        $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
+            'scope' => 'admin',
+            'auth'  => validAuth([
+                'public_webhook_receiver_url' => '  ',
+                'public_oauth_redirect_url'   => 'https://api.example.test/quickbooks/int/v1/oauth/callback',
+            ]),
+            'sync' => qbSettings(),
+        ]));
+        $stored = $store->rows[SettingsKeys::adminAuth()];
+
+        expect($saved->getStatusCode())->toBe(200)
+            ->and($stored)->not->toHaveKey('public_webhook_receiver_url')
+            ->and($stored)->not->toHaveKey('public_oauth_redirect_url')
+            ->and($saved->getData(true)['public_webhook_receiver_url'])
+            ->toBe('https://api.example.test/quickbooks/int/v1/webhooks');
+    } finally {
+        session(['company' => null]);
+        config()->set('app.url', null);
+    }
+});
+
 test('a global save does not require batch size, and a stored one is kept', function () {
     $store = new MemorySettingsStore();
     session(['company' => 'company-uuid']);
@@ -906,15 +1033,13 @@ test('a public oauth or webhook url must be https and not an internal address', 
                 ]),
                 'sync' => qbSettings(),
             ]));
-            $stored = $store->rows[SettingsKeys::adminAuth()];
+            $stored = $store->rows[SettingsKeys::adminAuth()] ?? [];
             $body   = $saved->getData(true);
 
-            expect($saved->getStatusCode())->toBe(200)
-                ->and($stored['redirect_uri'])->toBe($callback)
-                ->and($stored)->not->toHaveKey('public_oauth_redirect_url')
-                ->and($stored)->not->toHaveKey('public_webhook_receiver_url')
-                ->and($body['public_oauth_redirect_url'])->toBe($callback)
-                ->and($body['public_webhook_receiver_url'])->toBe($webhook);
+            // A new public URL that fails the check refuses the whole save instead of being dropped.
+            expect($saved->getStatusCode())->toBe(422)
+                ->and(array_keys($body['errors']))->toContain('public_oauth_redirect_url', 'public_webhook_receiver_url')
+                ->and($stored)->toBe([]);
         }
 
         Http::assertNothingSent();

@@ -28,10 +28,13 @@ class OAuthFlow
     {
         $state    = bin2hex(random_bytes(16));
         $verifier = $this->codeVerifier();
+        // Intuit requires the token request to repeat the redirect_uri sent here exactly,
+        // so complete() uses this one even if the saved URL changes in between.
         Cache::put($this->key($state), [
             'company_uuid'  => $companyUuid,
             'user_uuid'     => $userUuid,
             'code_verifier' => $verifier,
+            'redirect_uri'  => $credentials['redirect_uri'],
             'expires_at'    => time() + 600,
         ], 600);
 
@@ -102,6 +105,7 @@ class OAuthFlow
             throw new QuickBooksException(400, self::INVALID_LINK_MESSAGE);
         }
 
+        $credentials = $this->withStartedRedirect($credentials, $stored);
         try {
             $tokens = $this->client->exchangeCode($credentials, (string) $stored['code'], $this->storedVerifier($stored));
         } catch (QuickBooksException $exception) {
@@ -177,6 +181,24 @@ class OAuthFlow
     private function codeChallenge(string $verifier): string
     {
         return rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
+    }
+
+    /**
+     * A state saved before the redirect_uri was kept with it uses the current one.
+     *
+     * @param array{client_id: string, client_secret: string, redirect_uri: string, environment: string} $credentials
+     * @param array<string, mixed>                                                                       $stored
+     *
+     * @return array{client_id: string, client_secret: string, redirect_uri: string, environment: string}
+     */
+    private function withStartedRedirect(array $credentials, array $stored): array
+    {
+        $redirect = $stored['redirect_uri'] ?? null;
+        if (is_string($redirect) === true && $redirect !== '') {
+            $credentials['redirect_uri'] = $redirect;
+        }
+
+        return $credentials;
     }
 
     /**

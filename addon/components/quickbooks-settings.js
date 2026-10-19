@@ -67,6 +67,7 @@ const ERROR_FIELD_ORDER = [
 ];
 
 const CREDENTIAL_FIELDS = ['environment', 'client_id', 'client_secret', 'webhook_verifier'];
+const PUBLIC_URL_FIELDS = ['public_webhook_receiver_url', 'public_oauth_redirect_url'];
 
 function firstErrorKey(errors) {
     return ERROR_FIELD_ORDER.find((key) => errors?.[key]) || Object.keys(errors || {})[0] || null;
@@ -77,7 +78,7 @@ function errorFieldSelector(key) {
         return `[data-test-sync="${key.replace(/_reference$/, '_conflict')}"]`;
     }
 
-    if (CREDENTIAL_FIELDS.includes(key)) {
+    if (CREDENTIAL_FIELDS.includes(key) || PUBLIC_URL_FIELDS.includes(key)) {
         return `[data-test-field="${key}"]`;
     }
 

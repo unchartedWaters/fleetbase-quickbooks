@@ -179,6 +179,8 @@ quickbooks:
     direction-payment: Choose Both, To QuickBooks, or From QuickBooks for Payments.
     direction-wallet: Choose Both, To QuickBooks, or From QuickBooks for Accounts / Wallets.
     redirect-uri: "Enter a full http:// or https:// address that is listed under Keys & credentials, Redirect URIs."
+    public-webhook-url: "Public Webhook Receiver URL must be an https:// address whose host resolves to a public IP address. Check the address, or try again if DNS is not answering. Nothing was saved."
+    public-oauth-url: "Public OAuth Redirect URL must be an https:// address whose host resolves to a public IP address. Check the address, or try again if DNS is not answering. Nothing was saved."
     batch-size: Enter a whole number from 1 to 100.
     on-off: Choose On or Off.
     primary-customer: Choose Fleetbase or QuickBooks as Primary for Customers.

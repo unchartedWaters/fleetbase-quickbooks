@@ -719,6 +719,69 @@ test('oauth complete exchanges the code with the same computed callback', functi
     }
 });
 
+test('oauth complete sends the redirect uri used at start even if the saved one changed since', function () {
+    session(['company' => 'company-uuid', 'user' => 'user-uuid']);
+    $previous = qbRememberConfig(['app.url', 'fleetbase.url', 'fleetbase.console.host', 'quickbooks.console_host']);
+    config()->set('app.url', null);
+    config()->set('fleetbase.url', null);
+    config()->set('fleetbase.console.host', 'http://10.30.0.34:4200');
+    config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
+    $atStart = 'https://example.com/quickbooks/int/v1/oauth/callback';
+    Http::swap(new Illuminate\Http\Client\Factory());
+    Http::fake([
+        'oauth.platform.intuit.com/*'         => Http::response(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 3600]),
+        'sandbox-quickbooks.api.intuit.com/*' => Http::response([], 503),
+    ]);
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'                 => 'client-id',
+        'client_secret'             => (new SecretCipher())->encrypt('secret'),
+        'environment'               => 'sandbox',
+        'public_oauth_redirect_url' => $atStart,
+    ];
+    $controller = new class(new Authorizer(static fn () => true), new OAuthFlow(new QuickBooksClient()), new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()), $store, new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {
+        public bool $stored = false;
+
+        protected function persist(array $connection): void
+        {
+            $this->stored = true;
+        }
+
+        protected function connectionIsStored(string $companyUuid): bool
+        {
+            return $this->stored;
+        }
+    };
+
+    try {
+        $started = $controller->start(Request::create('/oauth/start', 'POST'));
+        expect(qbOAuthRedirect($started))->toBe($atStart);
+        $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
+            'state'   => (string) $started->getData(true)['state'],
+            'code'    => 'code',
+            'realmId' => '9341453000000001',
+        ]));
+        parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
+
+        // The administrator changes the public URL while the user is at Intuit.
+        $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url'] = 'https://example.net/quickbooks/cb';
+        $completed                                                           = null;
+        qbCaptureDispatches(function () use ($controller, $query, &$completed): void {
+            $completed = $controller->complete(Request::create('/oauth/complete', 'POST', [
+                'state' => (string) $query['oauth_state'],
+            ]));
+        });
+        $exchanges = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
+        parse_str($exchanges[0][0]->body(), $form);
+
+        expect($completed->getStatusCode())->toBe(200)
+            ->and($form['redirect_uri'])->toBe($atStart);
+    } finally {
+        qbRestoreConfig($previous);
+        session(['company' => null, 'user' => null]);
+    }
+});
+
 test('oauth complete skips customer import when customers are turned off', function () {
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     $previous = qbRememberConfig([

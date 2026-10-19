@@ -239,6 +239,14 @@ Keys come from [developer.intuit.com](https://developer.intuit.com) → your app
 
 The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The internal webhook path is `/quickbooks/int/v1/webhooks`. Admin → QuickBooks → Settings shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver URL stay editable and are saved on the install-wide settings row. Paste the public OAuth URL into Intuit Redirect URIs and the public webhook URL into the Intuit Endpoint URL. A blank public URL is shown as the matching internal URL.
 
+A new or changed public URL is checked when you save: it must be `https://` and
+its host must resolve to a public address. If it fails, the save is refused
+with an error under that field, and nothing from that save is stored. A saved
+URL sent back unchanged is kept without a new DNS lookup, so a resolver outage
+does not remove it. Clearing the field removes the saved URL. Connect sends
+Intuit the redirect URL in use when it started, and finishing the connection
+uses that same URL even if the setting changed in between.
+
 The Connection card on QuickBooks Setup shows only the actions that apply.
 Before a company is connected it offers **Connect to QuickBooks**. Once
 connected it offers **Sync now** and **Disconnect**. When QuickBooks must be
