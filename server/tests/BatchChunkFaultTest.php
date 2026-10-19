@@ -13,7 +13,8 @@ $chunkFaultConnection = [
     'environment'  => 'sandbox',
 ];
 
-test('a later chunk that fails with any status keeps the earlier chunk results and fails the rest with that status', function (int $status) use ($chunkFaultConnection) {
+test('a later chunk that fails with any status keeps the earlier chunk results'
+. ' and fails the rest with that status', function (int $status) use ($chunkFaultConnection) {
     $calls = 0;
     Http::fake(function (Illuminate\Http\Client\Request $request) use (&$calls, $status) {
         $calls++;
@@ -31,7 +32,12 @@ test('a later chunk that fails with any status keeps the earlier chunk results a
     });
     $items = [];
     for ($index = 0; $index < 70; $index++) {
-        $items[] = ['bId' => 'c' . $index, 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Customer ' . $index]];
+        $items[] = [
+            'bId'       => 'c' . $index,
+            'operation' => 'create',
+            'entity'    => 'Customer',
+            'payload'   => ['DisplayName' => 'Customer ' . $index],
+        ];
     }
 
     $results = (new QuickBooksClient())->batch($chunkFaultConnection, $items);
@@ -47,7 +53,8 @@ test('a later chunk that fails with any status keeps the earlier chunk results a
         ->and(array_unique(array_column($refused, 'halt')))->toBe([false]);
 })->with([503, 429, 500]);
 
-test('a later chunk lost to a transport error keeps the earlier chunk results', function () use ($chunkFaultConnection) {
+test('a later chunk lost to a transport error'
+. ' keeps the earlier chunk results', function () use ($chunkFaultConnection) {
     $calls = 0;
     Http::fake(function (Illuminate\Http\Client\Request $request) use (&$calls) {
         $calls++;
@@ -63,7 +70,12 @@ test('a later chunk lost to a transport error keeps the earlier chunk results', 
     });
     $items = [];
     for ($index = 0; $index < 40; $index++) {
-        $items[] = ['bId' => 'c' . $index, 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Customer ' . $index]];
+        $items[] = [
+            'bId'       => 'c' . $index,
+            'operation' => 'create',
+            'entity'    => 'Customer',
+            'payload'   => ['DisplayName' => 'Customer ' . $index],
+        ];
     }
 
     $results = (new QuickBooksClient())->batch($chunkFaultConnection, $items);
@@ -75,7 +87,8 @@ test('a later chunk lost to a transport error keeps the earlier chunk results', 
         ->and($results['c39']['error'])->toBe(QuickBooksClient::TRANSPORT_MESSAGE);
 });
 
-test('a failure of the first chunk still throws so nothing is recorded as written', function () use ($chunkFaultConnection) {
+test('a failure of the first chunk still throws'
+. ' so nothing is recorded as written', function () use ($chunkFaultConnection) {
     Http::fake(['*' => Http::response(['Fault' => ['Error' => [['Message' => 'Unavailable']]]], 503)]);
     $items = [
         ['bId' => 'a', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Ada']],
@@ -86,7 +99,8 @@ test('a failure of the first chunk still throws so nothing is recorded as writte
         ->toThrow(QuickBooksException::class);
 });
 
-test('a later chunk of a read-only batch that fails is still thrown, because reading again repeats no write', function () use ($chunkFaultConnection) {
+test('a later chunk of a read-only batch that fails is still thrown'
+. ', because reading again repeats no write', function () use ($chunkFaultConnection) {
     $calls = 0;
     Http::fake(function (Illuminate\Http\Client\Request $request) use (&$calls) {
         $calls++;
@@ -109,7 +123,8 @@ test('a later chunk of a read-only batch that fails is still thrown, because rea
         ->toThrow(QuickBooksException::class);
 });
 
-test('with quickbooks numbering a failed second chunk keeps the first chunk links and the next run creates only the rest', function (int $status) {
+test('with quickbooks numbering a failed second chunk keeps the first chunk links'
+. ' and the next run creates only the rest', function (int $status) {
     $client                              = new ChunkFaultQuickBooks();
     $client->failWriteChunk              = 2;
     $client->failStatus                  = $status;
@@ -124,7 +139,12 @@ test('with quickbooks numbering a failed second chunk keeps the first chunk link
         'home_currency'   => 'USD',
         'default_item_id' => 'item-1',
     ];
-    $ledger->customers['cust-1'] = ['uuid' => 'cust-1', 'company_uuid' => 'company-uuid', 'name' => 'Ada', 'email' => 'ada@example.test'];
+    $ledger->customers['cust-1'] = [
+        'uuid'         => 'cust-1',
+        'company_uuid' => 'company-uuid',
+        'name'         => 'Ada',
+        'email'        => 'ada@example.test',
+    ];
     $ledger->links[]             = [
         'company_uuid' => 'company-uuid',
         'realm_id'     => 'realm-1',
@@ -134,7 +154,12 @@ test('with quickbooks numbering a failed second chunk keeps the first chunk link
         'qbo_id'       => 'qbo-customer',
         'sync_token'   => '0',
     ];
-    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'ada@example.test']];
+    $client->customers['qbo-customer'] = [
+        'Id'               => 'qbo-customer',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Ada',
+        'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+    ];
     for ($index = 1; $index <= 40; $index++) {
         $ledger->invoices['inv-' . $index] = [
             'uuid'          => 'inv-' . $index,
@@ -149,11 +174,24 @@ test('with quickbooks numbering a failed second chunk keeps the first chunk link
             'status'        => 'sent',
             'items'         => [['description' => 'Delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000]],
         ];
-        $ledger->pending[] = ['company_uuid' => 'company-uuid', 'local_type' => 'invoice', 'local_uuid' => 'inv-' . $index, 'status' => 'pending', 'attempts' => 0];
+        $ledger->pending[] = [
+            'company_uuid' => 'company-uuid',
+            'local_type'   => 'invoice',
+            'local_uuid'   => 'inv-' . $index,
+            'status'       => 'pending',
+            'attempts'     => 0,
+        ];
     }
-    $settings     = qbSettings(['interval_minutes' => 1, 'invoice_reference' => 'quickbooks', 'payment_enabled' => false, 'wallet_enabled' => false]);
+    $settings     = qbSettings([
+        'interval_minutes'  => 1,
+        'invoice_reference' => 'quickbooks',
+        'payment_enabled'   => false,
+        'wallet_enabled'    => false,
+    ]);
     $now          = time();
-    $invoiceLinks = static fn (): int => count(array_filter($ledger->links, static fn (array $link): bool => $link['local_type'] === 'invoice'));
+    $invoiceLinks = static fn (): int => count(
+        array_filter($ledger->links, static fn (array $link): bool => $link['local_type'] === 'invoice')
+    );
 
     $engine->runScheduled($ledger, 'company-uuid', $settings, $now, true);
 
@@ -174,17 +212,41 @@ test('with quickbooks numbering a failed second chunk keeps the first chunk link
         ->and($invoiceLinks())->toBe(40);
 })->with([503, 429]);
 
-test('a batch item that fails with a quickbooks server fault or a stale sync token is marked as worth retrying', function () use ($chunkFaultConnection) {
+test('a batch item that fails with a quickbooks server fault or a stale sync token'
+. ' is marked as worth retrying', function () use ($chunkFaultConnection) {
     Http::fake(function () {
         return Http::response(['BatchItemResponse' => [
-            ['bId' => 'server', 'Fault' => ['type' => 'SystemFault', 'Error' => [['Message' => 'Internal error', 'code' => '10000']]]],
-            ['bId' => 'stale', 'Fault' => ['type' => 'ValidationFault', 'Error' => [['Message' => 'Stale Object Error', 'code' => '5010']]]],
-            ['bId' => 'name', 'Fault' => ['type' => 'ValidationFault', 'Error' => [['Message' => 'Duplicate Name Exists Error', 'code' => '6240']]]],
+            [
+                'bId'   => 'server',
+                'Fault' => [
+                    'type'  => 'SystemFault',
+                    'Error' => [['Message' => 'Internal error', 'code' => '10000']],
+                ],
+            ],
+            [
+                'bId'   => 'stale',
+                'Fault' => [
+                    'type'  => 'ValidationFault',
+                    'Error' => [['Message' => 'Stale Object Error', 'code' => '5010']],
+                ],
+            ],
+            [
+                'bId'   => 'name',
+                'Fault' => [
+                    'type'  => 'ValidationFault',
+                    'Error' => [['Message' => 'Duplicate Name Exists Error', 'code' => '6240']],
+                ],
+            ],
         ]], 200);
     });
     $items = [];
     foreach (['server', 'stale', 'name'] as $bId) {
-        $items[] = ['bId' => $bId, 'operation' => 'update', 'entity' => 'Customer', 'payload' => ['Id' => '1', 'SyncToken' => '0']];
+        $items[] = [
+            'bId'       => $bId,
+            'operation' => 'update',
+            'entity'    => 'Customer',
+            'payload'   => ['Id' => '1', 'SyncToken' => '0'],
+        ];
     }
 
     $results   = (new QuickBooksClient())->batch($chunkFaultConnection, $items);

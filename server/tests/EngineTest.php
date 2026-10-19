@@ -3620,7 +3620,8 @@ test('outbound quickbooks primary sends a cleared wallet description once', func
         ->and(array_count_values($client->calls)['updateAccount'] ?? 0)->toBe(1);
 });
 
-test('a customer name with a colon or a line break is sent in a form quickbooks accepts and the next sync is aligned', function () {
+test('a customer name with a colon or a line break is sent in a form quickbooks accepts'
+. ' and the next sync is aligned', function () {
     [$engine, $client]           = qbEngine();
     $ledger                      = engineLedger();
     $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => "Acme: North\tDepot\nEast"]);
@@ -3631,7 +3632,12 @@ test('a customer name with a colon or a line break is sent in a form quickbooks 
 
     $ledger->connections['company-uuid']['last_batch_at'] = null;
     $ledger->pending[0]['status']                         = 'pending';
-    $second                                               = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
+    $second                                               = $engine->runScheduled(
+        $ledger,
+        'company-uuid',
+        $settings,
+        time() + 10
+    );
 
     expect($first['created'])->toBe(1)
         ->and($client->customers['1']['DisplayName'])->toBe('Acme- North Depot East')
@@ -3642,13 +3648,20 @@ test('a customer name with a colon or a line break is sent in a form quickbooks 
 
     // The webhook echo of that create, with QuickBooks primary, does not rewrite the Fleetbase name.
     $inbound = qbSettings(['interval_minutes' => 1, 'customer_conflict' => 'quickbooks']);
-    $engine->acceptRemoteChanges($ledger, 'company-uuid', [['entity' => 'Customer', 'id' => '1', 'operation' => 'Update']], $inbound, time());
+    $engine->acceptRemoteChanges(
+        $ledger,
+        'company-uuid',
+        [['entity' => 'Customer', 'id' => '1', 'operation' => 'Update']],
+        $inbound,
+        time()
+    );
 
     expect($ledger->customers['cust-1']['name'])->toBe("Acme: North\tDepot\nEast");
 });
 
 foreach ([1 => 'on its own', 2 => 'in a batch'] as $nameTakenCount => $nameTakenLabel) {
-    test('a customer name quickbooks already uses for another record is reported by name ' . $nameTakenLabel, function () use ($nameTakenCount) {
+    test('a customer name quickbooks already uses for another record is reported by name '
+    . $nameTakenLabel, function () use ($nameTakenCount) {
         [$engine, $client]           = qbEngine();
         $client->failOnCreate        = 1;
         $duplicate                   = qbRequestFailed(400, 'Duplicate Name Exists Error');

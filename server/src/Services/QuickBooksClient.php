@@ -31,6 +31,12 @@ class QuickBooksClient
     /**
      * Run one write for a Fleetbase record, so its requestid names that record. Two records
      * whose QuickBooks bodies happen to be identical then never share a requestid.
+     *
+     * @template T
+     *
+     * @param callable(): T $write
+     *
+     * @return T
      */
     public function withWriteKey(string $key, callable $write): mixed
     {

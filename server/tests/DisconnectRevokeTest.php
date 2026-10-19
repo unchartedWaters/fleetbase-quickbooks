@@ -314,7 +314,8 @@ test('an operator may reconnect the connected realm, or after a disconnect the n
     });
 });
 
-test('after a disconnect an operator may reconnect only the company the organization last connected, even before it has links', function () {
+test('after a disconnect an operator may reconnect only the company the organization last connected,'
+. ' even before it has links', function () {
     revokeWithDatabase(function () {
         revokeSeed();
         Http::swap(new Illuminate\Http\Client\Factory());
@@ -337,7 +338,9 @@ test('after a disconnect an operator may reconnect only the company the organiza
             }
         };
         // The organization's links are on the old company. An administrator connects a new one.
-        DB::table('quickbooks_links')->where('company_uuid', 'company-uuid')->update(['realm_id' => '9341453000000001']);
+        DB::table('quickbooks_links')
+            ->where('company_uuid', 'company-uuid')
+            ->update(['realm_id' => '9341453000000001']);
         Connection::query()->where('company_uuid', 'company-uuid')->delete();
         $controller->persistForTest([
             'uuid'         => 'conn-new',

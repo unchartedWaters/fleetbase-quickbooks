@@ -214,7 +214,8 @@ test('a customer import that stops before its save does not move the stored curs
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 foreach (['succeeds' => 2, 'fails' => null] as $importSaveLabel => $importStoredCursor) {
-    test('the import job stores the cursor only after its customers are saved when the save ' . $importSaveLabel, function () use ($importStoredCursor) {
+    test('the import job stores the cursor only after its customers are saved when the save '
+    . $importSaveLabel, function () use ($importStoredCursor) {
         $restore       = tenantSqlite();
         $previousCache = Cache::getFacadeRoot();
         Cache::swap(new Repository(new ArrayStore()));
@@ -247,7 +248,11 @@ foreach (['succeeds' => 2, 'fails' => null] as $importSaveLabel => $importStored
                     }
                 }
             };
-            $settings                               = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
+            $settings                               = new SettingsService(
+                new CredentialResolver(),
+                new SyncSettingsResolver(),
+                new SecretCipher()
+            );
             $store                                  = new MemorySettingsStore();
             $store->rows[SettingsKeys::adminSync()] = ['batch_size' => 1];
 

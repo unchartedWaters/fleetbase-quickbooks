@@ -694,7 +694,8 @@ test('a customer catalog page with a failure that may pass on retry is kept for 
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
-test('a sync whose save fails backs its rows off, counts the attempt, frees them and records a failed batch', function () {
+test('a sync whose save fails backs its rows off, counts the attempt,'
+. ' frees them and records a failed batch', function () {
     [$restore] = claimSqlite();
     try {
         claimSchema();

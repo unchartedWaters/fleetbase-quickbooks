@@ -127,7 +127,8 @@ test('a remote change queued before retries were counted starts at the first ret
         ->and($revived->quickbooksAttempt)->toBe(0);
 });
 
-test('a queued retry wakes a little after the wait, so jobs held by one rate limit do not all call quickbooks at once', function () {
+test('a queued retry wakes a little after the wait,'
+. ' so jobs held by one rate limit do not all call quickbooks at once', function () {
     $draws = [];
     for ($index = 0; $index < 50; $index++) {
         $draws[] = WebhookRetry::spread(300);

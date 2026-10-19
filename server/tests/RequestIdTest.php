@@ -4,9 +4,15 @@ use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
-$requestIdConnection = ['company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'access_token' => 'token', 'environment' => 'sandbox'];
+$requestIdConnection = [
+    'company_uuid' => 'company-uuid',
+    'realm_id'     => 'realm-1',
+    'access_token' => 'token',
+    'environment'  => 'sandbox',
+];
 
-test('single writes carry a requestid that is the same for the same request and new for a changed one', function () use ($requestIdConnection) {
+test('single writes carry a requestid that is the same for the same request'
+. ' and new for a changed one', function () use ($requestIdConnection) {
     $sent = [];
     Http::fake(function (Request $request) use (&$sent) {
         parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
@@ -17,9 +23,18 @@ test('single writes carry a requestid that is the same for the same request and 
     $client = new QuickBooksClient();
 
     $other = array_merge($requestIdConnection, ['realm_id' => 'realm-2']);
-    $client->withWriteKey('invoice:a', fn () => $client->createInvoice($requestIdConnection, ['DocNumber' => 'A-1', 'Line' => []]));
-    $client->withWriteKey('invoice:a', fn () => $client->createInvoice($requestIdConnection, ['DocNumber' => 'A-1', 'Line' => []]));
-    $client->withWriteKey('invoice:a', fn () => $client->createInvoice($requestIdConnection, ['DocNumber' => 'A-2', 'Line' => []]));
+    $client->withWriteKey(
+        'invoice:a',
+        fn () => $client->createInvoice($requestIdConnection, ['DocNumber' => 'A-1', 'Line' => []])
+    );
+    $client->withWriteKey(
+        'invoice:a',
+        fn () => $client->createInvoice($requestIdConnection, ['DocNumber' => 'A-1', 'Line' => []])
+    );
+    $client->withWriteKey(
+        'invoice:a',
+        fn () => $client->createInvoice($requestIdConnection, ['DocNumber' => 'A-2', 'Line' => []])
+    );
     $client->withWriteKey('invoice:a', fn () => $client->createInvoice($other, ['DocNumber' => 'A-1', 'Line' => []]));
     $client->withWriteKey('invoice:a', fn () => $client->voidInvoice($requestIdConnection, '9', '0'));
 
@@ -35,7 +50,8 @@ test('single writes carry a requestid that is the same for the same request and 
         ->and($sent[4]['operation'])->toBe('void');
 });
 
-test('a batch with writes carries a requestid and a read-only batch or a query does not', function () use ($requestIdConnection) {
+test('a batch with writes carries a requestid'
+. ' and a read-only batch or a query does not', function () use ($requestIdConnection) {
     $sent = [];
     Http::fake(function (Request $request) use (&$sent) {
         parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
@@ -85,7 +101,12 @@ test('each chunk of a large write batch has its own requestid', function () use 
     });
     $items = [];
     for ($index = 0; $index < 40; $index++) {
-        $items[] = ['bId' => 'c' . $index, 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Customer ' . $index]];
+        $items[] = [
+            'bId'       => 'c' . $index,
+            'operation' => 'create',
+            'entity'    => 'Customer',
+            'payload'   => ['DisplayName' => 'Customer ' . $index],
+        ];
     }
 
     (new QuickBooksClient())->batch($requestIdConnection, $items);
@@ -96,7 +117,8 @@ test('each chunk of a large write batch has its own requestid', function () use 
         ->and($ids[1])->not->toBe($ids[0]);
 });
 
-test('two records with identical bodies get different requestids and a write with no record key gets none', function () use ($requestIdConnection) {
+test('two records with identical bodies get different requestids'
+. ' and a write with no record key gets none', function () use ($requestIdConnection) {
     $sent = [];
     Http::fake(function (Request $request) use (&$sent) {
         parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
@@ -136,7 +158,10 @@ test('requestids fit the 36 characters Intuit allows on a batch', function () us
         ['bId' => 'a', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Ada']],
         ['bId' => 'b', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Bea']],
     ]);
-    $client->withWriteKey('customer:uuid-a', fn () => $client->createCustomer($requestIdConnection, ['DisplayName' => 'Ada']));
+    $client->withWriteKey(
+        'customer:uuid-a',
+        fn () => $client->createCustomer($requestIdConnection, ['DisplayName' => 'Ada'])
+    );
 
     expect($ids)->toHaveCount(2)
         ->and(strlen($ids[0]))->toBeLessThanOrEqual(36)

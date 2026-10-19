@@ -393,7 +393,8 @@ test('when the engine throws the ledger is still saved under the lock, claims ar
         ->and(brcLockFree())->toBeTrue();
 });
 
-test('when the save throws the claims are released by the recovery, the lock is still released and nothing is dispatched', function () {
+test('when the save throws the claims are released by the recovery, the lock is still released'
+. ' and nothing is dispatched', function () {
     $built                            = brcRunner([], ['cust-1', 'cust-2']);
     $built['directory']->saveThrows   = new RuntimeException('database down');
 

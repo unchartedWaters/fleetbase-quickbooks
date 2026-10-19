@@ -22,12 +22,6 @@ class ChunkFaultQuickBooks extends FakeQuickBooks
     /** @var array<string, mixed>|null */
     private ?array $fakedFor = null;
 
-    /**
-     * @param array<string, mixed>                                                                                                $connection
-     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
-     *
-     * @return array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}>
-     */
     public function batch(array $connection, array $items): array
     {
         $this->calls[] = 'batch';
@@ -51,7 +45,10 @@ class ChunkFaultQuickBooks extends FakeQuickBooks
             if ($this->writeChunks === $this->failWriteChunk) {
                 $this->failWriteChunk = 0;
 
-                return Http::response(['Fault' => ['Error' => [['Message' => 'Throttled', 'code' => '003001']]]], $this->failStatus);
+                return Http::response(
+                    ['Fault' => ['Error' => [['Message' => 'Throttled', 'code' => '003001']]]],
+                    $this->failStatus
+                );
             }
         }
 
@@ -78,7 +75,12 @@ class ChunkFaultQuickBooks extends FakeQuickBooks
             }
             foreach ($request as $key => $value) {
                 if ($key !== 'bId' && $key !== 'operation' && is_array($value) === true) {
-                    $items[] = ['bId' => $request['bId'], 'operation' => $request['operation'], 'entity' => $key, 'payload' => $value];
+                    $items[] = [
+                        'bId'       => $request['bId'],
+                        'operation' => $request['operation'],
+                        'entity'    => $key,
+                        'payload'   => $value,
+                    ];
                 }
             }
         }

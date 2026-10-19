@@ -462,7 +462,8 @@ function withBatchDispatcher(callable $callback): mixed
     }
 }
 
-test('an idle connection with customer sync off is refreshed once its token was last refreshed over a week ago', function () {
+test('an idle connection with customer sync off is refreshed'
+. ' once its token was last refreshed over a week ago', function () {
     $client                                 = new RefreshingQuickBooks();
     [$tokens, $directory]                   = tokensWith($client);
     $store                                  = new MemorySettingsStore();

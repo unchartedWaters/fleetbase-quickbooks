@@ -462,7 +462,8 @@ test('update writes are chunked at 20 and other batch calls stay at 30', functio
         ->and(array_map('count', QuickBooksClient::batchChunks($creates)))->toBe([30, 1])
         ->and(array_map('count', QuickBooksClient::batchChunks($queries)))->toBe([30, 1])
         ->and(array_map('count', QuickBooksClient::batchChunks($mixed)))->toBe([6, 20, 1])
-        ->and(array_column(QuickBooksClient::batchChunks($mixed)[0], 'bId'))->toBe(['c-1', 'c-2', 'c-3', 'c-4', 'c-5', 'v-1'])
+        ->and(array_column(QuickBooksClient::batchChunks($mixed)[0], 'bId'))
+        ->toBe(['c-1', 'c-2', 'c-3', 'c-4', 'c-5', 'v-1'])
         ->and(QuickBooksClient::batchChunks($mixed)[1][0]['operation'])->toBe('update')
         ->and(QuickBooksClient::batchChunks($mixed)[2][0]['bId'])->toBe('u-21');
 });
@@ -471,7 +472,12 @@ test('alternating creates and updates are grouped by kind instead of split into 
     $items = [];
     for ($i = 1; $i <= 50; $i++) {
         $items[] = ['bId' => 'c-' . $i, 'operation' => 'create', 'entity' => 'Invoice', 'payload' => []];
-        $items[] = ['bId' => 'u-' . $i, 'operation' => 'update', 'entity' => 'Invoice', 'payload' => ['Id' => (string) $i]];
+        $items[] = [
+            'bId'       => 'u-' . $i,
+            'operation' => 'update',
+            'entity'    => 'Invoice',
+            'payload'   => ['Id' => (string) $i],
+        ];
     }
 
     $chunks = QuickBooksClient::batchChunks($items);
@@ -492,15 +498,28 @@ test('interleaved creates and updates sent in grouped chunks are matched back to
         $posts++;
         $rows = [];
         foreach (array_reverse($request->data()['BatchItemRequest']) as $item) {
-            $rows[] = ['bId' => $item['bId'], 'Invoice' => ['Id' => 'q-' . $item['bId'], 'SyncToken' => $item['operation'] === 'update' ? '1' : '0']];
+            $rows[] = [
+                'bId'     => $item['bId'],
+                'Invoice' => ['Id' => 'q-' . $item['bId'], 'SyncToken' => $item['operation'] === 'update' ? '1' : '0'],
+            ];
         }
 
         return Http::response(['BatchItemResponse' => $rows], 200);
     });
     $items = [];
     for ($i = 1; $i <= 50; $i++) {
-        $items[] = ['bId' => 'c-' . $i, 'operation' => 'create', 'entity' => 'Invoice', 'payload' => ['DocNumber' => 'C' . $i]];
-        $items[] = ['bId' => 'u-' . $i, 'operation' => 'update', 'entity' => 'Invoice', 'payload' => ['Id' => (string) $i, 'SyncToken' => '0']];
+        $items[] = [
+            'bId'       => 'c-' . $i,
+            'operation' => 'create',
+            'entity'    => 'Invoice',
+            'payload'   => ['DocNumber' => 'C' . $i],
+        ];
+        $items[] = [
+            'bId'       => 'u-' . $i,
+            'operation' => 'update',
+            'entity'    => 'Invoice',
+            'payload'   => ['Id' => (string) $i, 'SyncToken' => '0'],
+        ];
     }
 
     $results = (new QuickBooksClient())->batch(clientConnection(), $items);
