@@ -612,6 +612,22 @@ Pass `--path` with the Fleetbase directory when that directory is not the curren
 It publishes only when the tagged commit is on `main` and the PHP and Ember
 test workflows it calls (`server.yml`, `ember.yml`) pass.
 
+When upgrading from 0.0.2, also check these one-time effects first:
+
+- Invoices in currencies Fleetbase keeps in whole units (such as JPY or KRW)
+  were sent to QuickBooks at 1/100 of their amount. Where Fleetbase is Primary
+  for invoices and payments, the next sync corrects QuickBooks. Where QuickBooks
+  is Primary, the next sync would copy the 1/100 amounts into Fleetbase, so set
+  invoices and payments to Fleetbase Primary until those invoices have synced
+  once, or correct the amounts in QuickBooks before upgrading.
+- QuickBooks payments are now dated with the organization's own day (from its
+  timezone), and a part payment with the day Ledger recorded it rather than the
+  invoice date. Where Fleetbase is Primary for payments, existing QuickBooks
+  payments whose date differs are updated once to the corrected date, including
+  payments in a period already closed in QuickBooks.
+- Run `php artisan fleetbase:create-permissions` for the new
+  `quickbooks change-company connection` permission.
+
 As an installation administrator, open Admin → QuickBooks → Settings and save
 the Intuit Client ID and Client secret. Then open Organization settings →
 QuickBooks Setup and connect.
