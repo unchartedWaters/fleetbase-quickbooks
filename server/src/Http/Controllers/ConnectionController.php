@@ -472,6 +472,7 @@ class ConnectionController extends QuickbooksController
         }
         $model->fill($connection);
         $model->save();
+        FleetbaseDirectory::forgetReauthNotice($companyUuid);
     }
 
     /**

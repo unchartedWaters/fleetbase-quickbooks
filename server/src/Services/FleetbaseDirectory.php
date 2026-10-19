@@ -1723,7 +1723,7 @@ class FleetbaseDirectory
     protected function notifyReauth(array $connection): void
     {
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
-        $cacheKey    = 'quickbooks.reauth-notified.' . $companyUuid;
+        $cacheKey    = self::reauthNoticeKey($companyUuid);
         if (Cache::has($cacheKey) === true) {
             return;
         }
@@ -1735,6 +1735,20 @@ class FleetbaseDirectory
 
         Notification::send($recipients, new QuickbooksNeedsReauth($companyUuid, (string) ($connection['realm_id'] ?? '')));
         Cache::put($cacheKey, true, 3600);
+    }
+
+    /**
+     * A successful connect or reconnect forgets the hourly notice, so a new failure after
+     * it tells the company again instead of waiting out the hour.
+     */
+    public static function forgetReauthNotice(string $companyUuid): void
+    {
+        Cache::forget(self::reauthNoticeKey($companyUuid));
+    }
+
+    private static function reauthNoticeKey(string $companyUuid): string
+    {
+        return 'quickbooks.reauth-notified.' . $companyUuid;
     }
 
     /**
