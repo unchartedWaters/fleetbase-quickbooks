@@ -3906,7 +3906,7 @@ class SyncEngine
                         $settings,
                         $now
                     );
-                    $code  = (string) ($result['code'] ?? '');
+                    $code  = $this->batchFaultCode($result);
                     $error = $this->customerNameTakenError($ledger, $kind, (string) $uuid, $code)
                         ?? $this->batchItemAttemptError(
                             (string) ($result['error'] ?? ''),
@@ -4822,6 +4822,16 @@ class SyncEngine
                 $this->blockPayments[$invoiceId] = $payments;
             }
         }
+    }
+
+    /**
+     * The Intuit fault code QuickBooksClient copies onto a refused batch item, or ''.
+     *
+     * @param array<string, mixed> $result
+     */
+    private function batchFaultCode(array $result): string
+    {
+        return is_scalar($result['code'] ?? null) === true ? (string) $result['code'] : '';
     }
 
     /**

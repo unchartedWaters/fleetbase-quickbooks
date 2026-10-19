@@ -68,6 +68,7 @@ class LedgerPaymentDates
 
         $days = [];
         foreach ($rows as $row) {
+            /** @var \stdClass $row */
             $paid = $this->appTime($row->paid ?? null);
             if ($paid !== null) {
                 $days[(string) $row->subject_uuid] = $paid->setTimezone($this->zone($db, $companyUuid))->toDateString();

@@ -79,7 +79,8 @@ class BatchRunner
         $catalogDue = $this->catalogDue($companyUuid, $resolved, time());
         $keepalive  = $trigger === 'scheduled' && $this->tokenKeepaliveDue($companyUuid, time()) === true;
         $idle       = $catalogDue === false && $keepalive === false;
-        if ($trigger === 'scheduled' && $idle === true && $this->scheduledIsDue($companyUuid, $resolved, time()) === false) {
+        if ($trigger === 'scheduled' && $idle === true
+            && $this->scheduledIsDue($companyUuid, $resolved, time()) === false) {
             return $skipped;
         }
 

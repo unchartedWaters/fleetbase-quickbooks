@@ -5,14 +5,21 @@ use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Tests\Support\ChunkFaultQuickBooks;
 use Illuminate\Support\Facades\Http;
 
-$chunkFaultConnection = ['company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'access_token' => 'token', 'environment' => 'sandbox'];
+$chunkFaultConnection = [
+    'company_uuid' => 'company-uuid',
+    'realm_id'     => 'realm-1',
+    'access_token' => 'token',
+    'environment'  => 'sandbox',
+];
 
 test('a later chunk that fails with any status keeps the earlier chunk results and fails the rest with that status', function (int $status) use ($chunkFaultConnection) {
     $calls = 0;
     Http::fake(function (Illuminate\Http\Client\Request $request) use (&$calls, $status) {
         $calls++;
         if ($calls > 1) {
-            return Http::response(['Fault' => ['Error' => [['Message' => 'Unavailable']]]], $status, ['Retry-After' => '120']);
+            $fault = ['Fault' => ['Error' => [['Message' => 'Unavailable']]]];
+
+            return Http::response($fault, $status, ['Retry-After' => '120']);
         }
         $rows = [];
         foreach ($request->data()['BatchItemRequest'] as $item) {

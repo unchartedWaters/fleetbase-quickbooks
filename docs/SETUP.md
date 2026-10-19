@@ -200,9 +200,9 @@ first connection, needs `quickbooks change-company connection`, which the
 Administrator gets from `quickbooks * connection`. Otherwise finishing the
 connection returns HTTP 403, and nothing is saved or queued. On an existing
 install, run `php artisan fleetbase:create-permissions` so the new permission
-exists; the Administrator's wildcard already covers it. Global settings (Admin → QuickBooks → Settings)
-need an installation administrator; no role grants them. Installation
-administrators bypass all of these checks.
+exists; the Administrator's wildcard already covers it. Global settings
+(Admin → QuickBooks → Settings) need an installation administrator; no role
+grants them. Installation administrators bypass all of these checks.
 
 ### Enable and sync direction
 

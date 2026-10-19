@@ -229,13 +229,22 @@ test('reconnecting clears the reconnect notice so a new failure after it notifie
         bgConnection('company-a', 'realm-1', ['needs_reauth' => true]);
         $directory->tell($failed);
 
-        bgPersistController()->persistForTest(['company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'environment' => 'sandbox', 'needs_reauth' => false]);
+        bgPersistController()->persistForTest([
+            'company_uuid' => 'company-a',
+            'realm_id'     => 'realm-1',
+            'environment'  => 'sandbox',
+            'needs_reauth' => false,
+        ]);
 
         expect(Illuminate\Support\Facades\Cache::has('quickbooks.reauth-notified.company-a'))->toBeFalse();
         $directory->tell($failed);
     });
 
-    Illuminate\Support\Facades\Notification::assertSentToTimes($owner, Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth::class, 2);
+    Illuminate\Support\Facades\Notification::assertSentToTimes(
+        $owner,
+        Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth::class,
+        2
+    );
 });
 
 function bgPersistController(): ConnectionController

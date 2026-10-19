@@ -1215,6 +1215,7 @@ class FleetbaseDirectory
         $limit   = (int) ($settings['retry_limit'] ?? 5);
         $groups  = [];
         foreach (PendingSync::query()->whereIn('claimed_by', $held)->get(['uuid', 'attempts', 'claimed_by']) as $row) {
+            /** @var PendingSync $row */
             $attempts  = (int) $row->attempts + 1;
             $reflagged = str_starts_with((string) $row->claimed_by, self::REFLAG_PREFIX);
             $columns   = [
