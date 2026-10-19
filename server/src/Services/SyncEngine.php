@@ -12,11 +12,21 @@ use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 
+/**
+ * @phpstan-type RemovedLine array{id: string, description: string, amount: int}
+ * @phpstan-type StoredLines array{removed?: array<int, RemovedLine>, mapped?: bool}
+ */
 class SyncEngine
 {
     private const RATE_LIMITED_MESSAGE = 'quickbooks.messages.rate-limited';
 
     public const TOKEN_REJECTED_MESSAGE = ConnectionTokens::REAUTH_MESSAGE;
+
+    /**
+     * Webhook entity for "read this invoice's amount paid again", sent after a QuickBooks payment
+     * delete. It reads the QuickBooks invoice under the payment sync settings, never the invoice ones.
+     */
+    public const INVOICE_PAYMENTS = 'InvoicePayments';
 
     private const SYNC_FAILED_MESSAGE = 'quickbooks.messages.sync-failed';
 
@@ -110,6 +120,13 @@ class SyncEngine
      * @var array<int, array{bId: string, operation: string, entity: string, payload: array<string, mixed>}>|null
      */
     private ?array $writeBuffer = null;
+
+    /**
+     * Line ids to record once a buffered invoice write succeeds, keyed by Fleetbase uuid.
+     *
+     * @var array<string, array{invoice: string, payload: array<string, mixed>, cleared: array<int, string>}>
+     */
+    private array $bufferedLineMaps = [];
 
     /**
      * Prefetched QuickBooks customers for a block, keyed by Fleetbase uuid.
@@ -433,16 +450,17 @@ class SyncEngine
             return null;
         }
         $kind = match ($name) {
-            'Customer' => 'customer',
-            'Invoice'  => 'invoice',
-            'Payment'  => 'payment',
-            'Account'  => 'wallet',
-            default    => '',
+            'Customer'             => 'customer',
+            'Invoice'              => 'invoice',
+            'Payment'              => 'payment',
+            self::INVOICE_PAYMENTS => 'payment',
+            'Account'              => 'wallet',
+            default                => '',
         };
         if ($kind === '' || $this->entityEnabled($settings, $kind) === false || $this->quickbooksSupplies($settings, $kind) === false) {
             return null;
         }
-        $link = $ledger->linkForRemote((string) $connection['realm_id'], $name, $remoteId);
+        $link = $ledger->linkForRemote((string) $connection['realm_id'], self::readEntity($name), $remoteId);
         if ($link === null) {
             return null;
         }
@@ -457,7 +475,8 @@ class SyncEngine
      */
     private function applyWantedRemote(SyncLedger $ledger, array $connection, string $companyUuid, array $settings, string $name, array $linksById): void
     {
-        $remotes = $this->readRemoteIds($connection, $name, array_keys($linksById));
+        $remoteIds = array_map('strval', array_keys($linksById));
+        $remotes   = $this->readRemoteIds($connection, self::readEntity($name), $remoteIds);
         foreach ($linksById as $remoteId => $link) {
             $remote = $remotes[$remoteId] ?? null;
             if (is_array($remote) === false) {
@@ -482,8 +501,14 @@ class SyncEngine
 
             return;
         }
+        if ($name === self::INVOICE_PAYMENTS && isset($ledger->invoices[$localUuid]) === true) {
+            $this->applyAmountPaidFromBalance($ledger, $localUuid, $remote);
+
+            return;
+        }
         if ($name === 'Invoice' && isset($ledger->invoices[$localUuid]) === true) {
-            $this->applyInvoiceFromRemote($ledger, $localUuid, $remote, (string) ($settings['invoice_reference'] ?? 'fleetbase'));
+            $reference = (string) ($settings['invoice_reference'] ?? 'fleetbase');
+            $this->applyInvoiceFromRemote($ledger, $localUuid, $remote, $reference, (string) $connection['realm_id']);
             $this->applyPaymentStatus($ledger, $localUuid);
 
             return;
@@ -496,6 +521,33 @@ class SyncEngine
         if ($name === 'Account' && isset($ledger->wallets[$localUuid]) === true) {
             $this->applyWalletFromRemote($ledger, $localUuid, $this->withoutEmptyDescription($remote), (string) ($settings['wallet_reference'] ?? 'fleetbase'));
         }
+    }
+
+    /**
+     * Amount paid is what QuickBooks no longer shows as owed. Only the payment fields change.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function applyAmountPaidFromBalance(SyncLedger $ledger, string $uuid, array $remote): bool
+    {
+        $invoice = $ledger->invoices[$uuid];
+        $status  = (string) ($invoice['status'] ?? '');
+        $total   = $remote['TotalAmt'] ?? null;
+        $balance = $remote['Balance'] ?? null;
+        $voided  = in_array($status, ['void', 'voided', 'cancelled', 'canceled', 'deleted'], true) === true;
+        if ($voided === true || empty($invoice['deleted_at']) === false) {
+            return false;
+        }
+        if ($total === null || $total === '' || $balance === null || $balance === '') {
+            return false;
+        }
+        $before                                             = $invoice;
+        $paid                                               = $this->majorUnits($total) - $this->majorUnits($balance);
+        $ledger->invoices[$uuid]['amount_paid']             = max(0, $paid);
+        $ledger->invoices[$uuid]['payment_from_quickbooks'] = true;
+        $this->applyPaymentStatus($ledger, $uuid);
+
+        return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]);
     }
 
     /**
@@ -794,6 +846,9 @@ class SyncEngine
 
             return 'failed';
         }
+        if (empty($customer['deleted_at']) === false) {
+            return $this->deactivateRemote($ledger, $connection, 'customer', $uuid, $this->pushesRemote($direction));
+        }
 
         $copy       = $this->copiesRemote($direction);
         $push       = $this->pushesRemote($direction);
@@ -925,6 +980,85 @@ class SyncEngine
     }
 
     /**
+     * A customer or wallet deleted in Fleetbase makes its linked QuickBooks record inactive
+     * (QuickBooks keeps names and accounts). Nothing is looked up or created without a link,
+     * so an unrelated QuickBooks record that only shares a name or number is never touched.
+     *
+     * @param array<string, mixed> $connection
+     */
+    private function deactivateRemote(
+        SyncLedger $ledger,
+        array $connection,
+        string $kind,
+        string $uuid,
+        bool $push,
+    ): string {
+        $link = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], $kind, $uuid);
+        if ($link === null || $push === false) {
+            return 'aligned';
+        }
+        $remoteId = (string) $link['qbo_id'];
+        if ($kind === 'customer') {
+            if (isset($this->customerLookupFailed[$uuid]) === true) {
+                throw new QuickBooksException(500, $this->customerLookupFailed[$uuid]);
+            }
+            $cached = $this->customerRemoteCache[$uuid] ?? null;
+            $remote = is_array($cached) === true && (string) ($cached['Id'] ?? '') === $remoteId
+                ? $cached
+                : $this->client->getCustomer($connection, $remoteId);
+        } else {
+            if (isset($this->accountReadFailed[$remoteId]) === true) {
+                $this->lastError = $this->accountReadFailed[$remoteId];
+
+                return 'failed';
+            }
+            $remote = $this->accountById !== null
+                ? ($this->accountById[$remoteId] ?? null)
+                : $this->client->getAccount($connection, $remoteId);
+        }
+        if ($remote === null || (array_key_exists('Active', $remote) === true && $remote['Active'] === false)) {
+            return 'aligned';
+        }
+
+        return $this->writeInactive($ledger, $connection, $kind, $uuid, $remote);
+    }
+
+    /**
+     * Marks the linked QuickBooks customer or account inactive, in the batch when one is open.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $remote
+     */
+    private function writeInactive(
+        SyncLedger $ledger,
+        array $connection,
+        string $kind,
+        string $uuid,
+        array $remote,
+    ): string {
+        $entity    = $kind === 'customer' ? 'Customer' : 'Account';
+        $payload   = ['Active' => false];
+        $id        = (string) $remote['Id'];
+        $syncToken = (string) $remote['SyncToken'];
+        if ($this->writeBuffer !== null) {
+            $this->writeBuffer[] = [
+                'bId'       => $kind . ':' . $uuid,
+                'operation' => 'update',
+                'entity'    => $entity,
+                'payload'   => $payload + ['Id' => $id, 'SyncToken' => $syncToken, 'sparse' => true],
+            ];
+
+            return 'updated';
+        }
+        $updated = $kind === 'customer'
+            ? $this->client->updateCustomer($connection, $id, $syncToken, $payload)
+            : $this->client->updateAccount($connection, $id, $syncToken, $payload);
+        $ledger->putLink($this->linkFrom($connection, $kind, $uuid, $entity, $updated));
+
+        return 'updated';
+    }
+
+    /**
      * @param array<string, mixed> $connection
      * @param array<string, mixed> $settings
      */
@@ -942,6 +1076,9 @@ class SyncEngine
             $this->lastError = 'quickbooks.messages.wallet-missing';
 
             return 'failed';
+        }
+        if (empty($wallet['deleted_at']) === false) {
+            return $this->deactivateRemote($ledger, $connection, 'wallet', $uuid, $this->pushesRemote($direction));
         }
 
         $copy       = $this->copiesRemote($direction);
@@ -1183,6 +1320,8 @@ class SyncEngine
             return 'failed';
         }
 
+        $stored     = $this->storedLineIds($ledger, $connection, $uuid, $voided);
+        $invoice    = $ledger->invoices[$uuid];
         $payload    = $this->invoices->toQuickBooks($invoice, (string) $customerLink['qbo_id'], $itemId);
         $reference  = (string) ($settings['invoice_reference'] ?? 'fleetbase');
         $conflict   = (string) ($settings['invoice_conflict'] ?? 'fleetbase');
@@ -1290,12 +1429,15 @@ class SyncEngine
                     'entity'    => 'Invoice',
                     'payload'   => $payload,
                 ];
+                $this->bufferedLineMaps[$uuid] = ['invoice' => '', 'payload' => $payload, 'cleared' => []];
 
                 return 'created';
             }
             $created = $this->client->createInvoice($connection, $payload);
             $ledger->putLink($this->linkFrom($connection, 'invoice', $uuid, 'Invoice', $created));
             $this->copyInvoiceNumber($ledger, $uuid, $created, $reference);
+            $createdId = (string) ($created['Id'] ?? '');
+            $this->recordPushedLines($ledger, $uuid, $connection, $createdId, $payload, $created, []);
 
             return $this->withPayment('created', $this->syncPayment($ledger, $connection, $ledger->invoices[$uuid], (string) $customerLink['qbo_id'], (string) ($created['Id'] ?? ''), $settings));
         }
@@ -1312,8 +1454,27 @@ class SyncEngine
         // QuickBooks replaces the Fleetbase line set only when this sync copies remote lines.
         // Otherwise extra QuickBooks sales lines are not a Fleetbase mismatch.
         $remoteSuppliesLines = ($conflict === 'quickbooks' && $copy === true) || ($push === false && $copy === true);
-        if ($this->invoiceHashesMatch($invoice, $remote, $conflict, $remoteCents, $localCents, $reference, $pushClears, (string) $customerLink['qbo_id'], $pushClears === true && $currencyOk === true, $remoteSuppliesLines === false) === true) {
+        // When QuickBooks supplies the lines, a line Fleetbase deleted comes back instead of going.
+        $removed = $remoteSuppliesLines === true ? [] : $stored['removed'];
+        $mapped  = $stored['mapped'];
+        $matched = $this->invoiceHashesMatch(
+            $invoice,
+            $remote,
+            $conflict,
+            $remoteCents,
+            $localCents,
+            $reference,
+            $pushClears,
+            (string) $customerLink['qbo_id'],
+            $pushClears === true && $currencyOk === true,
+            $remoteSuppliesLines === false,
+            ['removed' => $removed, 'mapped' => $mapped]
+        );
+        if ($matched === true) {
             $outcome = ($numberChanged === true || $partyChanged === true) ? 'updated' : 'aligned';
+            $items   = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
+            $paired  = $this->invoices->pairedLineIds($items, $remote, $removed, $mapped);
+            $this->recordLineMap($ledger, $uuid, $connection, (string) $remote['Id'], $paired, $stored['uuids']);
             if ($this->writeBuffer !== null) {
                 return $outcome;
             }
@@ -1326,7 +1487,9 @@ class SyncEngine
 
         if (($conflict === 'quickbooks' && $copy === true) || ($push === false && $copy === true)) {
             $beforeStatus = (string) ($ledger->invoices[$uuid]['status'] ?? '');
-            $changed      = $this->applyInvoiceFromRemote($ledger, $uuid, $remote, $reference) === true || $numberChanged === true;
+            $realmId      = (string) $connection['realm_id'];
+            $applied      = $this->applyInvoiceFromRemote($ledger, $uuid, $remote, $reference, $realmId);
+            $changed      = $applied === true || $numberChanged === true;
             $this->applyPaymentStatus($ledger, $uuid);
             if ((string) ($ledger->invoices[$uuid]['status'] ?? '') !== $beforeStatus) {
                 $changed = true;
@@ -1362,7 +1525,7 @@ class SyncEngine
             return 'failed';
         }
         $this->keepFleetbaseDocNumber($payload, $ledger->invoices[$uuid], $remote, $reference);
-        $payload = $this->invoices->withExistingLineIds($payload, $remote);
+        $payload = $this->invoices->withExistingLineIds($payload, $remote, $removed, $mapped);
         $this->rememberPushedLineIds($ledger, $uuid, $payload);
 
         if ($this->writeBuffer !== null) {
@@ -1375,12 +1538,19 @@ class SyncEngine
                 'entity'    => 'Invoice',
                 'payload'   => $payload,
             ];
+            $this->bufferedLineMaps[$uuid] = [
+                'invoice' => (string) $remote['Id'],
+                'payload' => $payload,
+                'cleared' => $stored['uuids'],
+            ];
 
             return 'updated';
         }
 
         $updated = $this->client->updateInvoice($connection, (string) $remote['Id'], (string) $remote['SyncToken'], $payload);
         $ledger->putLink($this->linkFrom($connection, 'invoice', $uuid, 'Invoice', $updated));
+        $remoteId = (string) $remote['Id'];
+        $this->recordPushedLines($ledger, $uuid, $connection, $remoteId, $payload, $updated, $stored['uuids']);
 
         return $this->withPayment('updated', $this->syncPayment($ledger, $connection, $ledger->invoices[$uuid], (string) $customerLink['qbo_id'], (string) ($updated['Id'] ?? $remote['Id']), $settings));
     }
@@ -1417,6 +1587,15 @@ class SyncEngine
         $payments      = $applied['payments'];
         $remoteInvoice = $applied['invoice'];
         if ($payments === []) {
+            // QuickBooks keeps the payments and shows none for this unpaid invoice, so an amount
+            // Fleetbase still holds (a payment deleted in QuickBooks) comes from the balance.
+            $unbacked = $quickbooksPrimary === true
+                && $pushesPayment === false
+                && $applied['missing'] === false
+                && (int) ($invoice['amount_paid'] ?? 0) !== 0;
+            if ($unbacked === true && is_array($remoteInvoice) === true) {
+                return $this->applyAmountPaidFromBalance($ledger, $uuid, $remoteInvoice) === true ? 'updated' : null;
+            }
             if ($applied['missing'] === true || $pushesPayment === false || $applied['settled'] === true || $pushPay === false) {
                 return null;
             }
@@ -1763,9 +1942,21 @@ class SyncEngine
     /**
      * @param array<string, mixed> $invoice
      * @param array<string, mixed> $remote
+     * @param StoredLines          $lines   stored QuickBooks lines
      */
-    private function invoiceHashesMatch(array $invoice, array $remote, string $conflict, int $remoteCents, int $localCents, string $reference, bool $pushClears, string $customerRef, bool $compareCurrency, bool $ignoreExtraSalesLines): bool
-    {
+    private function invoiceHashesMatch(
+        array $invoice,
+        array $remote,
+        string $conflict,
+        int $remoteCents,
+        int $localCents,
+        string $reference,
+        bool $pushClears,
+        string $customerRef,
+        bool $compareCurrency,
+        bool $ignoreExtraSalesLines,
+        array $lines = [],
+    ): bool {
         if ($this->fleetbaseDocNumberDiffers($invoice, $remote, $reference) === true) {
             return false;
         }
@@ -1773,7 +1964,9 @@ class SyncEngine
         $localItems = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
         $compared   = $remote;
         if ($ignoreExtraSalesLines === true) {
-            $limited     = $this->invoices->withoutUnmatchedSalesLines($localItems, $remote);
+            $removed     = $lines['removed'] ?? [];
+            $mapped      = $lines['mapped'] ?? false;
+            $limited     = $this->invoices->withoutUnmatchedSalesLines($localItems, $remote, $removed, $mapped);
             $compared    = $limited['remote'];
             $remoteCents -= $limited['omitted_cents'];
         }
@@ -1817,7 +2010,8 @@ class SyncEngine
     }
 
     /**
-     * The line id is how the next sync pairs a Fleetbase line. It is not part of the content hash.
+     * The line id, item uuid and stored line are how a sync pairs a Fleetbase line. They are not
+     * part of the content hash.
      *
      * @param array<int, mixed> $items
      *
@@ -1830,7 +2024,7 @@ class SyncEngine
             if (is_array($item) === false) {
                 continue;
             }
-            unset($item['qbo_line_id']);
+            unset($item['qbo_line_id'], $item['uuid'], $item['qbo_line']);
             $clean[] = $item;
         }
 
@@ -1866,6 +2060,180 @@ class SyncEngine
             }
             $ledger->invoices[$uuid]['items'][$index]['qbo_line_id'] = $sales[$index];
         }
+    }
+
+    /**
+     * Copies the QuickBooks line ids stored for this invoice's link onto its items, so they pair
+     * exactly. Returns the lines whose Fleetbase item was deleted (no live item holds that id),
+     * the uuids of those deleted items, and whether the invoice has stored ids at all. Ids stored
+     * for another company or invoice are ignored.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array{removed: array<int, RemovedLine>, uuids: array<int, string>, mapped: bool}
+     */
+    private function storedLineIds(SyncLedger $ledger, array $connection, string $uuid, bool $voided = false): array
+    {
+        $realm     = (string) $connection['realm_id'];
+        $link      = $ledger->link((string) $connection['company_uuid'], $realm, 'invoice', $uuid);
+        $invoiceId = is_array($link) === true ? trim((string) ($link['qbo_id'] ?? '')) : '';
+        $items     = $ledger->invoices[$uuid]['items'] ?? null;
+        if ($voided === true || $invoiceId === '' || is_array($items) === false) {
+            return ['removed' => [], 'uuids' => [], 'mapped' => false];
+        }
+        $held = [];
+        foreach ($items as $index => $item) {
+            if (is_array($item) === false) {
+                continue;
+            }
+            $id = $this->storedLineId($item['qbo_line'] ?? null, $realm, $invoiceId);
+            if ($id !== '') {
+                $ledger->invoices[$uuid]['items'][$index]['qbo_line_id'] = $id;
+            }
+            $current = trim((string) ($ledger->invoices[$uuid]['items'][$index]['qbo_line_id'] ?? ''));
+            if ($current !== '') {
+                $held[$current] = true;
+            }
+        }
+        $removed = [];
+        $uuids   = [];
+        foreach ($this->removedLines($ledger, $uuid) as $line) {
+            $id = $this->storedLineId($line, $realm, $invoiceId);
+            if ($id === '' || isset($held[$id]) === true) {
+                continue;
+            }
+            $removed[] = [
+                'id'          => $id,
+                'description' => (string) ($line['description'] ?? ''),
+                'amount'      => (int) ($line['amount'] ?? 0),
+            ];
+            $uuids[]   = (string) ($line['uuid'] ?? '');
+        }
+
+        return [
+            'removed' => $removed,
+            'uuids'   => array_values(array_filter(array_unique($uuids))),
+            'mapped'  => $held !== [] || $removed !== [],
+        ];
+    }
+
+    private function storedLineId(mixed $line, string $realm, string $invoiceId): string
+    {
+        if (is_array($line) === false) {
+            return '';
+        }
+        if ((string) ($line['realm'] ?? '') !== $realm || (string) ($line['invoice'] ?? '') !== $invoiceId) {
+            return '';
+        }
+
+        return trim((string) ($line['id'] ?? ''));
+    }
+
+    /**
+     * After QuickBooks accepted a write, each Fleetbase item keeps the line id it was sent with.
+     * Items sent without one take the ids QuickBooks returned that were not sent, in order.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     * @param array<int, string>   $cleared
+     */
+    private function recordPushedLines(
+        SyncLedger $ledger,
+        string $uuid,
+        array $connection,
+        string $invoiceId,
+        array $payload,
+        mixed $response,
+        array $cleared,
+    ): void {
+        $sent  = $this->invoices->salesLineIds($payload);
+        $known = array_flip(array_filter($sent, static fn (string $id): bool => $id !== ''));
+        $fresh = [];
+        foreach (is_array($response) === true ? $this->invoices->salesLineIds($response) : [] as $id) {
+            if ($id !== '' && isset($known[$id]) === false) {
+                $fresh[] = $id;
+            }
+        }
+        $ids = [];
+        foreach ($sent as $index => $id) {
+            $ids[$index] = $id !== '' ? $id : (string) (array_shift($fresh) ?? '');
+        }
+        $this->recordLineMap($ledger, $uuid, $connection, $invoiceId, $ids, $cleared);
+    }
+
+    /**
+     * QuickBooks lines replaced the Fleetbase lines, so the new items take those lines' ids.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function recordReplacedLines(SyncLedger $ledger, string $uuid, array $remote, string $realmId): void
+    {
+        $invoiceId = trim((string) ($remote['Id'] ?? ''));
+        if ($realmId === '' || $invoiceId === '') {
+            return;
+        }
+        $cleared = [];
+        foreach ($this->removedLines($ledger, $uuid) as $line) {
+            $cleared[] = is_array($line) === true ? (string) ($line['uuid'] ?? '') : '';
+        }
+        $ids     = $this->invoices->salesLineIds($remote);
+        $cleared = array_values(array_filter($cleared));
+        $this->recordLineMap($ledger, $uuid, ['realm_id' => $realmId], $invoiceId, $ids, $cleared);
+    }
+
+    /**
+     * @return array<int, mixed>
+     */
+    private function removedLines(SyncLedger $ledger, string $uuid): array
+    {
+        $lines = $ledger->invoices[$uuid]['removed_lines'] ?? null;
+
+        return is_array($lines) === true ? $lines : [];
+    }
+
+    /**
+     * Marks which QuickBooks line each item is, for the directory to store. Set only once the
+     * invoice matched or a write succeeded.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<int, string>   $ids        line id by item position
+     * @param array<int, string>   $cleared    deleted items whose stored line is gone
+     */
+    private function recordLineMap(
+        SyncLedger $ledger,
+        string $uuid,
+        array $connection,
+        string $invoiceId,
+        array $ids,
+        array $cleared,
+    ): void {
+        $items = $ledger->invoices[$uuid]['items'] ?? null;
+        if ($invoiceId === '' || is_array($items) === false) {
+            return;
+        }
+        $position = 0;
+        foreach ($items as $index => $item) {
+            if (is_array($item) === false) {
+                continue;
+            }
+            $id = $ids[$position] ?? '';
+            $position++;
+            if ($id !== '') {
+                $ledger->invoices[$uuid]['items'][$index]['qbo_line_id'] = $id;
+            }
+        }
+        $ledger->invoices[$uuid]['line_map'] = ['realm' => (string) $connection['realm_id'], 'invoice' => $invoiceId];
+        if ($cleared !== []) {
+            $ledger->invoices[$uuid]['cleared_lines'] = $cleared;
+        }
+    }
+
+    /**
+     * The QuickBooks entity read for a webhook entity name. An invoice payments refresh reads the invoice.
+     */
+    private static function readEntity(string $name): string
+    {
+        return $name === self::INVOICE_PAYMENTS ? 'Invoice' : $name;
     }
 
     private function majorUnits(mixed $amount): int
@@ -2044,8 +2412,13 @@ class SyncEngine
     /**
      * @param array<string, mixed> $remote
      */
-    private function applyInvoiceFromRemote(SyncLedger $ledger, string $uuid, array $remote, string $reference): bool
-    {
+    private function applyInvoiceFromRemote(
+        SyncLedger $ledger,
+        string $uuid,
+        array $remote,
+        string $reference,
+        string $realmId = '',
+    ): bool {
         $changed = $this->copyInvoiceNumber($ledger, $uuid, $remote, $reference) === true
             || $this->copyInvoiceCustomerAndCurrency($ledger, $uuid, $remote) === true;
         foreach (['TxnDate' => 'date', 'DueDate' => 'due_date'] as $remoteKey => $local) {
@@ -2061,11 +2434,14 @@ class SyncEngine
             $changed                          = true;
         }
 
-        $mapped = $this->invoices->fromQuickBooks($remote);
-        if ($mapped['items'] !== [] && $mapped['items'] !== ($ledger->invoices[$uuid]['items'] ?? [])) {
+        $mapped  = $this->invoices->fromQuickBooks($remote);
+        $current = $ledger->invoices[$uuid]['items'] ?? [];
+        $current = is_array($current) === true ? $current : [];
+        if ($mapped['items'] !== [] && $mapped['items'] !== $this->hashableInvoiceItems($current)) {
             $ledger->invoices[$uuid]['items']                 = $mapped['items'];
             $ledger->invoices[$uuid]['items_from_quickbooks'] = true;
             $changed                                          = true;
+            $this->recordReplacedLines($ledger, $uuid, $remote, $realmId);
         }
         if ((int) ($ledger->invoices[$uuid]['total'] ?? 0) !== $mapped['total']) {
             $ledger->invoices[$uuid]['total'] = $mapped['total'];
@@ -3457,6 +3833,8 @@ class SyncEngine
      */
     private function persistSuccessfulInvoiceWrites(SyncLedger $ledger, array $connection, array $planned, array $results, array $settings): void
     {
+        $buffered               = $this->bufferedLineMaps;
+        $this->bufferedLineMaps = [];
         foreach ($planned as $uuid => $plan) {
             $result = $results['invoice:' . $uuid] ?? null;
             if (is_array($result) === false || empty($result['ok']) === true || is_array($result['body'] ?? null) === false || ($result['body']['Id'] ?? '') === '') {
@@ -3464,6 +3842,19 @@ class SyncEngine
             }
 
             $ledger->putLink($this->linkFrom($connection, 'invoice', (string) $uuid, 'Invoice', $result['body']));
+            $lines = $buffered[(string) $uuid] ?? null;
+            if ($lines !== null) {
+                $invoiceId = $lines['invoice'] !== '' ? $lines['invoice'] : (string) $result['body']['Id'];
+                $this->recordPushedLines(
+                    $ledger,
+                    (string) $uuid,
+                    $connection,
+                    $invoiceId,
+                    $lines['payload'],
+                    $result['body'],
+                    $lines['cleared']
+                );
+            }
             if ($plan['outcome'] === 'created') {
                 $this->copyInvoiceNumber(
                     $ledger,
@@ -3693,7 +4084,8 @@ class SyncEngine
                 ];
                 continue;
             }
-            if (is_array($customer) === false) {
+            // A deleted customer without a link is never matched or created.
+            if (is_array($customer) === false || empty($customer['deleted_at']) === false) {
                 continue;
             }
             $email = trim((string) ($customer['email'] ?? ''));
@@ -4398,6 +4790,10 @@ class SyncEngine
             }
             if ($linkedId !== '') {
                 $ids[] = $linkedId;
+            }
+            // A deleted wallet without a link is never matched by number or name.
+            if ($linkedId === '' && empty($wallet['deleted_at']) === false) {
+                continue;
             }
             $plans[$uuid] = [
                 'acct'   => trim((string) ($payload['AcctNum'] ?? '')),

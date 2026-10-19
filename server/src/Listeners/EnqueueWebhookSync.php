@@ -11,13 +11,35 @@ use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
+use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Support\QuickBooksPaymentReader;
+use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Support\WebhookPaymentInvoices;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 
 class EnqueueWebhookSync
 {
+    /** Activity notes for a QuickBooks delete that Fleetbase kept, by record type. */
+    private const DELETE_KEPT = [
+        'customer' => 'quickbooks.messages.remote-delete-kept.customer',
+        'invoice'  => 'quickbooks.messages.remote-delete-kept.invoice',
+        'payment'  => 'quickbooks.messages.remote-delete-kept.payment',
+        'wallet'   => 'quickbooks.messages.remote-delete-kept.wallet',
+    ];
+
+    /** Activity notes for a QuickBooks merge, by whether the link moved and by record type. */
+    private const MERGE_NOTES = [
+        'moved' => [
+            'customer' => 'quickbooks.messages.remote-merge-moved.customer',
+            'wallet'   => 'quickbooks.messages.remote-merge-moved.wallet',
+        ],
+        'kept' => [
+            'customer' => 'quickbooks.messages.remote-merge-kept.customer',
+            'wallet'   => 'quickbooks.messages.remote-merge-kept.wallet',
+        ],
+    ];
+
     /** @var array<string, array<int, QuickBooksEntityChanged>> */
     private array $queued = [];
 
@@ -96,8 +118,16 @@ class EnqueueWebhookSync
         $payable  = $this->payableEvents($settings, $events);
         $payments = $this->paymentInvoices($companyUuid, $payable);
         $this->rememberDeferredPayments($payable);
-        [$records, $inbound, $deletes] = $this->collectFlushEvents($settings, $events, $invoices, $payments);
-        $this->dispatchFlush($companyUuid, $records, $inbound, $deletes);
+        [$records, $inbound, $deletes, $kept, $merges] = $this->collectFlushEvents(
+            $settings,
+            $events,
+            $invoices,
+            $payments
+        );
+        [$deletes, $kept, $merges] = $this->onConnectedRealm($companyUuid, [$deletes, $kept, $merges]);
+        [$notes, $refresh]         = $this->followMerges($companyUuid, $settings, $merges);
+        $this->dispatchFlush($companyUuid, $records, array_merge($inbound, $refresh), $deletes);
+        $this->noteKeptDeletes($companyUuid, $kept, $notes);
     }
 
     /**
@@ -139,18 +169,171 @@ class EnqueueWebhookSync
      * @param array<string, mixed>                                                                                                                 $invoices
      * @param array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}> $payments
      *
-     * @return array{0: array<string, array{local_type: string, local_uuid: string}>, 1: array<int, array{entity: string, id: string, operation: string}>, 2: array<int, QuickBooksEntityChanged>}
+     * @return array{
+     *     0: array<string, array{local_type: string, local_uuid: string}>,
+     *     1: array<int, array{entity: string, id: string, operation: string}>,
+     *     2: array<int, QuickBooksEntityChanged>,
+     *     3: array<int, QuickBooksEntityChanged>,
+     *     4: array<int, QuickBooksEntityChanged>
+     * }
      */
     private function collectFlushEvents(array $settings, array $events, array $invoices, array $payments): array
     {
-        $records = [];
-        $inbound = [];
-        $deletes = [];
+        $records    = [];
+        $inbound    = [];
+        $deletes    = [];
+        $kept       = [];
+        $merges     = [];
+        $mergedAway = [];
         foreach ($events as $event) {
+            if ($event->operation === 'merge') {
+                $mergedAway[$this->recordKey($event)] = true;
+                if ($this->followsMerge($settings, $event) === true) {
+                    $merges[] = $event;
+                }
+            }
+        }
+        foreach ($events as $event) {
+            // A merge is not a delete, even if Intuit also reports the merged-away record as deleted.
+            $mergedDelete = $event->operation === 'delete' && isset($mergedAway[$this->recordKey($event)]) === true;
+            if ($event->operation === 'merge' || $mergedDelete === true) {
+                continue;
+            }
+            if ($event->operation === 'delete' && $this->keepsDelete($settings, $event) === true) {
+                $kept[] = $event;
+                continue;
+            }
             $this->collectFlushEvent($settings, $event, $invoices, $payments, $records, $inbound, $deletes);
         }
 
-        return [$records, $inbound, $deletes];
+        return [$records, $inbound, $deletes, $kept, $merges];
+    }
+
+    /**
+     * Deletes and merges change Fleetbase records and Activity, so they apply only to the
+     * QuickBooks company this organization is connected to now. Its links outlive a disconnect,
+     * and another organization on the same realm can still route the delivery here.
+     *
+     * @param array<int, array<int, QuickBooksEntityChanged>> $lists
+     *
+     * @return array<int, array<int, QuickBooksEntityChanged>>
+     */
+    private function onConnectedRealm(string $companyUuid, array $lists): array
+    {
+        if ($lists === [[], [], []]) {
+            return $lists;
+        }
+        $connection = $this->deleteDirectory()?->connection($companyUuid);
+        $realm      = is_array($connection) === true ? trim((string) ($connection['realm_id'] ?? '')) : '';
+        foreach ($lists as $index => $events) {
+            $lists[$index] = array_values(array_filter(
+                $events,
+                static fn (QuickBooksEntityChanged $event): bool => $realm !== '' && $event->realmId === $realm
+            ));
+        }
+
+        return $lists;
+    }
+
+    /**
+     * Customers and accounts are the records QuickBooks merges. Only a linked one matters.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private function followsMerge(array $settings, QuickBooksEntityChanged $event): bool
+    {
+        return in_array($event->entityType, ['customer', 'wallet'], true) === true
+            && is_string($event->localUuid) === true && $event->localUuid !== ''
+            && is_string($event->mergedInto) === true && $event->mergedInto !== ''
+            && $this->entityEnabled($settings, $event->entityType) === true;
+    }
+
+    /**
+     * The Fleetbase record of a merged-away QuickBooks record now syncs with the record it went
+     * into. When Fleetbase already links that record to another one of its own, both stay as
+     * they are. Neither case deletes anything in Fleetbase.
+     *
+     * @param array<string, mixed>                $settings
+     * @param array<int, QuickBooksEntityChanged> $merges
+     *
+     * @return array{
+     *     0: array<int, array{local_type: string, local_uuid: string, error: string, outcome: string}>,
+     *     1: array<int, array{entity: string, id: string, operation: string}>
+     * }
+     */
+    private function followMerges(string $companyUuid, array $settings, array $merges): array
+    {
+        $directory = $merges === [] ? null : $this->deleteDirectory();
+        if ($directory === null) {
+            return [[], []];
+        }
+        $notes   = [];
+        $refresh = [];
+        foreach ($merges as $event) {
+            $into  = (string) $event->mergedInto;
+            $type  = $event->entityType;
+            $moved = $directory->followMergedRecord($companyUuid, $event->realmId, $type, $event->quickbooksId, $into);
+            $key   = self::MERGE_NOTES[$moved === true ? 'moved' : 'kept'][$type] ?? null;
+            if ($moved === null || $key === null) {
+                continue;
+            }
+            $notes[] = [
+                'local_type' => $type,
+                'local_uuid' => (string) $event->localUuid,
+                'error'      => Translation::encode($key, ['id' => $event->quickbooksId, 'into' => $into]),
+                'outcome'    => $moved === true ? 'linked' : 'skipped',
+            ];
+            $remote   = $this->remoteEntity($event->entityType);
+            $supplied = $this->quickbooksSupplies($settings, $event->entityType);
+            if ($moved === true && $remote !== null && $supplied === true) {
+                $refresh[] = ['entity' => $remote, 'id' => $into, 'operation' => 'update'];
+            }
+        }
+
+        return [$notes, $refresh];
+    }
+
+    /**
+     * A delete of a linked record that the sync settings do not let QuickBooks apply.
+     * Fleetbase keeps the record, and Activity says so.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private function keepsDelete(array $settings, QuickBooksEntityChanged $event): bool
+    {
+        if (is_string($event->localUuid) === false || $event->localUuid === '') {
+            return false;
+        }
+
+        return $this->entityEnabled($settings, $event->entityType) === true
+            && $this->quickbooksSupplies($settings, $event->entityType) === false;
+    }
+
+    /**
+     * @param array<int, QuickBooksEntityChanged>                                                        $kept
+     * @param array<int, array{local_type: string, local_uuid: string, error: string, outcome?: string}> $notes
+     */
+    private function noteKeptDeletes(string $companyUuid, array $kept, array $notes = []): void
+    {
+        if ($kept === [] && $notes === []) {
+            return;
+        }
+        $directory = $this->deleteDirectory();
+        if ($directory === null) {
+            return;
+        }
+        foreach ($kept as $event) {
+            $key = self::DELETE_KEPT[$event->entityType] ?? null;
+            if ($key === null) {
+                continue;
+            }
+            $notes[] = [
+                'local_type' => $event->entityType,
+                'local_uuid' => (string) $event->localUuid,
+                'error'      => Translation::encode($key, ['id' => $event->quickbooksId]),
+            ];
+        }
+        $directory->noteRemoteDeletes($companyUuid, $notes);
     }
 
     /**
@@ -405,6 +588,20 @@ class EnqueueWebhookSync
             ];
         }
         $directory->releaseRemoteDeletes($companyUuid, $deletions);
+        // A removed payment can leave another one, or nothing, on the invoice. Read the amount paid
+        // again from QuickBooks in a queued job; the request never calls QuickBooks.
+        $refresh = [];
+        foreach ($directory->takePaymentRemovedInvoiceIds($companyUuid) as $id) {
+            $refresh[] = ['entity' => SyncEngine::INVOICE_PAYMENTS, 'id' => $id, 'operation' => 'update'];
+        }
+        if ($refresh !== []) {
+            ApplyRemoteChange::dispatch($companyUuid, $refresh);
+        }
+    }
+
+    private function recordKey(QuickBooksEntityChanged $event): string
+    {
+        return $event->entityType . '|' . $event->realmId . '|' . $event->quickbooksId;
     }
 
     private function deleteDirectory(): ?FleetbaseDirectory

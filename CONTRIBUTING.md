@@ -102,6 +102,13 @@ This package syncs Fleetbase customers, invoices, payments, and wallets (QuickBo
   still runs before that interval. One flagged row does not start the next
   minute. Sync now processes one pending page and does not drain the rest of the
   queue.
+- Deletes: a Fleetbase customer or wallet delete makes the linked QuickBooks
+  record inactive, and a deleted invoice line is removed from the QuickBooks
+  invoice (item `meta` keeps each line's QuickBooks id). A QuickBooks delete
+  that the sync settings do not apply writes a skipped Activity row. A
+  QuickBooks merge moves the link to the surviving record. A deleted QuickBooks
+  payment re-reads the invoice balance for its amount paid. See
+  [docs/SETUP.md](docs/SETUP.md#webhooks).
 
 ## Tests
 

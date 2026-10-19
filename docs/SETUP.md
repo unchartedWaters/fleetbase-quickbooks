@@ -370,9 +370,13 @@ Intuit sends a JSON array of CloudEvents. Each event's `type` names the entity
 and event (for example `qbo.invoice.updated.v1`), `intuitentityid` is the
 QuickBooks id, and `intuitaccountid` is the realm. Events `created`, `updated`,
 and `deleted` are applied, `voided` is treated as a delete if Intuit sends it,
-and `merged` is treated as an update of the surviving record (the merged-away id
-in `data.deletedid` is not handled). Other events, such as `emailed`, and other
-entities are ignored. The older `eventNotifications` body is still accepted.
+and `merged` is treated as an update of the surviving record. When a merge names
+the merged-away record (`deletedId`, or `data.deletedid` in CloudEvents), a
+linked Fleetbase customer or wallet is moved to the surviving record and is
+never deleted. If another Fleetbase record already links to the surviving
+record, both are kept and Activity says so. Other events, such as `emailed`, and
+other entities are ignored. The older `eventNotifications` body is still
+accepted.
 
 After the signature check, each event is applied to Fleetbase organizations
 connected to its realm. Direction `outbound` or `off` does not sync that type.
@@ -380,13 +384,28 @@ The event is still dispatched. This also applies to deletes and voids. A delete
 or void in QuickBooks changes Fleetbase (void the invoice, remove the customer,
 close and remove the wallet, unmark the paid invoice for a deleted payment) only
 when the type is enabled, the direction takes inbound, and QuickBooks is primary
-(or the direction is `inbound`). Otherwise Fleetbase keeps its record and the
-deletion is ignored. A wallet whose balance is not zero is never closed from
+(or the direction is `inbound`). Otherwise Fleetbase keeps its record, and the
+Activity page shows one skipped row per kept record. Deletes and merges apply
+only to an organization connected to that QuickBooks company now: links kept
+after a disconnect, or after connecting another company, are left as they are.
+A deleted payment unmarks
+the invoice, then the invoice's amount paid is read again from the QuickBooks
+invoice balance, so payments still on the invoice keep counting. A wallet whose
+balance is not zero is never closed from
 QuickBooks, whether by a delete or by an account that is made inactive: it stays
 open and linked, its pending sync is finished so the deleted account is not
 reactivated at once, and a warning is logged with its id. A later change to that
 wallet in Fleetbase pushes it again and makes the account active. Move the
 balance out first if the wallet should close.
+
+Deletes made in Fleetbase also reach QuickBooks when the type's direction sends
+to QuickBooks. A deleted Fleetbase customer or wallet makes its linked
+QuickBooks customer or account inactive (QuickBooks does not delete them). A
+line item deleted from a Fleetbase invoice is removed from the QuickBooks
+invoice on the next sync, and lines added in QuickBooks stay. The QuickBooks
+line id of each item is kept in the item's `meta` column. An invoice synced
+before this was recorded gets its line ids on its next sync; a line deleted
+before then cannot be told apart from a line added in QuickBooks, so it stays.
 
 Internal Webhook Receiver URL is computed from the configured origin and is not stored. Public Webhook Receiver URL is saved on the install-wide settings row when you set it. When that field is blank, the value shown is the internal URL. Paste the public URL into the Intuit Endpoint URL. The internal path stays `/quickbooks/int/v1/webhooks`. Saving settings does not register the URL with Intuit.
 
@@ -400,8 +419,11 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 - `realmId` — QuickBooks realm id
 - `entityType` — `customer`, `invoice`, `payment`, or `wallet`
 - `quickbooksId` — QuickBooks id
-- `operation` — `create`, `update`, or `delete`
+- `operation` — `create`, `update`, `delete`, or `merge` (the merged-away
+  record)
 - `localUuid` — Fleetbase uuid when a `quickbooks_links` row exists, otherwise null
+- `mergedInto` — for `merge`, the QuickBooks id of the surviving record,
+  otherwise null
 
 `Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync` queues one job per organization for the entities it will sync.
 

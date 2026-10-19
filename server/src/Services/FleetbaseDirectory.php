@@ -46,6 +46,9 @@ class FleetbaseDirectory
     /** Marks a lease whose row was flagged again while the holding run was sending it. */
     private const REFLAG_PREFIX = 'reflag:';
 
+    /** Invoice item meta key holding the QuickBooks line the item was synced to. */
+    private const LINE_META = 'quickbooks_line';
+
     /** How long a company without a connection is remembered by flag(). */
     public const UNTRACKED_SECONDS = 30;
 
@@ -72,6 +75,23 @@ class FleetbaseDirectory
      * @var array{connections: array<string, array<string, mixed>>, pending: array<string, array<string, mixed>>, customers: array<string, array<string, mixed>>, invoices: array<string, array<string, mixed>>, wallets: array<string, array<string, mixed>>, links: array<string, array<string, mixed>>}
      */
     private array $loaded = ['connections' => [], 'pending' => [], 'customers' => [], 'invoices' => [], 'wallets' => [], 'links' => []];
+
+    /**
+     * Item meta as read, per invoice, so a stored QuickBooks line id is merged into it.
+     *
+     * @var array<string, array{
+     *     live: array<string, array<string, mixed>|null>,
+     *     trashed: array<string, array<string, mixed>|null>
+     * }>
+     */
+    private array $lineMeta = [];
+
+    /**
+     * Fleetbase invoices that lost a payment to a QuickBooks delete in this request, by company.
+     *
+     * @var array<string, array<string, true>>
+     */
+    private array $paymentRemoved = [];
 
     /**
      * @return array{ledger: SyncLedger, connection: array<string, mixed>, customers: array<int, array<string, mixed>>}|null
@@ -1109,7 +1129,7 @@ class FleetbaseDirectory
         }
         [$customerIds, $invoiceIds, $walletIds, $flaggedInvoices] = $this->collectPendingIds($ledger, $companyUuid, $pendingLimit, $now);
         if ($pendingLimit === null) {
-            $this->loadFullLedger($ledger, $companyUuid, $flaggedInvoices);
+            $this->loadFullLedger($ledger, $companyUuid, $flaggedInvoices, $customerIds, $walletIds);
         } else {
             $this->loadLimitedLedger($ledger, $companyUuid, $customerIds, $invoiceIds, $walletIds, $flaggedInvoices);
         }
@@ -1153,17 +1173,24 @@ class FleetbaseDirectory
 
     /**
      * @param array<int, string> $flaggedInvoices
+     * @param array<int, string> $flaggedCustomers
+     * @param array<int, string> $flaggedWallets
      */
-    private function loadFullLedger(SyncLedger $ledger, string $companyUuid, array $flaggedInvoices): void
-    {
+    private function loadFullLedger(
+        SyncLedger $ledger,
+        string $companyUuid,
+        array $flaggedInvoices,
+        array $flaggedCustomers = [],
+        array $flaggedWallets = [],
+    ): void {
         foreach ((new Link())->newQuery()->where('company_uuid', $companyUuid)->get() as $link) {
             if ($link instanceof Link) {
                 $this->rememberLoadedLink($ledger, $link->toArray());
             }
         }
-        $ledger->customers = $this->readCustomers($companyUuid);
+        $ledger->customers = $this->readCustomers($companyUuid, null, $flaggedCustomers);
         $ledger->invoices  = $this->readInvoices($companyUuid, null, $flaggedInvoices);
-        $ledger->wallets   = $this->readWallets($companyUuid);
+        $ledger->wallets   = $this->readWallets($companyUuid, null, $flaggedWallets);
     }
 
     /**
@@ -1175,6 +1202,7 @@ class FleetbaseDirectory
     private function loadLimitedLedger(SyncLedger $ledger, string $companyUuid, array $customerIds, array $invoiceIds, array $walletIds, array $flaggedInvoices): void
     {
         $ledger->invoices = $this->readInvoices($companyUuid, $invoiceIds, $flaggedInvoices);
+        $flaggedCustomers = $customerIds;
         foreach ($ledger->invoices as $invoice) {
             $customerId = (string) ($invoice['customer_uuid'] ?? '');
             if ($customerId !== '') {
@@ -1182,8 +1210,8 @@ class FleetbaseDirectory
             }
         }
         $customerIds       = array_values(array_unique($customerIds));
-        $ledger->customers = $this->readCustomers($companyUuid, $customerIds);
-        $ledger->wallets   = $this->readWallets($companyUuid, $walletIds);
+        $ledger->customers = $this->readCustomers($companyUuid, $customerIds, $flaggedCustomers);
+        $ledger->wallets   = $this->readWallets($companyUuid, $walletIds, $walletIds);
         $this->readLinksFor($ledger, $companyUuid, $customerIds, $invoiceIds, $walletIds);
     }
 
@@ -1257,12 +1285,15 @@ class FleetbaseDirectory
             'Payment'  => true,
             'Account'  => true,
         ];
-        $ids = [];
+        // A payment re-read is an invoice read, so it loads the invoice link.
+        $aliases = [SyncEngine::INVOICE_PAYMENTS => 'Invoice'];
+        $ids     = [];
         foreach ($entities as $entity) {
             if (is_array($entity) === false) {
                 continue;
             }
             $name = $entity['entity'] ?? null;
+            $name = is_string($name) === true ? ($aliases[$name] ?? $name) : $name;
             if (is_string($name) === false || isset($known[$name]) === false) {
                 continue;
             }
@@ -1753,18 +1784,23 @@ class FleetbaseDirectory
     }
 
     /**
-     * @param array<int, string>|null $onlyUuids null loads every customer of the company
+     * Deleted customers are only read when flagged, so the engine can make the QuickBooks copy inactive.
+     *
+     * @param array<int, string>|null $onlyUuids    null loads every customer of the company
+     * @param array<int, string>      $flaggedUuids deleted customers to read too
      *
      * @return array<string, array<string, mixed>>
      */
-    private function readCustomers(string $companyUuid, ?array $onlyUuids = null): array
+    private function readCustomers(string $companyUuid, ?array $onlyUuids = null, array $flaggedUuids = []): array
     {
         $class = 'Fleetbase\\FleetOps\\Models\\Customer';
         if (class_exists($class) === false || $onlyUuids === []) {
             return [];
         }
 
-        $query = $class::query()->where('company_uuid', $companyUuid)->where('type', 'customer');
+        $query = $this->withFlaggedTrashed($class::query(), $flaggedUuids)
+            ->where('company_uuid', $companyUuid)
+            ->where('type', 'customer');
         if ($onlyUuids !== null) {
             $query->whereIn('uuid', $onlyUuids);
         }
@@ -1784,6 +1820,9 @@ class FleetbaseDirectory
                 'phone'        => $customer->phone,
                 'notes'        => $customer->notes,
             ];
+            if (empty($customer->deleted_at) === false) {
+                $row['deleted_at'] = $customer->deleted_at;
+            }
             $placeUuid = trim((string) ($customer->getAttributes()['place_uuid'] ?? ''));
             if ($placeUuid !== '' && isset($places[$placeUuid]) === true) {
                 $address = $mapper->addressFromPlace($places[$placeUuid]);
@@ -1813,8 +1852,15 @@ class FleetbaseDirectory
         }
 
         // The invoice model also eager-loads customer, template, and order.trackingNumber.
-        // This read copies line items only; those three relations stay unloaded.
-        $query = $class::query()->where('company_uuid', $companyUuid)->withOnly('items');
+        // This read copies line items only; those three relations stay unloaded. Deleted items
+        // that carry meta are read too: one holding a QuickBooks line id is a line Fleetbase removed.
+        $this->lineMeta = [];
+        $withItems      = static function ($items): void {
+            $items->withTrashed()->where(static function ($scope): void {
+                $scope->whereNull('deleted_at')->orWhereNotNull('meta->' . self::LINE_META);
+            });
+        };
+        $query = $class::query()->where('company_uuid', $companyUuid)->withOnly(['items' => $withItems]);
         if ($onlyUuids !== null) {
             $query->withoutGlobalScope(\Illuminate\Database\Eloquent\SoftDeletingScope::class)->whereIn('uuid', $onlyUuids);
         } elseif ($flaggedUuids !== []) {
@@ -1826,17 +1872,7 @@ class FleetbaseDirectory
         $rows = [];
         /** @var Model $invoice */
         foreach ($query->get() as $invoice) {
-            $items = [];
-            /** @var iterable<Model> $lines */
-            $lines = $invoice->items;
-            foreach ($lines as $item) {
-                $items[] = [
-                    'description' => $item->description,
-                    'quantity'    => (int) $item->quantity,
-                    'unit_price'  => (int) $item->unit_price,
-                    'amount'      => (int) $item->amount,
-                ];
-            }
+            [$items, $removed]             = $this->readInvoiceItems($invoice);
             $rows[(string) $invoice->uuid] = [
                 'uuid'          => (string) $invoice->uuid,
                 'company_uuid'  => $companyUuid,
@@ -1855,24 +1891,193 @@ class FleetbaseDirectory
                 'deleted_at'    => $invoice->deleted_at,
                 'items'         => $items,
             ];
+            if ($removed !== []) {
+                $rows[(string) $invoice->uuid]['removed_lines'] = $removed;
+            }
         }
 
         return $rows;
     }
 
     /**
+     * Live items with their uuid and stored QuickBooks line, and the stored lines of deleted items.
+     *
+     * @return array{
+     *     0: array<int, array<string, mixed>>,
+     *     1: array<int, array{
+     *         uuid: string, realm: string, invoice: string, id: string, description: string, amount: int
+     *     }>
+     * }
+     */
+    private function readInvoiceItems(Model $invoice): array
+    {
+        $items   = [];
+        $removed = [];
+        $known   = ['live' => [], 'trashed' => []];
+        /** @var iterable<Model> $lines */
+        $lines = $invoice->items;
+        foreach ($lines as $item) {
+            $uuid   = (string) $item->uuid;
+            $meta   = is_array($item->meta) === true ? $item->meta : null;
+            $stored = self::storedLine($meta);
+            if (empty($item->deleted_at) === false) {
+                $known['trashed'][$uuid] = $meta;
+                if ($stored !== null) {
+                    $removed[] = ['uuid' => $uuid] + $stored + [
+                        'description' => (string) $item->description,
+                        'amount'      => (int) $item->amount,
+                    ];
+                }
+                continue;
+            }
+            $known['live'][$uuid] = $meta;
+            $row                  = [
+                'description' => $item->description,
+                'quantity'    => (int) $item->quantity,
+                'unit_price'  => (int) $item->unit_price,
+                'amount'      => (int) $item->amount,
+                'uuid'        => $uuid,
+            ];
+            if ($stored !== null) {
+                $row['qbo_line'] = $stored;
+            }
+            $items[] = $row;
+        }
+        $this->lineMeta[(string) $invoice->uuid] = $known;
+
+        return [$items, $removed];
+    }
+
+    /**
+     * @param array<string, mixed>|null $meta
+     *
+     * @return array{realm: string, invoice: string, id: string}|null
+     */
+    private static function storedLine(?array $meta): ?array
+    {
+        $line = $meta[self::LINE_META] ?? null;
+        if (is_array($line) === false) {
+            return null;
+        }
+        $stored = [];
+        foreach (['realm', 'invoice', 'id'] as $key) {
+            $value = $line[$key] ?? null;
+            if ((is_string($value) === false && is_int($value) === false) || trim((string) $value) === '') {
+                return null;
+            }
+            $stored[$key] = trim((string) $value);
+        }
+
+        return ['realm' => $stored['realm'], 'invoice' => $stored['invoice'], 'id' => $stored['id']];
+    }
+
+    /**
+     * Item meta writes for one saved invoice: the QuickBooks line of each item after a sync matched
+     * or pushed it, and no stored line on items whose line is gone from QuickBooks.
+     *
+     * @param array<string, mixed> $invoice
+     *
+     * @return array<int, array{uuid: string, columns: array<string, mixed>}>
+     */
+    private function lineMetaRows(array $invoice): array
+    {
+        $known = $this->lineMeta[(string) ($invoice['uuid'] ?? '')] ?? null;
+        if ($known === null) {
+            return [];
+        }
+        $rows = [];
+        $map  = is_array($invoice['line_map'] ?? null) === true ? $invoice['line_map'] : null;
+        if (self::replacesLines($invoice) === true) {
+            foreach ($known['live'] as $itemUuid => $meta) {
+                $rows[] = self::withoutStoredLine((string) $itemUuid, $meta);
+            }
+        } elseif ($map !== null) {
+            $items = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
+            $rows  = self::mappedLineRows($items, $map, $known['live']);
+        }
+        foreach (is_array($invoice['cleared_lines'] ?? null) === true ? $invoice['cleared_lines'] : [] as $itemUuid) {
+            if (array_key_exists((string) $itemUuid, $known['trashed']) === true) {
+                $rows[] = self::withoutStoredLine((string) $itemUuid, $known['trashed'][(string) $itemUuid]);
+            }
+        }
+
+        return array_values(array_filter($rows));
+    }
+
+    /**
+     * Meta writes for live items whose QuickBooks line is new or changed.
+     *
+     * @param array<mixed>                             $items
+     * @param array<mixed>                             $map
+     * @param array<string, array<string, mixed>|null> $live
+     *
+     * @return array<int, array{uuid: string, columns: array<string, mixed>}>
+     */
+    private static function mappedLineRows(array $items, array $map, array $live): array
+    {
+        $rows = [];
+        foreach ($items as $item) {
+            $itemUuid = is_array($item) === true ? (string) ($item['uuid'] ?? '') : '';
+            $id       = is_array($item) === true ? trim((string) ($item['qbo_line_id'] ?? '')) : '';
+            if ($id === '' || array_key_exists($itemUuid, $live) === false) {
+                continue;
+            }
+            $meta  = $live[$itemUuid] ?? [];
+            $value = [
+                'realm'   => (string) ($map['realm'] ?? ''),
+                'invoice' => (string) ($map['invoice'] ?? ''),
+                'id'      => $id,
+            ];
+            // A json column can return keys in another order, so compare the normalised line.
+            if (self::storedLine($meta) === $value) {
+                continue;
+            }
+            $meta[self::LINE_META] = $value;
+            $rows[]                = ['uuid' => $itemUuid, 'columns' => ['meta' => json_encode($meta)]];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param array<string, mixed>|null $meta
+     *
+     * @return array{uuid: string, columns: array<string, mixed>}|null
+     */
+    private static function withoutStoredLine(string $itemUuid, ?array $meta): ?array
+    {
+        if (is_array($meta) === false || array_key_exists(self::LINE_META, $meta) === false) {
+            return null;
+        }
+        unset($meta[self::LINE_META]);
+
+        return ['uuid' => $itemUuid, 'columns' => ['meta' => $meta === [] ? null : json_encode($meta)]];
+    }
+
+    /**
+     * @param array<string, mixed> $invoice
+     */
+    private static function replacesLines(array $invoice): bool
+    {
+        return empty($invoice['replace_from_quickbooks']) === false
+            && empty($invoice['items_from_quickbooks']) === false
+            && is_array($invoice['items'] ?? null) === true;
+    }
+
+    /**
      * @param array<int, string>|null $onlyUuids
+     * @param array<int, string>      $flaggedUuids
      *
      * @return array<string, array<string, mixed>>
      */
-    private function readWallets(string $companyUuid, ?array $onlyUuids = null): array
+    private function readWallets(string $companyUuid, ?array $onlyUuids = null, array $flaggedUuids = []): array
     {
         $class = 'Fleetbase\\Ledger\\Models\\Wallet';
         if (class_exists($class) === false || $onlyUuids === []) {
             return [];
         }
 
-        $query = $class::query()->where('company_uuid', $companyUuid);
+        $query = $this->withFlaggedTrashed($class::query(), $flaggedUuids)->where('company_uuid', $companyUuid);
         if ($onlyUuids !== null) {
             $query->whereIn('uuid', $onlyUuids);
         }
@@ -1892,9 +2097,32 @@ class FleetbaseDirectory
                 // Read only: QuickBooks never changes a wallet balance, and it is not saved back.
                 'balance'      => (int) ($wallet->balance ?? 0),
             ];
+            if (empty($wallet->deleted_at) === false) {
+                $rows[(string) $wallet->uuid]['deleted_at'] = $wallet->deleted_at;
+            }
         }
 
         return $rows;
+    }
+
+    /**
+     * Also reads the soft-deleted rows among these uuids, so a flagged delete reaches QuickBooks.
+     *
+     * @param array<int, string> $flaggedUuids
+     */
+    private function withFlaggedTrashed(
+        \Illuminate\Database\Eloquent\Builder $query,
+        array $flaggedUuids,
+    ): \Illuminate\Database\Eloquent\Builder {
+        $flaggedUuids = array_values(array_filter($flaggedUuids, static fn (string $uuid): bool => $uuid !== ''));
+        if ($flaggedUuids === []) {
+            return $query;
+        }
+
+        return $query->withoutGlobalScope(\Illuminate\Database\Eloquent\SoftDeletingScope::class)
+            ->where(function ($scope) use ($flaggedUuids): void {
+                $scope->whereNull('deleted_at')->orWhereIn('uuid', $flaggedUuids);
+            });
     }
 
     private function dateString(mixed $value): string
@@ -2033,8 +2261,16 @@ class FleetbaseDirectory
             return;
         }
 
+        $metaRows = [];
         foreach ($ledger->invoices as $invoice) {
             $this->persistInvoice($class, $invoice, $skipped);
+            if (isset($skipped[(string) ($invoice['company_uuid'] ?? '')]) === false) {
+                $metaRows = array_merge($metaRows, $this->lineMetaRows($invoice));
+            }
+        }
+        $itemClass = 'Fleetbase\\Ledger\\Models\\InvoiceItem';
+        if ($metaRows !== [] && class_exists($itemClass) === true) {
+            $this->updateByUuid(new $itemClass(), $metaRows, ['meta']);
         }
     }
 
@@ -2109,7 +2345,8 @@ class FleetbaseDirectory
             $updates['status'] = (string) $invoice['status'];
         }
         if (empty($invoice['items_from_quickbooks']) === false && is_array($invoice['items'] ?? null) === true) {
-            $this->replaceInvoiceLines($uuid, $invoice['items']);
+            $lineMap = is_array($invoice['line_map'] ?? null) === true ? $invoice['line_map'] : null;
+            $this->replaceInvoiceLines($uuid, $invoice['items'], $lineMap);
         }
 
         return $updates;
@@ -2856,6 +3093,271 @@ class FleetbaseDirectory
     }
 
     /**
+     * QuickBooks ids of the invoices that lost a payment to a delete since the last call, so their
+     * amount paid can be read again. Each id is returned once.
+     *
+     * @return array<int, string>
+     */
+    public function takePaymentRemovedInvoiceIds(string $companyUuid): array
+    {
+        $uuids = array_map('strval', array_keys($this->paymentRemoved[$companyUuid] ?? []));
+        unset($this->paymentRemoved[$companyUuid]);
+        if ($uuids === []) {
+            return [];
+        }
+        $ids = [];
+        if ($this->memory !== null) {
+            foreach ($this->memory->links as $link) {
+                $ours = is_array($link) === true
+                    && ($link['company_uuid'] ?? '') === $companyUuid
+                    && ($link['local_type'] ?? '') === 'invoice';
+                if ($ours === true && in_array((string) ($link['local_uuid'] ?? ''), $uuids, true) === true) {
+                    $ids[] = (string) ($link['qbo_id'] ?? '');
+                }
+            }
+        } else {
+            foreach (array_chunk($uuids, 500) as $chunk) {
+                $found = Link::query()
+                    ->where('company_uuid', $companyUuid)
+                    ->where('local_type', 'invoice')
+                    ->whereIn('local_uuid', $chunk)
+                    ->pluck('qbo_id');
+                foreach ($found as $id) {
+                    $ids[] = (string) $id;
+                }
+            }
+        }
+
+        return array_values(array_unique(array_filter($ids, static fn (string $id): bool => $id !== '')));
+    }
+
+    /**
+     * Writes one inbound webhook batch to Activity with a skipped attempt per note,
+     * for QuickBooks deletes that Fleetbase did not apply.
+     *
+     * @param array<int, array{local_type: string, local_uuid: string, error: string, outcome?: string}> $notes
+     */
+    public function noteRemoteDeletes(string $companyUuid, array $notes): void
+    {
+        $notes = $this->withoutRetiredLocally($companyUuid, $notes);
+        if ($companyUuid === '' || $notes === []) {
+            return;
+        }
+        $now   = time();
+        $batch = [
+            'company_uuid' => $companyUuid,
+            'trigger'      => 'webhook',
+            'direction'    => 'inbound',
+            'status'       => 'finished',
+            'skipped'      => 0,
+            'linked'       => 0,
+            'started_at'   => $now,
+            'finished_at'  => $now,
+        ];
+        $attempts = [];
+        foreach ($notes as $note) {
+            $outcome = ($note['outcome'] ?? 'skipped') === 'linked' ? 'linked' : 'skipped';
+            $batch[$outcome]++;
+            $attempts[] = [
+                'company_uuid' => $companyUuid,
+                'local_type'   => $note['local_type'],
+                'local_uuid'   => $note['local_uuid'],
+                'outcome'      => $outcome,
+                'error'        => $note['error'],
+            ];
+        }
+        $this->saveNoteBatch($batch, $attempts);
+    }
+
+    /**
+     * @param array<string, mixed>             $batch
+     * @param array<int, array<string, mixed>> $attempts
+     */
+    private function saveNoteBatch(array $batch, array $attempts): void
+    {
+        if ($this->memory !== null) {
+            $this->memory->batches[] = $batch;
+            foreach ($attempts as $attempt) {
+                $this->memory->attempts[] = $attempt;
+            }
+
+            return;
+        }
+
+        try {
+            $record       = new SyncBatch();
+            $record->uuid = (string) Str::uuid();
+            $record->fill($this->batchAttributes($batch));
+            $record->save();
+            foreach (array_keys($attempts) as $index) {
+                $attempts[$index]['batch_uuid'] = (string) $record->uuid;
+            }
+            $this->insertAttempts($attempts);
+        } catch (\Illuminate\Database\QueryException $exception) {
+            if ($this->isMissingTable($exception) === true) {
+                return;
+            }
+
+            throw $exception;
+        }
+    }
+
+    /**
+     * Points the links of a merged-away QuickBooks record at the record it went into.
+     * True when a link moved, false when this company already links the surviving record
+     * (both links are kept), null when nothing links the merged-away record.
+     */
+    public function followMergedRecord(
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $fromId,
+        string $intoId,
+    ): ?bool {
+        if ($companyUuid === '' || $localType === '' || $fromId === '' || $intoId === '' || $fromId === $intoId) {
+            return null;
+        }
+        if ($this->memory !== null) {
+            return $this->followMemoryMerge($companyUuid, $realmId, $localType, $fromId, $intoId);
+        }
+
+        try {
+            $scope = fn (string $id) => Link::query()
+                ->where('company_uuid', $companyUuid)
+                ->where('realm_id', $realmId)
+                ->where('local_type', $localType)
+                ->where('qbo_id', $id);
+            if ($scope($fromId)->exists() === false) {
+                return null;
+            }
+            if ($scope($intoId)->exists() === true) {
+                return false;
+            }
+            $scope($fromId)->update(['qbo_id' => $intoId, 'sync_token' => '0', 'updated_at' => Carbon::now()]);
+
+            return true;
+        } catch (\Illuminate\Database\QueryException $exception) {
+            if ($this->isMissingTable($exception) === true) {
+                return null;
+            }
+
+            throw $exception;
+        }
+    }
+
+    private function followMemoryMerge(
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $fromId,
+        string $intoId,
+    ): ?bool {
+        $memory = $this->memory;
+        if ($memory === null) {
+            return null;
+        }
+        $from = null;
+        foreach ($memory->links as $index => $link) {
+            $other = ($link['company_uuid'] ?? '') !== $companyUuid
+                || ($link['realm_id'] ?? '') !== $realmId
+                || ($link['local_type'] ?? '') !== $localType;
+            if ($other === true) {
+                continue;
+            }
+            if ((string) ($link['qbo_id'] ?? '') === $intoId) {
+                return false;
+            }
+            if ((string) ($link['qbo_id'] ?? '') === $fromId) {
+                $from = $index;
+            }
+        }
+        if ($from === null) {
+            return null;
+        }
+        $memory->links[$from]['qbo_id']     = $intoId;
+        $memory->links[$from]['sync_token'] = '0';
+        $memory->rebuildIndex();
+
+        return true;
+    }
+
+    /**
+     * A delete that echoes a void, delete or close Fleetbase already made needs no note.
+     *
+     * @param array<int, array{local_type: string, local_uuid: string, error: string, outcome?: string}> $notes
+     *
+     * @return array<int, array{local_type: string, local_uuid: string, error: string, outcome?: string}>
+     */
+    private function withoutRetiredLocally(string $companyUuid, array $notes): array
+    {
+        if ($this->memory !== null || $notes === []) {
+            return $notes;
+        }
+        $classes = [
+            'invoice'  => 'Fleetbase\\Ledger\\Models\\Invoice',
+            'customer' => 'Fleetbase\\FleetOps\\Models\\Customer',
+            'wallet'   => 'Fleetbase\\Ledger\\Models\\Wallet',
+        ];
+        $byType = [];
+        foreach ($notes as $note) {
+            if (isset($classes[$note['local_type']]) === true) {
+                $byType[$note['local_type']][] = $note['local_uuid'];
+            }
+        }
+        $retired = [];
+        foreach ($byType as $type => $uuids) {
+            foreach ($this->retiredUuids($classes[$type], $companyUuid, $type, $uuids) as $uuid) {
+                $retired[$type . '|' . $uuid] = true;
+            }
+        }
+
+        return array_values(array_filter(
+            $notes,
+            static fn (array $note): bool => isset($retired[$note['local_type'] . '|' . $note['local_uuid']]) === false
+        ));
+    }
+
+    /**
+     * @param class-string       $class
+     * @param array<int, string> $uuids
+     *
+     * @return array<int, string>
+     */
+    private function retiredUuids(string $class, string $companyUuid, string $type, array $uuids): array
+    {
+        if (class_exists($class) === false) {
+            return [];
+        }
+
+        try {
+            $model = new $class();
+            if ($model instanceof Model === false) {
+                return [];
+            }
+            $query = $model->getConnection()->table($model->getTable())
+                ->where('company_uuid', $companyUuid)
+                ->whereIn('uuid', $uuids)
+                ->where(function ($retired) use ($type): void {
+                    $retired->whereNotNull('deleted_at');
+                    if ($type === 'invoice') {
+                        $retired->orWhereRaw("lower(status) in ('void', 'voided', 'cancelled', 'canceled')");
+                    }
+                    if ($type === 'wallet') {
+                        $retired->orWhere('status', 'closed');
+                    }
+                });
+
+            return array_map(static fn (mixed $uuid): string => (string) $uuid, $query->pluck('uuid')->all());
+        } catch (\Throwable $exception) {
+            if ($this->isUnavailableStorage($exception) === true) {
+                return [];
+            }
+
+            throw $exception;
+        }
+    }
+
+    /**
      * @return array<int, string>
      */
     private function linkedLocalUuids(string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid): array
@@ -3014,6 +3516,7 @@ class FleetbaseDirectory
             $this->setInvoiceStatus($companyUuid, $invoiceUuid, 'sent');
         }
         $this->finishPending($companyUuid, 'invoice', $invoiceUuid);
+        $this->paymentRemoved[$companyUuid][$invoiceUuid] = true;
     }
 
     private function dropPaymentInvoiceMap(string $companyUuid, string $realmId, string $paymentId): void
@@ -3046,14 +3549,15 @@ class FleetbaseDirectory
     private function retireDeleteBatch(string $companyUuid, array $deletions): void
     {
         $state = [
-            'void_invoices'  => [],
-            'sent_invoices'  => [],
-            'customers'      => [],
-            'wallets'        => [],
-            'link_uuids'     => [],
-            'wallet_links'   => [],
-            'void_realms'    => [],
-            'named_payments' => [],
+            'void_invoices'   => [],
+            'sent_invoices'   => [],
+            'customers'       => [],
+            'wallets'         => [],
+            'link_uuids'      => [],
+            'wallet_links'    => [],
+            'void_realms'     => [],
+            'named_payments'  => [],
+            'wallet_accounts' => [],
         ];
         $this->collectDeletionRecords($deletions, $state);
         $this->collectDeletionLinks($this->linksForDeletions($companyUuid, $deletions), $deletions, $state);
@@ -3083,6 +3587,7 @@ class FleetbaseDirectory
             }
             if ($type === 'wallet' && $local !== '') {
                 $state['wallets'][] = $local;
+                $state['wallet_accounts'][$local] ??= $qbo;
             }
             if ($type === 'payment') {
                 $this->collectPaymentDeletion($deletion, $realm, $qbo, $local, $state);
@@ -3159,7 +3664,8 @@ class FleetbaseDirectory
     {
         if ($uuid !== '' && $type === 'wallet' && $local !== '') {
             // Dropped below only when the wallet is really closed.
-            $state['wallet_links'][$local][] = $uuid;
+            $state['wallet_links'][$local][]  = $uuid;
+            $state['wallet_accounts'][$local] = $qbo;
         } elseif ($uuid !== '') {
             $state['link_uuids'][] = $uuid;
         }
@@ -3204,7 +3710,8 @@ class FleetbaseDirectory
      *     link_uuids: array<int, string>,
      *     wallet_links: array<string, array<int, string>>,
      *     void_realms: array<string, array<string, true>>,
-     *     named_payments: array<string, true>
+     *     named_payments: array<string, true>,
+     *     wallet_accounts: array<string, string>
      * } $state
      */
     private function applyDeletionBatch(string $companyUuid, array $state): void
@@ -3218,7 +3725,8 @@ class FleetbaseDirectory
         // Every deleted wallet's pending row is finished, held or not: pushing a held wallet
         // would reactivate the account that was deleted in QuickBooks.
         $settled   = array_values(array_unique($state['wallets']));
-        $wallets   = array_values(array_diff($settled, $this->walletsHoldingBalance($companyUuid, $settled)));
+        $held      = $this->walletsHoldingBalance($companyUuid, $settled);
+        $wallets   = array_values(array_diff($settled, $held));
         $linkUuids = $state['link_uuids'];
         foreach ($wallets as $wallet) {
             foreach ($state['wallet_links'][$wallet] ?? [] as $walletLink) {
@@ -3228,6 +3736,9 @@ class FleetbaseDirectory
         $linkUuids = array_values(array_unique($linkUuids));
 
         $this->updateInvoiceStatuses($companyUuid, $voidInvoices, $sentInvoices);
+        foreach ($sentInvoices as $invoiceUuid) {
+            $this->paymentRemoved[$companyUuid][$invoiceUuid] = true;
+        }
         $this->retireMany('Fleetbase\\FleetOps\\Models\\Customer', $companyUuid, $customers, []);
         $this->retireMany('Fleetbase\\Ledger\\Models\\Wallet', $companyUuid, $wallets, ['status' => 'closed']);
         $this->deleteRetiredLinks($companyUuid, $linkUuids, $state['void_realms']);
@@ -3236,6 +3747,19 @@ class FleetbaseDirectory
             'customer' => $customers,
             'wallet'   => $settled,
         ]);
+        $notes = [];
+        foreach ($held as $wallet) {
+            $account = (string) ($state['wallet_accounts'][$wallet] ?? '');
+            $notes[] = [
+                'local_type' => 'wallet',
+                'local_uuid' => $wallet,
+                'error'      => Translation::encode(
+                    'quickbooks.messages.remote-delete-wallet-balance',
+                    ['id' => $account]
+                ),
+            ];
+        }
+        $this->noteRemoteDeletes($companyUuid, $notes);
     }
 
     /**
@@ -4029,6 +4553,7 @@ class FleetbaseDirectory
             if (in_array($status, ['paid', 'partial'], true) === true) {
                 $memory->invoices[$invoiceUuid]['status'] = 'sent';
             }
+            $this->paymentRemoved[$companyUuid][$invoiceUuid] = true;
         }
 
         return $pendingUuids;
@@ -4357,10 +4882,12 @@ class FleetbaseDirectory
      * Replace every current line for one invoice with the inbound lines.
      * One delete of the current lines, then one insert. Integers are written
      * on the table so a negative amount does not pass through the Money cast.
+     * With a line map, each new line stores the QuickBooks line it came from.
      *
-     * @param array<int, mixed> $items
+     * @param array<int, mixed>                            $items
+     * @param array{realm?: string, invoice?: string}|null $lineMap
      */
-    private function replaceInvoiceLines(string $invoiceUuid, array $items): void
+    private function replaceInvoiceLines(string $invoiceUuid, array $items, ?array $lineMap = null): void
     {
         $class = 'Fleetbase\\Ledger\\Models\\InvoiceItem';
         if (class_exists($class) === false || $invoiceUuid === '') {
@@ -4381,7 +4908,7 @@ class FleetbaseDirectory
             if (is_array($item) === false) {
                 continue;
             }
-            $rows[] = [
+            $row = [
                 'uuid'         => (string) Str::uuid(),
                 'invoice_uuid' => $invoiceUuid,
                 'description'  => (string) ($item['description'] ?? ''),
@@ -4393,6 +4920,15 @@ class FleetbaseDirectory
                 'created_at'   => $now,
                 'updated_at'   => $now,
             ];
+            if ($lineMap !== null) {
+                $lineId      = trim((string) ($item['qbo_line_id'] ?? ''));
+                $row['meta'] = $lineId === '' ? null : json_encode([self::LINE_META => [
+                    'realm'   => (string) ($lineMap['realm'] ?? ''),
+                    'invoice' => (string) ($lineMap['invoice'] ?? ''),
+                    'id'      => $lineId,
+                ]]);
+            }
+            $rows[] = $row;
         }
         if ($rows === []) {
             return;

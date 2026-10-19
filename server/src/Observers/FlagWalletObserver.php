@@ -13,11 +13,29 @@ class FlagWalletObserver
 
     public function saved(object $wallet): void
     {
-        if (SyncSuppressor::paused() === true || method_exists($wallet, 'wasChanged') === false || $wallet->wasChanged(self::WATCHED) === false) {
+        if (method_exists($wallet, 'wasChanged') === false || $wallet->wasChanged(self::WATCHED) === false) {
             return;
         }
 
-        // A failure here must never fail the wallet save.
+        $this->flag($wallet);
+    }
+
+    /**
+     * A soft delete fires neither saved nor updated. Flagging lets the engine make the
+     * QuickBooks account inactive.
+     */
+    public function deleted(object $wallet): void
+    {
+        $this->flag($wallet);
+    }
+
+    private function flag(object $wallet): void
+    {
+        if (SyncSuppressor::paused() === true) {
+            return;
+        }
+
+        // A failure here must never fail the wallet save or delete.
         FlagGuard::run(static function () use ($wallet): void {
             $listener = Container::getInstance()->make(FlagWalletListener::class);
             if ($listener instanceof FlagWalletListener === true) {

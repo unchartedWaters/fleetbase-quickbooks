@@ -21,6 +21,7 @@ class QuickBooksEntityChanged
         public string $quickbooksId,
         public string $operation,
         public ?string $localUuid,
+        public ?string $mergedInto = null,
     ) {
     }
 }

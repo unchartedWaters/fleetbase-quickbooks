@@ -18,6 +18,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WebhookSignature;
+use Fleetbase\Quickbooks\Tests\Support\ConnectedCompany;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
@@ -276,6 +277,50 @@ JSON;
                 ->and($events[2]->operation)->toBe('update')
                 ->and($events[2]->localUuid)->toBeNull()
                 ->and(Http::recorded())->toHaveCount(0);
+        } finally {
+            qboChangedRestoreEvents();
+        }
+    });
+});
+
+test('a merge dispatches the surviving record as an update and the merged-away record as a merge', function () {
+    $settings = qboChangedSettings();
+    $body     = (string) json_encode(['eventNotifications' => [[
+        'realmId'         => 'realm-1',
+        'dataChangeEvent' => ['entities' => [
+            ['name' => 'Customer', 'id' => '2', 'operation' => 'Merge', 'deletedId' => '1'],
+        ]],
+    ]]]);
+
+    qboChangedWithoutVerifier(function () use ($settings, $body) {
+        $verifier = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
+
+        $store                                               = new MemorySettingsStore();
+        $store->rows[SettingsKeys::adminAuth()]              = $verifier;
+        $store->rows[SettingsKeys::companyAuth('company-a')] = $verifier;
+        $controller                                          = qboChangedController(
+            $settings,
+            $store,
+            ['realm-1' => 'company-a'],
+            ['company-a' => ['realm-1' => ['Customer|1' => 'cust-1']]]
+        );
+        qboChangedCollect();
+
+        try {
+            $response = $controller->handle(qboChangedRequest($body, qboChangedSignature($body, 'verifier-token')));
+            $events   = qboChangedSeen();
+
+            expect($response->getStatusCode())->toBe(200)
+                ->and($events)->toHaveCount(2)
+                ->and(array_map(
+                    static fn ($event): array => [
+                        $event->quickbooksId,
+                        $event->operation,
+                        $event->localUuid,
+                        $event->mergedInto,
+                    ],
+                    $events
+                ))->toBe([['2', 'update', null, null], ['1', 'merge', 'cust-1', '2']]);
         } finally {
             qboChangedRestoreEvents();
         }
@@ -833,6 +878,7 @@ test('a deleted payment stored under its quickbooks id unmarks the invoice and d
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-a', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
@@ -941,6 +987,7 @@ test('a deleted or voided payment quickbooks no longer returns unmarks only the 
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-a', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
@@ -1002,7 +1049,15 @@ test('a deleted or voided payment quickbooks no longer returns unmarks only the 
         qboChangedBus(function ($dispatcher) use ($listener, $store) {
             $listener->flush($store);
 
-            expect($dispatcher->jobs)->toBe([]);
+            // The amount paid of each unmarked invoice is read again from QuickBooks in a queued job.
+            $ids = [];
+            foreach ($dispatcher->jobs as $job) {
+                expect($job)->toBeInstanceOf(ApplyRemoteChange::class);
+                foreach ($job->entities as $entity) {
+                    $ids[] = $entity['entity'] . ':' . $entity['id'];
+                }
+            }
+            expect($ids)->toEqualCanonicalizing(['InvoicePayments:10']);
         });
 
         $paid    = DB::table('ledger_invoices')->where('uuid', 'inv-paid')->first();
@@ -1044,6 +1099,7 @@ test('a payment read does not unmark an invoice that payment did not pay', funct
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-a', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
@@ -1105,7 +1161,15 @@ test('a payment read does not unmark an invoice that payment did not pay', funct
         qboChangedBus(function ($dispatcher) use ($listener, $store) {
             $listener->flush($store);
 
-            expect($dispatcher->jobs)->toBe([]);
+            // The amount paid of each unmarked invoice is read again from QuickBooks in a queued job.
+            $ids = [];
+            foreach ($dispatcher->jobs as $job) {
+                expect($job)->toBeInstanceOf(ApplyRemoteChange::class);
+                foreach ($job->entities as $entity) {
+                    $ids[] = $entity['entity'] . ':' . $entity['id'];
+                }
+            }
+            expect($ids)->toEqualCanonicalizing(['InvoicePayments:10']);
         });
 
         $paid  = DB::table('ledger_invoices')->where('uuid', 'inv-paid')->first();
@@ -1143,6 +1207,7 @@ test('a deleted payment unmarks every invoice it paid and leaves the others', fu
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-a', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
@@ -1208,7 +1273,13 @@ test('a deleted payment unmarks every invoice it paid and leaves the others', fu
         qboChangedBus(function ($dispatcher) use ($listener, $store) {
             $listener->flush($store);
 
-            expect($dispatcher->jobs)->toBe([]);
+            // The amount paid is read again from QuickBooks in a queued job, never in the request.
+            expect($dispatcher->jobs)->toHaveCount(1)
+                ->and($dispatcher->jobs[0])->toBeInstanceOf(ApplyRemoteChange::class)
+                ->and($dispatcher->jobs[0]->entities)->toEqualCanonicalizing([
+                    ['entity' => 'InvoicePayments', 'id' => '10', 'operation' => 'update'],
+                    ['entity' => 'InvoicePayments', 'id' => '12', 'operation' => 'update'],
+                ]);
         });
 
         $paid    = DB::table('ledger_invoices')->where('uuid', 'inv-paid')->first();
@@ -1250,6 +1321,7 @@ test('a missing payment read unmarks every stored invoice on that payment', func
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-a', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
@@ -1486,11 +1558,32 @@ function qboChangedUnreadPaymentDelete(string $failure): void
             $listener->handle(new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '5', 'delete', '5'));
         }
 
-        qboChangedBus(function ($dispatcher) use ($listener, $store) {
+        qboChangedBus(function ($dispatcher) use ($listener, $store, $failure) {
             $listener->flush($store);
 
-            expect($dispatcher->jobs)->toBe([]);
+            // The amount paid of each unmarked invoice is read again from QuickBooks in a queued job.
+            $ids = [];
+            foreach ($dispatcher->jobs as $job) {
+                expect($job)->toBeInstanceOf(ApplyRemoteChange::class);
+                foreach ($job->entities as $entity) {
+                    $ids[] = $entity['entity'] . ':' . $entity['id'];
+                }
+            }
+            $expected = match ($failure) {
+                'batch' => ['InvoicePayments:10', 'InvoicePayments:12'],
+                'realm' => [],
+                default => ['InvoicePayments:10'],
+            };
+            expect($ids)->toEqualCanonicalizing($expected);
         });
+        if ($failure === 'realm') {
+            // The organization is connected to another QuickBooks company now, so the delete is not applied.
+            expect(DB::table('ledger_invoices')->where('uuid', 'inv-paid')->value('status'))->toBe('paid')
+                ->and(DB::table('quickbooks_links')->where('uuid', 'link-pay')->exists())->toBeTrue()
+                ->and($client->reads)->toBe(0);
+
+            return;
+        }
 
         $paid    = DB::table('ledger_invoices')->where('uuid', 'inv-paid')->first();
         $partial = DB::table('ledger_invoices')->where('uuid', 'inv-partial')->first();
@@ -1537,7 +1630,7 @@ test('a reauth skip on delete unmarks only the remembered invoice', function () 
     qboChangedUnreadPaymentDelete('reauth');
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
-test('a realm mismatch on delete unmarks only the remembered invoice', function () {
+test('a payment delete on a quickbooks company the organization is no longer connected to is not applied', function () {
     qboChangedUnreadPaymentDelete('realm');
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 

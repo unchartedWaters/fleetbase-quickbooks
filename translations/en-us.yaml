@@ -227,6 +227,18 @@ quickbooks:
     import-failed: Customer import failed.
     customer-missing: Customer no longer exists in Fleetbase.
     wallet-missing: Wallet no longer exists in Fleetbase.
+    remote-delete-kept:
+      customer: "A customer deleted in QuickBooks (ID {id}) was kept in Fleetbase. The customer sync settings do not let QuickBooks remove Fleetbase records."
+      invoice: "An invoice deleted or voided in QuickBooks (ID {id}) was kept in Fleetbase. The invoice sync settings do not let QuickBooks remove Fleetbase records."
+      payment: "A payment deleted or voided in QuickBooks (ID {id}) is still counted in Fleetbase. The payment sync settings do not let QuickBooks remove Fleetbase records."
+      wallet: "An account deleted in QuickBooks (ID {id}) was kept as a wallet in Fleetbase. The wallet sync settings do not let QuickBooks remove Fleetbase records."
+    remote-merge-moved:
+      customer: "QuickBooks merged customer {id} into customer {into}. The Fleetbase customer now syncs with customer {into}."
+      wallet: "QuickBooks merged account {id} into account {into}. The Fleetbase wallet now syncs with account {into}."
+    remote-merge-kept:
+      customer: "QuickBooks merged customer {id} into customer {into}, which another Fleetbase customer already syncs with. Both Fleetbase customers were kept; merge them in Fleetbase if they are the same."
+      wallet: "QuickBooks merged account {id} into account {into}, which another Fleetbase wallet already syncs with. Both Fleetbase wallets were kept."
+    remote-delete-wallet-balance: "An account deleted in QuickBooks (ID {id}) was kept as a wallet in Fleetbase, because the wallet still holds a balance or its balance could not be read."
     invoice-missing: Invoice no longer exists in Fleetbase.
     invoice-customer-off: Customer sync is off, so this invoice cannot be synced.
     invoice-customer-failed: Invoice customer could not be synced to QuickBooks.

@@ -52,6 +52,11 @@ class FakeQuickBooks extends QuickBooksClient
 
     public bool $multiCurrency = false;
 
+    /** Number new invoice lines on create and update, as QuickBooks does. */
+    public bool $assignLineIds = false;
+
+    public bool $failInvoiceUpdates = false;
+
     public string $serviceItemId = '';
 
     /** @var array<int, array<string, mixed>> */
@@ -118,8 +123,9 @@ class FakeQuickBooks extends QuickBooksClient
         if ($this->customTxnNumbers === false && empty($payload['DocNumber']) === true) {
             $payload['DocNumber'] = $this->autoDocNumber();
         }
-        $id     = 'inv-' . $this->invoiceCreates;
-        $record = array_merge($payload, [
+        $id      = 'inv-' . $this->invoiceCreates;
+        $payload = $this->withLineIds($payload);
+        $record  = array_merge($payload, [
             'Id'        => $id,
             'SyncToken' => '0',
             'TotalAmt'  => $this->lineTotal($payload),
@@ -138,6 +144,10 @@ class FakeQuickBooks extends QuickBooksClient
     public function updateInvoice(array $connection, string $id, string $syncToken, array $payload): array
     {
         $this->calls[] = 'updateInvoice';
+        if ($this->failInvoiceUpdates === true) {
+            throw new QuickBooksException(400, 'quickbooks.messages.batch-item-unsupported');
+        }
+        $payload       = $this->withLineIds($payload);
         $record        = array_merge($this->invoices[$id] ?? [], $payload, [
             'Id'        => $id,
             'SyncToken' => (string) ((int) $syncToken + 1),
@@ -697,6 +707,29 @@ class FakeQuickBooks extends QuickBooksClient
         }
 
         return $matches;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    private function withLineIds(array $payload): array
+    {
+        if ($this->assignLineIds === false || is_array($payload['Line'] ?? null) === false) {
+            return $payload;
+        }
+        $next = 0;
+        foreach ($payload['Line'] as $line) {
+            $next = max($next, (int) (is_array($line) === true ? ($line['Id'] ?? 0) : 0));
+        }
+        foreach ($payload['Line'] as $index => $line) {
+            if (is_array($line) === true && trim((string) ($line['Id'] ?? '')) === '') {
+                $payload['Line'][$index]['Id'] = (string) ++$next;
+            }
+        }
+
+        return $payload;
     }
 
     /**
