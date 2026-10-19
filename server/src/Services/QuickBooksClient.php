@@ -805,8 +805,9 @@ class QuickBooksClient
      * the single-record path. Queries, creates, and voids are posted in chunks of 30.
      * Update operations are posted in chunks of UPDATE_BATCH_SIZE (20), not the
      * sync settings batch size. An item fault is returned and the rest of the chunk
-     * is kept. This does not re-send successes one record at a time. HTTP 401 and
-     * 429 fail the chunk.
+     * is kept. This does not re-send successes one record at a time. An HTTP error on
+     * the first chunk is thrown; on a later chunk the earlier results are kept and the
+     * remaining items fail with that status.
      *
      * Each item is either an entity write:
      *   bId, operation (create|update|void|delete), entity (Customer|Invoice|Payment|Account|Item), payload
@@ -826,6 +827,7 @@ class QuickBooksClient
 
         $results = [];
         $refused = null;
+        $written = false;
         foreach (self::batchChunks($items) as $chunk) {
             if ($refused !== null) {
                 $this->refuseChunk($results, $chunk, $refused);
@@ -834,40 +836,60 @@ class QuickBooksClient
             try {
                 $chunkResults = $this->postBatch($connection, $chunk);
             } catch (QuickBooksException $exception) {
-                // A refused first chunk wrote nothing, so the caller may refresh the token and send
-                // everything again. After an earlier chunk was written, sending again would repeat
-                // those writes, so its results are kept and the rest fail as items to retry later.
-                if ($exception->isUnauthorized() === false || $results === []) {
+                // When no earlier chunk wrote anything (the first chunk, or only queries so far),
+                // the caller may refresh the token or send everything again. After an earlier
+                // chunk was written, any failure (401, 429, 5xx or a timeout) would repeat those
+                // writes on a resend, so their results are kept and the rest fail as items to
+                // retry later, with the status that stopped them.
+                if ($written === false) {
                     throw $exception;
                 }
-                $refused = $exception->getMessage();
+                $refused = $exception;
                 $this->refuseChunk($results, $chunk, $refused);
                 continue;
             }
             foreach ($chunkResults as $bId => $result) {
                 $results[$bId] = $result;
             }
+            $written = $written === true || self::hasWrites($chunk);
         }
 
         return $results;
     }
 
     /**
-     * Item errors for a chunk that was refused, or not sent, after an earlier chunk was written.
-     * They do not halt: a halting 401 asks the user to reconnect without trying a refresh.
+     * @param array<int, array{bId?: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     */
+    private static function hasWrites(array $items): bool
+    {
+        foreach ($items as $item) {
+            $query = $item['query'] ?? null;
+            if (is_string($query) === false || $query === '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Item errors for a chunk that failed, or was not sent, after an earlier chunk was written.
+     * They carry the failure's status, so a 429 still sets the rate-limit backoff. They do not
+     * halt: a halting 401 asks the user to reconnect without trying a refresh, and a halt stops
+     * the caller before it keeps the links of the items that were written.
      *
      * @param array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}> $results
      * @param array<int, array{bId?: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}>                            $chunk
      */
-    private function refuseChunk(array &$results, array $chunk, string $message): void
+    private function refuseChunk(array &$results, array $chunk, QuickBooksException $failure): void
     {
         foreach ($chunk as $item) {
             $results[(string) ($item['bId'] ?? '')] = [
                 'ok'     => false,
                 'body'   => [],
                 'rows'   => [],
-                'error'  => $message,
-                'status' => 401,
+                'error'  => $failure->getMessage(),
+                'status' => $failure->status,
                 'halt'   => false,
             ];
         }
