@@ -288,8 +288,10 @@ not queue another run straight away). The same refresh-and-retry applies when
 QuickBooks answers a batch with an authentication fault on every item instead of
 HTTP 401; a batch where only some items were refused is not repeated, so the
 accepted items are not written twice. A large batch is sent in chunks; when a
-later chunk is refused, the earlier chunks' results are kept and the refused and
-remaining items are retried on the next run. Copying QuickBooks customers on
+later chunk fails (refused, rate limited, a server error or a timeout), the
+earlier chunks' results and links are kept and the failed and remaining items
+are retried on a later run. A rate limit there still pauses the organization's
+sync. Copying QuickBooks customers on
 connect runs only when Customers is enabled in Data Resolution. If Customers is
 off, the import is skipped. An import does not run while a sync is running.
 
@@ -315,6 +317,12 @@ work, the command holds the next start for 60 seconds.
 
 An organization with nothing due does not sync. The schedule does not read a stored batch size. Each run still stops after one page. That page is the stored `batch_size` when an older settings row has one, otherwise 100. The settings form does not send `batch_size`.
 
+Intuit's refresh token lapses after about 100 days without use. A connection
+whose access token expired more than 7 days ago therefore gets a scheduled run
+even with nothing due and Customers off; with nothing pending, that run only
+refreshes the token. If that refresh fails for now, it is tried again an hour
+later.
+
 **Sync now** is on QuickBooks Setup. It uses the pending queue and does not load
 the whole organization. It processes one pending page and does not drain the
 rest of the queue. Leftover rows wait for the schedule above. Drain is chained
@@ -324,7 +332,14 @@ invoices already in this Fleetbase organization: a local non-draft invoice, or a
 `quickbooks_links` row for this organization whose local type is invoice. It
 does not list every invoice in the QuickBooks company.
 
-QuickBooks update operations are posted in chunks of 20. Queries, creates, and voids are posted in chunks of at most 30.
+QuickBooks update operations are posted in chunks of 20. Queries, creates, and
+voids are posted in chunks of at most 30. Updates and the other items are
+grouped separately, so new and edited invoices in one run share a few chunks
+instead of each starting a new one. Every write (and every batch with a write)
+carries Intuit's `requestid`, a hash of the company, the request and the UTC
+day. A write that timed out after QuickBooks saved it is then answered with the
+saved record when the same payload is sent again that day, instead of being
+saved twice. Reads carry none.
 
 Sync frequency is minutes (`interval_minutes`, default 5). Full sync frequency
 (hours) (`periodic_interval_hours`, default 24) limits only the customer

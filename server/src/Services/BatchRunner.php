@@ -41,6 +41,19 @@ class BatchRunner
 
     public const LOCK_UNAVAILABLE = 'quickbooks.messages.lock-unavailable';
 
+    /**
+     * Intuit's refresh token expires after about 100 days without a refresh. A connection
+     * whose access token expired this long ago gets a scheduled run that refreshes it, even
+     * when nothing is pending and the customer catalog is off.
+     */
+    public const TOKEN_KEEPALIVE_SECONDS = 7 * 86400;
+
+    /**
+     * After a keepalive run, the next one waits this long, so a refresh that keeps failing
+     * (an outage, refused app credentials) is not tried every minute.
+     */
+    public const TOKEN_KEEPALIVE_RETRY_SECONDS = 3600;
+
     /** @var array<string, int> */
     private static array $heldLocks = [];
 
@@ -64,7 +77,9 @@ class BatchRunner
         }
         $resolved   = $this->settingsFor($companyUuid);
         $catalogDue = $this->catalogDue($companyUuid, $resolved, time());
-        if ($trigger === 'scheduled' && $this->scheduledIsDue($companyUuid, $resolved, time()) === false && $catalogDue === false) {
+        $keepalive  = $trigger === 'scheduled' && $this->tokenKeepaliveDue($companyUuid, time()) === true;
+        $idle       = $catalogDue === false && $keepalive === false;
+        if ($trigger === 'scheduled' && $idle === true && $this->scheduledIsDue($companyUuid, $resolved, time()) === false) {
             return $skipped;
         }
 
@@ -80,6 +95,9 @@ class BatchRunner
             }
 
             return $skipped + ['reason' => 'busy'];
+        }
+        if ($keepalive === true) {
+            Cache::put($this->keepaliveKey($companyUuid), true, self::TOKEN_KEEPALIVE_RETRY_SECONDS);
         }
 
         return $this->performLockedRun($companyUuid, $trigger, $resolved, $catalogDue, $skipped, $lock);
@@ -244,7 +262,33 @@ class BatchRunner
         }
         $settings = $this->settingsFor($companyUuid);
 
-        return $this->scheduledIsDue($companyUuid, $settings, $now) === true || $this->catalogDue($companyUuid, $settings, $now) === true;
+        return $this->scheduledIsDue($companyUuid, $settings, $now) === true
+            || $this->catalogDue($companyUuid, $settings, $now) === true
+            || $this->tokenKeepaliveDue($companyUuid, $now) === true;
+    }
+
+    /**
+     * True when the access token expired over TOKEN_KEEPALIVE_SECONDS ago, so the refresh
+     * token has not been used for about that long. The pending run that follows refreshes
+     * the expired access token before it loads anything, and saves the new tokens at once.
+     */
+    private function tokenKeepaliveDue(string $companyUuid, int $now): bool
+    {
+        $connection = $this->directory->connection($companyUuid);
+        if ($connection === null || empty($connection['needs_reauth']) === false) {
+            return false;
+        }
+        $expiresAt = $connection['token_expires_at'] ?? null;
+        if ($expiresAt !== null && $now - (int) $expiresAt < self::TOKEN_KEEPALIVE_SECONDS) {
+            return false;
+        }
+
+        return Cache::has($this->keepaliveKey($companyUuid)) === false;
+    }
+
+    private function keepaliveKey(string $companyUuid): string
+    {
+        return 'quickbooks.token-keepalive.' . $companyUuid;
     }
 
     /**
