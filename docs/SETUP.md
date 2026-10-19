@@ -309,6 +309,9 @@ still waits until Sync frequency (`interval_minutes`, default 5) has elapsed
 after `last_batch_at`, unless 20 or more rows are already due. A first sync,
 with no `last_batch_at`, can start from one due row. After a run that queues
 work, the command holds the next start for 60 seconds.
+The scheduler's overlap lock on `quickbooks:sync` expires after 10 minutes
+(120 for `quickbooks:prune`), so a scheduler killed mid-run does not block
+scheduled runs for a day.
 
 An organization with nothing due does not sync. The schedule does not read a stored batch size. Each run still stops after one page. That page is the stored `batch_size` when an older settings row has one, otherwise 100. The settings form does not send `batch_size`.
 
