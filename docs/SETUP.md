@@ -323,7 +323,10 @@ invoices already in this Fleetbase organization: a local non-draft invoice, or a
 `quickbooks_links` row for this organization whose local type is invoice. It
 does not list every invoice in the QuickBooks company.
 
-QuickBooks update operations are posted in chunks of 20. Queries, creates, and voids are posted in chunks of at most 30.
+QuickBooks update operations are posted in chunks of 20. Queries, creates, and
+voids are posted in chunks of at most 30. Updates and the other items are
+grouped separately, so new and edited invoices in one run share a few chunks
+instead of each starting a new one.
 
 Sync frequency is minutes (`interval_minutes`, default 5). Full sync frequency
 (hours) (`periodic_interval_hours`, default 24) limits only the customer

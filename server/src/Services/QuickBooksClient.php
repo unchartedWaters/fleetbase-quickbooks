@@ -896,9 +896,11 @@ class QuickBooksClient
     }
 
     /**
-     * Updates stay in their own groups of UPDATE_BATCH_SIZE. Every other item
-     * stays at the Batch API cap. Order is preserved, and a full group is not
-     * split into single writes.
+     * Updates go in their own chunks of UPDATE_BATCH_SIZE. Every other item (creates,
+     * voids, queries) goes in chunks of up to the Batch API cap. Items are grouped by
+     * kind first, so creates and updates that interleave do not each start a chunk of
+     * one. Order is kept within a kind; the kinds follow the order they first appear.
+     * Results are matched back by bId, so the order across kinds does not matter.
      *
      * @param array<int, array{bId?: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
      *
@@ -906,20 +908,16 @@ class QuickBooksClient
      */
     public static function batchChunks(array $items): array
     {
-        $chunks  = [];
-        $current = [];
-        $limit   = self::BATCH_LIMIT;
+        $groups = [];
         foreach (array_values($items) as $item) {
-            $itemLimit = ($item['operation'] ?? null) === 'update' ? self::UPDATE_BATCH_SIZE : self::BATCH_LIMIT;
-            if ($current !== [] && ($itemLimit !== $limit || count($current) >= $limit)) {
-                $chunks[] = $current;
-                $current  = [];
-            }
-            $limit     = $itemLimit;
-            $current[] = $item;
+            $kind            = ($item['operation'] ?? null) === 'update' ? 'update' : 'other';
+            $groups[$kind][] = $item;
         }
-        if ($current !== []) {
-            $chunks[] = $current;
+
+        $chunks = [];
+        foreach ($groups as $kind => $group) {
+            $limit  = $kind === 'update' ? self::UPDATE_BATCH_SIZE : self::BATCH_LIMIT;
+            $chunks = array_merge($chunks, array_chunk($group, $limit));
         }
 
         return $chunks;
