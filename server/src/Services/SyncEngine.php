@@ -3104,16 +3104,37 @@ class SyncEngine
     }
 
     /**
+     * The QuickBooks payment date: the paid date, else the day Ledger recorded the last part
+     * payment, else the invoice date so a new payment still has a date.
+     *
      * @param array<string, mixed> $invoice
      */
     private function paymentDate(array $invoice): string
     {
-        $paid = trim((string) ($invoice['paid_at'] ?? ''));
-        if ($paid !== '') {
-            return substr($paid, 0, 10);
+        $recorded = $this->recordedPaymentDate($invoice);
+        if ($recorded !== '') {
+            return $recorded;
         }
 
         return trim((string) ($invoice['date'] ?? ''));
+    }
+
+    /**
+     * A date Fleetbase actually recorded for the payment. The invoice-date stand-in is not one,
+     * so it never makes Fleetbase rewrite the date of an existing QuickBooks payment.
+     *
+     * @param array<string, mixed> $invoice
+     */
+    private function recordedPaymentDate(array $invoice): string
+    {
+        foreach (['paid_at', 'payment_date'] as $key) {
+            $value = trim((string) ($invoice[$key] ?? ''));
+            if ($value !== '') {
+                return substr($value, 0, 10);
+            }
+        }
+
+        return '';
     }
 
     /**
@@ -3127,7 +3148,7 @@ class SyncEngine
             return false;
         }
 
-        $localDate  = $this->paymentDate($invoice);
+        $localDate  = $this->recordedPaymentDate($invoice);
         $remoteDate = substr(trim((string) ($remote['TxnDate'] ?? '')), 0, 10);
         if ($localDate !== '' && $remoteDate !== '' && $localDate !== $remoteDate) {
             return false;

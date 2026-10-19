@@ -1010,6 +1010,39 @@ test('a quickbooks payment with an unapplied amount is not rewritten from fleetb
         ->and($client->payments['pay-over']['TotalAmt'])->toBe('12.00');
 });
 
+test('a part-paid invoice is dated by the payment ledger recorded', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(
+        ['status' => 'partial', 'amount_paid' => 400, 'paid_at' => '', 'payment_date' => '2026-09-20'],
+        ['Balance' => 10]
+    );
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->calls)->toContain('createPayment')
+        ->and($client->paymentPayloads[0]['TxnDate'])->toBe('2026-09-20')
+        ->and($client->paymentPayloads[0]['TotalAmt'])->toBe('4.00');
+});
+
+test('a part-paid invoice with no recorded payment date leaves the quickbooks payment date alone', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(
+        ['status' => 'partial', 'amount_paid' => 400, 'paid_at' => ''],
+        ['Balance' => 6, 'LinkedTxn' => [['TxnId' => 'pay-1', 'TxnType' => 'Payment']]]
+    );
+    $client->payments['pay-1'] = [
+        'Id'   => 'pay-1', 'SyncToken' => '0', 'TotalAmt' => '4.00', 'TxnDate' => '2026-09-12',
+        'Line' => [['Amount' => '4.00', 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]]],
+    ];
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first  = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($first['aligned'])->toBe(1)
+        ->and($second['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updatePayment')
+        ->and($client->payments['pay-1']['TxnDate'])->toBe('2026-09-12');
+});
+
 test('a quickbooks payment is copied onto an invoice that is not paid yet', function () {
     [$engine, $client]               = qbEngine();
     $ledger                          = engineLedger();

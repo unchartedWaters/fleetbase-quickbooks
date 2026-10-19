@@ -32,10 +32,15 @@ screens without the surrounding Fleetbase console menus.
   balance left), its Fleetbase status is paid, although the amount paid is less
   than the Fleetbase total.
 - **Payments** — a payment for a paid Fleetbase invoice. Amount and date are
-  compared when a payment already exists. The payload includes `TxnDate`. A
-  QuickBooks payment that also applies credits (a credit memo or an unapplied
-  amount) or other invoices is left unchanged, because an update from Fleetbase
-  would replace its lines; change it in QuickBooks.
+  compared when a payment already exists. The payload includes `TxnDate`: the
+  day the invoice was paid in the organization's timezone (the app timezone when
+  the organization has none). A part-paid invoice has no paid date in Ledger, so
+  the day of its last recorded payment is used. When Ledger recorded none, the
+  invoice date is used for a new payment, and the date of an existing QuickBooks
+  payment is not compared or changed. A QuickBooks payment that also applies
+  credits (a credit memo or an unapplied amount) or other invoices is left
+  unchanged, because an update from Fleetbase would replace its lines; change it
+  in QuickBooks.
 - **Wallets** — a QuickBooks account (`Other Current Asset`). Fleetbase sends the wallet public ID as `AcctNum` only when that ID is 7 characters or fewer. Longer public IDs, such as `wallet_` plus 10 characters, are not sent. If the link is lost, a unique account with the same name and currency is reattached instead of creating a duplicate. When QuickBooks is primary, the account name and `AcctNum` are copied onto the wallet.
 
 Unknown QuickBooks invoices are not imported. An invoice is synced from QuickBooks only when this Fleetbase organization already has that invoice or a `quickbooks_links` row for it. The webhook event is still dispatched for those invoices.
