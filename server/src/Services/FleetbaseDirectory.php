@@ -1151,7 +1151,10 @@ class FleetbaseDirectory
             }
             PendingSync::query()->whereIn('claimed_by', $held)->update(['claimed_by' => null, 'claimed_until' => null]);
         } catch (\Throwable $exception) {
-            SafeLog::warning('QuickBooks could not release its pending-row lease; it will expire on its own.', ['error' => $exception->getMessage()]);
+            SafeLog::warning(
+                'QuickBooks could not release its pending-row lease; it will expire on its own.',
+                ['exception' => $exception::class]
+            );
         }
     }
 
@@ -1178,7 +1181,7 @@ class FleetbaseDirectory
         } catch (\Throwable $exception) {
             SafeLog::warning(
                 'QuickBooks could not back off pending rows after a failed save.',
-                ['error' => $exception->getMessage()]
+                ['company_uuid' => $companyUuid, 'exception' => $exception::class]
             );
         }
         $this->releaseClaims();
@@ -1188,7 +1191,7 @@ class FleetbaseDirectory
         } catch (\Throwable $exception) {
             SafeLog::warning(
                 'QuickBooks could not record a failed save in Activity.',
-                ['error' => $exception->getMessage()]
+                ['company_uuid' => $companyUuid, 'exception' => $exception::class]
             );
         }
     }

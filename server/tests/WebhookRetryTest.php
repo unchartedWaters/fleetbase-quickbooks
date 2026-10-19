@@ -56,7 +56,7 @@ test('a remote change that quickbooks could not answer is queued again with a gr
         ->and($laterJobs[0]->delay)->toBeLessThanOrEqual(WebhookRetry::BASE_DELAY_SECONDS * 4 + 12)
         ->and($directory->saved[0]->connections['company-uuid'])->not->toHaveKey('rate_limited_until')
         ->and($directory->batches())->toBe([]);
-})->with(['service unavailable' => 503, 'no response' => 0]);
+})->with(['service unavailable' => 503, 'request timeout' => 408, 'no response' => 0]);
 
 test('a remote change that still fails after the last retry is recorded as a failed sync', function () {
     $engine    = RemoteChangeEngine::failingWith(new QuickBooksException(503, 'QuickBooks is unavailable.'));

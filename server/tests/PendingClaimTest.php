@@ -23,10 +23,12 @@ use Illuminate\Cache\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 beforeEach(function () {
     $this->previousCache     = Cache::getFacadeRoot();
@@ -751,15 +753,35 @@ test('a failed save whose recovery also fails still reports the save error and f
             . " BEGIN SELECT RAISE(ABORT, 'batch write failed'); END;"
         );
         [$runner] = claimRunner(new ClaimProbeQuickBooks());
+        $logged   = new class {
+            /** @var array<int, array<string, mixed>> */
+            public array $contexts = [];
+
+            /**
+             * @param array<string, mixed> $context
+             */
+            public function warning(string $message, array $context = []): void
+            {
+                $this->contexts[] = $context;
+            }
+        };
+        $previousLog = Log::getFacadeRoot();
+        Log::swap($logged);
 
         $thrown = null;
         try {
             $runner->run('company-1', 'now');
         } catch (Throwable $exception) {
             $thrown = $exception;
+        } finally {
+            Log::swap($previousLog);
         }
 
-        expect($thrown)->not->toBeNull()
+        // A database error's text can carry query values, so the warning names only the class.
+        expect($logged->contexts)->not->toBe([])
+            ->and(json_encode($logged->contexts))->not->toContain('batch write failed')
+            ->and(array_column($logged->contexts, 'exception'))->toContain(QueryException::class)
+            ->and($thrown)->not->toBeNull()
             ->and($thrown->getMessage())->toContain('batch write failed')
             ->and(DB::table('quickbooks_pending_syncs')->where('attempts', 1)->count())->toBe(3)
             ->and(DB::table('quickbooks_pending_syncs')->whereNotNull('claimed_by')->count())->toBe(0)

@@ -2774,8 +2774,9 @@ class SyncEngine
 
         $settled = false;
         if (is_array($remoteInvoice) === true) {
-            $balance = $remoteInvoice['Balance'] ?? null;
-            if ($balance !== null && $balance !== '' && $this->majorUnits($balance) === 0) {
+            $balance  = $remoteInvoice['Balance'] ?? null;
+            $currency = (string) ($ledger->invoices[$invoiceUuid]['currency'] ?? '');
+            if ($balance !== null && $balance !== '' && $this->majorUnits($balance, $currency) === 0) {
                 $settled = true;
             }
         }
@@ -3489,10 +3490,12 @@ class SyncEngine
             return;
         }
 
-        $hasPaid = array_key_exists('amount_paid', $invoice);
-        $paid    = (int) ($invoice['amount_paid'] ?? 0);
-        $total   = (int) ($invoice['total'] ?? 0);
-        if (($total > 0 && $paid >= $total) || ($paid > 0 && $this->remoteSettled($remoteInvoice) === true)) {
+        $hasPaid  = array_key_exists('amount_paid', $invoice);
+        $paid     = (int) ($invoice['amount_paid'] ?? 0);
+        $total    = (int) ($invoice['total'] ?? 0);
+        $currency = (string) ($invoice['currency'] ?? '');
+        $settled  = $paid > 0 && $this->remoteSettled($remoteInvoice, $currency) === true;
+        if (($total > 0 && $paid >= $total) || $settled === true) {
             $ledger->invoices[$uuid]['status'] = 'paid';
 
             return;
@@ -3518,8 +3521,9 @@ class SyncEngine
      */
     private function markSettledPaid(SyncLedger $ledger, string $uuid, ?array $remoteInvoice): ?string
     {
-        $partial = (string) ($ledger->invoices[$uuid]['status'] ?? '') === 'partial';
-        if ($partial === false || $this->remoteSettled($remoteInvoice) === false) {
+        $partial  = (string) ($ledger->invoices[$uuid]['status'] ?? '') === 'partial';
+        $currency = (string) ($ledger->invoices[$uuid]['currency'] ?? '');
+        if ($partial === false || $this->remoteSettled($remoteInvoice, $currency) === false) {
             return null;
         }
         $ledger->invoices[$uuid]['status']                  = 'paid';
@@ -3533,7 +3537,7 @@ class SyncEngine
      *
      * @param array<string, mixed>|null $remoteInvoice
      */
-    private function remoteSettled(?array $remoteInvoice): bool
+    private function remoteSettled(?array $remoteInvoice, string $currency): bool
     {
         if ($remoteInvoice === null) {
             return false;
@@ -3544,7 +3548,7 @@ class SyncEngine
             return false;
         }
 
-        return $this->majorUnits($total) > 0 && $this->majorUnits($balance) === 0;
+        return $this->majorUnits($total, $currency) > 0 && $this->majorUnits($balance, $currency) === 0;
     }
 
     private function withPayment(string $outcome, ?string $paymentOutcome): string
