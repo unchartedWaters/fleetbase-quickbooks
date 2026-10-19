@@ -48,8 +48,9 @@ test('the operator role description matches what its policy grants', function ()
     $roles = array_column((new Quickbooks())->roles, 'description', 'name');
 
     expect($roles['QuickBooks Operator'])
-        ->toBe('Connects and disconnects QuickBooks, imports customers, views settings and sync activity, and runs '
-            . 'Sync now. Cannot change settings.');
+        ->toBe('Reconnects the QuickBooks company the organization already uses, disconnects, imports customers, '
+            . 'views settings and sync activity, and runs Sync now. Cannot change settings or connect a different '
+            . 'QuickBooks company.');
 });
 
 test('client and oauth messages keep their wording', function () {

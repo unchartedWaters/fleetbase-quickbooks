@@ -191,7 +191,16 @@ from `server/src/Auth/Schemas/Quickbooks.php`.
 | QuickBooks Operator (`QuickbooksOperator`) | `quickbooks see extension`, `quickbooks view`, `connect`, `disconnect` and `import-customers connection`, `quickbooks view settings`, `quickbooks view sync`, `quickbooks reconcile sync` |
 
 `quickbooks see extension` opens QuickBooks Setup. Sync now authorizes as
-`quickbooks reconcile sync`. Global settings (Admin → QuickBooks → Settings)
+`quickbooks reconcile sync`.
+
+A QuickBooks Operator can connect again only to the QuickBooks company the
+organization already uses: the realm of its connection or, after a
+disconnect, the realm on its kept links. Connecting a different company, or a
+first connection, needs `quickbooks change-company connection`, which the
+Administrator gets from `quickbooks * connection`. Otherwise finishing the
+connection returns HTTP 403, and nothing is saved or queued. On an existing
+install, run `php artisan fleetbase:create-permissions` so the new permission
+exists; the Administrator's wildcard already covers it. Global settings (Admin → QuickBooks → Settings)
 need an installation administrator; no role grants them. Installation
 administrators bypass all of these checks.
 
@@ -259,6 +268,14 @@ wait, still capped at 900 seconds.
 Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved by an installation administrator in Admin → QuickBooks → Settings for the install and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
 
 The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The internal webhook path is `/quickbooks/int/v1/webhooks`. Admin → QuickBooks → Settings shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver URL stay editable and are saved on the install-wide settings row. Paste the public OAuth URL into Intuit Redirect URIs and the public webhook URL into the Intuit Endpoint URL. A blank public URL is shown as the matching internal URL.
+
+A new or changed public URL is checked when you save: it must be `https://` and
+its host must resolve to a public address. If it fails, the save is refused
+with an error under that field, and nothing from that save is stored. A saved
+URL sent back unchanged is kept without a new DNS lookup, so a resolver outage
+does not remove it. Clearing the field removes the saved URL. Connect sends
+Intuit the redirect URL in use when it started, and finishing the connection
+uses that same URL even if the setting changed in between.
 
 The Connection card on QuickBooks Setup shows only the actions that apply.
 Before a company is connected it offers **Connect to QuickBooks**. Once
@@ -332,6 +349,9 @@ still waits until Sync frequency (`interval_minutes`, default 5) has elapsed
 after `last_batch_at`, unless 20 or more rows are already due. A first sync,
 with no `last_batch_at`, can start from one due row. After a run that queues
 work, the command holds the next start for 60 seconds.
+The scheduler's overlap lock on `quickbooks:sync` expires after 10 minutes
+(120 for `quickbooks:prune`), so a scheduler killed mid-run does not block
+scheduled runs for a day.
 
 An organization with nothing due does not sync. The schedule does not read a stored batch size. Each run still stops after one page. That page is the stored `batch_size` when an older settings row has one, otherwise 100. The settings form does not send `batch_size`.
 
@@ -374,6 +394,10 @@ Activity rows show created, updated, aligned, linked, skipped, unmatched, voided
 and counts; a failed run shows its error under the row][activity]
 
 The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires `quickbooks reconcile sync` or an installation administrator, plus a connection and a saved Client ID and Client secret. It does not require a Redirect URI. OAuth connect still needs the public https redirect.
+
+The widget reads its status only for users with `quickbooks view sync` (both
+QuickBooks roles) or installation administrators. Other Ledger users see a
+short no-permission note instead, and the widget makes no QuickBooks request.
 
 ![QuickBooks Sync widget: Connected, last sync time, records waiting,
 and Sync now][dashboard-widget]
@@ -520,7 +544,11 @@ A company with no QuickBooks connection is looked up at most once per 30 seconds
 ## Requirements and install
 
 This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`,
-`fleetbase/fleetops-api` `^0.6.73`, and `fleetbase/ledger-api` `^0.0.13`.
+`fleetbase/fleetops-api` `^0.6.73`, and `fleetbase/ledger-api`
+`>=0.0.13 <0.1`. The Ledger range is open to later `0.0.x` releases on purpose:
+Fleetbase raises its own Ledger requirement with each Ledger release, and a
+narrower range would stop `composer require` (and the Docker start-up script)
+from installing this package next to it.
 The Ember engine needs Node `>= 22`.
 
 From the Fleetbase directory, install the extension from the Fleetbase registry:
@@ -532,6 +560,9 @@ flb install @unchartedwaters/quickbooks-engine
 Pass `--path` with the Fleetbase directory when that directory is not the current one. `flb install` looks the package up on `https://api.fleetbase.io/~registry/v1/lookup` and installs `@unchartedwaters/quickbooks-engine` and `unchartedwaters/quickbooks-api`.
 
 `.github/workflows/deploy.yml` publishes this package to the Fleetbase registry with `flb publish` when a `v*` tag is pushed. The tag has to contain that workflow, and the GitHub secrets named in it have to exist.
+
+It publishes only when the tagged commit is on `main` and the PHP and Ember
+test workflows it calls (`server.yml`, `ember.yml`) pass.
 
 As an installation administrator, open Admin → QuickBooks → Settings and save
 the Intuit Client ID and Client secret. Then open Organization settings →

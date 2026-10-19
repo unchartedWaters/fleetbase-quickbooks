@@ -6,6 +6,7 @@ use Fleetbase\Quickbooks\Jobs\ImportCustomers;
 use Fleetbase\Quickbooks\Jobs\QueueCompanyScope;
 use Fleetbase\Quickbooks\Jobs\SyncCompanyBatch;
 use Fleetbase\Quickbooks\Models\Connection;
+use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
@@ -247,10 +248,13 @@ class ConnectionController extends QuickbooksController
                 (string) $request->input('state'),
                 $companyUuid,
                 (string) session('user', ''),
-                $this->credentials($companyUuid)
+                $this->credentials($companyUuid),
+                fn (string $realmId): bool => $this->mayConnectRealm($request, $companyUuid, $realmId)
             );
         } catch (QuickBooksException $exception) {
-            return response()->json(['message' => Translation::render($exception->getMessage())], 422);
+            $status = $exception->getMessage() === OAuthFlow::CHANGE_COMPANY_MESSAGE ? 403 : 422;
+
+            return response()->json(['message' => Translation::render($exception->getMessage())], $status);
         }
         if ($connection === null) {
             if ($this->connectionIsStored($companyUuid) === false) {
@@ -446,6 +450,38 @@ class ConnectionController extends QuickbooksController
             $this->store->defaultSync()
         );
         QueueCompanyScope::dispatch($companyUuid, (new SyncFlagger())->enabledEntities($resolved), true);
+    }
+
+    /**
+     * Connecting a new or different QuickBooks company queues all of the organization's records
+     * to it, so that needs `quickbooks change-company connection` (QuickBooks Administrator).
+     * Anyone who may connect may reconnect the company the organization already uses.
+     */
+    private function mayConnectRealm(Request $request, string $companyUuid, string $realmId): bool
+    {
+        if ($this->authorizer->can('quickbooks change-company connection', $request) === true) {
+            return true;
+        }
+        $lastRealm = $this->lastRealm($companyUuid);
+
+        return $lastRealm !== null && $lastRealm === $realmId;
+    }
+
+    /**
+     * The realm of the current connection, or after a disconnect the realm of the links it kept.
+     */
+    protected function lastRealm(string $companyUuid): ?string
+    {
+        $connection = $this->latestConnection($companyUuid);
+        $realm      = $connection instanceof Connection === true ? (string) $connection->realm_id : '';
+        if ($realm === '') {
+            $realm = (string) Link::query()
+                ->where('company_uuid', $companyUuid)
+                ->latest('updated_at')
+                ->value('realm_id');
+        }
+
+        return $realm !== '' ? $realm : null;
     }
 
     protected function connectionIsStored(string $companyUuid): bool

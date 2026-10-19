@@ -76,6 +76,7 @@ quickbooks:
     refresh: Refresh QuickBooks status
     loading: Loading QuickBooks status.
     unavailable: QuickBooks status is unavailable.
+    no-access: You do not have permission to view the QuickBooks sync status.
     last-sync: Last sync
     no-sync: No sync yet
     records-waiting: Records waiting
@@ -178,6 +179,8 @@ quickbooks:
     direction-payment: Choose Both, To QuickBooks, or From QuickBooks for Payments.
     direction-wallet: Choose Both, To QuickBooks, or From QuickBooks for Accounts / Wallets.
     redirect-uri: "Enter a full http:// or https:// address that is listed under Keys & credentials, Redirect URIs."
+    public-webhook-url: "Public Webhook Receiver URL must be an https:// address whose host resolves to a public IP address. Check the address, or try again if DNS is not answering. Nothing was saved."
+    public-oauth-url: "Public OAuth Redirect URL must be an https:// address whose host resolves to a public IP address. Check the address, or try again if DNS is not answering. Nothing was saved."
     batch-size: Enter a whole number from 1 to 100.
     on-off: Choose On or Off.
     primary-customer: Choose Fleetbase or QuickBooks as Primary for Customers.
@@ -197,6 +200,7 @@ quickbooks:
     reauth: QuickBooks needs to be connected again. Choose Connect to QuickBooks on QuickBooks Setup.
     import-reauth: QuickBooks needs to be connected again before import can continue. Choose Connect to QuickBooks on QuickBooks Setup.
     oauth-other-user: This QuickBooks authorization was started by a different user or organization. Connect again from QuickBooks Setup.
+    oauth-change-company: Only a QuickBooks Administrator can connect this organization to a new or different QuickBooks company. You can connect again to the QuickBooks company it already uses.
     oauth-connect-failed: QuickBooks could not finish connecting. Connect again from QuickBooks Setup.
     oauth-invalid-link: This QuickBooks authorization link is not valid. Connect again from QuickBooks Setup.
     oauth-state-invalid: QuickBooks authorization state is invalid or expired.

@@ -1144,6 +1144,33 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-save]', document).isNotDisabled();
     });
 
+    test('a refused public URL shows its error under that field until it is edited', async function (assert) {
+        this.set('settings', {
+            client_id: 'id',
+            environment: 'sandbox',
+            client_secret_set: true,
+            internal_oauth_redirect_url: 'https://api.example.test/quickbooks/int/v1/oauth/callback',
+            public_oauth_redirect_url: 'https://api.example.test/quickbooks/int/v1/oauth/callback',
+        });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+        this.set('onSave', () => {
+            const error = new Error('save failed');
+            error.errors = { public_oauth_redirect_url: 'quickbooks.validation.public-oauth-url' };
+            throw error;
+        });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
+        await fillIn("[data-test-field='public_oauth_redirect_url']", 'https://new.invalid/callback');
+        await click(saveButton());
+
+        assertFieldError(assert, "[data-test-field='public_oauth_redirect_url']", 'public_oauth_redirect_url');
+        assert.dom("[data-test-error='public_oauth_redirect_url']").includesText('Public OAuth Redirect URL must be an https:// address');
+        assert.dom("[data-test-field='public_oauth_redirect_url']").hasValue('https://new.invalid/callback');
+
+        await fillIn("[data-test-field='public_oauth_redirect_url']", 'https://example.com/callback');
+        assert.dom("[data-test-error='public_oauth_redirect_url']").doesNotExist();
+    });
+
     test('each validation error sits under its control, before the hint', async function (assert) {
         this.set('settings', {
             client_id: '',

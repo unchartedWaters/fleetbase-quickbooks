@@ -7,11 +7,12 @@ namespace Fleetbase\Quickbooks\Support;
  * IP literals are normalized, including short, octal, decimal, and hexadecimal
  * forms. 6to4 and NAT64 addresses are rejected when the embedded IPv4 is not
  * public. A hostname is resolved, and the URL is rejected when DNS fails or any
- * address is not a public unicast address.
+ * address is not a public unicast address. With $resolve false a well-formed
+ * hostname is accepted without a lookup, for a URL that already passed on save.
  */
 class PublicHttps
 {
-    public static function isPublicHttpsUrl(string $url): bool
+    public static function isPublicHttpsUrl(string $url, bool $resolve = true): bool
     {
         $url = trim($url);
         if ($url === '' || str_starts_with(strtolower($url), 'https://') === false) {
@@ -29,10 +30,10 @@ class PublicHttps
             return false;
         }
 
-        return self::hostIsInternal($host) === false;
+        return self::hostIsInternal($host, $resolve) === false;
     }
 
-    private static function hostIsInternal(string $host): bool
+    private static function hostIsInternal(string $host, bool $resolve): bool
     {
         $host = trim($host, '[]');
         if (str_ends_with($host, '.') === true) {
@@ -62,6 +63,10 @@ class PublicHttps
         }
         if (str_contains($host, ':') === true) {
             return true;
+        }
+
+        if ($resolve === false) {
+            return self::hostnameIsWellFormed($host) === false;
         }
 
         return self::hostnameResolvesToPublic($host) === false;
@@ -287,9 +292,16 @@ class PublicHttps
         return true;
     }
 
+    private static function hostnameIsWellFormed(string $host): bool
+    {
+        $label = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
+
+        return strlen($host) <= 253 && preg_match('/^(?:' . $label . ')(?:\.(?:' . $label . '))*$/', $host) === 1;
+    }
+
     private static function hostnameResolvesToPublic(string $host): bool
     {
-        if (strlen($host) > 253 || preg_match('/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/', $host) !== 1) {
+        if (self::hostnameIsWellFormed($host) === false) {
             return false;
         }
         // dns_get_record warns when lookup fails. The @ keeps Laravel from turning

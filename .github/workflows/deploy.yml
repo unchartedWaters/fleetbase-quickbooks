@@ -14,11 +14,18 @@ name: Release deployment
 # The upload API only attaches a bundle to an extension it can already find
 # by package name, so the first listing is still created in the Fleetbase
 # console. Later tags upload the new bundle.
+#
+# Both publish jobs wait for `check`, which fails unless the tagged commit is
+# on main, and for the PHP and Ember test workflows (server.yml, ember.yml),
+# which this workflow calls.
 
 on:
   push:
     tags:
       - 'v*'
+
+permissions:
+  contents: read
 
 env:
   NODE_VERSION: lts/*
@@ -29,6 +36,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check the tagged commit is on main
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "Tag ${GITHUB_REF_NAME} is not on main. Release from a commit on main."
+            exit 1
+          fi
 
       - name: Check package versions match
         run: python3 .github/workflows/check-versions.py
@@ -49,8 +66,22 @@ jobs:
       - name: Check the registry tarball includes the Composer package
         run: python3 .github/workflows/check-registry-manifest.py
 
+  php_tests:
+    uses: ./.github/workflows/server.yml
+
+  ember_tests:
+    uses: ./.github/workflows/ember.yml
+    with:
+      test_only: true
+    # A called workflow may not ask for more than its caller grants, and
+    # ember.yml's github_publish job declares packages: write. That job is
+    # skipped here (test_only), so nothing in this call publishes.
+    permissions:
+      contents: read
+      packages: write
+
   npmjs:
-    needs: check
+    needs: [check, php_tests, ember_tests]
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -79,7 +110,7 @@ jobs:
         run: npm publish --access public --registry https://registry.npmjs.org/
 
   registry_publish:
-    needs: check
+    needs: [check, php_tests, ember_tests]
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -91,7 +122,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install Fleetbase CLI
-        run: npm i -g @fleetbase/cli npm-cli-login
+        run: npm i -g @fleetbase/cli@0.0.6 npm-cli-login@1.0.0
 
       - name: Login to Fleetbase Registry
         env:

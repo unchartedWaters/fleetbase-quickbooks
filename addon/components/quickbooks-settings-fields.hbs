@@ -151,11 +151,17 @@
                             id={{id}}
                             @type="text"
                             @value={{url.value}}
-                            class="w-full form-input"
+                            class="w-full form-input {{if (get @errors url.key) 'border-red-500 dark:border-red-400'}}"
+                            style={{if (get @errors url.key) "border-color:#dc2626"}}
                             disabled={{@readOnly}}
                             data-test-field={{url.key}}
+                            aria-invalid={{if (get @errors url.key) "true"}}
+                            aria-describedby={{if (get @errors url.key) (concat url.key "-error")}}
                             {{on "input" (fn @onUpdate url.key)}}
                         />
+                        {{#if (get @errors url.key)}}
+                            <p id={{concat url.key "-error"}} class="text-xs text-red-600 dark:text-red-400 mt-1" data-test-error={{url.key}} tabindex="-1">{{get @errors url.key}}</p>
+                        {{/if}}
                         <p class="text-xs text-gray-400 mt-1" data-test-field-help={{url.key}}>{{url.hint}}</p>
                     </InputGroup>
                 {{else}}
