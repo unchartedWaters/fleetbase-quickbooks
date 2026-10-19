@@ -146,6 +146,7 @@ function dctSchema(Illuminate\Database\Schema\Builder $schema): void
         $table->integer('quantity')->default(0);
         $table->integer('unit_price')->default(0);
         $table->integer('amount')->default(0);
+        $table->json('meta')->nullable();
         $table->softDeletes();
     });
     $schema->create('ledger_wallets', function (Blueprint $table) {

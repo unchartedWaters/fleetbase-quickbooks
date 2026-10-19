@@ -7,6 +7,7 @@ use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
+use Fleetbase\Quickbooks\Tests\Support\InvoiceLines;
 
 test('a stored report customer conflict does not write the fleetbase customer', function () {
     [$engine, $client]                 = qbEngine();
@@ -2464,6 +2465,103 @@ test('a linked customer or wallet deleted in quickbooks is left unchanged', func
         ->and($ledger->link('company-uuid', 'realm-1', 'wallet', 'wal-1')['qbo_id'])->toBe('acct-gone');
 });
 
+test('a linked customer deleted in fleetbase is made inactive in quickbooks', function () {
+    [$engine, $client]                 = qbEngine();
+    $ledger                            = engineLedger();
+    $ledger->customers['cust-1']       = engineCustomer('cust-1', ['deleted_at' => '2026-10-19 10:00:00']);
+    $ledger->links[]                   = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->pending[]                 = enginePending('customer', 'cust-1');
+    $client->customers['qbo-customer'] = [
+        'Id'          => 'qbo-customer',
+        'SyncToken'   => '3',
+        'DisplayName' => 'Ada',
+        'Active'      => true,
+    ];
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and($batch['failed'])->toBe(0)
+        ->and($client->calls)->toContain('updateCustomer')
+        ->and($client->calls)->not->toContain('createCustomer')
+        ->and($client->customers['qbo-customer']['Active'])->toBeFalse()
+        ->and($client->customers['qbo-customer'])->not->toHaveKey('DisplayName');
+});
+
+test('a deleted fleetbase customer or wallet is never created and an inactive one is left alone', function () {
+    [$engine, $client]                 = qbEngine();
+    $ledger                            = engineLedger();
+    $ledger->customers['cust-new']     = engineCustomer('cust-new', ['deleted_at' => '2026-10-19 10:00:00']);
+    $ledger->customers['cust-1']       = engineCustomer('cust-1', ['deleted_at' => '2026-10-19 10:00:00']);
+    $ledger->links[]                   = engineLink('customer', 'cust-1', 'qbo-customer');
+    $client->customers['qbo-customer'] = [
+        'Id'          => 'qbo-customer',
+        'SyncToken'   => '3',
+        'DisplayName' => 'Ada',
+        'Active'      => false,
+    ];
+    $ledger->wallets['wal-new']        = engineWallet('wal-new', ['deleted_at' => '2026-10-19 10:00:00']);
+    $ledger->pending[]                 = enginePending('customer', 'cust-new');
+    $ledger->pending[]                 = enginePending('customer', 'cust-1');
+    $ledger->pending[]                 = enginePending('wallet', 'wal-new');
+
+    $settings = qbSettings(['interval_minutes' => 1, 'wallet_enabled' => true]);
+    $batch    = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($batch['aligned'])->toBe(3)
+        ->and($batch['failed'])->toBe(0)
+        ->and($client->calls)->not->toContain('createCustomer')
+        ->and($client->calls)->not->toContain('updateCustomer')
+        ->and($client->calls)->not->toContain('findCustomerByEmail')
+        ->and($client->calls)->not->toContain('createAccount')
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-new'))->toBeNull()
+        ->and($ledger->link('company-uuid', 'realm-1', 'wallet', 'wal-new'))->toBeNull();
+});
+
+test('a deleted fleetbase customer is not sent when customers only come from quickbooks', function () {
+    [$engine, $client]                 = qbEngine();
+    $ledger                            = engineLedger();
+    $ledger->customers['cust-1']       = engineCustomer('cust-1', ['deleted_at' => '2026-10-19 10:00:00']);
+    $ledger->links[]                   = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->pending[]                 = enginePending('customer', 'cust-1');
+    $client->customers['qbo-customer'] = [
+        'Id'          => 'qbo-customer',
+        'SyncToken'   => '3',
+        'DisplayName' => 'Ada',
+        'Active'      => true,
+    ];
+
+    $settings = qbSettings(['interval_minutes' => 1, 'customer_direction' => 'inbound']);
+    $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($client->calls)->not->toContain('updateCustomer')
+        ->and($client->customers['qbo-customer']['Active'])->toBeTrue();
+});
+
+test('a linked wallet deleted in fleetbase makes its quickbooks account inactive', function () {
+    [$engine, $client]             = qbEngine();
+    $ledger                        = engineLedger();
+    $ledger->wallets['wal-1']      = engineWallet('wal-1', ['deleted_at' => '2026-10-19 10:00:00']);
+    $ledger->links[]               = engineLink('wallet', 'wal-1', 'acct-1');
+    $ledger->pending[]             = enginePending('wallet', 'wal-1');
+    $client->accounts['acct-1']    = [
+        'Id'          => 'acct-1',
+        'SyncToken'   => '2',
+        'Name'        => 'Operating',
+        'AcctNum'     => 'wallet_wal-1',
+        'Active'      => true,
+        'CurrencyRef' => ['value' => 'USD'],
+    ];
+
+    $settings = qbSettings(['interval_minutes' => 1, 'wallet_enabled' => true]);
+    $batch    = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and($client->calls)->toContain('updateAccount')
+        ->and($client->accounts['acct-1']['Active'])->toBeFalse()
+        ->and($client->accounts['acct-1']['Name'])->toBe('Operating');
+});
+
 test('a voided cancelled deleted or removed invoice is not pushed', function () {
     [$engine, $client]                 = qbEngine();
     $ledger                            = engineLedger();
@@ -2817,6 +2915,261 @@ test('extra quickbooks sales lines stay and one update aligns the invoice', func
         ->and($client->invoices['qb-1']['Line'][1])->toBe($warehouse)
         ->and($client->invoices['qb-1']['Line'][2])->toEqual($subtotalSent)
         ->and($client->invoices['qb-1']['Line'][3])->toBe($discount);
+});
+
+test('a line deleted in fleetbase is removed from the quickbooks invoice and a quickbooks line stays', function () {
+    $warehouse                  = InvoiceLines::sales('3', 'Warehouse fee', '4.00');
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items'         => [InvoiceLines::tracked('item-1', 'Delivery', 1000, '1')],
+        'removed_lines' => [InvoiceLines::removed('item-2', 'Fuel', 500, '2')],
+    ], [
+        'TotalAmt' => '19.00',
+        'Line'     => [
+            InvoiceLines::sales('1', 'Delivery', '10.00'),
+            InvoiceLines::sales('2', 'Fuel', '5.00'),
+            $warehouse,
+        ],
+    ]);
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1', '3'])
+        ->and($client->invoices['qb-1']['Line'][1])->toBe($warehouse)
+        ->and($ledger->invoices['inv-1']['line_map'])->toBe(['realm' => 'realm-1', 'invoice' => 'qb-1'])
+        ->and($ledger->invoices['inv-1']['items'][0]['qbo_line_id'])->toBe('1')
+        ->and($ledger->invoices['inv-1']['cleared_lines'])->toBe(['item-2']);
+
+    unset(
+        $ledger->invoices['inv-1']['removed_lines'],
+        $ledger->invoices['inv-1']['line_map'],
+        $ledger->invoices['inv-1']['cleared_lines']
+    );
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
+});
+
+test('a removed line stored for another quickbooks company or invoice stays', function (
+    string $realm,
+    string $invoice,
+) {
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items'         => [InvoiceLines::tracked('item-1', 'Delivery', 1000, '1')],
+        'removed_lines' => [InvoiceLines::removed('item-2', 'Fuel', 500, '2', $realm, $invoice)],
+    ], [
+        'TotalAmt' => '15.00',
+        'Line'     => [InvoiceLines::sales('1', 'Delivery', '10.00'), InvoiceLines::sales('2', 'Fuel', '5.00')],
+    ]);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1', '2'])
+        ->and($ledger->invoices['inv-1']['cleared_lines'] ?? [])->toBe([]);
+})->with([['realm-2', 'qb-1'], ['realm-1', 'qb-9']]);
+
+test('a removed line id that a fleetbase line still holds is not removed', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items'         => [InvoiceLines::tracked('item-new', 'Delivery', 1000, '1')],
+        'removed_lines' => [InvoiceLines::removed('item-old', 'Delivery', 1000, '1')],
+    ], [
+        'TotalAmt' => '10.00',
+        'Line'     => [InvoiceLines::sales('1', 'Delivery', '10.00')],
+    ]);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1']);
+});
+
+test('an aligned invoice without stored line ids records which quickbooks line each item is', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items' => [
+            InvoiceLines::item('item-1', 'Delivery', 1000),
+            InvoiceLines::item('item-2', 'Fuel', 500),
+        ],
+        'total' => 1500,
+    ], [
+        'TotalAmt' => '19.00',
+        'Line'     => [
+            InvoiceLines::sales('1', 'Delivery', '10.00'),
+            InvoiceLines::sales('2', 'Fuel', '5.00'),
+            InvoiceLines::sales('3', 'Warehouse fee', '4.00'),
+        ],
+    ]);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and($ledger->invoices['inv-1']['line_map'])->toBe(['realm' => 'realm-1', 'invoice' => 'qb-1'])
+        ->and(array_column($ledger->invoices['inv-1']['items'], 'qbo_line_id'))->toBe(['1', '2']);
+});
+
+test('a removed line that was edited in quickbooks stays', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items'         => [InvoiceLines::tracked('item-1', 'Delivery', 1000, '1')],
+        'removed_lines' => [InvoiceLines::removed('item-2', 'Fuel', 500, '2')],
+    ], [
+        'TotalAmt' => '16.00',
+        'Line'     => [
+            InvoiceLines::sales('1', 'Delivery', '10.00'),
+            InvoiceLines::sales('2', 'Fuel surcharge', '6.00'),
+        ],
+    ]);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1', '2']);
+});
+
+test('a new fleetbase line on an invoice with stored ids does not replace a line added in quickbooks', function () {
+    $warehouse                  = InvoiceLines::sales('3', 'Warehouse fee', '4.00');
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items' => [
+            InvoiceLines::tracked('item-1', 'Delivery', 1000, '1'),
+            InvoiceLines::item('item-3', 'Tolls', 300),
+        ],
+        'total' => 1300,
+    ], [
+        'TotalAmt' => '14.00',
+        'Line'     => [InvoiceLines::sales('1', 'Delivery', '10.00'), $warehouse],
+    ]);
+    $client->assignLineIds = true;
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1', '4', '3'])
+        ->and($client->invoices['qb-1']['Line'][2])->toBe($warehouse)
+        ->and(array_column($ledger->invoices['inv-1']['items'], 'qbo_line_id'))->toBe(['1', '4']);
+});
+
+test('an invoice without stored ids pairs lines by content, so a line deleted earlier is not duplicated', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items' => [
+            InvoiceLines::item('item-1', 'Delivery', 1000),
+            InvoiceLines::item('item-3', 'Tolls', 300),
+        ],
+        'total' => 1300,
+    ], [
+        'TotalAmt' => '18.00',
+        'Line'     => [
+            InvoiceLines::sales('1', 'Delivery', '10.00'),
+            InvoiceLines::sales('2', 'Fuel', '5.00'),
+            InvoiceLines::sales('3', 'Tolls', '3.00'),
+        ],
+    ]);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and(array_column($ledger->invoices['inv-1']['items'], 'qbo_line_id'))->toBe(['1', '3']);
+});
+
+test('a new fleetbase line takes the quickbooks id, and nothing is recorded when the update fails', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items' => [
+            InvoiceLines::tracked('item-1', 'Delivery', 1000, '1'),
+            InvoiceLines::item('item-3', 'Tolls', 300),
+        ],
+        'total' => 1300,
+    ], [
+        'TotalAmt' => '10.00',
+        'Line'     => [InvoiceLines::sales('1', 'Delivery', '10.00')],
+    ]);
+    $client->assignLineIds = true;
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and(array_column($client->invoices['qb-1']['Line'], 'Description'))->toBe(['Delivery', 'Tolls'])
+        ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1', '2'])
+        ->and(array_column($ledger->invoices['inv-1']['items'], 'qbo_line_id'))->toBe(['1', '2']);
+
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items'         => [InvoiceLines::tracked('item-1', 'Delivery', 1000, '1')],
+        'removed_lines' => [InvoiceLines::removed('item-2', 'Fuel', 500, '2')],
+    ], [
+        'TotalAmt' => '15.00',
+        'Line'     => [InvoiceLines::sales('1', 'Delivery', '10.00'), InvoiceLines::sales('2', 'Fuel', '5.00')],
+    ]);
+    $client->failInvoiceUpdates = true;
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($ledger->invoices['inv-1'])->not->toHaveKey('line_map')
+        ->and($ledger->invoices['inv-1'])->not->toHaveKey('cleared_lines');
+});
+
+test('after a quickbooks payment delete the amount paid comes from the invoice balance', function (
+    string $balance,
+    int $paid,
+    string $status,
+) {
+    $paidInvoice                = ['total' => 5000, 'amount_paid' => 2500, 'status' => 'sent'];
+    [$engine, $client, $ledger] = engineLinkedInvoice($paidInvoice, [
+        'TotalAmt' => '50.00',
+        'Balance'  => $balance,
+        'Line'     => [InvoiceLines::sales('1', 'Changed in QuickBooks', '50.00')],
+    ]);
+
+    $engine->acceptRemoteChanges($ledger, 'company-uuid', [
+        ['entity' => 'InvoicePayments', 'id' => 'qb-1', 'operation' => 'update'],
+    ], qbSettings(['payment_conflict' => 'quickbooks']), time());
+
+    expect($ledger->invoices['inv-1']['amount_paid'])->toBe($paid)
+        ->and($ledger->invoices['inv-1']['status'])->toBe($status)
+        ->and($ledger->invoices['inv-1']['payment_from_quickbooks'])->toBeTrue()
+        ->and($ledger->invoices['inv-1']['items'][0]['description'])->toBe('Delivery')
+        ->and($ledger->invoices['inv-1'])->not->toHaveKey('replace_from_quickbooks');
+})->with([
+    'no payment left'  => ['50.00', 0, 'sent'],
+    'one payment left' => ['30.00', 2000, 'partial'],
+]);
+
+test('a payment amount read is not applied when quickbooks does not supply payments or the invoice is void', function (
+    array $overrides,
+    array $invoice,
+) {
+    $paidInvoice                = array_merge(['total' => 5000, 'amount_paid' => 2500, 'status' => 'sent'], $invoice);
+    [$engine, $client, $ledger] = engineLinkedInvoice($paidInvoice, [
+        'TotalAmt' => '50.00',
+        'Balance'  => '50.00',
+    ]);
+
+    $engine->acceptRemoteChanges($ledger, 'company-uuid', [
+        ['entity' => 'InvoicePayments', 'id' => 'qb-1', 'operation' => 'update'],
+    ], qbSettings($overrides), time());
+
+    expect($ledger->invoices['inv-1']['amount_paid'])->toBe(2500);
+})->with([
+    'fleetbase wins' => [[], []],
+    'payments off'   => [['payment_conflict' => 'quickbooks', 'payment_enabled' => false], []],
+    'void invoice'   => [['payment_conflict' => 'quickbooks'], ['status' => 'void']],
+]);
+
+test('a quickbooks primary sync clears an amount paid that no quickbooks payment backs', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(['amount_paid' => 600, 'status' => 'sent'], [
+        'TotalAmt' => '10.00',
+        'Balance'  => '10.00',
+    ]);
+
+    $settings = qbSettings(['interval_minutes' => 1, 'payment_conflict' => 'quickbooks']);
+    $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($ledger->invoices['inv-1']['amount_paid'])->toBe(0)
+        ->and($ledger->invoices['inv-1']['status'])->toBe('sent')
+        ->and($client->calls)->not->toContain('createPayment');
 });
 
 test('clearing invoice tax updates the existing tax line instead of leaving it', function () {

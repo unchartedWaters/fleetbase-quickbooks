@@ -101,18 +101,22 @@ class InvoiceMapper
      * other Fleetbase lines take the remaining ids in order. Extra sales lines,
      * and discount and subtotal lines, are included unchanged so the update
      * does not delete them. A cleared tax amount updates the existing tax line
-     * to zero instead of leaving it.
+     * to zero instead of leaving it. Sales lines whose item was deleted in Fleetbase
+     * ($removed) are left out, so QuickBooks removes them. Once the invoice has stored
+     * line ids ($mapped), a line without one pairs only with a line of the same content.
      *
-     * @param array<string, mixed> $payload
-     * @param array<string, mixed> $remote
+     * @param array<string, mixed>                                            $payload
+     * @param array<string, mixed>                                            $remote
+     * @param array<int, array{id: string, description: string, amount: int}> $removed
      *
      * @return array<string, mixed>
      */
-    public function withExistingLineIds(array $payload, array $remote): array
+    public function withExistingLineIds(array $payload, array $remote, array $removed = [], bool $mapped = false): array
     {
         $lines       = is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [];
         $taxId       = null;
         $itemId      = '';
+        $remote      = $this->withoutRemovedLines($remote, $removed);
         $remoteSales = $this->remoteSalesLines($remote, $taxId, $itemId);
         $wanted      = [];
         $salesAt     = [];
@@ -132,15 +136,24 @@ class InvoiceMapper
                 continue;
             }
             $salesAt[] = $index;
-            $wanted[]  = trim((string) ($line['Id'] ?? ''));
-            $ref       = is_array($line['SalesItemLineDetail']['ItemRef'] ?? null) === true
-                ? trim((string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? ''))
-                : '';
-            if ($ref !== '') {
-                $itemId = $ref;
-            }
+            $wanted[]  = [
+                'id'          => trim((string) ($line['Id'] ?? '')),
+                'description' => (string) ($line['Description'] ?? ''),
+                'amount'      => self::lineAmount($line['Amount'] ?? 0),
+            ];
+            $itemId    = self::itemRef($line) ?? $itemId;
         }
-        $payload['Line'] = $this->applyPairedLineIds($lines, $remote, $remoteSales, $salesAt, $wanted, $hasTax, $taxId, $itemId);
+        $paired          = $this->pairSalesLines($wanted, $remoteSales, $mapped);
+        $payload['Line'] = $this->applyPairedLineIds(
+            $lines,
+            $remote,
+            $remoteSales,
+            $salesAt,
+            $paired,
+            $hasTax,
+            $taxId,
+            $itemId
+        );
 
         return $payload;
     }
@@ -150,14 +163,22 @@ class InvoiceMapper
      * @param array<string, mixed>             $remote
      * @param array<int, array<string, mixed>> $remoteSales
      * @param array<int, int>                  $salesAt
-     * @param array<int, string>               $wanted
+     * @param array<int, int|null>             $paired      remote sales index by Fleetbase line
      *
      * @return array<int, mixed>
      */
-    private function applyPairedLineIds(array $lines, array $remote, array $remoteSales, array $salesAt, array $wanted, bool $hasTax, ?string $taxId, string $itemId): array
-    {
+    private function applyPairedLineIds(
+        array $lines,
+        array $remote,
+        array $remoteSales,
+        array $salesAt,
+        array $paired,
+        bool $hasTax,
+        ?string $taxId,
+        string $itemId,
+    ): array {
         $pairedRemote = [];
-        foreach ($this->pairSalesLines($wanted, $remoteSales) as $localIndex => $remoteIndex) {
+        foreach ($paired as $localIndex => $remoteIndex) {
             if ($remoteIndex === null) {
                 continue;
             }
@@ -239,26 +260,27 @@ class InvoiceMapper
      * The rest pair with the remaining remote sales lines in order. Lines past that
      * set stay in QuickBooks; their amount is returned so the compared total can
      * leave them out. Discount, subtotal, and the synthetic tax line are kept.
+     * A line whose item was deleted in Fleetbase ($removed) is never paired and
+     * stays in the comparison, so the invoice does not look aligned while it remains.
      *
-     * @param array<int, mixed>    $localItems
-     * @param array<string, mixed> $remote
+     * @param array<int, mixed>                                               $localItems
+     * @param array<string, mixed>                                            $remote
+     * @param array<int, array{id: string, description: string, amount: int}> $removed
      *
      * @return array{remote: array<string, mixed>, omitted_cents: int}
      */
-    public function withoutUnmatchedSalesLines(array $localItems, array $remote): array
-    {
+    public function withoutUnmatchedSalesLines(
+        array $localItems,
+        array $remote,
+        array $removed = [],
+        bool $mapped = false,
+    ): array {
         $taxId       = null;
         $itemId      = '';
-        $remoteSales = $this->remoteSalesLines($remote, $taxId, $itemId);
-        $wanted      = [];
-        foreach ($localItems as $item) {
-            if (is_array($item) === false) {
-                continue;
-            }
-            $wanted[] = trim((string) ($item['qbo_line_id'] ?? ''));
-        }
-        $paired = [];
-        foreach ($this->pairSalesLines($wanted, $remoteSales) as $remoteIndex) {
+        $remoteSales = $this->remoteSalesLines($this->withoutRemovedLines($remote, $removed), $taxId, $itemId);
+        $paired      = [];
+        $wanted      = $this->wantedLines($localItems);
+        foreach ($this->pairSalesLines($wanted, $remoteSales, $mapped) as $remoteIndex) {
             if ($remoteIndex !== null) {
                 $paired[$remoteIndex] = true;
             }
@@ -269,7 +291,8 @@ class InvoiceMapper
         $cursor  = 0;
         $lines   = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
         foreach ($lines as $line) {
-            if (is_array($line) === false || $this->isProductSalesLine($line) === false) {
+            $sales = is_array($line) === true && $this->isProductSalesLine($line) === true;
+            if ($sales === false || $this->isRemovedLine($line, $removed) === true) {
                 $kept[] = $line;
                 continue;
             }
@@ -284,6 +307,122 @@ class InvoiceMapper
         $filtered['Line'] = $kept;
 
         return ['remote' => $filtered, 'omitted_cents' => $omitted];
+    }
+
+    /**
+     * The QuickBooks line id each Fleetbase item pairs with, by item position ('' when none).
+     * Pairing is the same as for an update, so an aligned invoice records the lines it matched.
+     *
+     * @param array<int, mixed>                                               $localItems
+     * @param array<string, mixed>                                            $remote
+     * @param array<int, array{id: string, description: string, amount: int}> $removed
+     *
+     * @return array<int, string>
+     */
+    public function pairedLineIds(array $localItems, array $remote, array $removed = [], bool $mapped = false): array
+    {
+        $taxId       = null;
+        $itemId      = '';
+        $remoteSales = $this->remoteSalesLines($this->withoutRemovedLines($remote, $removed), $taxId, $itemId);
+        $ids         = [];
+        $wanted      = $this->wantedLines($localItems);
+        foreach ($this->pairSalesLines($wanted, $remoteSales, $mapped) as $localIndex => $remoteIndex) {
+            $ids[$localIndex] = $remoteIndex === null ? '' : trim((string) ($remoteSales[$remoteIndex]['Id'] ?? ''));
+        }
+
+        return $ids;
+    }
+
+    /**
+     * Ids of the product sales lines, in order. The synthetic tax line is skipped.
+     *
+     * @param array<string, mixed> $invoice
+     *
+     * @return array<int, string>
+     */
+    public function salesLineIds(array $invoice): array
+    {
+        $ids   = [];
+        $lines = is_array($invoice['Line'] ?? null) === true ? $invoice['Line'] : [];
+        foreach ($lines as $line) {
+            if (is_array($line) === true && $this->isProductSalesLine($line) === true) {
+                $ids[] = trim((string) ($line['Id'] ?? ''));
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * @param array<int, mixed> $localItems
+     *
+     * @return array<int, array{id: string, description: string, amount: int}>
+     */
+    private function wantedLines(array $localItems): array
+    {
+        $wanted = [];
+        foreach ($localItems as $item) {
+            if (is_array($item) === true) {
+                $wanted[] = [
+                    'id'          => trim((string) ($item['qbo_line_id'] ?? '')),
+                    'description' => (string) ($item['description'] ?? ''),
+                    'amount'      => (int) ($item['amount'] ?? 0),
+                ];
+            }
+        }
+
+        return $wanted;
+    }
+
+    /**
+     * @param array<string, mixed>                                            $remote
+     * @param array<int, array{id: string, description: string, amount: int}> $removed
+     *
+     * @return array<string, mixed>
+     */
+    private function withoutRemovedLines(array $remote, array $removed): array
+    {
+        if ($removed === [] || is_array($remote['Line'] ?? null) === false) {
+            return $remote;
+        }
+        $remote['Line'] = array_values(array_filter(
+            $remote['Line'],
+            fn (mixed $line): bool => is_array($line) === false || $this->isRemovedLine($line, $removed) === false
+        ));
+
+        return $remote;
+    }
+
+    /**
+     * A QuickBooks line is removed only while it still holds what the deleted Fleetbase item
+     * held. A line edited in QuickBooks, or an id QuickBooks gave to another line, stays.
+     *
+     * @param array<string, mixed>                                            $line
+     * @param array<int, array{id: string, description: string, amount: int}> $removed
+     */
+    private function isRemovedLine(array $line, array $removed): bool
+    {
+        $id = trim((string) ($line['Id'] ?? ''));
+        if ($id === '' || $this->isProductSalesLine($line) === false) {
+            return false;
+        }
+        foreach ($removed as $gone) {
+            if ($gone['id'] === $id && $this->sameContent($gone, $line) === true) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array{description: string, amount: int} $local
+     * @param array<string, mixed>                    $line
+     */
+    private function sameContent(array $local, array $line): bool
+    {
+        return $local['description'] === (string) ($line['Description'] ?? '')
+            && $local['amount'] === self::lineAmount($line['Amount'] ?? 0);
     }
 
     /**
@@ -318,40 +457,44 @@ class InvoiceMapper
     }
 
     /**
-     * @param array<int, string>               $wantedIds
-     * @param array<int, array<string, mixed>> $remoteSales
+     * A Fleetbase line pairs with the QuickBooks line of its stored id, then with an unused line
+     * of the same description and amount. Without stored ids on the invoice, the rest pair in
+     * order. With them, an unpaired line is new and gets no id, so a line added in QuickBooks
+     * is not overwritten.
+     *
+     * @param array<int, array{id: string, description: string, amount: int}> $wantedLines
+     * @param array<int, array<string, mixed>>                                $remoteSales
      *
      * @return array<int, int|null>
      */
-    private function pairSalesLines(array $wantedIds, array $remoteSales): array
+    private function pairSalesLines(array $wantedLines, array $remoteSales, bool $mapped = false): array
     {
         $pairs   = [];
         $used    = [];
         $pending = [];
-        foreach ($wantedIds as $localIndex => $wanted) {
-            $pairs[$localIndex] = null;
-            $wanted             = trim($wanted);
-            if ($wanted === '') {
+        foreach ($wantedLines as $localIndex => $line) {
+            $found              = self::lineWithId(trim($line['id']), $remoteSales, $used);
+            $pairs[$localIndex] = $found;
+            if ($found === null) {
                 $pending[] = $localIndex;
                 continue;
             }
-            $found = null;
-            foreach ($remoteSales as $index => $line) {
-                $remoteId = trim((string) ($line['Id'] ?? ''));
-                if (isset($used[$index]) === true || $remoteId === '' || $remoteId !== $wanted) {
-                    continue;
-                }
-                $found = $index;
-                break;
-            }
+            $used[$found] = true;
+        }
+        $unpaired = [];
+        foreach ($pending as $localIndex) {
+            $found = $this->lineWithContent($wantedLines[$localIndex], $remoteSales, $used);
             if ($found === null) {
-                $pending[] = $localIndex;
+                $unpaired[] = $localIndex;
                 continue;
             }
             $used[$found]       = true;
             $pairs[$localIndex] = $found;
         }
-        foreach ($pending as $localIndex) {
+        if ($mapped === true) {
+            return $pairs;
+        }
+        foreach ($unpaired as $localIndex) {
             foreach (array_keys($remoteSales) as $index) {
                 if (isset($used[$index]) === true) {
                     continue;
@@ -363,6 +506,58 @@ class InvoiceMapper
         }
 
         return $pairs;
+    }
+
+    /**
+     * The first unused QuickBooks sales line with this id. An empty id matches none.
+     *
+     * @param array<int, array<string, mixed>> $remoteSales
+     * @param array<int, bool>                 $used
+     */
+    private static function lineWithId(string $id, array $remoteSales, array $used): ?int
+    {
+        if ($id === '') {
+            return null;
+        }
+        foreach ($remoteSales as $index => $line) {
+            if (isset($used[$index]) === false && trim((string) ($line['Id'] ?? '')) === $id) {
+                return $index;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The first unused QuickBooks sales line with this line's description and amount.
+     *
+     * @param array{id: string, description: string, amount: int} $wanted
+     * @param array<int, array<string, mixed>>                    $remoteSales
+     * @param array<int, bool>                                    $used
+     */
+    private function lineWithContent(array $wanted, array $remoteSales, array $used): ?int
+    {
+        foreach ($remoteSales as $index => $line) {
+            if (isset($used[$index]) === false && $this->sameContent($wanted, $line) === true) {
+                return $index;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The item id of a payload sales line, or null when it names none.
+     *
+     * @param array<mixed> $line
+     */
+    private static function itemRef(array $line): ?string
+    {
+        $ref = is_array($line['SalesItemLineDetail']['ItemRef'] ?? null) === true
+            ? trim((string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? ''))
+            : '';
+
+        return $ref === '' ? null : $ref;
     }
 
     /**

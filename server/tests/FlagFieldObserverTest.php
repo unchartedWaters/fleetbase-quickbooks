@@ -133,6 +133,37 @@ test('a wallet meta change does not flag a sync', function () {
     expect($directory->written)->toBe([]);
 });
 
+test('a deleted customer or wallet flags a sync so quickbooks hears about it', function () {
+    $directory = bindFlagListener(FlagCustomerListener::class);
+    (new FlagCustomerObserver())->deleted(customerRecord('cust-1'));
+
+    expect($directory->written)->toHaveCount(1)
+        ->and($directory->written[0]['local_type'])->toBe('customer')
+        ->and($directory->written[0]['local_uuid'])->toBe('cust-1');
+
+    $directory = bindFlagListener(FlagWalletListener::class);
+    (new FlagWalletObserver())->deleted(recordChanged('status', 'wal-1'));
+
+    expect($directory->written)->toHaveCount(1)
+        ->and($directory->written[0]['local_type'])->toBe('wallet')
+        ->and($directory->written[0]['local_uuid'])->toBe('wal-1');
+});
+
+test('a deleted plain contact, or a delete while syncing is paused, flags nothing', function () {
+    $directory     = bindFlagListener(FlagCustomerListener::class);
+    $contact       = customerRecord('contact-1');
+    $contact->type = 'contact';
+    (new FlagCustomerObserver())->deleted($contact);
+
+    SyncSuppressor::pause();
+    (new FlagCustomerObserver())->deleted(customerRecord('cust-1'));
+    $walletDirectory = bindFlagListener(FlagWalletListener::class);
+    (new FlagWalletObserver())->deleted(recordChanged('status', 'wal-1'));
+
+    expect($directory->written)->toBe([])
+        ->and($walletDirectory->written)->toBe([]);
+});
+
 function bindFlagListener(string $listener): FleetbaseDirectory
 {
     $directory = new class extends FleetbaseDirectory {

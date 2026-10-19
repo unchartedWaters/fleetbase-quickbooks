@@ -26,7 +26,7 @@ class ApplyRemoteChange implements ShouldQueue
     use SerializesModels;
 
     /** @var array<int, string> */
-    public const ENTITIES = ['Customer', 'Invoice', 'Payment', 'Account'];
+    public const ENTITIES = ['Customer', 'Invoice', 'Payment', 'Account', SyncEngine::INVOICE_PAYMENTS];
 
     /**
      * Intuit retries the HTTP delivery. Laravel must not run this job again on its own.

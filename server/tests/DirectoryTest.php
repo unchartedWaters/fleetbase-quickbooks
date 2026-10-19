@@ -546,6 +546,127 @@ test('inbound invoice lines are replaced with one delete and one insert', functi
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
+test('stored quickbooks line ids are read, written into item meta, and cleared for removed lines', function () {
+    [$restore] = directorySqlite();
+    try {
+        $schema = DB::connection('sqlite')->getSchemaBuilder();
+        directoryWebhookSchema($schema);
+        $schema->table('ledger_invoice_items', function (Blueprint $table) {
+            $table->timestamps();
+        });
+        directoryWebhookRows();
+        $qbLine = static fn (string $id): array => ['realm' => 'realm-1', 'invoice' => '8', 'id' => $id];
+        $line   = static fn (string $id): string => (string) json_encode(
+            ['note' => 'keep', 'quickbooks_line' => $qbLine($id)]
+        );
+        $item = static fn (string $uuid, string $description, int $amount, ?string $meta, mixed $deleted): array => [
+            'uuid'         => $uuid,
+            'invoice_uuid' => 'inv-9',
+            'description'  => $description,
+            'amount'       => $amount,
+            'meta'         => $meta,
+            'deleted_at'   => $deleted,
+        ];
+        DB::table('ledger_invoice_items')->insert([
+            $item('item-1', 'Delivery', 1000, $line('1'), null),
+            $item('item-2', 'Fuel', 500, $line('2'), now()),
+            $item('item-3', 'Never synced', 100, null, now()),
+            $item('item-4', 'Tolls', 300, null, null),
+        ]);
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->load('company-uuid')['ledger'];
+        $invoice   = $ledger->invoices['inv-9'];
+
+        expect(array_column($invoice['items'], 'uuid'))->toBe(['item-1', 'item-4'])
+            ->and($invoice['items'][0]['qbo_line'])->toBe($qbLine('1'))
+            ->and($invoice['items'][1])->not->toHaveKey('qbo_line')
+            ->and($invoice['removed_lines'])->toBe([
+                ['uuid' => 'item-2'] + $qbLine('2') + ['description' => 'Fuel', 'amount' => 500],
+            ]);
+
+        $ledger->invoices['inv-9']['items'][0]['qbo_line_id'] = '1';
+        $ledger->invoices['inv-9']['items'][1]['qbo_line_id'] = '5';
+        $ledger->invoices['inv-9']['line_map']                = ['realm' => 'realm-1', 'invoice' => '8'];
+        $ledger->invoices['inv-9']['cleared_lines']           = ['item-2'];
+        $connection                                           = DB::connection('sqlite');
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+
+        $directory->save($ledger);
+        $writes = array_values(array_filter(
+            array_column($connection->getQueryLog(), 'query'),
+            static fn (string $sql): bool => str_contains($sql, 'ledger_invoice_items')
+                && str_starts_with(strtolower(ltrim($sql)), 'update')
+        ));
+        $meta = static fn (string $uuid): mixed => json_decode(
+            (string) DB::table('ledger_invoice_items')->where('uuid', $uuid)->value('meta'),
+            true
+        );
+
+        expect($writes)->toHaveCount(1)
+            ->and($meta('item-1'))->toBe(['note' => 'keep', 'quickbooks_line' => $qbLine('1')])
+            ->and($meta('item-4'))->toBe(['quickbooks_line' => $qbLine('5')])
+            ->and($meta('item-2'))->toBe(['note' => 'keep'])
+            ->and($meta('item-3'))->toBeNull();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('lines replaced from quickbooks store their quickbooks ids and the old rows let go of theirs', function () {
+    [$restore] = directorySqlite();
+    try {
+        $schema = DB::connection('sqlite')->getSchemaBuilder();
+        directoryWebhookSchema($schema);
+        $schema->table('ledger_invoices', function (Blueprint $table) {
+            $table->integer('subtotal')->default(0);
+            $table->integer('balance')->default(0);
+        });
+        $schema->table('ledger_invoice_items', function (Blueprint $table) {
+            $table->decimal('tax_rate', 5, 2)->default(0);
+            $table->integer('tax_amount')->default(0);
+            $table->timestamps();
+        });
+        directoryWebhookRows();
+        DB::table('ledger_invoice_items')->insert([
+            'uuid' => 'item-1', 'invoice_uuid' => 'inv-9', 'description' => 'Delivery', 'amount' => 1000,
+            'meta' => json_encode(['quickbooks_line' => ['realm' => 'realm-1', 'invoice' => '8', 'id' => '1']]),
+        ]);
+        $directory                                            = new FleetbaseDirectory();
+        $ledger                                               = $directory->load('company-uuid')['ledger'];
+        $ledger->invoices['inv-9']['replace_from_quickbooks'] = true;
+        $ledger->invoices['inv-9']['items_from_quickbooks']   = true;
+        $ledger->invoices['inv-9']['line_map']                = ['realm' => 'realm-1', 'invoice' => '8'];
+        $ledger->invoices['inv-9']['items']                   = [
+            [
+                'description' => 'Delivery',
+                'quantity'    => 1,
+                'unit_price'  => 1200,
+                'amount'      => 1200,
+                'qbo_line_id' => '1',
+            ],
+            ['description' => 'Fuel', 'quantity' => 1, 'unit_price' => 500, 'amount' => 500, 'qbo_line_id' => '2'],
+        ];
+
+        $directory->save($ledger);
+        $live = DB::table('ledger_invoice_items')
+            ->where('invoice_uuid', 'inv-9')
+            ->whereNull('deleted_at')
+            ->orderBy('description')
+            ->get();
+        $stored = static fn (string $id): array => [
+            'quickbooks_line' => ['realm' => 'realm-1', 'invoice' => '8', 'id' => $id],
+        ];
+
+        expect(json_decode((string) $live[0]->meta, true))->toBe($stored('1'))
+            ->and(json_decode((string) $live[1]->meta, true))->toBe($stored('2'))
+            ->and(DB::table('ledger_invoice_items')->where('uuid', 'item-1')->value('meta'))->toBeNull()
+            ->and(DB::table('ledger_invoice_items')->where('uuid', 'item-1')->value('deleted_at'))->not->toBeNull();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
 test('stale invoice payment links for a chunk are deleted in one statement', function () {
     [$restore] = directorySqlite();
     try {
@@ -701,7 +822,13 @@ test('a pending invoice load includes a payment stored under its quickbooks id a
             ->and($identities)->toContain('payment:inv-9')
             ->and($identities)->not->toContain('payment:77')
             ->and($loaded['ledger']->invoices['inv-9']['items'])->toBe([
-                ['description' => 'Delivery', 'quantity' => 2, 'unit_price' => 500, 'amount' => 1000],
+                [
+                    'description' => 'Delivery',
+                    'quantity'    => 2,
+                    'unit_price'  => 500,
+                    'amount'      => 1000,
+                    'uuid'        => 'line-9',
+                ],
             ])
             ->and($eager)->toBe([])
             ->and($customerEager)->toBe([])
@@ -1308,6 +1435,7 @@ function directoryWebhookSchema(Illuminate\Database\Schema\Builder $schema): voi
         $table->integer('quantity')->default(0);
         $table->integer('unit_price')->default(0);
         $table->integer('amount')->default(0);
+        $table->json('meta')->nullable();
         $table->softDeletes();
     });
     $schema->create('ledger_wallets', function (Blueprint $table) {

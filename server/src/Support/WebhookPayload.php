@@ -55,7 +55,9 @@ class WebhookPayload
      * One entry per entity change, in delivery order. Each entry has the realm, the entity
      * name, id and operation as Intuit sent them, and `time` when the change carried one.
      *
-     * @return array<int, array{realm: mixed, name: mixed, id: mixed, operation: mixed, time?: mixed}>
+     * @return array<int, array{
+     *     realm: mixed, name: mixed, id: mixed, operation: mixed, time?: mixed, merged_into?: string
+     * }>
      */
     public static function changes(string $rawBody): array
     {
@@ -90,6 +92,8 @@ class WebhookPayload
                 $change['time'] = $event['time'];
             }
             $changes[] = $change;
+            $data      = is_array($event['data'] ?? null) === true ? $event['data'] : [];
+            self::addMergedAway($changes, $change, self::deletedId($data));
         }
 
         return $changes;
@@ -128,9 +132,55 @@ class WebhookPayload
                     $found['time'] = $entity['lastUpdated'];
                 }
                 $changes[] = $found;
+                self::addMergedAway($changes, $found, self::deletedId($entity));
             }
         }
 
         return $changes;
+    }
+
+    /**
+     * A merge folds the record named by deletedId into the one the event names. The
+     * merged-away record is reported on its own, with the record it went into, so its
+     * Fleetbase link can follow the surviving record.
+     *
+     * @param array<int, array<string, mixed>> $changes
+     * @param array<string, mixed>             $change
+     */
+    private static function addMergedAway(array &$changes, array $change, ?string $deletedId): void
+    {
+        if (is_string($change['operation'] ?? null) === false || strtolower($change['operation']) !== 'merge') {
+            return;
+        }
+        if ($deletedId === null || $deletedId === (string) ($change['id'] ?? '')) {
+            return;
+        }
+
+        $merged                = $change;
+        $merged['id']          = $deletedId;
+        $merged['operation']   = 'MergedAway';
+        $merged['merged_into'] = (string) ($change['id'] ?? '');
+        $changes[]             = $merged;
+    }
+
+    /**
+     * Intuit spells the field deletedId in the legacy body and deletedid in CloudEvents samples.
+     *
+     * @param array<mixed> $fields
+     */
+    private static function deletedId(array $fields): ?string
+    {
+        foreach ($fields as $key => $value) {
+            if (is_string($key) === false || strtolower($key) !== 'deletedid') {
+                continue;
+            }
+            if (is_int($value) === true) {
+                $value = (string) $value;
+            }
+
+            return is_string($value) === true && trim($value) !== '' ? trim($value) : null;
+        }
+
+        return null;
     }
 }

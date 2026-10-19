@@ -28,6 +28,15 @@ class FlagCustomerObserver
         $this->flag($customer);
     }
 
+    /**
+     * A soft delete fires neither saved nor updated. Flagging lets the engine make the
+     * QuickBooks customer inactive.
+     */
+    public function deleted(object $customer): void
+    {
+        $this->flag($customer);
+    }
+
     private function flag(object $customer): void
     {
         if (SyncSuppressor::paused() === true) {

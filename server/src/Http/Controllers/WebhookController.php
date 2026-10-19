@@ -16,6 +16,12 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 
+/**
+ * @phpstan-type WebhookEntity array{
+ *     entityType: string, qbo: string, id: string, operation: string, merged_into?: string
+ * }
+ * @phpstan-type WebhookGroup array{realm: string, entities: array<int, WebhookEntity>}
+ */
 class WebhookController extends Controller
 {
     /** @var array<string, array{type: string, qbo: string}> */
@@ -33,6 +39,8 @@ class WebhookController extends Controller
         'delete' => 'delete',
         'void'   => 'delete',
         'merge'  => 'update',
+        // The record QuickBooks merged into another one. It is not a delete in Fleetbase.
+        'mergedaway' => 'merge',
     ];
 
     private WebhookReplayGuard $replay;
@@ -170,7 +178,7 @@ class WebhookController extends Controller
     }
 
     /**
-     * @return array<int, array{realm: string, entities: array<int, array{entityType: string, qbo: string, id: string, operation: string}>}>
+     * @return array<int, WebhookGroup>
      */
     private function entitiesByRealm(string $rawBody): array
     {
@@ -193,7 +201,7 @@ class WebhookController extends Controller
     /**
      * @param array<string, mixed> $entity
      *
-     * @return array{entityType: string, qbo: string, id: string, operation: string}|null
+     * @return WebhookEntity|null
      */
     private function mapEntity(array $entity): ?array
     {
@@ -218,12 +226,21 @@ class WebhookController extends Controller
             return null;
         }
 
-        return [
+        $change = [
             'entityType' => $type['type'],
             'qbo'        => $type['qbo'],
             'id'         => $id,
             'operation'  => $mapped,
         ];
+        if ($mapped === 'merge') {
+            $into = $this->stringId($entity['merged_into'] ?? null);
+            if ($into === null) {
+                return null;
+            }
+            $change['merged_into'] = $into;
+        }
+
+        return $change;
     }
 
     private function stringId(mixed $value): ?string
@@ -239,8 +256,8 @@ class WebhookController extends Controller
     }
 
     /**
-     * @param array<int, array{realm: string, entities: array<int, array{entityType: string, qbo: string, id: string, operation: string}>}> $groups
-     * @param array{entityType: string, qbo: string, id: string, operation: string}                                                         $entity
+     * @param array<int, WebhookGroup> $groups
+     * @param WebhookEntity            $entity
      */
     private function addEntity(array &$groups, string $realmId, array $entity): void
     {
@@ -256,8 +273,8 @@ class WebhookController extends Controller
     }
 
     /**
-     * @param array<int, array{realm: string, entities: array<int, array{entityType: string, qbo: string, id: string, operation: string}>}> $groups
-     * @param array<string, array<int, Connection>>                                                                                         $connectionsByRealm
+     * @param array<int, WebhookGroup>              $groups
+     * @param array<string, array<int, Connection>> $connectionsByRealm
      */
     private function dispatchEntities(array $groups, array $connectionsByRealm): void
     {
@@ -301,7 +318,8 @@ class WebhookController extends Controller
                         $entity['entityType'],
                         $entity['id'],
                         $entity['operation'],
-                        $localUuid
+                        $localUuid,
+                        $entity['merged_into'] ?? null
                     ));
                 }
             }
