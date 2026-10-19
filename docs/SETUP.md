@@ -285,8 +285,10 @@ not queue another run straight away). The same refresh-and-retry applies when
 QuickBooks answers a batch with an authentication fault on every item instead of
 HTTP 401; a batch where only some items were refused is not repeated, so the
 accepted items are not written twice. A large batch is sent in chunks; when a
-later chunk is refused, the earlier chunks' results are kept and the refused and
-remaining items are retried on the next run. Copying QuickBooks customers on
+later chunk fails (refused, rate limited, a server error or a timeout), the
+earlier chunks' results and links are kept and the failed and remaining items
+are retried on a later run. A rate limit there still pauses the organization's
+sync. Copying QuickBooks customers on
 connect runs only when Customers is enabled in Data Resolution. If Customers is
 off, the import is skipped. An import does not run while a sync is running.
 
