@@ -930,11 +930,82 @@ test('a shared quickbooks payment is not rewritten from fleetbase', function () 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
     expect($batch['skipped'])->toBe(1)
-        ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies to other invoices, '
-            . 'so Fleetbase left it unchanged.')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies credits or other '
+            . 'invoices, so Fleetbase left it unchanged. Change it in QuickBooks.')
         ->and($client->calls)->not->toContain('updatePayment')
         ->and($client->payments['pay-shared']['TotalAmt'])->toBe(15)
         ->and($client->payments['pay-shared']['Line'])->toHaveCount(2);
+});
+
+test('a quickbooks payment that also applies a credit memo is not rewritten from fleetbase', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', ['status' => 'paid', 'amount_paid' => 1000, 'paid_at' => '2026-09-20']);
+    $client->invoices['qb-1']    = [
+        'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 0,
+        'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Line'    => [[
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
+    ];
+    // 10.00 settles the invoice: 7.00 received plus a 3.00 credit memo.
+    $client->payments['pay-credit'] = [
+        'Id'   => 'pay-credit', 'SyncToken' => '1', 'TotalAmt' => 7, 'TxnDate' => '2026-09-10',
+        'Line' => [
+            ['Amount' => 10, 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]],
+            ['Amount' => 3, 'LinkedTxn' => [['TxnId' => 'cm-1', 'TxnType' => 'CreditMemo']]],
+        ],
+    ];
+    $ledger->links[]   = engineLink('invoice', 'inv-1', 'qb-1');
+    $ledger->links[]   = engineLink('payment', 'inv-1', 'pay-credit');
+    $ledger->pending[] = enginePending('invoice', 'inv-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['skipped'])->toBe(1)
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies credits or other '
+            . 'invoices, so Fleetbase left it unchanged. Change it in QuickBooks.')
+        ->and($client->calls)->not->toContain('updatePayment')
+        ->and($client->payments['pay-credit']['TotalAmt'])->toBe(7)
+        ->and($client->payments['pay-credit']['Line'])->toHaveCount(2);
+});
+
+test('a quickbooks payment with an unapplied amount is not rewritten from fleetbase', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', ['status' => 'paid', 'amount_paid' => 1000, 'paid_at' => '2026-09-20']);
+    $client->invoices['qb-1']    = [
+        'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 0,
+        'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Line'    => [[
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
+    ];
+    // 12.00 received, 10.00 applied to the invoice, 2.00 left as customer credit.
+    $client->payments['pay-over'] = [
+        'Id'      => 'pay-over', 'SyncToken' => '1', 'TotalAmt' => '12.00', 'UnappliedAmt' => '2.00',
+        'TxnDate' => '2026-09-10',
+        'Line'    => [
+            ['Amount' => 10, 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]],
+        ],
+    ];
+    $ledger->links[]   = engineLink('invoice', 'inv-1', 'qb-1');
+    $ledger->links[]   = engineLink('payment', 'inv-1', 'pay-over');
+    $ledger->pending[] = enginePending('invoice', 'inv-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['skipped'])->toBe(1)
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies credits or other '
+            . 'invoices, so Fleetbase left it unchanged. Change it in QuickBooks.')
+        ->and($client->calls)->not->toContain('updatePayment')
+        ->and($client->payments['pay-over']['TotalAmt'])->toBe('12.00');
 });
 
 test('a quickbooks payment is copied onto an invoice that is not paid yet', function () {

@@ -1664,7 +1664,7 @@ class SyncEngine
         }
 
         $remote = $payments[0];
-        if ($this->paymentCoversOtherInvoices($remote, $invoiceId) === true) {
+        if ($this->paymentAppliesElsewhere($remote, $invoiceId) === true) {
             $this->lastError = 'quickbooks.messages.payment-shared';
 
             return 'skipped';
@@ -3256,6 +3256,35 @@ class SyncEngine
         }
 
         return $found === true ? $sum : null;
+    }
+
+    /**
+     * A Fleetbase update sends one Invoice line and this invoice's amount as TotalAmt, and
+     * QuickBooks replaces the whole Line array. Credit memo lines, other invoices and an
+     * unapplied amount (customer credit) would be lost, so such a payment is left alone.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function paymentAppliesElsewhere(array $remote, string $invoiceId): bool
+    {
+        if ($this->paymentCoversOtherInvoices($remote, $invoiceId) === true) {
+            return true;
+        }
+        $lines = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
+        foreach ($lines as $line) {
+            $txns = is_array($line) === true && is_array($line['LinkedTxn'] ?? null) === true ? $line['LinkedTxn'] : [];
+            foreach ($txns as $txn) {
+                $type = is_array($txn) === true ? (string) ($txn['TxnType'] ?? '') : '';
+                if ($type !== '' && $type !== 'Invoice') {
+                    return true;
+                }
+            }
+        }
+        $applied = $this->linkedLineCents($remote, $invoiceId);
+
+        return $applied !== null
+            && array_key_exists('TotalAmt', $remote) === true
+            && $this->majorUnits($remote['TotalAmt']) > $applied;
     }
 
     /**

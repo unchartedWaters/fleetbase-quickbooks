@@ -248,6 +248,6 @@ quickbooks:
     invoice-number-taken: "QuickBooks invoice number {number} was not copied because another Fleetbase invoice already uses it."
     invoice-number-kept: "This invoice keeps {number}."
     invoice-payments-multiple: This invoice has more than one QuickBooks payment, so Fleetbase left them unchanged.
-    payment-shared: This QuickBooks payment also applies to other invoices, so Fleetbase left it unchanged.
+    payment-shared: This QuickBooks payment also applies credits or other invoices, so Fleetbase left it unchanged. Change it in QuickBooks.
     wallet-currency-mismatch: "Wallet currency {currency} does not match the QuickBooks home currency {home}."
     invoice-currency-mismatch: "Invoice currency {currency} does not match the QuickBooks home currency {home}."
