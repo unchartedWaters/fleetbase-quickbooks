@@ -66,6 +66,7 @@ function revokeWithDatabase(callable $work): void
     $schema->create('quickbooks_links', function (Blueprint $table) {
         $table->char('uuid', 36)->primary();
         $table->char('company_uuid', 36)->index();
+        $table->string('realm_id')->nullable();
         $table->string('local_type');
         $table->char('local_uuid', 36);
         $table->timestamps();
@@ -269,3 +270,46 @@ test('disconnect does not call Intuit when the app credentials or the refresh to
             ->and(Connection::query()->count())->toBe(0);
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('an operator may reconnect the connected realm, or after a disconnect the newest link realm', function () {
+    revokeWithDatabase(function () {
+        revokeSeed();
+        Http::swap(new Illuminate\Http\Client\Factory());
+        Http::fake(['developer.api.intuit.com/*' => Http::response('', 200)]);
+        session(['company' => 'company-uuid']);
+        $authorizer = new Authorizer(static fn () => true);
+        $flow       = new OAuthFlow(new QuickBooksClient());
+        $settings   = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
+        $probe      = new ConnectionProbe(new QuickBooksClient());
+        $controller = new class($authorizer, $flow, $settings, revokeStore(), $probe) extends ConnectionController {
+            public function realmFor(string $companyUuid): ?string
+            {
+                return $this->lastRealm($companyUuid);
+            }
+        };
+        DB::table('quickbooks_links')->where('company_uuid', 'company-uuid')->update([
+            'realm_id'   => '9341453000000002',
+            'updated_at' => '2026-10-01 00:00:00',
+        ]);
+        DB::table('quickbooks_links')->insert([
+            'uuid'         => 'link-newer',
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => '9341453000000003',
+            'local_type'   => 'invoice',
+            'local_uuid'   => 'invoice-newer',
+            'updated_at'   => '2026-10-02 00:00:00',
+        ]);
+        DB::table('quickbooks_links')
+            ->where('company_uuid', 'other-company')
+            ->update(['realm_id' => '9341453000000009']);
+
+        $connected = $controller->realmFor('company-uuid');
+        $controller->disconnect(Request::create('/disconnect', 'POST'));
+        $afterDisconnect = $controller->realmFor('company-uuid');
+        DB::table('quickbooks_links')->where('company_uuid', 'company-uuid')->delete();
+
+        expect($connected)->toBe('9341453000000001')
+            ->and($afterDisconnect)->toBe('9341453000000003')
+            ->and($controller->realmFor('company-uuid'))->toBeNull();
+    });
+});

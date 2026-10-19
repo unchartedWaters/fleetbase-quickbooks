@@ -200,6 +200,7 @@ quickbooks:
     reauth: QuickBooks needs to be connected again. Choose Connect to QuickBooks on QuickBooks Setup.
     import-reauth: QuickBooks needs to be connected again before import can continue. Choose Connect to QuickBooks on QuickBooks Setup.
     oauth-other-user: This QuickBooks authorization was started by a different user or organization. Connect again from QuickBooks Setup.
+    oauth-change-company: Only a QuickBooks Administrator can connect this organization to a new or different QuickBooks company. You can connect again to the QuickBooks company it already uses.
     oauth-connect-failed: QuickBooks could not finish connecting. Connect again from QuickBooks Setup.
     oauth-invalid-link: This QuickBooks authorization link is not valid. Connect again from QuickBooks Setup.
     oauth-state-invalid: QuickBooks authorization state is invalid or expired.

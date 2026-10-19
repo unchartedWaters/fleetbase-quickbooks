@@ -24,8 +24,9 @@ class Quickbooks
      */
     public array $resources = [
         [
+            // change-company: connect a new or different QuickBooks company (Administrator only).
             'name'    => 'connection',
-            'actions' => ['connect', 'disconnect', 'import-customers'],
+            'actions' => ['connect', 'disconnect', 'import-customers', 'change-company'],
         ],
         [
             // "view" and "update" cover an organization's own sync settings. The global settings (Intuit
@@ -58,7 +59,8 @@ class Quickbooks
         ],
         [
             'name'        => 'QuickbooksOperator',
-            'description' => 'Connect QuickBooks, import customers, view settings, and run Sync now.',
+            'description' => 'Reconnect the QuickBooks company already in use, import customers, view settings, '
+                . 'and run Sync now.',
             'permissions' => [
                 'quickbooks see extension',
                 'quickbooks view connection',
@@ -84,8 +86,9 @@ class Quickbooks
         ],
         [
             'name'        => 'QuickBooks Operator',
-            'description' => 'Connects and disconnects QuickBooks, imports customers, views settings and sync '
-                . 'activity, and runs Sync now. Cannot change settings.',
+            'description' => 'Reconnects the QuickBooks company the organization already uses, disconnects, '
+                . 'imports customers, views settings and sync activity, and runs Sync now. Cannot change '
+                . 'settings or connect a different QuickBooks company.',
             'policies'    => ['QuickbooksOperator'],
         ],
     ];

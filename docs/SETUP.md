@@ -170,7 +170,16 @@ from `server/src/Auth/Schemas/Quickbooks.php`.
 | QuickBooks Operator (`QuickbooksOperator`) | `quickbooks see extension`, `quickbooks view`, `connect`, `disconnect` and `import-customers connection`, `quickbooks view settings`, `quickbooks view sync`, `quickbooks reconcile sync` |
 
 `quickbooks see extension` opens QuickBooks Setup. Sync now authorizes as
-`quickbooks reconcile sync`. Global settings (Admin → QuickBooks → Settings)
+`quickbooks reconcile sync`.
+
+A QuickBooks Operator can connect again only to the QuickBooks company the
+organization already uses: the realm of its connection or, after a
+disconnect, the realm on its kept links. Connecting a different company, or a
+first connection, needs `quickbooks change-company connection`, which the
+Administrator gets from `quickbooks * connection`. Otherwise finishing the
+connection returns HTTP 403, and nothing is saved or queued. On an existing
+install, run `php artisan fleetbase:create-permissions` so the new permission
+exists; the Administrator's wildcard already covers it. Global settings (Admin → QuickBooks → Settings)
 need an installation administrator; no role grants them. Installation
 administrators bypass all of these checks.
 

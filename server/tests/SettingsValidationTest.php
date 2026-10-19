@@ -1038,7 +1038,7 @@ test('a public oauth or webhook url must be https and not an internal address', 
 
             // A new public URL that fails the check refuses the whole save instead of being dropped.
             expect($saved->getStatusCode())->toBe(422)
-                ->and(array_keys($body['errors']))->toContain('public_oauth_redirect_url', 'public_webhook_receiver_url')
+                ->and($body['errors'])->toHaveKeys(['public_oauth_redirect_url', 'public_webhook_receiver_url'])
                 ->and($stored)->toBe([]);
         }
 
