@@ -9,6 +9,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Tests\Support\CapturedJobs;
+use Fleetbase\Quickbooks\Tests\Support\ConnectedCompany;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -47,6 +48,7 @@ function rdgDeliver(
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-a', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
@@ -442,3 +444,36 @@ test('a merge of a type that is switched off changes nothing', function () {
     expect($result['links']['link-cust'])->toBe('1')
         ->and($result['notes'])->toBe([]);
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a delete or merge for an organization no longer connected to that quickbooks company changes nothing', function (
+    ?string $realm,
+) {
+    // Links outlive a disconnect, so another organization on the realm can still route events here.
+    $leave = static function () use ($realm): void {
+        $connection = DB::table('quickbooks_connections')->where('company_uuid', 'company-a');
+        $realm === null ? $connection->delete() : $connection->update(['realm_id' => $realm]);
+    };
+    $events = [
+        new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '1', 'merge', 'cust-1', '2'),
+        new QuickBooksEntityChanged('company-a', 'realm-1', 'invoice', '8', 'delete', 'inv-1'),
+        new QuickBooksEntityChanged('company-a', 'realm-1', 'wallet', '7', 'delete', 'wal-1'),
+        new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'delete', 'inv-paid'),
+    ];
+
+    $applied = rdgDeliver(rdgSync('both', 'quickbooks'), 0, true, $leave, $events);
+    $kept    = rdgDeliver(rdgSync('both', 'fleetbase'), 0, true, $leave, $events);
+
+    expect($applied)->toMatchArray([
+        'invoice_voided'   => false,
+        'payment_unmarked' => false,
+        'wallet_closed'    => false,
+        'links_kept'       => true,
+        'notes'            => [],
+        'jobs'             => [],
+    ])
+        ->and($applied['links']['link-cust'])->toBe('1')
+        ->and($kept['notes'])->toBe([]);
+})->with([
+    'disconnected'               => [null],
+    'connected to another realm' => ['realm-2'],
+])->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');

@@ -124,7 +124,8 @@ class EnqueueWebhookSync
             $invoices,
             $payments
         );
-        [$notes, $refresh] = $this->followMerges($companyUuid, $settings, $merges);
+        [$deletes, $kept, $merges] = $this->onConnectedRealm($companyUuid, [$deletes, $kept, $merges]);
+        [$notes, $refresh]         = $this->followMerges($companyUuid, $settings, $merges);
         $this->dispatchFlush($companyUuid, $records, array_merge($inbound, $refresh), $deletes);
         $this->noteKeptDeletes($companyUuid, $kept, $notes);
     }
@@ -206,6 +207,32 @@ class EnqueueWebhookSync
         }
 
         return [$records, $inbound, $deletes, $kept, $merges];
+    }
+
+    /**
+     * Deletes and merges change Fleetbase records and Activity, so they apply only to the
+     * QuickBooks company this organization is connected to now. Its links outlive a disconnect,
+     * and another organization on the same realm can still route the delivery here.
+     *
+     * @param array<int, array<int, QuickBooksEntityChanged>> $lists
+     *
+     * @return array<int, array<int, QuickBooksEntityChanged>>
+     */
+    private function onConnectedRealm(string $companyUuid, array $lists): array
+    {
+        if ($lists === [[], [], []]) {
+            return $lists;
+        }
+        $connection = $this->deleteDirectory()?->connection($companyUuid);
+        $realm      = is_array($connection) === true ? trim((string) ($connection['realm_id'] ?? '')) : '';
+        foreach ($lists as $index => $events) {
+            $lists[$index] = array_values(array_filter(
+                $events,
+                static fn (QuickBooksEntityChanged $event): bool => $realm !== '' && $event->realmId === $realm
+            ));
+        }
+
+        return $lists;
     }
 
     /**

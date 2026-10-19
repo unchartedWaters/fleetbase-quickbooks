@@ -18,6 +18,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WebhookSignature;
+use Fleetbase\Quickbooks\Tests\Support\ConnectedCompany;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
@@ -877,6 +878,7 @@ test('a deleted payment stored under its quickbooks id unmarks the invoice and d
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-a', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
@@ -985,6 +987,7 @@ test('a deleted or voided payment quickbooks no longer returns unmarks only the 
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-a', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
@@ -1096,6 +1099,7 @@ test('a payment read does not unmark an invoice that payment did not pay', funct
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-a', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
@@ -1203,6 +1207,7 @@ test('a deleted payment unmarks every invoice it paid and leaves the others', fu
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-a', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
@@ -1316,6 +1321,7 @@ test('a missing payment read unmarks every stored invoice on that payment', func
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-a', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
@@ -1563,9 +1569,21 @@ function qboChangedUnreadPaymentDelete(string $failure): void
                     $ids[] = $entity['entity'] . ':' . $entity['id'];
                 }
             }
-            $expected = $failure === 'batch' ? ['InvoicePayments:10', 'InvoicePayments:12'] : ['InvoicePayments:10'];
+            $expected = match ($failure) {
+                'batch' => ['InvoicePayments:10', 'InvoicePayments:12'],
+                'realm' => [],
+                default => ['InvoicePayments:10'],
+            };
             expect($ids)->toEqualCanonicalizing($expected);
         });
+        if ($failure === 'realm') {
+            // The organization is connected to another QuickBooks company now, so the delete is not applied.
+            expect(DB::table('ledger_invoices')->where('uuid', 'inv-paid')->value('status'))->toBe('paid')
+                ->and(DB::table('quickbooks_links')->where('uuid', 'link-pay')->exists())->toBeTrue()
+                ->and($client->reads)->toBe(0);
+
+            return;
+        }
 
         $paid    = DB::table('ledger_invoices')->where('uuid', 'inv-paid')->first();
         $partial = DB::table('ledger_invoices')->where('uuid', 'inv-partial')->first();
@@ -1612,7 +1630,7 @@ test('a reauth skip on delete unmarks only the remembered invoice', function () 
     qboChangedUnreadPaymentDelete('reauth');
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
-test('a realm mismatch on delete unmarks only the remembered invoice', function () {
+test('a payment delete on a quickbooks company the organization is no longer connected to is not applied', function () {
     qboChangedUnreadPaymentDelete('realm');
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 

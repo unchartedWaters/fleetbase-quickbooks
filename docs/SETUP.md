@@ -385,7 +385,10 @@ or void in QuickBooks changes Fleetbase (void the invoice, remove the customer,
 close and remove the wallet, unmark the paid invoice for a deleted payment) only
 when the type is enabled, the direction takes inbound, and QuickBooks is primary
 (or the direction is `inbound`). Otherwise Fleetbase keeps its record, and the
-Activity page shows one skipped row per kept record. A deleted payment unmarks
+Activity page shows one skipped row per kept record. Deletes and merges apply
+only to an organization connected to that QuickBooks company now: links kept
+after a disconnect, or after connecting another company, are left as they are.
+A deleted payment unmarks
 the invoice, then the invoice's amount paid is read again from the QuickBooks
 invoice balance, so payments still on the invoice keep counting. A wallet whose
 balance is not zero is never closed from

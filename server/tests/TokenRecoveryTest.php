@@ -21,6 +21,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WalletMapper;
+use Fleetbase\Quickbooks\Tests\Support\ConnectedCompany;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Cache\ArrayStore;
@@ -507,6 +508,7 @@ function trcWithPaymentTables(callable $callback): mixed
     $schema = DB::connection('sqlite')->getSchemaBuilder();
 
     try {
+        ConnectedCompany::create($schema, 'company-uuid', 'realm-1');
         $schema->create('quickbooks_links', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36);
