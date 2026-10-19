@@ -38,6 +38,11 @@ class SyncEngine
      */
     private const QUERY_PAGE_SIZE = 100;
 
+    /**
+     * QuickBooks rejects an invoice whose DocNumber is longer than this.
+     */
+    private const DOC_NUMBER_MAX = 21;
+
     private ?string $lastError = null;
 
     /** @var array<string, bool> */
@@ -547,7 +552,7 @@ class SyncEngine
 
         $ledger->invoices[$uuid]['amount_paid']             = max(0, $paid);
         $ledger->invoices[$uuid]['payment_from_quickbooks'] = true;
-        $this->applyPaymentStatus($ledger, $uuid);
+        $this->applyPaymentStatus($ledger, $uuid, $remote);
 
         return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]);
     }
@@ -1424,6 +1429,9 @@ class SyncEngine
                 }
                 $payload['DocNumber'] = $next;
             }
+            if ($this->rejectLongDocNumber($payload) === true) {
+                return 'failed';
+            }
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
                     'bId'       => 'invoice:' . $uuid,
@@ -1527,6 +1535,9 @@ class SyncEngine
             return 'failed';
         }
         $this->keepFleetbaseDocNumber($payload, $ledger->invoices[$uuid], $remote, $reference);
+        if ($this->rejectLongDocNumber($payload) === true) {
+            return 'failed';
+        }
         $payload = $this->invoiceMapper($ledger->invoices[$uuid])
             ->withExistingLineIds($payload, $remote, $removed, $mapped);
         $this->rememberPushedLineIds($ledger, $uuid, $payload);
@@ -1632,19 +1643,21 @@ class SyncEngine
         if ($pushesPayment === false) {
             $before = $ledger->invoices[$uuid];
             $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
-            $this->applyPaymentStatus($ledger, $uuid);
+            $this->applyPaymentStatus($ledger, $uuid, $remoteInvoice);
 
             return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) === true ? 'updated' : null;
         }
 
         if ($this->paymentsMatch($invoice, $payments, $invoiceId) === true) {
-            return null;
+            $copies = $quickbooksPrimary === true || ($pushPay === false && $copyPay === true);
+
+            return $copies === true ? $this->markSettledPaid($ledger, $uuid, $remoteInvoice) : null;
         }
 
         if ($conflict === 'quickbooks' && $copyPay === true) {
             $before = $ledger->invoices[$uuid];
             $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
-            $this->applyPaymentStatus($ledger, $uuid);
+            $this->applyPaymentStatus($ledger, $uuid, $remoteInvoice);
 
             return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) === true ? 'updated' : null;
         }
@@ -1653,7 +1666,7 @@ class SyncEngine
             if ($copyPay === true) {
                 $before = $ledger->invoices[$uuid];
                 $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
-                $this->applyPaymentStatus($ledger, $uuid);
+                $this->applyPaymentStatus($ledger, $uuid, $remoteInvoice);
 
                 return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) === true ? 'updated' : null;
             }
@@ -1668,7 +1681,7 @@ class SyncEngine
         }
 
         $remote = $payments[0];
-        if ($this->paymentCoversOtherInvoices($remote, $invoiceId) === true) {
+        if ($this->paymentAppliesElsewhere($remote, $invoiceId, (string) ($invoice['currency'] ?? '')) === true) {
             $this->lastError = 'quickbooks.messages.payment-shared';
 
             return 'skipped';
@@ -1975,6 +1988,9 @@ class SyncEngine
                 ->withoutUnmatchedSalesLines($localItems, $remote, $removed, $mapped);
             $compared    = $limited['remote'];
             $remoteCents -= $limited['omitted_cents'];
+            // Fleetbase sends the lines, so a discount or tax QuickBooks adds is not a change to send:
+            // an update keeps it and the totals would differ again on every sync.
+            $remoteCents -= $this->invoiceMapper($invoice)->quickbooksAdjustmentCents($remote);
         }
 
         $local = ['total' => $localCents];
@@ -3118,16 +3134,37 @@ class SyncEngine
     }
 
     /**
+     * The QuickBooks payment date: the paid date, else the day Ledger recorded the last part
+     * payment, else the invoice date so a new payment still has a date.
+     *
      * @param array<string, mixed> $invoice
      */
     private function paymentDate(array $invoice): string
     {
-        $paid = trim((string) ($invoice['paid_at'] ?? ''));
-        if ($paid !== '') {
-            return substr($paid, 0, 10);
+        $recorded = $this->recordedPaymentDate($invoice);
+        if ($recorded !== '') {
+            return $recorded;
         }
 
         return trim((string) ($invoice['date'] ?? ''));
+    }
+
+    /**
+     * A date Fleetbase actually recorded for the payment. The invoice-date stand-in is not one,
+     * so it never makes Fleetbase rewrite the date of an existing QuickBooks payment.
+     *
+     * @param array<string, mixed> $invoice
+     */
+    private function recordedPaymentDate(array $invoice): string
+    {
+        foreach (['paid_at', 'payment_date'] as $key) {
+            $value = trim((string) ($invoice[$key] ?? ''));
+            if ($value !== '') {
+                return substr($value, 0, 10);
+            }
+        }
+
+        return '';
     }
 
     /**
@@ -3141,7 +3178,7 @@ class SyncEngine
             return false;
         }
 
-        $localDate  = $this->paymentDate($invoice);
+        $localDate  = $this->recordedPaymentDate($invoice);
         $remoteDate = substr(trim((string) ($remote['TxnDate'] ?? '')), 0, 10);
         if ($localDate !== '' && $remoteDate !== '' && $localDate !== $remoteDate) {
             return false;
@@ -3278,6 +3315,35 @@ class SyncEngine
     }
 
     /**
+     * A Fleetbase update sends one Invoice line and this invoice's amount as TotalAmt, and
+     * QuickBooks replaces the whole Line array. Credit memo lines, other invoices and an
+     * unapplied amount (customer credit) would be lost, so such a payment is left alone.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function paymentAppliesElsewhere(array $remote, string $invoiceId, string $currency = ''): bool
+    {
+        if ($this->paymentCoversOtherInvoices($remote, $invoiceId) === true) {
+            return true;
+        }
+        $lines = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
+        foreach ($lines as $line) {
+            $txns = is_array($line) === true && is_array($line['LinkedTxn'] ?? null) === true ? $line['LinkedTxn'] : [];
+            foreach ($txns as $txn) {
+                $type = is_array($txn) === true ? (string) ($txn['TxnType'] ?? '') : '';
+                if ($type !== '' && $type !== 'Invoice') {
+                    return true;
+                }
+            }
+        }
+        $applied = $this->linkedLineCents($remote, $invoiceId, $currency);
+
+        return $applied !== null
+            && array_key_exists('TotalAmt', $remote) === true
+            && $this->majorUnits($remote['TotalAmt'], $currency) > $applied;
+    }
+
+    /**
      * @param array<string, mixed> $remote
      */
     private function paymentCoversOtherInvoices(array $remote, string $invoiceId): bool
@@ -3357,7 +3423,13 @@ class SyncEngine
         return false;
     }
 
-    private function applyPaymentStatus(SyncLedger $ledger, string $uuid): void
+    /**
+     * A QuickBooks invoice with nothing left owing is paid, even when a discount made the amount
+     * paid smaller than the Fleetbase total.
+     *
+     * @param array<string, mixed>|null $remoteInvoice the QuickBooks invoice the payments came from
+     */
+    private function applyPaymentStatus(SyncLedger $ledger, string $uuid, ?array $remoteInvoice = null): void
     {
         $invoice = $ledger->invoices[$uuid];
         $status  = (string) ($invoice['status'] ?? '');
@@ -3368,7 +3440,7 @@ class SyncEngine
         $hasPaid = array_key_exists('amount_paid', $invoice);
         $paid    = (int) ($invoice['amount_paid'] ?? 0);
         $total   = (int) ($invoice['total'] ?? 0);
-        if ($total > 0 && $paid >= $total) {
+        if (($total > 0 && $paid >= $total) || ($paid > 0 && $this->remoteSettled($remoteInvoice) === true)) {
             $ledger->invoices[$uuid]['status'] = 'paid';
 
             return;
@@ -3384,6 +3456,43 @@ class SyncEngine
                 $ledger->invoices[$uuid]['status'] = 'sent';
             }
         }
+    }
+
+    /**
+     * An invoice an earlier version left part-paid because a QuickBooks discount made the amount
+     * paid smaller than its total. The amount already matches, so only the status changes.
+     *
+     * @param array<string, mixed>|null $remoteInvoice
+     */
+    private function markSettledPaid(SyncLedger $ledger, string $uuid, ?array $remoteInvoice): ?string
+    {
+        $partial = (string) ($ledger->invoices[$uuid]['status'] ?? '') === 'partial';
+        if ($partial === false || $this->remoteSettled($remoteInvoice) === false) {
+            return null;
+        }
+        $ledger->invoices[$uuid]['status']                  = 'paid';
+        $ledger->invoices[$uuid]['payment_from_quickbooks'] = true;
+
+        return 'updated';
+    }
+
+    /**
+     * QuickBooks shows the invoice as fully paid: a balance of zero on a non-zero total.
+     *
+     * @param array<string, mixed>|null $remoteInvoice
+     */
+    private function remoteSettled(?array $remoteInvoice): bool
+    {
+        if ($remoteInvoice === null) {
+            return false;
+        }
+        $total   = $remoteInvoice['TotalAmt'] ?? null;
+        $balance = $remoteInvoice['Balance'] ?? null;
+        if ($total === null || $total === '' || $balance === null || $balance === '') {
+            return false;
+        }
+
+        return $this->majorUnits($total) > 0 && $this->majorUnits($balance) === 0;
     }
 
     private function withPayment(string $outcome, ?string $paymentOutcome): string
@@ -5228,6 +5337,26 @@ class SyncEngine
             return false;
         }
         $this->lastError = $error;
+
+        return true;
+    }
+
+    /**
+     * QuickBooks refuses the whole invoice when DocNumber is too long. Fail the row before
+     * sending, with a message that names the number.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function rejectLongDocNumber(array $payload): bool
+    {
+        $number = trim((string) ($payload['DocNumber'] ?? ''));
+        if (mb_strlen($number) <= self::DOC_NUMBER_MAX) {
+            return false;
+        }
+        $this->lastError = Translation::encode('quickbooks.messages.invoice-number-too-long', [
+            'number' => $number,
+            'max'    => (string) self::DOC_NUMBER_MAX,
+        ]);
 
         return true;
     }

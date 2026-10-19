@@ -21,8 +21,26 @@ screens without the surrounding Fleetbase console menus.
 ## What syncs
 
 - **Customers** — name, email, phone, notes, and billing address.
-- **Invoices** — number, dates, notes, currency, tax, total, and the sales-item lines Fleetbase understands (description, quantity, unit price, and amount). Draft invoices are sent after they leave draft. QuickBooks products, discounts, and other line types are not copied back.
-- **Payments** — a payment for a paid Fleetbase invoice. Amount and date are compared when a payment already exists. The payload includes `TxnDate`. A QuickBooks payment that also applies to other invoices is left unchanged.
+- **Invoices** — number, dates, notes, currency, tax, total, and the sales-item
+  lines Fleetbase understands (description, quantity, unit price, and amount).
+  Draft invoices are sent after they leave draft. QuickBooks products,
+  discounts, and other line types are not copied back. A discount added in
+  QuickBooks, and tax that QuickBooks works out itself (`TxnTaxDetail`, such as
+  automated sales tax), stay on the QuickBooks invoice. Fleetbase cannot change
+  them, so they are left out when the totals are compared and do not cause
+  another update. When QuickBooks shows such an invoice as fully paid (no
+  balance left), its Fleetbase status is paid, although the amount paid is less
+  than the Fleetbase total.
+- **Payments** — a payment for a paid Fleetbase invoice. Amount and date are
+  compared when a payment already exists. The payload includes `TxnDate`: the
+  day the invoice was paid in the organization's timezone (the app timezone when
+  the organization has none). A part-paid invoice has no paid date in Ledger, so
+  the day of its last recorded payment is used. When Ledger recorded none, the
+  invoice date is used for a new payment, and the date of an existing QuickBooks
+  payment is not compared or changed. A QuickBooks payment that also applies
+  credits (a credit memo or an unapplied amount) or other invoices is left
+  unchanged, because an update from Fleetbase would replace its lines; change it
+  in QuickBooks.
 - **Wallets** — a QuickBooks account (`Other Current Asset`). Fleetbase sends the wallet public ID as `AcctNum` only when that ID is 7 characters or fewer. Longer public IDs, such as `wallet_` plus 10 characters, are not sent. If the link is lost, a unique account with the same name and currency is reattached instead of creating a duplicate. When QuickBooks is primary, the account name and `AcctNum` are copied onto the wallet.
 
 Unknown QuickBooks invoices are not imported. An invoice is synced from QuickBooks only when this Fleetbase organization already has that invoice or a `quickbooks_links` row for it. The webhook event is still dispatched for those invoices.
@@ -457,10 +475,33 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   Invoices that were posted in the home currency by an earlier version stay
   aligned until a push is attempted. Earlier versions sent zero-decimal
   currency amounts (such as JPY) at 1/100; check those invoices in QuickBooks.
-- **Invoice numbers.** With `invoice_reference=quickbooks`, a QuickBooks DocNumber that another Fleetbase invoice (any organization) already uses is not copied. The invoice keeps its number and the Activity row shows a note. The note repeats on each sync until the duplicate is resolved.
+- **Invoice numbers.** With `invoice_reference=quickbooks`, a QuickBooks
+  DocNumber that another Fleetbase invoice (any organization) already uses is
+  not copied. The invoice keeps its number and the Activity row shows a note.
+  The note repeats on each sync until the duplicate is resolved. QuickBooks
+  accepts at most 21 characters in an invoice number, so a longer number (for
+  example from a long Ledger invoice prefix) is not sent: the row fails with a
+  message naming the number. With QuickBooks numbering, two organizations on the
+  same QuickBooks company can reserve the same next number at the same moment.
+  QuickBooks rejects a duplicate invoice number by default (Fleetbase never asks
+  it to allow one), so the later create fails once and the next sync reserves a
+  new number.
 - **Quantities.** Fleetbase invoice line quantities are whole numbers. A fractional QuickBooks quantity imports as 1 unit at the line amount.
-- **Tax.** Invoice tax is sent as an ordinary sales line whose description is `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No `TxnTaxDetail` or tax code is sent. A QuickBooks company that uses automated sales tax can show different tax and totals than Fleetbase. On the way back, only that synthetic line is read as tax.
-- **Partial payments.** An invoice has at most one QuickBooks Payment from this package. Partial and later payments are not created as separate Payments. The one Payment is created with the amount recorded as paid on the Fleetbase invoice (its total when the invoice is paid and no amount is recorded) and is updated when that amount changes (`SyncEngine::syncPayment`). If an invoice has more than one QuickBooks payment, or the payment also applies to other invoices, Fleetbase leaves them unchanged and the row is skipped.
+- **Tax.** Invoice tax is sent as an ordinary sales line whose description is
+  `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No
+  `TxnTaxDetail` or tax code is sent. A QuickBooks company that uses automated
+  sales tax can show different tax and totals than Fleetbase. That difference,
+  like a QuickBooks discount, is left out when Fleetbase compares totals
+  (`InvoiceMapper::quickbooksAdjustmentCents`), so it does not cause an update
+  on every sync. On the way back, only that synthetic line is read as tax.
+- **Partial payments.** An invoice has at most one QuickBooks Payment from this
+  package. Partial and later payments are not created as separate Payments. The
+  one Payment is created with the amount recorded as paid on the Fleetbase
+  invoice (its total when the invoice is paid and no amount is recorded) and is
+  updated when that amount changes (`SyncEngine::syncPayment`). If an invoice
+  has more than one QuickBooks payment, or the payment also applies credits (a
+  credit memo or an unapplied amount) or other invoices, Fleetbase leaves them
+  unchanged and the row is skipped.
 - **Wallets.** Each Fleetbase wallet becomes one QuickBooks chart-of-accounts entry (`Other Current Asset`).
 - **Shared QuickBooks company.** Several Fleetbase organizations can connect to the same QuickBooks company (realm). `quickbooks_connections` is unique per organization, not per realm, and a webhook for a realm is applied to every organization connected to it (`WebhookController`). Intuit app credentials, the redirect, and the webhook verifier are install-wide, so every organization on the install uses the same Intuit app.
 - **Links.** `quickbooks_links` holds links for customers, invoices, and wallets, and also for payments. A payment link is keyed by the Fleetbase invoice uuid, or by the QuickBooks payment id when the payment was found in QuickBooks.

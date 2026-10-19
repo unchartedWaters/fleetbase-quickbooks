@@ -12,9 +12,11 @@ use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
+use Fleetbase\Quickbooks\Support\LedgerPaymentDates;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Fleetbase\Quickbooks\Support\Translation;
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -1883,7 +1885,9 @@ class FleetbaseDirectory
             });
         }
 
-        $rows = [];
+        $rows  = [];
+        $dates = new LedgerPaymentDates();
+        $db    = (new $class())->getConnection();
         /** @var Model $invoice */
         foreach ($query->get() as $invoice) {
             [$items, $removed]             = $this->readInvoiceItems($invoice);
@@ -1901,12 +1905,41 @@ class FleetbaseDirectory
                 'total'         => (int) $invoice->total_amount,
                 'amount_paid'   => (int) $invoice->amount_paid,
                 'status'        => (string) $invoice->status,
-                'paid_at'       => $this->dateString($invoice->paid_at),
+                'paid_at'       => $dates->day($db, $companyUuid, $invoice->paid_at),
                 'deleted_at'    => $invoice->deleted_at,
                 'items'         => $items,
             ];
             if ($removed !== []) {
                 $rows[(string) $invoice->uuid]['removed_lines'] = $removed;
+            }
+        }
+
+        return $this->withRecordedPaymentDays($rows, $dates, $db, $companyUuid);
+    }
+
+    /**
+     * Ledger sets no paid date on a part-paid invoice. The day of its last recorded payment
+     * dates the QuickBooks payment instead, and stays the same until another payment is made.
+     *
+     * @param array<string, array<string, mixed>> $rows
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function withRecordedPaymentDays(
+        array $rows,
+        LedgerPaymentDates $dates,
+        ConnectionInterface $db,
+        string $companyUuid,
+    ): array {
+        $undated = [];
+        foreach ($rows as $uuid => $row) {
+            if ($row['paid_at'] === '' && $row['amount_paid'] > 0) {
+                $undated[] = (string) $uuid;
+            }
+        }
+        foreach ($dates->lastPaymentDays($db, $companyUuid, $undated) as $uuid => $day) {
+            if (isset($rows[$uuid]) === true) {
+                $rows[$uuid]['payment_date'] = $day;
             }
         }
 
