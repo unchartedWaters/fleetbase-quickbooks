@@ -570,6 +570,28 @@ class InvoiceMapper
     }
 
     /**
+     * What QuickBooks adds to the invoice lines on its own: tax it works out itself (TxnTaxDetail,
+     * for example automated sales tax) less discount lines. Fleetbase sends neither and keeps the
+     * discount lines on an update (withExistingLineIds), so this part of TotalAmt never matches a
+     * Fleetbase total and is left out of the comparison.
+     *
+     * @param array<string, mixed> $remote
+     */
+    public function quickbooksAdjustmentCents(array $remote): int
+    {
+        $detail = is_array($remote['TxnTaxDetail'] ?? null) === true ? $remote['TxnTaxDetail'] : [];
+        $cents  = self::lineAmount($detail['TotalTax'] ?? 0);
+        $lines  = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
+        foreach ($lines as $line) {
+            if (is_array($line) === true && (string) ($line['DetailType'] ?? '') === 'DiscountLineDetail') {
+                $cents -= abs(self::lineAmount($line['Amount'] ?? 0));
+            }
+        }
+
+        return $cents;
+    }
+
+    /**
      * Copy the QuickBooks fields this mapper already understands.
      * Sales item lines become description, quantity, unit price, and amount.
      * Only the synthetic tax line this mapper writes is stored as tax. Discounts, products, and other

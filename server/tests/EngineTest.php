@@ -942,7 +942,8 @@ test('a quickbooks payment that also applies a credit memo is not rewritten from
     $ledger                      = engineLedger();
     $ledger->customers['cust-1'] = engineCustomer('cust-1');
     $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
-    $ledger->invoices['inv-1']   = engineInvoice('inv-1', ['status' => 'paid', 'amount_paid' => 1000, 'paid_at' => '2026-09-20']);
+    $paid                        = ['status' => 'paid', 'amount_paid' => 1000, 'paid_at' => '2026-09-20'];
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', $paid);
     $client->invoices['qb-1']    = [
         'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 0,
         'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
@@ -978,7 +979,8 @@ test('a quickbooks payment with an unapplied amount is not rewritten from fleetb
     $ledger                      = engineLedger();
     $ledger->customers['cust-1'] = engineCustomer('cust-1');
     $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
-    $ledger->invoices['inv-1']   = engineInvoice('inv-1', ['status' => 'paid', 'amount_paid' => 1000, 'paid_at' => '2026-09-20']);
+    $paid                        = ['status' => 'paid', 'amount_paid' => 1000, 'paid_at' => '2026-09-20'];
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', $paid);
     $client->invoices['qb-1']    = [
         'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 0,
         'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
@@ -2986,6 +2988,128 @@ test('extra quickbooks sales lines stay and one update aligns the invoice', func
         ->and($client->invoices['qb-1']['Line'][1])->toBe($warehouse)
         ->and($client->invoices['qb-1']['Line'][2])->toEqual($subtotalSent)
         ->and($client->invoices['qb-1']['Line'][3])->toBe($discount);
+});
+
+test('a quickbooks discount kept on the invoice converges in one sync', function () {
+    $discount = [
+        'Id'                 => '20',
+        'Amount'             => '1.50',
+        'DetailType'         => 'DiscountLineDetail',
+        'Description'        => 'Loyalty discount',
+        'DiscountLineDetail' => ['PercentBased' => false],
+    ];
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items' => [['description' => 'Evening delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000]],
+    ], [
+        'TotalAmt' => '8.50',
+        'Line'     => [InvoiceLines::sales('9', 'Delivery', '10.00'), $discount],
+    ]);
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($client->invoices['qb-1']['TotalAmt'])->toBe('8.50')
+        ->and($client->invoices['qb-1']['Line'][1])->toBe($discount);
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and($second['updated'])->toBe(0)
+        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
+});
+
+test('an invoice that differs from quickbooks only by a discount is aligned', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([], [
+        'TotalAmt' => '9.00',
+        'Line'     => [InvoiceLines::sales('9', 'Delivery', '10.00'), [
+            'Id'                 => '20',
+            'Amount'             => '1.00',
+            'DetailType'         => 'DiscountLineDetail',
+            'DiscountLineDetail' => ['PercentBased' => true, 'DiscountPercent' => 10],
+        ]],
+    ]);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice');
+});
+
+test('sales tax quickbooks adds on top of the fleetbase lines does not update the invoice again', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items' => [['description' => 'Evening delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000]],
+    ], [
+        'TotalAmt'     => '10.80',
+        'Line'         => [InvoiceLines::sales('9', 'Delivery', '10.00')],
+        'TxnTaxDetail' => ['TotalTax' => '0.80'],
+    ]);
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($client->invoices['qb-1']['TotalAmt'])->toBe('10.80');
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
+});
+
+test('a discounted invoice paid in full in quickbooks becomes paid', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([], [
+        'TotalAmt'  => '9.00',
+        'Balance'   => '0.00',
+        'LinkedTxn' => [['TxnId' => 'pay-1', 'TxnType' => 'Payment']],
+        'Line'      => [InvoiceLines::sales('9', 'Delivery', '10.00'), [
+            'Id'                 => '20',
+            'Amount'             => '1.00',
+            'DetailType'         => 'DiscountLineDetail',
+            'DiscountLineDetail' => ['PercentBased' => false],
+        ]],
+    ]);
+    $client->payments['pay-1'] = [
+        'Id'   => 'pay-1', 'SyncToken' => '0', 'TotalAmt' => '9.00', 'TxnDate' => '2026-09-10',
+        'Line' => [['Amount' => '9.00', 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]]],
+    ];
+    $settings = qbSettings(['interval_minutes' => 1, 'payment_reference' => 'quickbooks']);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(900)
+        ->and($ledger->invoices['inv-1']['status'])->toBe('paid')
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and($client->calls)->not->toContain('updatePayment');
+});
+
+test('a discounted invoice left part-paid becomes paid once quickbooks shows it settled', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(
+        ['status' => 'partial', 'amount_paid' => 900, 'paid_at' => '2026-09-10'],
+        [
+            'TotalAmt'  => '9.00',
+            'Balance'   => '0.00',
+            'LinkedTxn' => [['TxnId' => 'pay-1', 'TxnType' => 'Payment']],
+            'Line'      => [InvoiceLines::sales('9', 'Delivery', '10.00'), [
+                'Id'                 => '20',
+                'Amount'             => '1.00',
+                'DetailType'         => 'DiscountLineDetail',
+                'DiscountLineDetail' => ['PercentBased' => false],
+            ]],
+        ]
+    );
+    $client->payments['pay-1'] = [
+        'Id'   => 'pay-1', 'SyncToken' => '0', 'TotalAmt' => '9.00', 'TxnDate' => '2026-09-10',
+        'Line' => [['Amount' => '9.00', 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]]],
+    ];
+    $settings = qbSettings(['interval_minutes' => 1, 'payment_reference' => 'quickbooks']);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and($ledger->invoices['inv-1']['status'])->toBe('paid')
+        ->and($client->calls)->not->toContain('updatePayment');
 });
 
 test('a line deleted in fleetbase is removed from the quickbooks invoice and a quickbooks line stays', function () {

@@ -21,7 +21,16 @@ screens without the surrounding Fleetbase console menus.
 ## What syncs
 
 - **Customers** — name, email, phone, notes, and billing address.
-- **Invoices** — number, dates, notes, currency, tax, total, and the sales-item lines Fleetbase understands (description, quantity, unit price, and amount). Draft invoices are sent after they leave draft. QuickBooks products, discounts, and other line types are not copied back.
+- **Invoices** — number, dates, notes, currency, tax, total, and the sales-item
+  lines Fleetbase understands (description, quantity, unit price, and amount).
+  Draft invoices are sent after they leave draft. QuickBooks products,
+  discounts, and other line types are not copied back. A discount added in
+  QuickBooks, and tax that QuickBooks works out itself (`TxnTaxDetail`, such as
+  automated sales tax), stay on the QuickBooks invoice. Fleetbase cannot change
+  them, so they are left out when the totals are compared and do not cause
+  another update. When QuickBooks shows such an invoice as fully paid (no
+  balance left), its Fleetbase status is paid, although the amount paid is less
+  than the Fleetbase total.
 - **Payments** — a payment for a paid Fleetbase invoice. Amount and date are
   compared when a payment already exists. The payload includes `TxnDate`. A
   QuickBooks payment that also applies credits (a credit memo or an unapplied
@@ -444,7 +453,13 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   aligned until a push is attempted.
 - **Invoice numbers.** With `invoice_reference=quickbooks`, a QuickBooks DocNumber that another Fleetbase invoice (any organization) already uses is not copied. The invoice keeps its number and the Activity row shows a note. The note repeats on each sync until the duplicate is resolved.
 - **Quantities.** Fleetbase invoice line quantities are whole numbers. A fractional QuickBooks quantity imports as 1 unit at the line amount.
-- **Tax.** Invoice tax is sent as an ordinary sales line whose description is `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No `TxnTaxDetail` or tax code is sent. A QuickBooks company that uses automated sales tax can show different tax and totals than Fleetbase. On the way back, only that synthetic line is read as tax.
+- **Tax.** Invoice tax is sent as an ordinary sales line whose description is
+  `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No
+  `TxnTaxDetail` or tax code is sent. A QuickBooks company that uses automated
+  sales tax can show different tax and totals than Fleetbase. That difference,
+  like a QuickBooks discount, is left out when Fleetbase compares totals
+  (`InvoiceMapper::quickbooksAdjustmentCents`), so it does not cause an update
+  on every sync. On the way back, only that synthetic line is read as tax.
 - **Partial payments.** An invoice has at most one QuickBooks Payment from this
   package. Partial and later payments are not created as separate Payments. The
   one Payment is created with the amount recorded as paid on the Fleetbase

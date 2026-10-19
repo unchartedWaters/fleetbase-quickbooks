@@ -545,7 +545,7 @@ class SyncEngine
         $paid                                               = $this->majorUnits($total) - $this->majorUnits($balance);
         $ledger->invoices[$uuid]['amount_paid']             = max(0, $paid);
         $ledger->invoices[$uuid]['payment_from_quickbooks'] = true;
-        $this->applyPaymentStatus($ledger, $uuid);
+        $this->applyPaymentStatus($ledger, $uuid, $remote);
 
         return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]);
     }
@@ -1628,19 +1628,21 @@ class SyncEngine
         if ($pushesPayment === false) {
             $before = $ledger->invoices[$uuid];
             $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
-            $this->applyPaymentStatus($ledger, $uuid);
+            $this->applyPaymentStatus($ledger, $uuid, $remoteInvoice);
 
             return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) === true ? 'updated' : null;
         }
 
         if ($this->paymentsMatch($invoice, $payments, $invoiceId) === true) {
-            return null;
+            $copies = $quickbooksPrimary === true || ($pushPay === false && $copyPay === true);
+
+            return $copies === true ? $this->markSettledPaid($ledger, $uuid, $remoteInvoice) : null;
         }
 
         if ($conflict === 'quickbooks' && $copyPay === true) {
             $before = $ledger->invoices[$uuid];
             $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
-            $this->applyPaymentStatus($ledger, $uuid);
+            $this->applyPaymentStatus($ledger, $uuid, $remoteInvoice);
 
             return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) === true ? 'updated' : null;
         }
@@ -1649,7 +1651,7 @@ class SyncEngine
             if ($copyPay === true) {
                 $before = $ledger->invoices[$uuid];
                 $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
-                $this->applyPaymentStatus($ledger, $uuid);
+                $this->applyPaymentStatus($ledger, $uuid, $remoteInvoice);
 
                 return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) === true ? 'updated' : null;
             }
@@ -1969,6 +1971,9 @@ class SyncEngine
             $limited     = $this->invoices->withoutUnmatchedSalesLines($localItems, $remote, $removed, $mapped);
             $compared    = $limited['remote'];
             $remoteCents -= $limited['omitted_cents'];
+            // Fleetbase sends the lines, so a discount or tax QuickBooks adds is not a change to send:
+            // an update keeps it and the totals would differ again on every sync.
+            $remoteCents -= $this->invoices->quickbooksAdjustmentCents($remote);
         }
 
         $local = ['total' => $localCents];
@@ -3367,7 +3372,13 @@ class SyncEngine
         return false;
     }
 
-    private function applyPaymentStatus(SyncLedger $ledger, string $uuid): void
+    /**
+     * A QuickBooks invoice with nothing left owing is paid, even when a discount made the amount
+     * paid smaller than the Fleetbase total.
+     *
+     * @param array<string, mixed>|null $remoteInvoice the QuickBooks invoice the payments came from
+     */
+    private function applyPaymentStatus(SyncLedger $ledger, string $uuid, ?array $remoteInvoice = null): void
     {
         $invoice = $ledger->invoices[$uuid];
         $status  = (string) ($invoice['status'] ?? '');
@@ -3378,7 +3389,7 @@ class SyncEngine
         $hasPaid = array_key_exists('amount_paid', $invoice);
         $paid    = (int) ($invoice['amount_paid'] ?? 0);
         $total   = (int) ($invoice['total'] ?? 0);
-        if ($total > 0 && $paid >= $total) {
+        if (($total > 0 && $paid >= $total) || ($paid > 0 && $this->remoteSettled($remoteInvoice) === true)) {
             $ledger->invoices[$uuid]['status'] = 'paid';
 
             return;
@@ -3394,6 +3405,43 @@ class SyncEngine
                 $ledger->invoices[$uuid]['status'] = 'sent';
             }
         }
+    }
+
+    /**
+     * An invoice an earlier version left part-paid because a QuickBooks discount made the amount
+     * paid smaller than its total. The amount already matches, so only the status changes.
+     *
+     * @param array<string, mixed>|null $remoteInvoice
+     */
+    private function markSettledPaid(SyncLedger $ledger, string $uuid, ?array $remoteInvoice): ?string
+    {
+        $partial = (string) ($ledger->invoices[$uuid]['status'] ?? '') === 'partial';
+        if ($partial === false || $this->remoteSettled($remoteInvoice) === false) {
+            return null;
+        }
+        $ledger->invoices[$uuid]['status']                  = 'paid';
+        $ledger->invoices[$uuid]['payment_from_quickbooks'] = true;
+
+        return 'updated';
+    }
+
+    /**
+     * QuickBooks shows the invoice as fully paid: a balance of zero on a non-zero total.
+     *
+     * @param array<string, mixed>|null $remoteInvoice
+     */
+    private function remoteSettled(?array $remoteInvoice): bool
+    {
+        if ($remoteInvoice === null) {
+            return false;
+        }
+        $total   = $remoteInvoice['TotalAmt'] ?? null;
+        $balance = $remoteInvoice['Balance'] ?? null;
+        if ($total === null || $total === '' || $balance === null || $balance === '') {
+            return false;
+        }
+
+        return $this->majorUnits($total) > 0 && $this->majorUnits($balance) === 0;
     }
 
     private function withPayment(string $outcome, ?string $paymentOutcome): string
