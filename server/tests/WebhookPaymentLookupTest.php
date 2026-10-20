@@ -93,7 +93,7 @@ class WplClient extends FakeQuickBooks
             $this->calls[] = 'batch';
             throw new RuntimeException('batch read failed');
         }
-        if (in_array($this->batchFailure, ['429', '503', '0'], true) === true) {
+        if (in_array($this->batchFailure, ['429', '503', '408', '0'], true) === true) {
             $this->calls[] = 'batch';
             $status        = (int) $this->batchFailure;
             throw new QuickBooksException($status, qbRequestFailed($status), $status === 429 ? '90' : null);
@@ -807,6 +807,7 @@ test('a payment read quickbooks could not answer queues the job again and nothin
 })->with([
     'rate limited'        => ['429', 90],
     'service unavailable' => ['503', 30],
+    'request timeout'     => ['408', 30],
     'no response'         => ['0', 30],
 ])->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
 
