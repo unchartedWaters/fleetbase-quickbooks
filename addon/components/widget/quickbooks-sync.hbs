@@ -2,19 +2,25 @@
     <div class="quickbooks-widget-header">
         <div class="min-w-0">
             <div class="quickbooks-widget-title">{{t "quickbooks.widget.title"}}</div>
-            {{#unless this.isLoading}}
-                {{#unless this.error}}
-                    <div class="quickbooks-widget-subtitle" data-test-widget-subtitle>{{this.statusLabel}}</div>
+            {{#unless this.noAccess}}
+                {{#unless this.isLoading}}
+                    {{#unless this.error}}
+                        <div class="quickbooks-widget-subtitle" data-test-widget-subtitle>{{this.statusLabel}}</div>
+                    {{/unless}}
                 {{/unless}}
             {{/unless}}
         </div>
-        <button type="button" class="quickbooks-icon-button" {{on "click" this.refresh}} disabled={{this.busy}} aria-label={{t "quickbooks.widget.refresh"}}>
-            <FaIcon @icon="rotate" />
-        </button>
+        {{#unless this.noAccess}}
+            <button type="button" class="quickbooks-icon-button" {{on "click" this.refresh}} disabled={{this.busy}} aria-label={{t "quickbooks.widget.refresh"}}>
+                <FaIcon @icon="rotate" />
+            </button>
+        {{/unless}}
     </div>
 
     <div class="quickbooks-widget-body space-y-4">
-        {{#if this.isLoading}}
+        {{#if this.noAccess}}
+            <div class="quickbooks-widget-empty" data-test-widget-no-access>{{t "quickbooks.widget.no-access"}}</div>
+        {{else if this.isLoading}}
             <div class="quickbooks-widget-empty" data-test-widget-loading>{{t "quickbooks.widget.loading"}}</div>
         {{else if this.error}}
             <div class="quickbooks-widget-empty" data-test-widget-empty>{{this.error}}</div>

@@ -11,6 +11,9 @@ use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Services\TokenRefresher;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
+use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\SafeLog;
+use Fleetbase\Quickbooks\Support\WebhookRetry;
 use Illuminate\Bus\Queueable;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
@@ -29,8 +32,9 @@ class ApplyRemoteChange implements ShouldQueue
     public const ENTITIES = ['Customer', 'Invoice', 'Payment', 'Account', SyncEngine::INVOICE_PAYMENTS];
 
     /**
-     * Intuit retries the HTTP delivery. Laravel must not run this job again on its own.
-     * A busy company lock is the exception: that delivery is queued again here.
+     * Intuit does not send a delivery again once it got HTTP 200, and Laravel must not run
+     * this job again on its own. A busy company lock and a QuickBooks read that failed for a
+     * temporary reason are the exceptions: that delivery is queued again here.
      */
     public int $tries = 1;
 
@@ -39,6 +43,12 @@ class ApplyRemoteChange implements ShouldQueue
     public const LOCK_RETRY_LIMIT = 3;
 
     public const LOCK_RETRY_DELAY_SECONDS = 5;
+
+    /**
+     * Retries made after QuickBooks could not answer. Not a constructor argument, so a job
+     * queued before this counter existed still loads, and starts at 0.
+     */
+    public int $quickbooksAttempt = 0;
 
     /**
      * @param array<int, array{entity: string, id: string, operation: string}> $entities
@@ -68,8 +78,12 @@ class ApplyRemoteChange implements ShouldQueue
         SettingsStore $store,
         ?ConnectionTokens $tokens = null,
     ): void {
-        $entities = $this->knownEntities();
-        if ($entities === [] || ConnectionGate::hasRealm($directory->connection($this->companyUuid)) === false) {
+        $entities   = $this->knownEntities();
+        $connection = $directory->connection($this->companyUuid);
+        if ($entities === [] || ConnectionGate::hasRealm($connection) === false) {
+            return;
+        }
+        if ($this->waitedForRateLimit($directory, $connection) === true) {
             return;
         }
 
@@ -164,9 +178,85 @@ class ApplyRemoteChange implements ShouldQueue
         if ($tokens !== null && $this->tokenUnusable($engine, $directory, $tokens, $ledger, $lock) === true) {
             return [$ledger, false];
         }
-        $engine->acceptRemoteChanges($ledger, $this->companyUuid, $entities, $syncSettings, time());
+        try {
+            $engine->acceptRemoteChanges($ledger, $this->companyUuid, $entities, $syncSettings, time());
+        } catch (QuickBooksException $exception) {
+            if ($exception->isTransient() === false) {
+                throw $exception;
+            }
+            // Changes read before the failure are saved; the retry reads them again.
+            $this->quickbooksUnavailable($ledger, $exception);
+        }
 
         return [$ledger, true];
+    }
+
+    /**
+     * True when QuickBooks asked for a wait that has not ended. This delivery is then
+     * queued for after it, so it does not call QuickBooks while rate limited.
+     *
+     * @param array<string, mixed>|null $connection
+     */
+    private function waitedForRateLimit(FleetbaseDirectory $directory, ?array $connection): bool
+    {
+        $wait = WebhookRetry::rateLimitedFor($connection, time());
+        if ($wait < 1) {
+            return false;
+        }
+        if ($this->retryQuickBooks($wait) === false) {
+            $this->logGaveUp('rate limited');
+            $directory->saveFailed($this->companyUuid, 'webhook', 'inbound', WebhookRetry::MESSAGE);
+        }
+
+        return true;
+    }
+
+    /**
+     * QuickBooks answered with a 429 or a 5xx, or did not answer. Store a rate limit on the
+     * connection, then queue this delivery again, or record it as failed after the last retry.
+     */
+    private function quickbooksUnavailable(SyncLedger $ledger, QuickBooksException $exception): void
+    {
+        $now        = time();
+        $company    = $this->companyUuid;
+        $connection = $ledger->connection($company) ?? [];
+        $wait       = WebhookRetry::delay($exception, $connection, $this->quickbooksAttempt, $now);
+        if (isset($ledger->connections[$company]) === true) {
+            $ledger->connections[$company] = WebhookRetry::withRateLimit($connection, $exception, $wait, $now);
+        }
+        if ($this->retryQuickBooks($wait) === false) {
+            $this->logGaveUp('status ' . $exception->status);
+            $ledger->fail($this->companyUuid, 'webhook', 'inbound', WebhookRetry::failedMessage($exception), $now);
+        }
+    }
+
+    /**
+     * Queue this delivery again after $wait seconds. False when the retries are used up.
+     */
+    private function retryQuickBooks(int $wait): bool
+    {
+        if ($this->quickbooksAttempt >= WebhookRetry::LIMIT) {
+            return false;
+        }
+
+        $retry                    = new self($this->companyUuid, $this->entities, $this->lockAttempt);
+        $retry->quickbooksAttempt = $this->quickbooksAttempt + 1;
+        $retry->delay(WebhookRetry::spread($wait));
+        $dispatcher = Container::getInstance()->make(Dispatcher::class);
+        if ($dispatcher instanceof Dispatcher === true) {
+            $dispatcher->dispatch($retry);
+        }
+
+        return true;
+    }
+
+    private function logGaveUp(string $reason): void
+    {
+        SafeLog::warning('QuickBooks webhook change dropped after its last retry.', [
+            'company_uuid' => $this->companyUuid,
+            'retries'      => $this->quickbooksAttempt,
+            'reason'       => $reason,
+        ]);
     }
 
     private function finishWebhook(SyncEngine $engine, FleetbaseDirectory $directory, Lock $lock, bool $save, mixed $ledger): void
@@ -227,7 +317,8 @@ class ApplyRemoteChange implements ShouldQueue
             return;
         }
 
-        $retry = new self($this->companyUuid, $this->entities, $this->lockAttempt + 1);
+        $retry                    = new self($this->companyUuid, $this->entities, $this->lockAttempt + 1);
+        $retry->quickbooksAttempt = $this->quickbooksAttempt;
         $retry->delay(self::LOCK_RETRY_DELAY_SECONDS * ($this->lockAttempt + 1));
         $dispatcher = Container::getInstance()->make(Dispatcher::class);
         if ($dispatcher instanceof Dispatcher === true) {

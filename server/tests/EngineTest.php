@@ -930,11 +930,144 @@ test('a shared quickbooks payment is not rewritten from fleetbase', function () 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
     expect($batch['skipped'])->toBe(1)
-        ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies to other invoices, '
-            . 'so Fleetbase left it unchanged.')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies credits or other '
+            . 'invoices, so Fleetbase left it unchanged. Change it in QuickBooks.')
         ->and($client->calls)->not->toContain('updatePayment')
         ->and($client->payments['pay-shared']['TotalAmt'])->toBe(15)
         ->and($client->payments['pay-shared']['Line'])->toHaveCount(2);
+});
+
+test('a quickbooks payment that also applies a credit memo is not rewritten from fleetbase', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $paid                        = ['status' => 'paid', 'amount_paid' => 1000, 'paid_at' => '2026-09-20'];
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', $paid);
+    $client->invoices['qb-1']    = [
+        'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 0,
+        'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Line'    => [[
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
+    ];
+    // 10.00 settles the invoice: 7.00 received plus a 3.00 credit memo.
+    $client->payments['pay-credit'] = [
+        'Id'   => 'pay-credit', 'SyncToken' => '1', 'TotalAmt' => 7, 'TxnDate' => '2026-09-10',
+        'Line' => [
+            ['Amount' => 10, 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]],
+            ['Amount' => 3, 'LinkedTxn' => [['TxnId' => 'cm-1', 'TxnType' => 'CreditMemo']]],
+        ],
+    ];
+    $ledger->links[]   = engineLink('invoice', 'inv-1', 'qb-1');
+    $ledger->links[]   = engineLink('payment', 'inv-1', 'pay-credit');
+    $ledger->pending[] = enginePending('invoice', 'inv-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['skipped'])->toBe(1)
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies credits or other '
+            . 'invoices, so Fleetbase left it unchanged. Change it in QuickBooks.')
+        ->and($client->calls)->not->toContain('updatePayment')
+        ->and($client->payments['pay-credit']['TotalAmt'])->toBe(7)
+        ->and($client->payments['pay-credit']['Line'])->toHaveCount(2);
+});
+
+test('a quickbooks payment with an unapplied amount is not rewritten from fleetbase', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $paid                        = ['status' => 'paid', 'amount_paid' => 1000, 'paid_at' => '2026-09-20'];
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', $paid);
+    $client->invoices['qb-1']    = [
+        'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 0,
+        'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        'Line'    => [[
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
+    ];
+    // 12.00 received, 10.00 applied to the invoice, 2.00 left as customer credit.
+    $client->payments['pay-over'] = [
+        'Id'      => 'pay-over', 'SyncToken' => '1', 'TotalAmt' => '12.00', 'UnappliedAmt' => '2.00',
+        'TxnDate' => '2026-09-10',
+        'Line'    => [
+            ['Amount' => 10, 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]],
+        ],
+    ];
+    $ledger->links[]   = engineLink('invoice', 'inv-1', 'qb-1');
+    $ledger->links[]   = engineLink('payment', 'inv-1', 'pay-over');
+    $ledger->pending[] = enginePending('invoice', 'inv-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['skipped'])->toBe(1)
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies credits or other '
+            . 'invoices, so Fleetbase left it unchanged. Change it in QuickBooks.')
+        ->and($client->calls)->not->toContain('updatePayment')
+        ->and($client->payments['pay-over']['TotalAmt'])->toBe('12.00');
+});
+
+test('an invoice number longer than quickbooks allows fails the row before anything is sent', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1', ['number' => 'ACME-LOGISTICS-2026-00042']);
+    $ledger->pending[]           = enginePending('invoice', 'inv-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['failed'])->toBe(1)
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe('Invoice number ACME-LOGISTICS-2026-00042 has more than '
+            . 'the 21 characters QuickBooks accepts, so it was not sent. Use a shorter invoice number or prefix.');
+});
+
+test('a fleetbase invoice number longer than quickbooks allows is not sent on an update', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(['number' => 'ACME-LOGISTICS-2026-00042']);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['failed'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and($client->invoices['qb-1']['DocNumber'])->toBe('INV-1')
+        ->and(qbText($ledger->attempts[0]['error']))->toContain('ACME-LOGISTICS-2026-00042');
+});
+
+test('a part-paid invoice is dated by the payment ledger recorded', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(
+        ['status' => 'partial', 'amount_paid' => 400, 'paid_at' => '', 'payment_date' => '2026-09-20'],
+        ['Balance' => 10]
+    );
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->calls)->toContain('createPayment')
+        ->and($client->paymentPayloads[0]['TxnDate'])->toBe('2026-09-20')
+        ->and($client->paymentPayloads[0]['TotalAmt'])->toBe('4.00');
+});
+
+test('a part-paid invoice with no recorded payment date leaves the quickbooks payment date alone', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(
+        ['status' => 'partial', 'amount_paid' => 400, 'paid_at' => ''],
+        ['Balance' => 6, 'LinkedTxn' => [['TxnId' => 'pay-1', 'TxnType' => 'Payment']]]
+    );
+    $client->payments['pay-1'] = [
+        'Id'   => 'pay-1', 'SyncToken' => '0', 'TotalAmt' => '4.00', 'TxnDate' => '2026-09-12',
+        'Line' => [['Amount' => '4.00', 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]]],
+    ];
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first  = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($first['aligned'])->toBe(1)
+        ->and($second['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updatePayment')
+        ->and($client->payments['pay-1']['TxnDate'])->toBe('2026-09-12');
 });
 
 test('a quickbooks payment is copied onto an invoice that is not paid yet', function () {
@@ -2917,6 +3050,128 @@ test('extra quickbooks sales lines stay and one update aligns the invoice', func
         ->and($client->invoices['qb-1']['Line'][3])->toBe($discount);
 });
 
+test('a quickbooks discount kept on the invoice converges in one sync', function () {
+    $discount = [
+        'Id'                 => '20',
+        'Amount'             => '1.50',
+        'DetailType'         => 'DiscountLineDetail',
+        'Description'        => 'Loyalty discount',
+        'DiscountLineDetail' => ['PercentBased' => false],
+    ];
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items' => [['description' => 'Evening delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000]],
+    ], [
+        'TotalAmt' => '8.50',
+        'Line'     => [InvoiceLines::sales('9', 'Delivery', '10.00'), $discount],
+    ]);
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($client->invoices['qb-1']['TotalAmt'])->toBe('8.50')
+        ->and($client->invoices['qb-1']['Line'][1])->toBe($discount);
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and($second['updated'])->toBe(0)
+        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
+});
+
+test('an invoice that differs from quickbooks only by a discount is aligned', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([], [
+        'TotalAmt' => '9.00',
+        'Line'     => [InvoiceLines::sales('9', 'Delivery', '10.00'), [
+            'Id'                 => '20',
+            'Amount'             => '1.00',
+            'DetailType'         => 'DiscountLineDetail',
+            'DiscountLineDetail' => ['PercentBased' => true, 'DiscountPercent' => 10],
+        ]],
+    ]);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice');
+});
+
+test('sales tax quickbooks adds on top of the fleetbase lines does not update the invoice again', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items' => [['description' => 'Evening delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000]],
+    ], [
+        'TotalAmt'     => '10.80',
+        'Line'         => [InvoiceLines::sales('9', 'Delivery', '10.00')],
+        'TxnTaxDetail' => ['TotalTax' => '0.80'],
+    ]);
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($client->invoices['qb-1']['TotalAmt'])->toBe('10.80');
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
+});
+
+test('a discounted invoice paid in full in quickbooks becomes paid', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([], [
+        'TotalAmt'  => '9.00',
+        'Balance'   => '0.00',
+        'LinkedTxn' => [['TxnId' => 'pay-1', 'TxnType' => 'Payment']],
+        'Line'      => [InvoiceLines::sales('9', 'Delivery', '10.00'), [
+            'Id'                 => '20',
+            'Amount'             => '1.00',
+            'DetailType'         => 'DiscountLineDetail',
+            'DiscountLineDetail' => ['PercentBased' => false],
+        ]],
+    ]);
+    $client->payments['pay-1'] = [
+        'Id'   => 'pay-1', 'SyncToken' => '0', 'TotalAmt' => '9.00', 'TxnDate' => '2026-09-10',
+        'Line' => [['Amount' => '9.00', 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]]],
+    ];
+    $settings = qbSettings(['interval_minutes' => 1, 'payment_reference' => 'quickbooks']);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(900)
+        ->and($ledger->invoices['inv-1']['status'])->toBe('paid')
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and($client->calls)->not->toContain('updatePayment');
+});
+
+test('a discounted invoice left part-paid becomes paid once quickbooks shows it settled', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice(
+        ['status' => 'partial', 'amount_paid' => 900, 'paid_at' => '2026-09-10'],
+        [
+            'TotalAmt'  => '9.00',
+            'Balance'   => '0.00',
+            'LinkedTxn' => [['TxnId' => 'pay-1', 'TxnType' => 'Payment']],
+            'Line'      => [InvoiceLines::sales('9', 'Delivery', '10.00'), [
+                'Id'                 => '20',
+                'Amount'             => '1.00',
+                'DetailType'         => 'DiscountLineDetail',
+                'DiscountLineDetail' => ['PercentBased' => false],
+            ]],
+        ]
+    );
+    $client->payments['pay-1'] = [
+        'Id'   => 'pay-1', 'SyncToken' => '0', 'TotalAmt' => '9.00', 'TxnDate' => '2026-09-10',
+        'Line' => [['Amount' => '9.00', 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]]],
+    ];
+    $settings = qbSettings(['interval_minutes' => 1, 'payment_reference' => 'quickbooks']);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($batch['updated'])->toBe(1)
+        ->and($ledger->invoices['inv-1']['status'])->toBe('paid')
+        ->and($client->calls)->not->toContain('updatePayment');
+});
+
 test('a line deleted in fleetbase is removed from the quickbooks invoice and a quickbooks line stays', function () {
     $warehouse                  = InvoiceLines::sales('3', 'Warehouse fee', '4.00');
     [$engine, $client, $ledger] = engineLinkedInvoice([
@@ -3364,6 +3619,71 @@ test('outbound quickbooks primary sends a cleared wallet description once', func
         ->and($second['updated'])->toBe(0)
         ->and(array_count_values($client->calls)['updateAccount'] ?? 0)->toBe(1);
 });
+
+test('a customer name with a colon or a line break is sent in a form quickbooks accepts'
+. ' and the next sync is aligned', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => "Acme: North\tDepot\nEast"]);
+    $ledger->pending[]           = enginePending('customer', 'cust-1');
+    $settings                    = qbSettings(['interval_minutes' => 1]);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    $ledger->connections['company-uuid']['last_batch_at'] = null;
+    $ledger->pending[0]['status']                         = 'pending';
+    $second                                               = $engine->runScheduled(
+        $ledger,
+        'company-uuid',
+        $settings,
+        time() + 10
+    );
+
+    expect($first['created'])->toBe(1)
+        ->and($client->customers['1']['DisplayName'])->toBe('Acme- North Depot East')
+        ->and($second['aligned'])->toBe(1)
+        ->and($second['updated'])->toBe(0)
+        ->and($client->calls)->not->toContain('updateCustomer')
+        ->and($ledger->customers['cust-1']['name'])->toBe("Acme: North\tDepot\nEast");
+
+    // The webhook echo of that create, with QuickBooks primary, does not rewrite the Fleetbase name.
+    $inbound = qbSettings(['interval_minutes' => 1, 'customer_conflict' => 'quickbooks']);
+    $engine->acceptRemoteChanges(
+        $ledger,
+        'company-uuid',
+        [['entity' => 'Customer', 'id' => '1', 'operation' => 'Update']],
+        $inbound,
+        time()
+    );
+
+    expect($ledger->customers['cust-1']['name'])->toBe("Acme: North\tDepot\nEast");
+});
+
+foreach ([1 => 'on its own', 2 => 'in a batch'] as $nameTakenCount => $nameTakenLabel) {
+    test('a customer name quickbooks already uses for another record is reported by name '
+    . $nameTakenLabel, function () use ($nameTakenCount) {
+        [$engine, $client]           = qbEngine();
+        $client->failOnCreate        = 1;
+        $duplicate                   = qbRequestFailed(400, 'Duplicate Name Exists Error');
+        $client->failWith            = new QuickBooksException(400, $duplicate, null, '6240');
+        $ledger                      = engineLedger();
+        $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => 'Acme: North']);
+        $ledger->pending[]           = enginePending('customer', 'cust-1');
+        if ($nameTakenCount === 2) {
+            $ledger->customers['cust-2'] = engineCustomer('cust-2', ['name' => 'Beta', 'email' => 'beta@example.test']);
+            $ledger->pending[]           = enginePending('customer', 'cust-2');
+        }
+
+        $batch  = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+        $errors = array_column($ledger->attempts, 'error', 'local_uuid');
+
+        expect($batch['failed'])->toBe(1)
+            ->and(qbText($errors['cust-1']))->toBe(
+                'QuickBooks did not accept customer "Acme- North": a QuickBooks customer, vendor or employee'
+                . ' already uses that name. Rename one of them, then sync again.'
+            );
+    });
+}
 
 function engineLedger(): SyncLedger
 {

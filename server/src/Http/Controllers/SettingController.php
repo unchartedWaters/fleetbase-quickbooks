@@ -30,6 +30,12 @@ class SettingController extends QuickbooksController
         'public_oauth_redirect_url',
     ];
 
+    /** @var array<string, string> */
+    private const PUBLIC_URL_ERRORS = [
+        'public_webhook_receiver_url' => 'quickbooks.validation.public-webhook-url',
+        'public_oauth_redirect_url'   => 'quickbooks.validation.public-oauth-url',
+    ];
+
     /** @var array<int, string> */
     private const DIRECTION_FIELDS = [
         'customer_direction',
@@ -86,6 +92,8 @@ class SettingController extends QuickbooksController
         if (self::verifierNeeded($existingAuth, $incomingAuth, $mergedAuth) === true) {
             $errors['webhook_verifier'] = 'quickbooks.validation.webhook-verifier';
         }
+        [$publicUrls, $publicErrors] = $this->resolvePublicUrls($publicUrls, $existingAuth);
+        $errors                      = array_merge($errors, $publicErrors);
         if ($errors !== []) {
             return $this->invalid($errors);
         }
@@ -618,41 +626,71 @@ class SettingController extends QuickbooksController
     }
 
     /**
-     * A public https URL is stored. An empty or internal one is cleared so the
-     * response and the OAuth callback stay on the computed address.
+     * What to do with each submitted public URL: null clears it, a string stores it. A blank
+     * value, or the computed internal address the screen shows when none is saved, clears it.
+     * The saved value sent back unchanged is kept without a new DNS lookup, so a resolver
+     * outage cannot drop it. Any other value must pass the public https check now, or the
+     * whole save is refused with an error on that field.
      *
-     * @param array<string, mixed>  $auth
-     * @param array<string, string> $public
+     * @param array<string, string> $submitted
+     * @param array<string, mixed>  $existingAuth
+     *
+     * @return array{0: array<string, string|null>, 1: array<string, string>}
+     */
+    private function resolvePublicUrls(array $submitted, array $existingAuth): array
+    {
+        $internal = [
+            'public_webhook_receiver_url' => self::internalWebhookReceiverUrl(),
+            'public_oauth_redirect_url'   => self::internalOAuthRedirectUrl(),
+        ];
+        $resolved = [];
+        $errors   = [];
+        foreach ($submitted as $key => $value) {
+            $saved = trim((string) ($existingAuth[$key] ?? ''));
+            if ($value !== '' && $value === $saved) {
+                $resolved[$key] = $saved;
+            } elseif ($value === '' || $value === $internal[$key]) {
+                $resolved[$key] = null;
+            } elseif (self::isPublicHttpsUrl($value) === true) {
+                $resolved[$key] = $value;
+            } else {
+                $errors[$key] = self::PUBLIC_URL_ERRORS[$key];
+            }
+        }
+
+        return [$resolved, $errors];
+    }
+
+    /**
+     * Applies resolvePublicUrls(). A URL that was not submitted keeps its saved value.
+     *
+     * @param array<string, mixed>       $auth
+     * @param array<string, string|null> $public
      *
      * @return array<string, mixed>
      */
     private function applyPublicUrls(array $auth, array $public): array
     {
-        foreach (self::PUBLIC_URL_KEYS as $key) {
-            if (array_key_exists($key, $public) === false) {
-                $current = $auth[$key] ?? null;
-                if (is_string($current) === true && self::isPublicHttpsUrl($current) === true) {
-                    $auth[$key] = trim($current);
-                    continue;
-                }
+        foreach ($public as $key => $value) {
+            if ($value === null) {
                 unset($auth[$key]);
                 continue;
             }
-            $value = trim($public[$key]);
-            if ($value !== '' && self::isPublicHttpsUrl($value) === true) {
-                $auth[$key] = $value;
-                continue;
-            }
-            unset($auth[$key]);
+            $auth[$key] = $value;
         }
 
         return $auth;
     }
 
+    /**
+     * A saved public URL passed the DNS check when it was saved, so it is not looked up
+     * again here: a failed lookup would show the internal address, and the next save
+     * would send that back. Internal IP literals and non-https values are still hidden.
+     */
     private static function publicOrInternal(mixed $saved, string $internal): string
     {
         $saved = is_string($saved) === true ? trim($saved) : '';
-        if ($saved !== '' && self::isPublicHttpsUrl($saved) === true) {
+        if ($saved !== '' && PublicHttps::isPublicHttpsUrl($saved, false) === true) {
             return $saved;
         }
 

@@ -1099,6 +1099,10 @@ test('sec batch item results map faults queries entity bodies and missing items'
                 ['bId' => 'entity', 'Customer' => ['Id' => '1', 'SyncToken' => '0', 'DisplayName' => 'Ada']],
                 ['bId' => 'fault-message', 'Fault' => ['Error' => [['Message' => 'Only a message']]]],
                 ['bId' => 'fault-empty', 'Fault' => ['Error' => [['Detail' => '  ', 'Message' => 'Ignored']]]],
+                [
+                    'bId'   => 'fault-coded',
+                    'Fault' => ['Error' => [['Message' => 'Duplicate Name Exists Error', 'code' => '6240']]],
+                ],
                 ['bId' => 'query-list', 'QueryResponse' => ['startPosition' => 1, 'maxResults' => 2, 'Invoice' => [['Id' => 'a'], 'junk', ['Id' => 'b']]]],
                 ['bId' => 'query-single', 'QueryResponse' => ['Invoice' => ['Id' => 'solo', 'DocNumber' => 'S-1']]],
                 ['bId' => 'query-empty', 'QueryResponse' => []],
@@ -1110,7 +1114,7 @@ test('sec batch item results map faults queries entity bodies and missing items'
     ]);
 
     $items = [];
-    foreach (['entity', 'fault-message', 'fault-empty', 'no-entity', 'missing'] as $bId) {
+    foreach (['entity', 'fault-message', 'fault-empty', 'fault-coded', 'no-entity', 'missing'] as $bId) {
         $items[] = ['bId' => $bId, 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => $bId]];
     }
     foreach (['query-list', 'query-single', 'query-empty'] as $bId) {
@@ -1121,10 +1125,15 @@ test('sec batch item results map faults queries entity bodies and missing items'
 
     $ok   = ['ok' => true, 'body' => [], 'rows' => [], 'error' => null, 'status' => 200, 'halt' => false];
     $fail = ['ok' => false, 'body' => [], 'rows' => [], 'error' => null, 'status' => 400, 'halt' => false];
-    expect(array_keys($results))->toBe(['entity', 'fault-message', 'fault-empty', 'no-entity', 'missing', 'query-list', 'query-single', 'query-empty'])
+    expect(array_keys($results))->toBe([
+        'entity', 'fault-message', 'fault-empty', 'fault-coded', 'no-entity',
+        'missing', 'query-list', 'query-single', 'query-empty',
+    ])
         ->and($results['entity'])->toBe(array_merge($ok, ['body' => ['Id' => '1', 'SyncToken' => '0', 'DisplayName' => 'Ada']]))
         ->and($results['fault-message'])->toBe(array_merge($fail, ['error' => 'Only a message']))
         ->and($results['fault-empty'])->toBe(array_merge($fail, ['error' => 'quickbooks.messages.item-rejected']))
+        ->and($results['fault-coded'])
+        ->toBe(array_merge($fail, ['error' => 'Duplicate Name Exists Error', 'code' => '6240']))
         ->and($results['no-entity'])->toBe(array_merge($fail, ['error' => 'quickbooks.messages.batch-item-no-entity']))
         ->and($results['missing'])->toBe(array_merge($fail, ['error' => 'quickbooks.messages.batch-item-missing']))
         ->and($results['query-list'])->toBe(array_merge($ok, ['rows' => [['Id' => 'a'], ['Id' => 'b']]]))

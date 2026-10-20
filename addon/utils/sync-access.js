@@ -1,3 +1,5 @@
+// Reading the sync summary (the dashboard widget) needs this permission.
+export const VIEW_SYNC_PERMISSION = 'quickbooks view sync';
 // Sync now and reconcile share this permission. QuickBooks Operator grants it.
 export const SYNC_NOW_PERMISSION = 'quickbooks reconcile sync';
 export const CONNECT_PERMISSION = 'quickbooks connect connection';
@@ -5,6 +7,10 @@ export const DISCONNECT_PERMISSION = 'quickbooks disconnect connection';
 
 function allows(abilities, permission) {
     return abilities?.can?.(permission) === true;
+}
+
+export function canViewSync(abilities) {
+    return allows(abilities, VIEW_SYNC_PERMISSION);
 }
 
 export function canRunSyncNow(abilities) {

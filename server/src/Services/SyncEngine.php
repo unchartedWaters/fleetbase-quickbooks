@@ -38,7 +38,26 @@ class SyncEngine
      */
     private const QUERY_PAGE_SIZE = 100;
 
+    /**
+     * QuickBooks rejects an invoice whose DocNumber is longer than this.
+     */
+    private const DOC_NUMBER_MAX = 21;
+
+    /**
+     * Intuit fault code for "Duplicate Name Exists": a customer, vendor or employee already has the name.
+     */
+    private const DUPLICATE_NAME_FAULT = '6240';
+
     private ?string $lastError = null;
+
+    /**
+     * Rows of the current run, by company, whose failure QuickBooks would give again for the
+     * same data: a 4xx validation fault, or a check Fleetbase made before sending. Sending
+     * them again soon does not help, so the customer catalog moves past them.
+     *
+     * @var array<string, array<string, true>>
+     */
+    private array $permanentFailures = [];
 
     /** @var array<string, bool> */
     private array $customTxnNumbers = [];
@@ -296,6 +315,29 @@ class SyncEngine
     }
 
     /**
+     * How many rows of the last run for this company failed in a way that sending the same
+     * data again would not fix. Every other failed row may pass on a retry.
+     */
+    public function permanentFailures(string $companyUuid): int
+    {
+        return count($this->permanentFailures[$companyUuid] ?? []);
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private function notePermanence(string $companyUuid, array $row, bool $permanent): void
+    {
+        $key = (string) ($row['local_type'] ?? '') . '|' . (string) ($row['local_uuid'] ?? '');
+        if ($permanent === true) {
+            $this->permanentFailures[$companyUuid][$key] = true;
+
+            return;
+        }
+        unset($this->permanentFailures[$companyUuid][$key]);
+    }
+
+    /**
      * The connection to retry a rejected call with, or null when the 401 stands.
      *
      * @param array<string, mixed> $connection
@@ -541,11 +583,13 @@ class SyncEngine
         if ($total === null || $total === '' || $balance === null || $balance === '') {
             return false;
         }
-        $before                                             = $invoice;
-        $paid                                               = $this->majorUnits($total) - $this->majorUnits($balance);
+        $before   = $invoice;
+        $currency = (string) ($invoice['currency'] ?? '');
+        $paid     = $this->majorUnits($total, $currency) - $this->majorUnits($balance, $currency);
+
         $ledger->invoices[$uuid]['amount_paid']             = max(0, $paid);
         $ledger->invoices[$uuid]['payment_from_quickbooks'] = true;
-        $this->applyPaymentStatus($ledger, $uuid);
+        $this->applyPaymentStatus($ledger, $uuid, $remote);
 
         return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]);
     }
@@ -679,6 +723,7 @@ class SyncEngine
         $companyUuid             = (string) $connection['company_uuid'];
         // A worker can reuse this engine, so a refresh that failed in an earlier run is tried again.
         unset($this->refreshFailed[$companyUuid]);
+        $this->permanentFailures[$companyUuid] = [];
         $ledger->rebuildIndex();
         $connection = $this->processRows($ledger, $connection, $rows, $settings, $batch, $now, $trigger, $companyUuid);
 
@@ -926,10 +971,7 @@ class SyncEngine
         }
 
         if ($reference === 'quickbooks' && $copy === true) {
-            $name = trim((string) ($remote['DisplayName'] ?? ''));
-            if ($name !== '') {
-                $ledger->customers[$uuid]['name'] = $name;
-            }
+            $this->copyCustomerName($ledger, $uuid, $remote);
             $payload = $this->customers->toQuickBooks($this->customers->fromParty($ledger->customers[$uuid]), $pushClears);
         }
 
@@ -1422,6 +1464,9 @@ class SyncEngine
                 }
                 $payload['DocNumber'] = $next;
             }
+            if ($this->rejectLongDocNumber($payload) === true) {
+                return 'failed';
+            }
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
                     'bId'       => 'invoice:' . $uuid,
@@ -1448,7 +1493,7 @@ class SyncEngine
             $partyChanged = $this->copyInvoiceCustomerAndCurrency($ledger, $uuid, $remote);
         }
         $invoice     = $ledger->invoices[$uuid];
-        $remoteCents = $this->majorUnits($remote['TotalAmt'] ?? 0);
+        $remoteCents = $this->majorUnits($remote['TotalAmt'] ?? 0, (string) ($invoice['currency'] ?? ''));
         $localCents  = (int) ($invoice['total'] ?? 0);
         $currencyOk  = $this->invoiceCurrencyError($ledger, $connection, (string) ($invoice['currency'] ?? '')) === null;
         // QuickBooks replaces the Fleetbase line set only when this sync copies remote lines.
@@ -1473,7 +1518,7 @@ class SyncEngine
         if ($matched === true) {
             $outcome = ($numberChanged === true || $partyChanged === true) ? 'updated' : 'aligned';
             $items   = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
-            $paired  = $this->invoices->pairedLineIds($items, $remote, $removed, $mapped);
+            $paired  = $this->invoiceMapper($invoice)->pairedLineIds($items, $remote, $removed, $mapped);
             $this->recordLineMap($ledger, $uuid, $connection, (string) $remote['Id'], $paired, $stored['uuids']);
             if ($this->writeBuffer !== null) {
                 return $outcome;
@@ -1525,7 +1570,11 @@ class SyncEngine
             return 'failed';
         }
         $this->keepFleetbaseDocNumber($payload, $ledger->invoices[$uuid], $remote, $reference);
-        $payload = $this->invoices->withExistingLineIds($payload, $remote, $removed, $mapped);
+        if ($this->rejectLongDocNumber($payload) === true) {
+            return 'failed';
+        }
+        $payload = $this->invoiceMapper($ledger->invoices[$uuid])
+            ->withExistingLineIds($payload, $remote, $removed, $mapped);
         $this->rememberPushedLineIds($ledger, $uuid, $payload);
 
         if ($this->writeBuffer !== null) {
@@ -1604,7 +1653,8 @@ class SyncEngine
             if ($amountCents <= 0) {
                 return null;
             }
-            $payload = $this->invoices->payment($customerRef, $invoiceId, $amountCents, $this->paymentDate($invoice));
+            $payload = $this->invoiceMapper($invoice)
+                ->payment($customerRef, $invoiceId, $amountCents, $this->paymentDate($invoice));
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
                     'bId'       => 'payment:' . $uuid,
@@ -1628,19 +1678,21 @@ class SyncEngine
         if ($pushesPayment === false) {
             $before = $ledger->invoices[$uuid];
             $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
-            $this->applyPaymentStatus($ledger, $uuid);
+            $this->applyPaymentStatus($ledger, $uuid, $remoteInvoice);
 
             return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) === true ? 'updated' : null;
         }
 
         if ($this->paymentsMatch($invoice, $payments, $invoiceId) === true) {
-            return null;
+            $copies = $quickbooksPrimary === true || ($pushPay === false && $copyPay === true);
+
+            return $copies === true ? $this->markSettledPaid($ledger, $uuid, $remoteInvoice) : null;
         }
 
         if ($conflict === 'quickbooks' && $copyPay === true) {
             $before = $ledger->invoices[$uuid];
             $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
-            $this->applyPaymentStatus($ledger, $uuid);
+            $this->applyPaymentStatus($ledger, $uuid, $remoteInvoice);
 
             return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) === true ? 'updated' : null;
         }
@@ -1649,7 +1701,7 @@ class SyncEngine
             if ($copyPay === true) {
                 $before = $ledger->invoices[$uuid];
                 $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
-                $this->applyPaymentStatus($ledger, $uuid);
+                $this->applyPaymentStatus($ledger, $uuid, $remoteInvoice);
 
                 return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) === true ? 'updated' : null;
             }
@@ -1664,7 +1716,7 @@ class SyncEngine
         }
 
         $remote = $payments[0];
-        if ($this->paymentCoversOtherInvoices($remote, $invoiceId) === true) {
+        if ($this->paymentAppliesElsewhere($remote, $invoiceId, (string) ($invoice['currency'] ?? '')) === true) {
             $this->lastError = 'quickbooks.messages.payment-shared';
 
             return 'skipped';
@@ -1674,7 +1726,8 @@ class SyncEngine
         if ($amountCents <= 0) {
             return null;
         }
-        $payload = $this->invoices->payment($customerRef, $invoiceId, $amountCents, $this->paymentDate($invoice));
+        $payload = $this->invoiceMapper($invoice)
+            ->payment($customerRef, $invoiceId, $amountCents, $this->paymentDate($invoice));
         if ($this->writeBuffer !== null) {
             $payload['Id']        = (string) $remote['Id'];
             $payload['SyncToken'] = (string) $remote['SyncToken'];
@@ -1703,6 +1756,10 @@ class SyncEngine
     private function failure(SyncLedger $ledger, array $connection, array $row, \Throwable $exception, array $settings, int $now): string
     {
         $companyUuid = (string) $connection['company_uuid'];
+        $permanent   = $exception instanceof QuickBooksException
+            && $exception->isTransient() === false
+            && $exception->isUnauthorized() === false;
+        $this->notePermanence($companyUuid, $row, $permanent);
         if ($exception instanceof QuickBooksException && $exception->isRateLimit() === true) {
             $previous                                                  = isset($connection['last_rate_limit_wait']) === true ? (int) $connection['last_rate_limit_wait'] : null;
             $wait                                                      = $this->backoff->rateLimitWait($exception->retryAfter, $previous);
@@ -1966,9 +2023,13 @@ class SyncEngine
         if ($ignoreExtraSalesLines === true) {
             $removed     = $lines['removed'] ?? [];
             $mapped      = $lines['mapped'] ?? false;
-            $limited     = $this->invoices->withoutUnmatchedSalesLines($localItems, $remote, $removed, $mapped);
+            $limited     = $this->invoiceMapper($invoice)
+                ->withoutUnmatchedSalesLines($localItems, $remote, $removed, $mapped);
             $compared    = $limited['remote'];
             $remoteCents -= $limited['omitted_cents'];
+            // Fleetbase sends the lines, so a discount or tax QuickBooks adds is not a change to send:
+            // an update keeps it and the totals would differ again on every sync.
+            $remoteCents -= $this->invoiceMapper($invoice)->quickbooksAdjustmentCents($remote);
         }
 
         $local = ['total' => $localCents];
@@ -2000,7 +2061,7 @@ class SyncEngine
                 $other['currency'] = $remoteCurrency;
             }
         }
-        $mapped         = $this->invoices->fromQuickBooks($compared);
+        $mapped         = $this->invoiceMapper($invoice)->fromQuickBooks($compared);
         $local['items'] = $this->hashableInvoiceItems($localItems);
         $local['tax']   = (int) ($invoice['tax'] ?? 0);
         $other['items'] = $mapped['items'];
@@ -2236,7 +2297,10 @@ class SyncEngine
         return $name === self::INVOICE_PAYMENTS ? 'Invoice' : $name;
     }
 
-    private function majorUnits(mixed $amount): int
+    /**
+     * A QuickBooks amount in Fleetbase units of the invoice currency (whole units when zero-decimal).
+     */
+    private function majorUnits(mixed $amount, string $currency = ''): int
     {
         if (is_float($amount) === true) {
             throw new \InvalidArgumentException('Money must not be a float.');
@@ -2245,7 +2309,17 @@ class SyncEngine
             return 0;
         }
 
-        return Amounts::toMinorUnits($amount);
+        return Amounts::toMinorUnits($amount, $currency);
+    }
+
+    /**
+     * The invoice mapper for this Fleetbase invoice's currency.
+     *
+     * @param array<string, mixed> $invoice
+     */
+    private function invoiceMapper(array $invoice): InvoiceMapper
+    {
+        return $this->invoices->forCurrency((string) ($invoice['currency'] ?? ''));
     }
 
     /**
@@ -2296,7 +2370,7 @@ class SyncEngine
     {
         $local = [
             'email' => $this->comparableEmail((string) ($payload['PrimaryEmailAddr']['Address'] ?? '')),
-            'name'  => (string) ($payload['DisplayName'] ?? ''),
+            'name'  => CustomerMapper::displayName((string) ($payload['DisplayName'] ?? '')),
             'phone' => $this->comparablePhone((string) ($payload['PrimaryPhone']['FreeFormNumber'] ?? '')),
         ];
         if (array_key_exists('Notes', $payload) === true) {
@@ -2315,7 +2389,7 @@ class SyncEngine
 
         $other = [
             'email' => $this->comparableEmail((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')),
-            'name'  => (string) ($remote['DisplayName'] ?? ''),
+            'name'  => CustomerMapper::displayName((string) ($remote['DisplayName'] ?? '')),
             'phone' => $this->comparablePhone((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')),
         ];
         if (array_key_exists('notes', $local) === true) {
@@ -2434,7 +2508,7 @@ class SyncEngine
             $changed                          = true;
         }
 
-        $mapped  = $this->invoices->fromQuickBooks($remote);
+        $mapped  = $this->invoiceMapper($ledger->invoices[$uuid])->fromQuickBooks($remote);
         $current = $ledger->invoices[$uuid]['items'] ?? [];
         $current = is_array($current) === true ? $current : [];
         if ($mapped['items'] !== [] && $mapped['items'] !== $this->hashableInvoiceItems($current)) {
@@ -2459,14 +2533,27 @@ class SyncEngine
     }
 
     /**
+     * Copy the QuickBooks name onto the Fleetbase customer. A name that only differs by what
+     * QuickBooks cannot store (a colon sent as a hyphen, a line break as a space) is the
+     * same name and is kept, so the echo of Fleetbase's own push does not rewrite it.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function copyCustomerName(SyncLedger $ledger, string $uuid, array $remote): void
+    {
+        $name  = trim((string) ($remote['DisplayName'] ?? ''));
+        $local = (string) ($ledger->customers[$uuid]['name'] ?? '');
+        if ($name !== '' && CustomerMapper::displayName($local) !== CustomerMapper::displayName($name)) {
+            $ledger->customers[$uuid]['name'] = $name;
+        }
+    }
+
+    /**
      * @param array<string, mixed> $remote
      */
     private function applyCustomerFromRemote(SyncLedger $ledger, string $uuid, array $remote): void
     {
-        $name = trim((string) ($remote['DisplayName'] ?? ''));
-        if ($name !== '') {
-            $ledger->customers[$uuid]['name'] = $name;
-        }
+        $this->copyCustomerName($ledger, $uuid, $remote);
         $email = (string) ($remote['PrimaryEmailAddr']['Address'] ?? '');
         if ($email !== '') {
             $ledger->customers[$uuid]['email'] = $email;
@@ -2590,7 +2677,7 @@ class SyncEngine
             }
         }
 
-        $name = trim($displayName);
+        $name = CustomerMapper::displayName($displayName);
         if ($name === '') {
             return null;
         }
@@ -2687,8 +2774,9 @@ class SyncEngine
 
         $settled = false;
         if (is_array($remoteInvoice) === true) {
-            $balance = $remoteInvoice['Balance'] ?? null;
-            if ($balance !== null && $balance !== '' && $this->majorUnits($balance) === 0) {
+            $balance  = $remoteInvoice['Balance'] ?? null;
+            $currency = (string) ($ledger->invoices[$invoiceUuid]['currency'] ?? '');
+            if ($balance !== null && $balance !== '' && $this->majorUnits($balance, $currency) === 0) {
                 $settled = true;
             }
         }
@@ -3099,16 +3187,37 @@ class SyncEngine
     }
 
     /**
+     * The QuickBooks payment date: the paid date, else the day Ledger recorded the last part
+     * payment, else the invoice date so a new payment still has a date.
+     *
      * @param array<string, mixed> $invoice
      */
     private function paymentDate(array $invoice): string
     {
-        $paid = trim((string) ($invoice['paid_at'] ?? ''));
-        if ($paid !== '') {
-            return substr($paid, 0, 10);
+        $recorded = $this->recordedPaymentDate($invoice);
+        if ($recorded !== '') {
+            return $recorded;
         }
 
         return trim((string) ($invoice['date'] ?? ''));
+    }
+
+    /**
+     * A date Fleetbase actually recorded for the payment. The invoice-date stand-in is not one,
+     * so it never makes Fleetbase rewrite the date of an existing QuickBooks payment.
+     *
+     * @param array<string, mixed> $invoice
+     */
+    private function recordedPaymentDate(array $invoice): string
+    {
+        foreach (['paid_at', 'payment_date'] as $key) {
+            $value = trim((string) ($invoice[$key] ?? ''));
+            if ($value !== '') {
+                return substr($value, 0, 10);
+            }
+        }
+
+        return '';
     }
 
     /**
@@ -3117,12 +3226,12 @@ class SyncEngine
      */
     private function paymentMatches(array $invoice, array $remote, string $invoiceId): bool
     {
-        $remoteCents = $this->amountOnInvoice($remote, $invoiceId);
+        $remoteCents = $this->amountOnInvoice($remote, $invoiceId, (string) ($invoice['currency'] ?? ''));
         if ($remoteCents === null || $remoteCents !== $this->paymentAmountCents($invoice)) {
             return false;
         }
 
-        $localDate  = $this->paymentDate($invoice);
+        $localDate  = $this->recordedPaymentDate($invoice);
         $remoteDate = substr(trim((string) ($remote['TxnDate'] ?? '')), 0, 10);
         if ($localDate !== '' && $remoteDate !== '' && $localDate !== $remoteDate) {
             return false;
@@ -3140,7 +3249,7 @@ class SyncEngine
         if (count($payments) === 1) {
             return $this->paymentMatches($invoice, $payments[0], $invoiceId);
         }
-        $remoteCents = $this->summedOnInvoice($payments, $invoiceId);
+        $remoteCents = $this->summedOnInvoice($payments, $invoiceId, (string) ($invoice['currency'] ?? ''));
 
         return $remoteCents !== null && $remoteCents === $this->paymentAmountCents($invoice);
     }
@@ -3184,7 +3293,7 @@ class SyncEngine
         if ($latest !== '') {
             $ledger->invoices[$uuid]['paid_at'] = $latest;
         }
-        $amount = $this->summedOnInvoice($payments, $invoiceId);
+        $amount = $this->summedOnInvoice($payments, $invoiceId, (string) ($ledger->invoices[$uuid]['currency'] ?? ''));
         if ($amount !== null) {
             $ledger->invoices[$uuid]['amount_paid'] = $amount;
         }
@@ -3197,7 +3306,7 @@ class SyncEngine
      *
      * @param array<int, array<string, mixed>> $payments
      */
-    private function summedOnInvoice(array $payments, string $invoiceId): ?int
+    private function summedOnInvoice(array $payments, string $invoiceId, string $currency = ''): ?int
     {
         if ($payments === []) {
             return null;
@@ -3205,7 +3314,7 @@ class SyncEngine
 
         $sum = 0;
         foreach ($payments as $remote) {
-            $amount = $this->amountOnInvoice($remote, $invoiceId);
+            $amount = $this->amountOnInvoice($remote, $invoiceId, $currency);
             if ($amount === null) {
                 return null;
             }
@@ -3222,9 +3331,9 @@ class SyncEngine
      *
      * @param array<string, mixed> $remote
      */
-    private function amountOnInvoice(array $remote, string $invoiceId): ?int
+    private function amountOnInvoice(array $remote, string $invoiceId, string $currency = ''): ?int
     {
-        $applied = $this->linkedLineCents($remote, $invoiceId);
+        $applied = $this->linkedLineCents($remote, $invoiceId, $currency);
         if ($applied !== null) {
             return $applied;
         }
@@ -3232,13 +3341,13 @@ class SyncEngine
             return null;
         }
 
-        return $this->majorUnits($remote['TotalAmt']);
+        return $this->majorUnits($remote['TotalAmt'], $currency);
     }
 
     /**
      * @param array<string, mixed> $remote
      */
-    private function linkedLineCents(array $remote, string $invoiceId): ?int
+    private function linkedLineCents(array $remote, string $invoiceId, string $currency = ''): ?int
     {
         $lines = $remote['Line'] ?? null;
         if (is_array($lines) === false || $invoiceId === '') {
@@ -3252,10 +3361,39 @@ class SyncEngine
                 continue;
             }
             $found = true;
-            $sum += $this->majorUnits($line['Amount'] ?? 0);
+            $sum += $this->majorUnits($line['Amount'] ?? 0, $currency);
         }
 
         return $found === true ? $sum : null;
+    }
+
+    /**
+     * A Fleetbase update sends one Invoice line and this invoice's amount as TotalAmt, and
+     * QuickBooks replaces the whole Line array. Credit memo lines, other invoices and an
+     * unapplied amount (customer credit) would be lost, so such a payment is left alone.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function paymentAppliesElsewhere(array $remote, string $invoiceId, string $currency = ''): bool
+    {
+        if ($this->paymentCoversOtherInvoices($remote, $invoiceId) === true) {
+            return true;
+        }
+        $lines = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
+        foreach ($lines as $line) {
+            $txns = is_array($line) === true && is_array($line['LinkedTxn'] ?? null) === true ? $line['LinkedTxn'] : [];
+            foreach ($txns as $txn) {
+                $type = is_array($txn) === true ? (string) ($txn['TxnType'] ?? '') : '';
+                if ($type !== '' && $type !== 'Invoice') {
+                    return true;
+                }
+            }
+        }
+        $applied = $this->linkedLineCents($remote, $invoiceId, $currency);
+
+        return $applied !== null
+            && array_key_exists('TotalAmt', $remote) === true
+            && $this->majorUnits($remote['TotalAmt'], $currency) > $applied;
     }
 
     /**
@@ -3338,7 +3476,13 @@ class SyncEngine
         return false;
     }
 
-    private function applyPaymentStatus(SyncLedger $ledger, string $uuid): void
+    /**
+     * A QuickBooks invoice with nothing left owing is paid, even when a discount made the amount
+     * paid smaller than the Fleetbase total.
+     *
+     * @param array<string, mixed>|null $remoteInvoice the QuickBooks invoice the payments came from
+     */
+    private function applyPaymentStatus(SyncLedger $ledger, string $uuid, ?array $remoteInvoice = null): void
     {
         $invoice = $ledger->invoices[$uuid];
         $status  = (string) ($invoice['status'] ?? '');
@@ -3346,10 +3490,12 @@ class SyncEngine
             return;
         }
 
-        $hasPaid = array_key_exists('amount_paid', $invoice);
-        $paid    = (int) ($invoice['amount_paid'] ?? 0);
-        $total   = (int) ($invoice['total'] ?? 0);
-        if ($total > 0 && $paid >= $total) {
+        $hasPaid  = array_key_exists('amount_paid', $invoice);
+        $paid     = (int) ($invoice['amount_paid'] ?? 0);
+        $total    = (int) ($invoice['total'] ?? 0);
+        $currency = (string) ($invoice['currency'] ?? '');
+        $settled  = $paid > 0 && $this->remoteSettled($remoteInvoice, $currency) === true;
+        if (($total > 0 && $paid >= $total) || $settled === true) {
             $ledger->invoices[$uuid]['status'] = 'paid';
 
             return;
@@ -3365,6 +3511,44 @@ class SyncEngine
                 $ledger->invoices[$uuid]['status'] = 'sent';
             }
         }
+    }
+
+    /**
+     * An invoice an earlier version left part-paid because a QuickBooks discount made the amount
+     * paid smaller than its total. The amount already matches, so only the status changes.
+     *
+     * @param array<string, mixed>|null $remoteInvoice
+     */
+    private function markSettledPaid(SyncLedger $ledger, string $uuid, ?array $remoteInvoice): ?string
+    {
+        $partial  = (string) ($ledger->invoices[$uuid]['status'] ?? '') === 'partial';
+        $currency = (string) ($ledger->invoices[$uuid]['currency'] ?? '');
+        if ($partial === false || $this->remoteSettled($remoteInvoice, $currency) === false) {
+            return null;
+        }
+        $ledger->invoices[$uuid]['status']                  = 'paid';
+        $ledger->invoices[$uuid]['payment_from_quickbooks'] = true;
+
+        return 'updated';
+    }
+
+    /**
+     * QuickBooks shows the invoice as fully paid: a balance of zero on a non-zero total.
+     *
+     * @param array<string, mixed>|null $remoteInvoice
+     */
+    private function remoteSettled(?array $remoteInvoice, string $currency): bool
+    {
+        if ($remoteInvoice === null) {
+            return false;
+        }
+        $total   = $remoteInvoice['TotalAmt'] ?? null;
+        $balance = $remoteInvoice['Balance'] ?? null;
+        if ($total === null || $total === '' || $balance === null || $balance === '') {
+            return false;
+        }
+
+        return $this->majorUnits($total, $currency) > 0 && $this->majorUnits($balance, $currency) === 0;
     }
 
     private function withPayment(string $outcome, ?string $paymentOutcome): string
@@ -3426,7 +3610,13 @@ class SyncEngine
                 return;
             }
             $retryError = $this->exceptionError($exception);
-            $outcome    = $this->failure($ledger, $connection, $row, $exception, $settings, $now);
+            if ($exception instanceof QuickBooksException) {
+                $type       = (string) $row['local_type'];
+                $uuid       = (string) $row['local_uuid'];
+                $nameTaken  = $this->customerNameTakenError($ledger, $type, $uuid, $exception->faultCode);
+                $retryError = $nameTaken ?? $retryError;
+            }
+            $outcome = $this->failure($ledger, $connection, $row, $exception, $settings, $now);
         }
         $connection = $ledger->connection($companyUuid) ?? $connection;
         $this->recordRow($ledger, $connection, $row, $outcome, $batch, $trigger, $retryError);
@@ -3720,7 +3910,12 @@ class SyncEngine
                         $settings,
                         $now
                     );
-                    $error = $this->batchItemAttemptError((string) ($result['error'] ?? ''), (int) ($result['status'] ?? 0));
+                    $code  = $this->batchFaultCode($result);
+                    $error = $this->customerNameTakenError($ledger, $kind, (string) $uuid, $code)
+                        ?? $this->batchItemAttemptError(
+                            (string) ($result['error'] ?? ''),
+                            (int) ($result['status'] ?? 0)
+                        );
                 } elseif (is_array($result['body'] ?? null) === true && ($result['body']['Id'] ?? '') !== '') {
                     $localType = $kind === 'wallet' ? 'wallet' : $kind;
                     $entity    = match ($kind) {
@@ -4634,6 +4829,16 @@ class SyncEngine
     }
 
     /**
+     * The Intuit fault code QuickBooksClient copies onto a refused batch item, or ''.
+     *
+     * @param array<string, mixed> $result
+     */
+    private function batchFaultCode(array $result): string
+    {
+        return is_scalar($result['code'] ?? null) === true ? (string) $result['code'] : '';
+    }
+
+    /**
      * @param array<string, mixed> $connection
      *
      * @return array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}>
@@ -4656,13 +4861,21 @@ class SyncEngine
      * @param array<string, mixed>                                                                 $connection
      * @param array{bId: string, operation: string, entity: string, payload: array<string, mixed>} $op
      *
-     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}
+     * @return array{
+     *     ok: bool,
+     *     body: array<string, mixed>,
+     *     rows: array<int, array<string, mixed>>,
+     *     error: string|null,
+     *     status: int,
+     *     halt: bool,
+     *     code?: string
+     * }
      */
     private function executeOneWrite(array $connection, array $op): array
     {
         try {
             $payload = $op['payload'];
-            $body    = match ($op['entity'] . ':' . $op['operation']) {
+            $body    = $this->client->withWriteKey($op['bId'], fn () => match ($op['entity'] . ':' . $op['operation']) {
                 'Customer:create' => $this->client->createCustomer($connection, $payload),
                 'Customer:update' => $this->client->updateCustomer($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
                 'Invoice:create'  => $this->client->createInvoice($connection, $payload),
@@ -4673,11 +4886,11 @@ class SyncEngine
                 'Account:create'  => $this->client->createAccount($connection, $payload),
                 'Account:update'  => $this->client->updateAccount($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
                 default           => throw new QuickBooksException(400, 'quickbooks.messages.batch-item-unsupported'),
-            };
+            });
 
             return ['ok' => true, 'body' => $body, 'rows' => [], 'error' => null, 'status' => 200, 'halt' => false];
         } catch (QuickBooksException $exception) {
-            return [
+            $result = [
                 'ok'     => false,
                 'body'   => [],
                 'rows'   => [],
@@ -4685,7 +4898,27 @@ class SyncEngine
                 'status' => $exception->status,
                 'halt'   => $exception->isUnauthorized() === true || $exception->isRateLimit() === true,
             ];
+            if ($exception->faultCode !== null && $exception->faultCode !== '') {
+                $result['code'] = $exception->faultCode;
+            }
+
+            return $result;
         }
+    }
+
+    /**
+     * QuickBooks fault 6240: the name is already used by another customer, a vendor or an
+     * employee (DisplayName is unique across all three). Intuit's own text does not say
+     * which customer or what to do, so this names the customer. Null for any other result.
+     */
+    private function customerNameTakenError(SyncLedger $ledger, string $kind, string $uuid, ?string $faultCode): ?string
+    {
+        if ($kind !== 'customer' || $faultCode !== self::DUPLICATE_NAME_FAULT) {
+            return null;
+        }
+        $name = CustomerMapper::displayName((string) ($ledger->customers[$uuid]['name'] ?? ''));
+
+        return Translation::encode('quickbooks.messages.customer-name-taken', ['name' => $name]);
     }
 
     /**
@@ -5214,6 +5447,26 @@ class SyncEngine
     }
 
     /**
+     * QuickBooks refuses the whole invoice when DocNumber is too long. Fail the row before
+     * sending, with a message that names the number.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function rejectLongDocNumber(array $payload): bool
+    {
+        $number = trim((string) ($payload['DocNumber'] ?? ''));
+        if (mb_strlen($number) <= self::DOC_NUMBER_MAX) {
+            return false;
+        }
+        $this->lastError = Translation::encode('quickbooks.messages.invoice-number-too-long', [
+            'number' => $number,
+            'max'    => (string) self::DOC_NUMBER_MAX,
+        ]);
+
+        return true;
+    }
+
+    /**
      * @param array<string, mixed> $payload
      * @param array<string, mixed> $remote
      */
@@ -5307,6 +5560,11 @@ class SyncEngine
             'outcome'      => $outcome,
             'error'        => $this->lastError ?? $retryError,
         ];
+        // A failure Fleetbase decided itself (lastError) is final for this data. A failure
+        // from QuickBooks was classified by failure(). A row that did not fail is not counted.
+        if ($outcome !== 'failed' || $this->lastError !== null) {
+            $this->notePermanence((string) $connection['company_uuid'], $row, $outcome === 'failed');
+        }
         $tracksPending = in_array($trigger, ['scheduled', 'now', 'manual', 'catalog'], true);
         if ($this->lastError !== null && $tracksPending === true) {
             $ledger->updatePending((string) $connection['company_uuid'], (string) $row['local_type'], (string) $row['local_uuid'], [

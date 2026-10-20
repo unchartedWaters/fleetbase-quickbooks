@@ -151,8 +151,8 @@ class FakeQuickBooks extends QuickBooksClient
         $record        = array_merge($this->invoices[$id] ?? [], $payload, [
             'Id'        => $id,
             'SyncToken' => (string) ((int) $syncToken + 1),
-            'TotalAmt'  => $this->lineTotal($payload),
         ]);
+        $record['TotalAmt']  = $this->lineTotal($payload, $record['TxnTaxDetail'] ?? null);
         $this->invoices[$id] = $record;
 
         return $record;
@@ -342,6 +342,9 @@ class FakeQuickBooks extends QuickBooksClient
                         'status' => $exception->status,
                         'halt'   => $halt,
                     ];
+                    if ($exception->faultCode !== null) {
+                        $results[$bId]['code'] = $exception->faultCode;
+                    }
                     if ($halt === true) {
                         return $results;
                     }
@@ -733,26 +736,39 @@ class FakeQuickBooks extends QuickBooksClient
     }
 
     /**
+     * Sales lines less discounts, plus the tax QuickBooks worked out itself (automated sales tax),
+     * which a payload without TxnTaxDetail leaves in place on an update.
+     *
      * @param array<string, mixed> $payload
      */
-    private function lineTotal(array $payload): string
+    private function lineTotal(array $payload, mixed $taxDetail = null): string
     {
         $cents = 0;
         foreach ($payload['Line'] ?? [] as $line) {
             if (is_array($line) === false) {
                 continue;
             }
+            $detail = (string) ($line['DetailType'] ?? '');
             // A subtotal repeats the sales lines above it. QuickBooks does not add it again.
-            if ((string) ($line['DetailType'] ?? '') === 'SubTotalLineDetail') {
+            if ($detail === 'SubTotalLineDetail') {
                 continue;
             }
-            $amount = $line['Amount'] ?? 0;
-            if (is_float($amount) === true) {
-                throw new \InvalidArgumentException('Money must not be a float.');
-            }
-            $cents += Amounts::toMinorUnits(is_int($amount) === true ? $amount : (string) $amount);
+            $amount = $this->minorUnits($line['Amount'] ?? 0);
+            $cents += $detail === 'DiscountLineDetail' ? -$amount : $amount;
+        }
+        if (is_array($taxDetail) === true) {
+            $cents += $this->minorUnits($taxDetail['TotalTax'] ?? 0);
         }
 
         return Amounts::centsToDecimal($cents);
+    }
+
+    private function minorUnits(mixed $amount): int
+    {
+        if (is_float($amount) === true) {
+            throw new \InvalidArgumentException('Money must not be a float.');
+        }
+
+        return Amounts::toMinorUnits(is_int($amount) === true ? $amount : (string) $amount);
     }
 }

@@ -48,6 +48,15 @@ class SettingsKeys
         return 'company.' . $companyUuid . '.quickbooks.auth';
     }
 
+    /**
+     * The QuickBooks company (realm) an organization last connected. It outlives a disconnect,
+     * so an Operator can reconnect that company but not a different one.
+     */
+    public static function companyLastRealm(string $companyUuid): string
+    {
+        return 'company.' . $companyUuid . '.quickbooks.last_realm';
+    }
+
     public static function adminAuth(): string
     {
         return 'system.quickbooks.auth';

@@ -202,6 +202,51 @@ test('reconnecting the same realm keeps the import cursor and the rate limit sta
     });
 });
 
+test('reconnecting clears the reconnect notice so a new failure after it notifies again', function () {
+    Illuminate\Support\Facades\Notification::fake();
+    Illuminate\Support\Facades\Cache::forget('quickbooks.reauth-notified.company-a');
+    $owner       = new Fleetbase\Models\User();
+    $owner->uuid = 'owner-uuid';
+    $directory   = new class($owner) extends FleetbaseDirectory {
+        public function __construct(private Fleetbase\Models\User $owner)
+        {
+        }
+
+        /** @param array<string, mixed> $connection */
+        public function tell(array $connection): void
+        {
+            $this->notifyReauth($connection);
+        }
+
+        protected function reauthRecipients(string $companyUuid): array
+        {
+            return [$this->owner];
+        }
+    };
+    $failed = ['company_uuid' => 'company-a', 'realm_id' => 'realm-1', 'needs_reauth' => true];
+
+    bgWithConnections(function () use ($directory, $failed) {
+        bgConnection('company-a', 'realm-1', ['needs_reauth' => true]);
+        $directory->tell($failed);
+
+        bgPersistController()->persistForTest([
+            'company_uuid' => 'company-a',
+            'realm_id'     => 'realm-1',
+            'environment'  => 'sandbox',
+            'needs_reauth' => false,
+        ]);
+
+        expect(Illuminate\Support\Facades\Cache::has('quickbooks.reauth-notified.company-a'))->toBeFalse();
+        $directory->tell($failed);
+    });
+
+    Illuminate\Support\Facades\Notification::assertSentToTimes(
+        $owner,
+        Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth::class,
+        2
+    );
+});
+
 function bgPersistController(): ConnectionController
 {
     return new class(new Authorizer(static fn () => true), new OAuthFlow(new QuickBooksClient()), new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()), new MemorySettingsStore(), new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {

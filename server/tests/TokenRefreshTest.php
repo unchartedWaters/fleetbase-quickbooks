@@ -461,3 +461,53 @@ function withBatchDispatcher(callable $callback): mixed
         }
     }
 }
+
+test('an idle connection with customer sync off is refreshed'
+. ' once its token was last refreshed over a week ago', function () {
+    $client                                 = new RefreshingQuickBooks();
+    [$tokens, $directory]                   = tokensWith($client);
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminSync()] = ['customer_enabled' => false];
+    // An access token lasts an hour, so its expiry is an hour after the last refresh.
+    refreshLedger($directory, time() - 8 * 86400 + 3600);
+    $runner = batchRunner($directory, $tokens, $client, $store);
+
+    expect($runner->isScheduledDue('company-uuid', time()))->toBeTrue();
+
+    withBatchDispatcher(fn () => $runner->run('company-uuid'));
+
+    expect($client->refreshes)->toBe(1)
+        ->and($directory->memory->connections['company-uuid']['refresh_token'])->toBe('new-refresh')
+        ->and($directory->memory->pending)->toBe([])
+        ->and($client->calls)->toBe([])
+        ->and($runner->isScheduledDue('company-uuid', time()))->toBeFalse();
+});
+
+test('an idle connection refreshed a day ago is not due for a token refresh', function () {
+    $client                                 = new RefreshingQuickBooks();
+    [$tokens, $directory]                   = tokensWith($client);
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminSync()] = ['customer_enabled' => false];
+    refreshLedger($directory, time() - 86400 + 3600);
+    $runner = batchRunner($directory, $tokens, $client, $store);
+
+    $result = withBatchDispatcher(fn () => $runner->run('company-uuid'));
+
+    expect($runner->isScheduledDue('company-uuid', time()))->toBeFalse()
+        ->and($result['status'])->toBe('skipped')
+        ->and($client->refreshes)->toBe(0);
+});
+
+test('a week-old token whose refresh fails for now is not tried again every minute', function () {
+    $client                                 = new RefreshingQuickBooks(new QuickBooksException(503, 'unavailable'));
+    [$tokens, $directory]                   = tokensWith($client);
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminSync()] = ['customer_enabled' => false];
+    refreshLedger($directory, time() - 8 * 86400 + 3600);
+    $runner = batchRunner($directory, $tokens, $client, $store);
+
+    withBatchDispatcher(fn () => $runner->run('company-uuid'));
+
+    expect($client->refreshes)->toBe(1)
+        ->and($runner->isScheduledDue('company-uuid', time()))->toBeFalse();
+});

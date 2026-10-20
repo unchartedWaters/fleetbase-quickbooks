@@ -16,8 +16,10 @@ class FetchStubService extends Service {
     legacyKeys = false;
     redirectUri = 'http://localhost:8000/quickbooks/int/v1/oauth/callback';
     posts = [];
+    gets = [];
 
-    async get() {
+    async get(path, query) {
+        this.gets.push([path, query]);
         return {
             connection: this.connection,
             ...(this.legacyKeys ? { client_id: 'client-id', client_secret_set: true } : {}),
@@ -37,7 +39,14 @@ class FetchStubService extends Service {
 
 class OperatorAbilitiesStubService extends Service {
     can(permission) {
-        return permission === 'quickbooks reconcile sync';
+        return ['quickbooks view sync', 'quickbooks reconcile sync'].includes(permission);
+    }
+}
+
+// Can see the sync status but not run Sync now.
+class ViewerAbilitiesStubService extends Service {
+    can(permission) {
+        return permission === 'quickbooks view sync';
     }
 }
 
@@ -153,7 +162,7 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
     });
 
     test('sync now stays disabled without the operator permission', async function (assert) {
-        this.owner.register('service:abilities', DeniedAbilitiesStubService);
+        this.owner.register('service:abilities', ViewerAbilitiesStubService);
         this.fetch.connection = { realm_id: '123', environment: 'sandbox' };
         this.fetch.credentialsConfigured = true;
 
@@ -162,6 +171,32 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         assert.dom('[data-test-sync-denied]').hasText('You do not have permission to run Sync now.');
         assert.dom('[data-test-widget-credentials-missing]').doesNotExist();
         assert.strictEqual(this.fetch.posts.length, 0);
+    });
+
+    test('a user without QuickBooks sync access is told so and the summary is not requested', async function (assert) {
+        this.owner.register('service:abilities', DeniedAbilitiesStubService);
+        this.fetch.connection = { realm_id: '123', environment: 'sandbox' };
+        this.fetch.credentialsConfigured = true;
+
+        await render(hbs`<Widget::QuickbooksSync />`);
+
+        assert.deepEqual(this.fetch.gets, []);
+        assert.dom('[data-test-widget-no-access]').hasText('You do not have permission to view the QuickBooks sync status.');
+        assert.dom('[data-test-widget-loading]').doesNotExist();
+        assert.dom('[data-test-widget-empty]').doesNotExist();
+        assert.dom('[data-test-widget-sync]').doesNotExist();
+        assert.dom('.quickbooks-icon-button').doesNotExist();
+        assert.dom().doesNotIncludeText('QuickBooks status is unavailable.');
+    });
+
+    test('a user with sync access loads the summary', async function (assert) {
+        this.owner.register('service:abilities', ViewerAbilitiesStubService);
+
+        await render(hbs`<Widget::QuickbooksSync />`);
+
+        assert.deepEqual(this.fetch.gets, [['summary', { company_uuid: 'company-uuid' }]]);
+        assert.dom('[data-test-widget-no-access]').doesNotExist();
+        assert.dom('[data-test-widget-subtitle]').hasText('Not connected');
     });
 
     test('a failed summary shows unavailable and does not say not connected', async function (assert) {

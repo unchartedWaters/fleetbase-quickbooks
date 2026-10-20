@@ -2,6 +2,7 @@
 
 use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 
@@ -64,7 +65,7 @@ test('a company is skipped when the interval has not elapsed the rate limit is a
 test('a 429 with retry after pauses the company and does not consume the retry count', function () {
     [$engine, $client]           = qbEngine();
     $client->failOnCreate        = 1;
-    $client->failWith            = new Fleetbase\Quickbooks\Support\QuickBooksException(429, 'slow down', '30');
+    $client->failWith            = new QuickBooksException(429, 'slow down', '30');
     $ledger                      = batchLedger();
     $ledger->customers['cust-1'] = customerRow('cust-1');
     $ledger->pending[]           = pendingRow('customer', 'cust-1');
@@ -80,7 +81,7 @@ test('a 429 with retry after pauses the company and does not consume the retry c
 test('a 429 without retry after pauses 60 seconds and a second 429 doubles it', function () {
     [$engine, $client]           = qbEngine();
     $client->failOnCreate        = 1;
-    $client->failWith            = new Fleetbase\Quickbooks\Support\QuickBooksException(429, 'slow down', null);
+    $client->failWith            = new QuickBooksException(429, 'slow down', null);
     $ledger                      = batchLedger();
     $ledger->customers['cust-1'] = customerRow('cust-1');
     $ledger->pending[]           = pendingRow('customer', 'cust-1');
@@ -103,7 +104,7 @@ test('a 429 without retry after pauses 60 seconds and a second 429 doubles it', 
 test('the rest of the chunk stays pending when a 429 arrives mid batch', function () {
     [$engine, $client]    = qbEngine();
     $client->failOnCreate = 2;
-    $client->failWith     = new Fleetbase\Quickbooks\Support\QuickBooksException(429, 'slow down', '30');
+    $client->failWith     = new QuickBooksException(429, 'slow down', '30');
     $ledger               = batchLedger();
     foreach (['cust-1', 'cust-2', 'cust-3'] as $uuid) {
         $ledger->customers[$uuid] = array_merge(customerRow($uuid), ['name' => 'Customer ' . $uuid, 'email' => $uuid . '@example.test']);
@@ -119,7 +120,7 @@ test('the rest of the chunk stays pending when a 429 arrives mid batch', functio
 test('a 401 mid batch stops the batch keeps the rows pending without using attempts and marks the connection for reauth', function () {
     [$engine, $client]    = qbEngine();
     $client->failOnCreate = 2;
-    $client->failWith     = new Fleetbase\Quickbooks\Support\QuickBooksException(401, qbRequestFailed(401));
+    $client->failWith     = new QuickBooksException(401, qbRequestFailed(401));
     $ledger               = batchLedger();
     foreach (['cust-1', 'cust-2', 'cust-3'] as $uuid) {
         $ledger->customers[$uuid] = array_merge(customerRow($uuid), ['name' => 'Customer ' . $uuid, 'email' => $uuid . '@example.test']);
@@ -151,7 +152,7 @@ test('a 401 mid batch stops the batch keeps the rows pending without using attem
 test('a timeout or http 500 uses the default backoff and does not set a rate limit', function () {
     [$engine, $client]           = qbEngine();
     $client->failOnCreate        = 1;
-    $client->failWith            = new Fleetbase\Quickbooks\Support\QuickBooksException(500, 'unavailable');
+    $client->failWith            = new QuickBooksException(500, 'unavailable');
     $ledger                      = batchLedger();
     $ledger->customers['cust-1'] = customerRow('cust-1');
     $ledger->pending[]           = pendingRow('customer', 'cust-1');
@@ -175,7 +176,7 @@ test('a timeout or http 500 uses the default backoff and does not set a rate lim
 test('retry delay doubles on each retry and the row fails only after those retries', function () {
     [$engine, $client]           = qbEngine();
     $client->failOnCreate        = 1;
-    $client->failWith            = new Fleetbase\Quickbooks\Support\QuickBooksException(500, 'unavailable');
+    $client->failWith            = new QuickBooksException(500, 'unavailable');
     $ledger                      = batchLedger();
     $ledger->customers['cust-1'] = customerRow('cust-1');
     $ledger->pending[]           = pendingRow('customer', 'cust-1');
@@ -222,7 +223,7 @@ test('retry delay doubles on each retry and the row fails only after those retri
 test('one retry attempt schedules a retry after the first failure', function () {
     [$engine, $client]           = qbEngine();
     $client->failOnCreate        = 1;
-    $client->failWith            = new Fleetbase\Quickbooks\Support\QuickBooksException(500, 'unavailable');
+    $client->failWith            = new QuickBooksException(500, 'unavailable');
     $ledger                      = batchLedger();
     $ledger->customers['cust-1'] = customerRow('cust-1');
     $ledger->pending[]           = pendingRow('customer', 'cust-1');
@@ -242,7 +243,7 @@ test('one retry attempt schedules a retry after the first failure', function () 
 test('a row past the retry limit is marked failed and skipped later', function () {
     [$engine, $client]              = qbEngine();
     $client->failOnCreate           = 1;
-    $client->failWith               = new Fleetbase\Quickbooks\Support\QuickBooksException(0, 'timeout');
+    $client->failWith               = new QuickBooksException(0, 'timeout');
     $ledger                         = batchLedger();
     $ledger->customers['cust-1']    = customerRow('cust-1');
     $ledger->pending[]              = pendingRow('customer', 'cust-1');
@@ -512,6 +513,53 @@ test('a block create fails when quickbooks does not confirm a free invoice numbe
         ->and(qbText($ledger->attempts[0]['error']))->toBe('QuickBooks did not confirm a free invoice number, so '
             . 'Fleetbase did not create this invoice.')
         ->and($ledger->invoices['inv-1']['number'])->toBe('LOCAL-1');
+});
+
+test('an invoice number another organization takes first fails once and the next run takes a new one', function () {
+    $client = new class extends FakeQuickBooks {
+        public bool $raced = false;
+
+        public function createInvoice(array $connection, array $payload): array
+        {
+            if ($this->raced === false) {
+                // Another organization on this QuickBooks company created this number first.
+                $this->raced                 = true;
+                $this->invoices['other-org'] = [
+                    'Id' => 'other-org', 'SyncToken' => '0', 'DocNumber' => $payload['DocNumber'], 'TotalAmt' => 1,
+                ];
+
+                throw new QuickBooksException(400, 'Duplicate Document Number Error', null, '6140');
+            }
+
+            return parent::createInvoice($connection, $payload);
+        }
+    };
+    $client->customTxnNumbers          = true;
+    $client->invoices['old']           = ['Id' => 'old', 'SyncToken' => '0', 'DocNumber' => 'INV-009', 'TotalAmt' => 1];
+    [$engine, $client]                 = qbEngine($client);
+    $ledger                            = batchLedger();
+    $ledger->customers['cust-1']       = customerRow('cust-1');
+    $ledger->links[]                   = linkRow('customer', 'cust-1', 'qbo-customer');
+    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada'];
+    $ledger->invoices['inv-1']         = invoiceFixture('inv-1', 1000, 'sent', 'LOCAL-1');
+    $ledger->pending[]                 = pendingRow('invoice', 'inv-1');
+    $settings                          = qbSettings(['interval_minutes' => 1, 'invoice_reference' => 'quickbooks']);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['failed'])->toBe(1)
+        ->and($ledger->pending[0]['status'])->toBe('pending')
+        ->and($ledger->invoices['inv-1']['number'])->toBe('LOCAL-1');
+
+    $ledger->connections['company-uuid']['last_batch_at'] = null;
+
+    $second = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 3600);
+    $docs   = array_column($client->invoices, 'DocNumber');
+
+    expect($second['created'])->toBe(1)
+        ->and($ledger->invoices['inv-1']['number'])->toBe('INV-011')
+        ->and($client->invoices['other-org']['DocNumber'])->toBe('INV-010')
+        ->and(count($docs))->toBe(count(array_unique($docs)));
 });
 
 test('quickbooks invoice numbers replace the fleetbase number', function () {

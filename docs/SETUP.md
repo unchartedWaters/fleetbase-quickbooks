@@ -21,13 +21,34 @@ screens without the surrounding Fleetbase console menus.
 ## What syncs
 
 - **Customers** — name, email, phone, notes, and billing address.
-- **Invoices** — number, dates, notes, currency, tax, total, and the sales-item lines Fleetbase understands (description, quantity, unit price, and amount). Draft invoices are sent after they leave draft. QuickBooks products, discounts, and other line types are not copied back.
-- **Payments** — a payment for a paid Fleetbase invoice. Amount and date are compared when a payment already exists. The payload includes `TxnDate`. A QuickBooks payment that also applies to other invoices is left unchanged.
+- **Invoices** — number, dates, notes, currency, tax, total, and the sales-item
+  lines Fleetbase understands (description, quantity, unit price, and amount).
+  Draft invoices are sent after they leave draft. QuickBooks products,
+  discounts, and other line types are not copied back. A discount added in
+  QuickBooks, and tax that QuickBooks works out itself (`TxnTaxDetail`, such as
+  automated sales tax), stay on the QuickBooks invoice. Fleetbase cannot change
+  them, so they are left out when the totals are compared and do not cause
+  another update. When QuickBooks shows such an invoice as fully paid (no
+  balance left), its Fleetbase status is paid, although the amount paid is less
+  than the Fleetbase total.
+- **Payments** — a payment for a paid Fleetbase invoice. Amount and date are
+  compared when a payment already exists. The payload includes `TxnDate`: the
+  day the invoice was paid in the organization's timezone (the app timezone when
+  the organization has none). A part-paid invoice has no paid date in Ledger, so
+  the day of its last recorded payment is used. When Ledger recorded none, the
+  invoice date is used for a new payment, and the date of an existing QuickBooks
+  payment is not compared or changed. A QuickBooks payment that also applies
+  credits (a credit memo or an unapplied amount) or other invoices is left
+  unchanged, because an update from Fleetbase would replace its lines; change it
+  in QuickBooks.
 - **Wallets** — a QuickBooks account (`Other Current Asset`). Fleetbase sends the wallet public ID as `AcctNum` only when that ID is 7 characters or fewer. Longer public IDs, such as `wallet_` plus 10 characters, are not sent. If the link is lost, a unique account with the same name and currency is reattached instead of creating a duplicate. When QuickBooks is primary, the account name and `AcctNum` are copied onto the wallet.
 
 Unknown QuickBooks invoices are not imported. An invoice is synced from QuickBooks only when this Fleetbase organization already has that invoice or a `quickbooks_links` row for it. The webhook event is still dispatched for those invoices.
 
 Money is stored as integer minor units. QuickBooks major-unit amounts are converted with `Amounts::toMinorUnits` before they are saved, and a PHP float is rejected. Unit price on an invoice line is an integer minor-unit value. When it is sent to QuickBooks it is formatted as a decimal string, not a float.
+
+Zero-decimal currencies such as JPY, KRW and CLP (`Amounts::ZERO_DECIMAL`) are
+stored in whole units, as Fleetbase does: ¥5,000 is sent as `5000.00`.
 
 ## Create a QuickBooks app
 
@@ -170,9 +191,20 @@ from `server/src/Auth/Schemas/Quickbooks.php`.
 | QuickBooks Operator (`QuickbooksOperator`) | `quickbooks see extension`, `quickbooks view`, `connect`, `disconnect` and `import-customers connection`, `quickbooks view settings`, `quickbooks view sync`, `quickbooks reconcile sync` |
 
 `quickbooks see extension` opens QuickBooks Setup. Sync now authorizes as
-`quickbooks reconcile sync`. Global settings (Admin → QuickBooks → Settings)
-need an installation administrator; no role grants them. Installation
-administrators bypass all of these checks.
+`quickbooks reconcile sync`.
+
+A QuickBooks Operator can connect again only to the QuickBooks company the
+organization already uses: the realm of its connection or, after a
+disconnect, the realm it last connected (remembered in the organization's
+settings; for a connection made before this was remembered, the realm on its
+kept links). Connecting a different company, or a
+first connection, needs `quickbooks change-company connection`, which the
+Administrator gets from `quickbooks * connection`. Otherwise finishing the
+connection returns HTTP 403, and nothing is saved or queued. On an existing
+install, run `php artisan fleetbase:create-permissions` so the new permission
+exists; the Administrator's wildcard already covers it. Global settings
+(Admin → QuickBooks → Settings) need an installation administrator; no role
+grants them. Installation administrators bypass all of these checks.
 
 ### Enable and sync direction
 
@@ -239,6 +271,14 @@ Keys come from [developer.intuit.com](https://developer.intuit.com) → your app
 
 The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The internal webhook path is `/quickbooks/int/v1/webhooks`. Admin → QuickBooks → Settings shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver URL stay editable and are saved on the install-wide settings row. Paste the public OAuth URL into Intuit Redirect URIs and the public webhook URL into the Intuit Endpoint URL. A blank public URL is shown as the matching internal URL.
 
+A new or changed public URL is checked when you save: it must be `https://` and
+its host must resolve to a public address. If it fails, the save is refused
+with an error under that field, and nothing from that save is stored. A saved
+URL sent back unchanged is kept without a new DNS lookup, so a resolver outage
+does not remove it. Clearing the field removes the saved URL. Connect sends
+Intuit the redirect URL in use when it started, and finishing the connection
+uses that same URL even if the setting changed in between.
+
 The Connection card on QuickBooks Setup shows only the actions that apply.
 Before a company is connected it offers **Connect to QuickBooks**. Once
 connected it offers **Sync now** and **Disconnect**. When QuickBooks must be
@@ -285,8 +325,10 @@ not queue another run straight away). The same refresh-and-retry applies when
 QuickBooks answers a batch with an authentication fault on every item instead of
 HTTP 401; a batch where only some items were refused is not repeated, so the
 accepted items are not written twice. A large batch is sent in chunks; when a
-later chunk is refused, the earlier chunks' results are kept and the refused and
-remaining items are retried on the next run. Copying QuickBooks customers on
+later chunk fails (refused, rate limited, a server error or a timeout), the
+earlier chunks' results and links are kept and the failed and remaining items
+are retried on a later run. A rate limit there still pauses the organization's
+sync. Copying QuickBooks customers on
 connect runs only when Customers is enabled in Data Resolution. If Customers is
 off, the import is skipped. An import does not run while a sync is running.
 
@@ -309,8 +351,17 @@ still waits until Sync frequency (`interval_minutes`, default 5) has elapsed
 after `last_batch_at`, unless 20 or more rows are already due. A first sync,
 with no `last_batch_at`, can start from one due row. After a run that queues
 work, the command holds the next start for 60 seconds.
+The scheduler's overlap lock on `quickbooks:sync` expires after 10 minutes
+(120 for `quickbooks:prune`), so a scheduler killed mid-run does not block
+scheduled runs for a day.
 
 An organization with nothing due does not sync. The schedule does not read a stored batch size. Each run still stops after one page. That page is the stored `batch_size` when an older settings row has one, otherwise 100. The settings form does not send `batch_size`.
+
+Intuit's refresh token lapses after about 100 days without use. A connection
+whose access token expired more than 7 days ago therefore gets a scheduled run
+even with nothing due and Customers off; with nothing pending, that run only
+refreshes the token. If that refresh fails for now, it is tried again an hour
+later.
 
 **Sync now** is on QuickBooks Setup. It uses the pending queue and does not load
 the whole organization. It processes one pending page and does not drain the
@@ -321,14 +372,29 @@ invoices already in this Fleetbase organization: a local non-draft invoice, or a
 `quickbooks_links` row for this organization whose local type is invoice. It
 does not list every invoice in the QuickBooks company.
 
-QuickBooks update operations are posted in chunks of 20. Queries, creates, and voids are posted in chunks of at most 30.
+QuickBooks update operations are posted in chunks of 20. Queries, creates, and
+voids are posted in chunks of at most 30. Updates and the other items are
+grouped separately, so new and edited invoices in one run share a few chunks
+instead of each starting a new one. Every write (and every batch with a write)
+carries Intuit's `requestid`, a hash of the company, the request and the UTC
+day. A write that timed out after QuickBooks saved it is then answered with the
+saved record when the same payload is sent again that day, instead of being
+saved twice. Reads carry none.
 
 Sync frequency is minutes (`interval_minutes`, default 5). Full sync frequency
 (hours) (`periodic_interval_hours`, default 24) limits only the customer
-catalog, and that catalog is skipped when Customers is unchecked. Customer
+catalog, and that catalog is skipped when Customers is unchecked. The catalog
+walks the customers one page at a time. A page moves on when each customer on
+it synced, or QuickBooks refused it for its data (for example a duplicate
+name). A refused customer is a failed Activity row and is tried again on the
+next full sync. A page with a failure that can pass on retry (rate limit,
+QuickBooks server error, QuickBooks not reached) is sent again. Customer
 import reads QuickBooks in pages of at most 100 records and stores the next
 start in `quickbooks_connections.customer_import_start`, so a run that stops at
-the 600 second organization lock continues there.
+the 600 second organization lock continues there. The start is stored only
+after the imported customers are saved, and the customers and their links are
+saved together, so a worker that stops before the save imports those pages
+again.
 
 Sync now with no connection returns HTTP 422 and does not save an activity row. The console shows that error. A stored realm that needs reconnect returns HTTP 422 and saves a skipped activity row.
 
@@ -338,6 +404,10 @@ Activity rows show created, updated, aligned, linked, skipped, unmatched, voided
 and counts; a failed run shows its error under the row][activity]
 
 The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires `quickbooks reconcile sync` or an installation administrator, plus a connection and a saved Client ID and Client secret. It does not require a Redirect URI. OAuth connect still needs the public https redirect.
+
+The widget reads its status only for users with `quickbooks view sync` (both
+QuickBooks roles) or installation administrators. Other Ledger users see a
+short no-permission note instead, and the widget makes no QuickBooks request.
 
 ![QuickBooks Sync widget: Connected, last sync time, records waiting,
 and Sync now][dashboard-widget]
@@ -358,13 +428,40 @@ retry of the same body is processed. While a delivery is being processed its
 body is remembered for 120 seconds only, so a worker that dies mid-request does
 not block Intuit's retry; a repeat that arrives during processing gets HTTP 409,
 so Intuit retries it. Once processed, an exact repeat is answered HTTP 200 and
-not applied again for `quickbooks.webhook.max_age_seconds` (default 600). A
-delivery whose event `time` (or `lastUpdated` in the older format) is older than
-that age is answered HTTP 200 and not applied, whether or not its realm is
-connected, and a warning is logged. These answer 200 because Intuit retries any
-other answer for days and may hold back later deliveries until the first one is
-acknowledged. The request itself does not call QuickBooks: payment lookups run
-in the queued job `ResolveWebhookPayments`, so queue workers must be running.
+not applied again for `quickbooks.webhook.stale_replay_seconds` (default
+604800, 7 days, and never less than `quickbooks.webhook.max_age_seconds`), so a
+captured body cannot be replayed later as a stale one.
+
+A delivery whose event `time` (or `lastUpdated` in the older format) is older
+than `quickbooks.webhook.max_age_seconds` (default 600) is stale. Intuit can
+deliver late, so a stale delivery is still used, but only to read the current
+record: its creates and updates make Fleetbase read that record from QuickBooks
+as usual, while its deletes, voids and merged-away records are not applied, and
+a warning is logged. Reading the record back cannot stand in for those: a
+deleted or merged-away record reads as gone, a voided invoice reads as an
+invoice with no lines, and the record may have been restored since. The
+surviving record of a merge is still read. A delivery older than the replay
+window is answered HTTP 200 and not applied at all. Set the window to 0 (or
+anything up to the maximum age) to apply no stale delivery, as before. Stale and
+too-old deliveries answer 200 whether or not their realm is connected, because
+Intuit retries any other answer for days and may hold back later deliveries
+until the first one is acknowledged. The request itself does not call
+QuickBooks: payment lookups run in the queued job `ResolveWebhookPayments`, so
+queue workers must be running.
+
+Intuit does not send a delivery again once it got HTTP 200, so the queued jobs
+that read QuickBooks (`ApplyRemoteChange` and `ResolveWebhookPayments`) queue
+themselves again when QuickBooks answers HTTP 429 or 5xx, or does not answer.
+After a 429 the job waits for Intuit's `Retry-After` (or twice the last
+rate-limit wait, or 60 seconds) and stores that wait on the connection, so the
+scheduled sync waits too. After a 5xx or no answer it waits 30 seconds, doubled
+on each retry. While the connection is rate limited the jobs do not call
+QuickBooks; they queue themselves for after the wait. Each queued retry wakes up
+to a tenth of its wait later (at most 60 seconds), so jobs held by one rate
+limit do not all call QuickBooks at the same moment. After 5 retries the change
+is dropped, a warning is logged, and Activity shows a failed webhook sync: save
+the record in QuickBooks again to send it again. Laravel's own retries stay off
+(`$tries = 1`). Other QuickBooks errors are not retried.
 
 Intuit sends a JSON array of CloudEvents. Each event's `type` names the entity
 and event (for example `qbo.invoice.updated.v1`), `intuitentityid` is the
@@ -437,19 +534,54 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   Primary, whether or not multi-currency is on. With multi-currency on,
   QuickBooks applies its own exchange rate because no `ExchangeRate` is sent.
   Invoices that were posted in the home currency by an earlier version stay
-  aligned until a push is attempted.
-- **Invoice numbers.** With `invoice_reference=quickbooks`, a QuickBooks DocNumber that another Fleetbase invoice (any organization) already uses is not copied. The invoice keeps its number and the Activity row shows a note. The note repeats on each sync until the duplicate is resolved.
+  aligned until a push is attempted. Earlier versions sent zero-decimal
+  currency amounts (such as JPY) at 1/100; check those invoices in QuickBooks.
+- **Invoice numbers.** With `invoice_reference=quickbooks`, a QuickBooks
+  DocNumber that another Fleetbase invoice (any organization) already uses is
+  not copied. The invoice keeps its number and the Activity row shows a note.
+  The note repeats on each sync until the duplicate is resolved. QuickBooks
+  accepts at most 21 characters in an invoice number, so a longer number (for
+  example from a long Ledger invoice prefix) is not sent: the row fails with a
+  message naming the number. With QuickBooks numbering, two organizations on the
+  same QuickBooks company can reserve the same next number at the same moment.
+  QuickBooks rejects a duplicate invoice number by default (Fleetbase never asks
+  it to allow one), so the later create fails once and the next sync reserves a
+  new number.
 - **Quantities.** Fleetbase invoice line quantities are whole numbers. A fractional QuickBooks quantity imports as 1 unit at the line amount.
-- **Tax.** Invoice tax is sent as an ordinary sales line whose description is `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No `TxnTaxDetail` or tax code is sent. A QuickBooks company that uses automated sales tax can show different tax and totals than Fleetbase. On the way back, only that synthetic line is read as tax.
-- **Partial payments.** An invoice has at most one QuickBooks Payment from this package. Partial and later payments are not created as separate Payments. The one Payment is created with the amount recorded as paid on the Fleetbase invoice (its total when the invoice is paid and no amount is recorded) and is updated when that amount changes (`SyncEngine::syncPayment`). If an invoice has more than one QuickBooks payment, or the payment also applies to other invoices, Fleetbase leaves them unchanged and the row is skipped.
+- **Tax.** Invoice tax is sent as an ordinary sales line whose description is
+  `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No
+  `TxnTaxDetail` or tax code is sent. A QuickBooks company that uses automated
+  sales tax can show different tax and totals than Fleetbase. That difference,
+  like a QuickBooks discount, is left out when Fleetbase compares totals
+  (`InvoiceMapper::quickbooksAdjustmentCents`), so it does not cause an update
+  on every sync. On the way back, only that synthetic line is read as tax.
+- **Partial payments.** An invoice has at most one QuickBooks Payment from this
+  package. Partial and later payments are not created as separate Payments. The
+  one Payment is created with the amount recorded as paid on the Fleetbase
+  invoice (its total when the invoice is paid and no amount is recorded) and is
+  updated when that amount changes (`SyncEngine::syncPayment`). If an invoice
+  has more than one QuickBooks payment, or the payment also applies credits (a
+  credit memo or an unapplied amount) or other invoices, Fleetbase leaves them
+  unchanged and the row is skipped.
 - **Wallets.** Each Fleetbase wallet becomes one QuickBooks chart-of-accounts entry (`Other Current Asset`).
 - **Shared QuickBooks company.** Several Fleetbase organizations can connect to the same QuickBooks company (realm). `quickbooks_connections` is unique per organization, not per realm, and a webhook for a realm is applied to every organization connected to it (`WebhookController`). Intuit app credentials, the redirect, and the webhook verifier are install-wide, so every organization on the install uses the same Intuit app.
 - **Links.** `quickbooks_links` holds links for customers, invoices, and wallets, and also for payments. A payment link is keyed by the Fleetbase invoice uuid, or by the QuickBooks payment id when the payment was found in QuickBooks.
 - **Customer matching.** A Fleetbase customer is matched to an existing QuickBooks customer by email first, then by display name. When Primary is Fleetbase, a name match is rejected if both sides have an email and the emails differ, so that customer is not matched. Names are the only key when there is no email, so two different customers with the same name are treated as one.
+- **Customer names.** QuickBooks does not accept a colon, tab or line break in
+  a customer's display name. Fleetbase sends a colon as `-` and a tab or line
+  break as a space, and compares names the same way. The Fleetbase name is not
+  changed. A display name is unique across QuickBooks customers, vendors and
+  employees, so a name one of them already uses fails with a message that names
+  the customer.
 
 ## Overlapping syncs and history
 
 A running sync leases the pending rows it loaded (`claimed_until`, `claimed_by` on `quickbooks_pending_syncs`) so a second run, such as the one a webhook starts while the first is waiting on QuickBooks, cannot send the same row again. A lease left by a killed worker expires after `quickbooks.sync.claim_seconds` (default 900; keep it above the 570 second job timeout). Run the migrations before enabling more than one queue worker; until the columns exist, runs work but are not protected against overlap. A Fleetbase change flagged while its row is leased marks the lease (`claimed_by` gets a `reflag:` prefix), so the running sync leaves that row pending (still recording the attempt and backoff) and the next run sends the new change. A mark left by a run that died stops counting once its lease expires.
+
+When a run cannot save its results (a database error), its leased rows still
+get one more attempt and the normal backoff, the lease is released, and
+Activity shows a failed run. A save error that keeps happening therefore stops
+at the retry limit like any other failure.
 
 A sync saves its links first, in their own transaction, then the pending rows, attempts and Fleetbase records together. If the second part fails, the links to records already created in QuickBooks are kept, the rows stay pending, and the retry updates those records instead of creating them again.
 
@@ -460,7 +592,11 @@ A company with no QuickBooks connection is looked up at most once per 30 seconds
 ## Requirements and install
 
 This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`,
-`fleetbase/fleetops-api` `^0.6.73`, and `fleetbase/ledger-api` `^0.0.13`.
+`fleetbase/fleetops-api` `^0.6.73`, and `fleetbase/ledger-api`
+`>=0.0.13 <0.1`. The Ledger range is open to later `0.0.x` releases on purpose:
+Fleetbase raises its own Ledger requirement with each Ledger release, and a
+narrower range would stop `composer require` (and the Docker start-up script)
+from installing this package next to it.
 The Ember engine needs Node `>= 22`.
 
 From the Fleetbase directory, install the extension from the Fleetbase registry:
@@ -472,6 +608,25 @@ flb install @unchartedwaters/quickbooks-engine
 Pass `--path` with the Fleetbase directory when that directory is not the current one. `flb install` looks the package up on `https://api.fleetbase.io/~registry/v1/lookup` and installs `@unchartedwaters/quickbooks-engine` and `unchartedwaters/quickbooks-api`.
 
 `.github/workflows/deploy.yml` publishes this package to the Fleetbase registry with `flb publish` when a `v*` tag is pushed. The tag has to contain that workflow, and the GitHub secrets named in it have to exist.
+
+It publishes only when the tagged commit is on `main` and the PHP and Ember
+test workflows it calls (`server.yml`, `ember.yml`) pass.
+
+When upgrading from 0.0.2, also check these one-time effects first:
+
+- Invoices in currencies Fleetbase keeps in whole units (such as JPY or KRW)
+  were sent to QuickBooks at 1/100 of their amount. Where Fleetbase is Primary
+  for invoices and payments, the next sync corrects QuickBooks. Where QuickBooks
+  is Primary, the next sync would copy the 1/100 amounts into Fleetbase, so set
+  invoices and payments to Fleetbase Primary until those invoices have synced
+  once, or correct the amounts in QuickBooks before upgrading.
+- QuickBooks payments are now dated with the organization's own day (from its
+  timezone), and a part payment with the day Ledger recorded it rather than the
+  invoice date. Where Fleetbase is Primary for payments, existing QuickBooks
+  payments whose date differs are updated once to the corrected date, including
+  payments in a period already closed in QuickBooks.
+- Run `php artisan fleetbase:create-permissions` for the new
+  `quickbooks change-company connection` permission.
 
 As an installation administrator, open Admin → QuickBooks → Settings and save
 the Intuit Client ID and Client secret. Then open Organization settings →

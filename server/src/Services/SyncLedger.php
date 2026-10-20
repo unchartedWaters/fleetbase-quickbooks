@@ -386,6 +386,25 @@ class SyncLedger
     }
 
     /**
+     * A run that stopped before it synced anything, recorded as failed with its reason.
+     *
+     * @return array<string, mixed>
+     */
+    public function fail(string $companyUuid, string $trigger, string $direction, string $message, int $now): array
+    {
+        $batch            = array_merge($this->skip($companyUuid, $trigger, $direction, $message, $now), [
+            'status' => 'failed',
+            'failed' => 1,
+        ]);
+        $attempt          = array_merge((array) array_pop($this->attempts), ['outcome' => 'failed']);
+        $this->attempts[] = $attempt;
+        array_pop($this->batches);
+        $this->batches[] = $batch;
+
+        return $batch;
+    }
+
+    /**
      * @param array<string, mixed> $changes
      */
     public function updatePending(string $companyUuid, string $localType, string $localUuid, array $changes): void

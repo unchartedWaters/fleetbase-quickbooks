@@ -15,6 +15,8 @@ class OAuthFlow
 
     private const INVALID_LINK_MESSAGE = 'quickbooks.messages.oauth-invalid-link';
 
+    public const CHANGE_COMPANY_MESSAGE = 'quickbooks.messages.oauth-change-company';
+
     public function __construct(private QuickBooksClient $client)
     {
     }
@@ -28,10 +30,13 @@ class OAuthFlow
     {
         $state    = bin2hex(random_bytes(16));
         $verifier = $this->codeVerifier();
+        // Intuit requires the token request to repeat the redirect_uri sent here exactly,
+        // so complete() uses this one even if the saved URL changes in between.
         Cache::put($this->key($state), [
             'company_uuid'  => $companyUuid,
             'user_uuid'     => $userUuid,
             'code_verifier' => $verifier,
+            'redirect_uri'  => $credentials['redirect_uri'],
             'expires_at'    => time() + 600,
         ], 600);
 
@@ -74,12 +79,21 @@ class OAuthFlow
     }
 
     /**
+     * $realmAllowed sees the QuickBooks company (realm) Intuit returned before the code is
+     * exchanged. When it says no, the handle is dropped and no token is requested.
+     *
      * @param array{client_id: string, client_secret: string, redirect_uri: string, environment: string} $credentials
+     * @param (callable(string): bool)|null                                                              $realmAllowed
      *
      * @return array<string, mixed>|null null when the same user already completed this handle
      */
-    public function complete(string $handle, string $companyUuid, string $userUuid, array $credentials): ?array
-    {
+    public function complete(
+        string $handle,
+        string $companyUuid,
+        string $userUuid,
+        array $credentials,
+        ?callable $realmAllowed = null,
+    ): ?array {
         $key    = $this->key($handle);
         $stored = Cache::get($key);
 
@@ -101,24 +115,11 @@ class OAuthFlow
         if (isset($stored['code']) === false) {
             throw new QuickBooksException(400, self::INVALID_LINK_MESSAGE);
         }
-
-        try {
-            $tokens = $this->client->exchangeCode($credentials, (string) $stored['code'], $this->storedVerifier($stored));
-        } catch (QuickBooksException $exception) {
-            throw new QuickBooksException($exception->status, self::CONNECT_FAILED_MESSAGE);
+        if ($realmAllowed !== null && $realmAllowed((string) $stored['realm_id']) !== true) {
+            throw new QuickBooksException(403, self::CHANGE_COMPANY_MESSAGE);
         }
 
-        $connection = [
-            'company_uuid'    => $stored['company_uuid'],
-            'realm_id'        => (string) $stored['realm_id'],
-            'access_token'    => $tokens['access_token'],
-            'refresh_token'   => $tokens['refresh_token'],
-            'token_expires_at'=> time() + $tokens['expires_in'],
-            'environment'     => $credentials['environment'],
-            'needs_reauth'    => false,
-        ];
-
-        $connection = $this->withCompanyDetails($connection);
+        $connection = $this->withCompanyDetails($this->exchange($stored, $credentials));
 
         // A reload of the console keeps ?oauth_state in the URL and calls complete() again.
         Cache::put($key, [
@@ -128,6 +129,34 @@ class OAuthFlow
         ], 600);
 
         return $connection;
+    }
+
+    /**
+     * Trade the stored code for tokens, sending the redirect_uri saved when the flow began.
+     *
+     * @param array<string, mixed>                                                                       $stored
+     * @param array{client_id: string, client_secret: string, redirect_uri: string, environment: string} $credentials
+     *
+     * @return array<string, mixed>
+     */
+    private function exchange(array $stored, array $credentials): array
+    {
+        $credentials = $this->withStartedRedirect($credentials, $stored);
+        try {
+            $tokens = $this->client->exchangeCode($credentials, (string) $stored['code'], $this->storedVerifier($stored));
+        } catch (QuickBooksException $exception) {
+            throw new QuickBooksException($exception->status, self::CONNECT_FAILED_MESSAGE);
+        }
+
+        return [
+            'company_uuid'    => $stored['company_uuid'],
+            'realm_id'        => (string) $stored['realm_id'],
+            'access_token'    => $tokens['access_token'],
+            'refresh_token'   => $tokens['refresh_token'],
+            'token_expires_at'=> time() + $tokens['expires_in'],
+            'environment'     => $credentials['environment'],
+            'needs_reauth'    => false,
+        ];
     }
 
     /**
@@ -177,6 +206,24 @@ class OAuthFlow
     private function codeChallenge(string $verifier): string
     {
         return rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
+    }
+
+    /**
+     * A state saved before the redirect_uri was kept with it uses the current one.
+     *
+     * @param array{client_id: string, client_secret: string, redirect_uri: string, environment: string} $credentials
+     * @param array<string, mixed>                                                                       $stored
+     *
+     * @return array{client_id: string, client_secret: string, redirect_uri: string, environment: string}
+     */
+    private function withStartedRedirect(array $credentials, array $stored): array
+    {
+        $redirect = $stored['redirect_uri'] ?? null;
+        if (is_string($redirect) === true && $redirect !== '') {
+            $credentials['redirect_uri'] = $redirect;
+        }
+
+        return $credentials;
     }
 
     /**

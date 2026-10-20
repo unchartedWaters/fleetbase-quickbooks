@@ -10,11 +10,14 @@ use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
+use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
+use Fleetbase\Quickbooks\Support\LedgerPaymentDates;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Fleetbase\Quickbooks\Support\Translation;
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -68,6 +71,11 @@ class FleetbaseDirectory
      * @var array<int, string>
      */
     private array $claimTokens = [];
+
+    /**
+     * Set by saveImport(): links and records commit in one transaction.
+     */
+    private bool $linksWithRecords = false;
 
     /**
      * Rows as loadLedger() read them, so save() writes only what the engine changed.
@@ -346,6 +354,22 @@ class FleetbaseDirectory
         }
     }
 
+    /**
+     * Save a customer import. Its links point at Fleetbase customers created by this same
+     * save, not at records this run created in QuickBooks, so they commit together with
+     * those customers: a failed customer write leaves no link to a customer that does not
+     * exist (which would show that QuickBooks customer as linked for good).
+     */
+    public function saveImport(SyncLedger $ledger): void
+    {
+        $this->linksWithRecords = true;
+        try {
+            $this->save($ledger);
+        } finally {
+            $this->linksWithRecords = false;
+        }
+    }
+
     private function write(SyncLedger $ledger): void
     {
         $this->stampOwnedCompanies($ledger);
@@ -364,7 +388,16 @@ class FleetbaseDirectory
         // Pending rows, attempts and the Fleetbase rows then land together or not at all: a
         // failure leaves the rows pending, and the retry updates through the kept links.
         // Connection rows above stay outside: tokens and rate-limit state are saved either way.
+        // A customer import has created nothing in QuickBooks, so see saveImport().
         $database = (new Link())->getConnection();
+        if ($this->linksWithRecords === true) {
+            $database->transaction(function () use ($ledger, $skipped): void {
+                $this->writeLinks($ledger, $skipped);
+                $this->writeRecords($ledger, $skipped);
+            });
+
+            return;
+        }
         $database->transaction(function () use ($ledger, $skipped): void {
             $this->writeLinks($ledger, $skipped);
         });
@@ -782,6 +815,39 @@ class FleetbaseDirectory
     }
 
     /**
+     * Record a run that stopped before it synced anything as failed, with its reason.
+     */
+    public function saveFailed(string $companyUuid, string $trigger, string $direction, string $message): void
+    {
+        $ledger = $this->memory ?? new SyncLedger();
+        $ledger->fail($companyUuid, $trigger, $direction, $message, time());
+        $this->save($ledger);
+    }
+
+    /**
+     * Persist the rate limit QuickBooks asked for on this connection right away.
+     *
+     * @param array<string, mixed> $connection
+     */
+    public function saveRateLimit(array $connection): void
+    {
+        $fields = ['rate_limited_until', 'last_rate_limit_wait'];
+        if ($this->memory !== null) {
+            $companyUuid = (string) ($connection['company_uuid'] ?? '');
+            if (isset($this->memory->connections[$companyUuid]) === true) {
+                $limit   = array_intersect_key($connection, array_flip($fields));
+                $current = $this->memory->connections[$companyUuid];
+
+                $this->memory->connections[$companyUuid] = array_merge($current, $limit);
+            }
+
+            return;
+        }
+
+        $this->updateConnection($connection, $fields);
+    }
+
+    /**
      * @param array<string, mixed> $row
      * @param array<int, string>   $fields
      *
@@ -1085,8 +1151,117 @@ class FleetbaseDirectory
             }
             PendingSync::query()->whereIn('claimed_by', $held)->update(['claimed_by' => null, 'claimed_until' => null]);
         } catch (\Throwable $exception) {
-            SafeLog::warning('QuickBooks could not release its pending-row lease; it will expire on its own.', ['error' => $exception->getMessage()]);
+            SafeLog::warning(
+                'QuickBooks could not release its pending-row lease; it will expire on its own.',
+                ['exception' => $exception::class]
+            );
         }
+    }
+
+    /**
+     * save() threw, so nothing of this run's pending rows, attempts or batch was stored. Give
+     * the rows this run leased one more attempt and the normal backoff, release them, and
+     * record a failed batch. Without this a save error that repeats would send the same rows
+     * again each time the lease expires, with no attempt count and nothing in Activity.
+     * Each step is a separate small write, and none of them throws.
+     *
+     * @param array<string, mixed> $settings resolved sync settings (retry_limit, default_backoff_seconds)
+     */
+    public function recoverFailedSave(string $companyUuid, string $trigger, array $settings, int $now): void
+    {
+        if ($this->memory !== null) {
+            $this->releaseClaims();
+
+            return;
+        }
+
+        $deferred = 0;
+        try {
+            $deferred = $this->deferClaimedRows($settings, $now);
+        } catch (\Throwable $exception) {
+            SafeLog::warning(
+                'QuickBooks could not back off pending rows after a failed save.',
+                ['company_uuid' => $companyUuid, 'exception' => $exception::class]
+            );
+        }
+        $this->releaseClaims();
+
+        try {
+            $this->recordFailedSave($companyUuid, $trigger, $deferred, $now);
+        } catch (\Throwable $exception) {
+            SafeLog::warning(
+                'QuickBooks could not record a failed save in Activity.',
+                ['company_uuid' => $companyUuid, 'exception' => $exception::class]
+            );
+        }
+    }
+
+    /**
+     * One more attempt and the normal backoff for each row this directory leased, as a failed
+     * send gets. A row past retry_limit stops. A row flagged again while leased keeps its status
+     * so the new change is still sent. Returns how many rows were backed off.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private function deferClaimedRows(array $settings, int $now): int
+    {
+        if ($this->claimTokens === [] || $this->claimsSupported() === false) {
+            return 0;
+        }
+
+        $held = $this->claimTokens;
+        foreach ($this->claimTokens as $token) {
+            $held[] = self::REFLAG_PREFIX . $token;
+        }
+        $backoff = new BackoffPolicy();
+        $base    = (int) ($settings['default_backoff_seconds'] ?? 30);
+        $limit   = (int) ($settings['retry_limit'] ?? 5);
+        $groups  = [];
+        foreach (PendingSync::query()->whereIn('claimed_by', $held)->get(['uuid', 'attempts', 'claimed_by']) as $row) {
+            /** @var PendingSync $row */
+            $attempts  = (int) $row->attempts + 1;
+            $reflagged = str_starts_with((string) $row->claimed_by, self::REFLAG_PREFIX);
+            $columns   = [
+                'attempts'        => $attempts,
+                'next_attempt_at' => Carbon::createFromTimestamp($now + $backoff->defaultWait($base, $attempts)),
+            ];
+            if ($reflagged === false && $attempts > $limit) {
+                $columns['status'] = 'failed';
+            }
+            $key                     = $attempts . '|' . ($reflagged === true ? 'reflag' : 'held');
+            $groups[$key]['columns'] = $columns;
+            $groups[$key]['uuids'][] = (string) $row->uuid;
+        }
+
+        $count = 0;
+        foreach ($groups as $group) {
+            PendingSync::query()->whereIn('uuid', $group['uuids'])->update($group['columns']);
+            $count += count($group['uuids']);
+        }
+
+        return $count;
+    }
+
+    private function recordFailedSave(string $companyUuid, string $trigger, int $deferred, int $now): void
+    {
+        $ledger            = new SyncLedger();
+        $ledger->batches[] = [
+            'company_uuid' => $companyUuid,
+            'trigger'      => $trigger,
+            'direction'    => 'outbound',
+            'status'       => 'failed',
+            'failed'       => $deferred,
+            'started_at'   => $now,
+            'finished_at'  => $now,
+        ];
+        $ledger->attempts[] = [
+            'company_uuid' => $companyUuid,
+            'local_type'   => 'connection',
+            'local_uuid'   => $companyUuid,
+            'outcome'      => 'failed',
+            'error'        => 'quickbooks.messages.save-failed',
+        ];
+        $this->insertBatchAttempts($ledger);
     }
 
     /**
@@ -1723,7 +1898,7 @@ class FleetbaseDirectory
     protected function notifyReauth(array $connection): void
     {
         $companyUuid = (string) ($connection['company_uuid'] ?? '');
-        $cacheKey    = 'quickbooks.reauth-notified.' . $companyUuid;
+        $cacheKey    = self::reauthNoticeKey($companyUuid);
         if (Cache::has($cacheKey) === true) {
             return;
         }
@@ -1735,6 +1910,20 @@ class FleetbaseDirectory
 
         Notification::send($recipients, new QuickbooksNeedsReauth($companyUuid, (string) ($connection['realm_id'] ?? '')));
         Cache::put($cacheKey, true, 3600);
+    }
+
+    /**
+     * A successful connect or reconnect forgets the hourly notice, so a new failure after
+     * it tells the company again instead of waiting out the hour.
+     */
+    public static function forgetReauthNotice(string $companyUuid): void
+    {
+        Cache::forget(self::reauthNoticeKey($companyUuid));
+    }
+
+    private static function reauthNoticeKey(string $companyUuid): string
+    {
+        return 'quickbooks.reauth-notified.' . $companyUuid;
     }
 
     /**
@@ -1869,7 +2058,9 @@ class FleetbaseDirectory
             });
         }
 
-        $rows = [];
+        $rows  = [];
+        $dates = new LedgerPaymentDates();
+        $db    = (new $class())->getConnection();
         /** @var Model $invoice */
         foreach ($query->get() as $invoice) {
             [$items, $removed]             = $this->readInvoiceItems($invoice);
@@ -1887,12 +2078,41 @@ class FleetbaseDirectory
                 'total'         => (int) $invoice->total_amount,
                 'amount_paid'   => (int) $invoice->amount_paid,
                 'status'        => (string) $invoice->status,
-                'paid_at'       => $this->dateString($invoice->paid_at),
+                'paid_at'       => $dates->day($db, $companyUuid, $invoice->paid_at),
                 'deleted_at'    => $invoice->deleted_at,
                 'items'         => $items,
             ];
             if ($removed !== []) {
                 $rows[(string) $invoice->uuid]['removed_lines'] = $removed;
+            }
+        }
+
+        return $this->withRecordedPaymentDays($rows, $dates, $db, $companyUuid);
+    }
+
+    /**
+     * Ledger sets no paid date on a part-paid invoice. The day of its last recorded payment
+     * dates the QuickBooks payment instead, and stays the same until another payment is made.
+     *
+     * @param array<string, array<string, mixed>> $rows
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function withRecordedPaymentDays(
+        array $rows,
+        LedgerPaymentDates $dates,
+        ConnectionInterface $db,
+        string $companyUuid,
+    ): array {
+        $undated = [];
+        foreach ($rows as $uuid => $row) {
+            if ($row['paid_at'] === '' && $row['amount_paid'] > 0) {
+                $undated[] = (string) $uuid;
+            }
+        }
+        foreach ($dates->lastPaymentDays($db, $companyUuid, $undated) as $uuid => $day) {
+            if (isset($rows[$uuid]) === true) {
+                $rows[$uuid]['payment_date'] = $day;
             }
         }
 

@@ -23,6 +23,33 @@ class QuickBooksClient
     private array $preferencesByRealm = [];
 
     /**
+     * The Fleetbase record a single write belongs to (for example invoice:<uuid>), set by
+     * withWriteKey. A single write without one carries no requestid.
+     */
+    private ?string $writeKey = null;
+
+    /**
+     * Run one write for a Fleetbase record, so its requestid names that record. Two records
+     * whose QuickBooks bodies happen to be identical then never share a requestid.
+     *
+     * @template T
+     *
+     * @param callable(): T $write
+     *
+     * @return T
+     */
+    public function withWriteKey(string $key, callable $write): mixed
+    {
+        $previous       = $this->writeKey;
+        $this->writeKey = $key;
+        try {
+            return $write();
+        } finally {
+            $this->writeKey = $previous;
+        }
+    }
+
+    /**
      * QuickBooks query strings are single-quoted. A backslash and a quote inside
      * the value must both be escaped or the value closes the literal.
      */
@@ -805,8 +832,9 @@ class QuickBooksClient
      * the single-record path. Queries, creates, and voids are posted in chunks of 30.
      * Update operations are posted in chunks of UPDATE_BATCH_SIZE (20), not the
      * sync settings batch size. An item fault is returned and the rest of the chunk
-     * is kept. This does not re-send successes one record at a time. HTTP 401 and
-     * 429 fail the chunk.
+     * is kept. This does not re-send successes one record at a time. An HTTP error on
+     * the first chunk is thrown; on a later chunk the earlier results are kept and the
+     * remaining items fail with that status.
      *
      * Each item is either an entity write:
      *   bId, operation (create|update|void|delete), entity (Customer|Invoice|Payment|Account|Item), payload
@@ -826,6 +854,7 @@ class QuickBooksClient
 
         $results = [];
         $refused = null;
+        $written = false;
         foreach (self::batchChunks($items) as $chunk) {
             if ($refused !== null) {
                 $this->refuseChunk($results, $chunk, $refused);
@@ -834,49 +863,77 @@ class QuickBooksClient
             try {
                 $chunkResults = $this->postBatch($connection, $chunk);
             } catch (QuickBooksException $exception) {
-                // A refused first chunk wrote nothing, so the caller may refresh the token and send
-                // everything again. After an earlier chunk was written, sending again would repeat
-                // those writes, so its results are kept and the rest fail as items to retry later.
-                if ($exception->isUnauthorized() === false || $results === []) {
+                // When no earlier chunk wrote anything (the first chunk, or only queries so far),
+                // the caller may refresh the token or send everything again. After an earlier
+                // chunk was written, any failure (401, 429, 5xx or a timeout) would repeat those
+                // writes on a resend, so their results are kept and the rest fail as items to
+                // retry later, with the status that stopped them.
+                if ($written === false) {
                     throw $exception;
                 }
-                $refused = $exception->getMessage();
+                $refused = $exception;
                 $this->refuseChunk($results, $chunk, $refused);
                 continue;
             }
             foreach ($chunkResults as $bId => $result) {
                 $results[$bId] = $result;
             }
+            $written = $written === true || self::hasWrites($chunk);
         }
 
         return $results;
     }
 
     /**
-     * Item errors for a chunk that was refused, or not sent, after an earlier chunk was written.
-     * They do not halt: a halting 401 asks the user to reconnect without trying a refresh.
+     * @param array<int, array{
+     *     bId?: string,
+     *     operation?: string,
+     *     entity?: string,
+     *     payload?: array<string, mixed>,
+     *     query?: string
+     * }> $items
+     */
+    private static function hasWrites(array $items): bool
+    {
+        foreach ($items as $item) {
+            $query = $item['query'] ?? null;
+            if (is_string($query) === false || $query === '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Item errors for a chunk that failed, or was not sent, after an earlier chunk was written.
+     * They carry the failure's status, so a 429 still sets the rate-limit backoff. They do not
+     * halt: a halting 401 asks the user to reconnect without trying a refresh, and a halt stops
+     * the caller before it keeps the links of the items that were written.
      *
      * @param array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}> $results
      * @param array<int, array{bId?: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}>                            $chunk
      */
-    private function refuseChunk(array &$results, array $chunk, string $message): void
+    private function refuseChunk(array &$results, array $chunk, QuickBooksException $failure): void
     {
         foreach ($chunk as $item) {
             $results[(string) ($item['bId'] ?? '')] = [
                 'ok'     => false,
                 'body'   => [],
                 'rows'   => [],
-                'error'  => $message,
-                'status' => 401,
+                'error'  => $failure->getMessage(),
+                'status' => $failure->status,
                 'halt'   => false,
             ];
         }
     }
 
     /**
-     * Updates stay in their own groups of UPDATE_BATCH_SIZE. Every other item
-     * stays at the Batch API cap. Order is preserved, and a full group is not
-     * split into single writes.
+     * Updates go in their own chunks of UPDATE_BATCH_SIZE. Every other item (creates,
+     * voids, queries) goes in chunks of up to the Batch API cap. Items are grouped by
+     * kind first, so creates and updates that interleave do not each start a chunk of
+     * one. Order is kept within a kind; the kinds follow the order they first appear.
+     * Results are matched back by bId, so the order across kinds does not matter.
      *
      * @param array<int, array{bId?: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
      *
@@ -884,20 +941,16 @@ class QuickBooksClient
      */
     public static function batchChunks(array $items): array
     {
-        $chunks  = [];
-        $current = [];
-        $limit   = self::BATCH_LIMIT;
+        $groups = [];
         foreach (array_values($items) as $item) {
-            $itemLimit = ($item['operation'] ?? null) === 'update' ? self::UPDATE_BATCH_SIZE : self::BATCH_LIMIT;
-            if ($current !== [] && ($itemLimit !== $limit || count($current) >= $limit)) {
-                $chunks[] = $current;
-                $current  = [];
-            }
-            $limit     = $itemLimit;
-            $current[] = $item;
+            $kind            = ($item['operation'] ?? null) === 'update' ? 'update' : 'other';
+            $groups[$kind][] = $item;
         }
-        if ($current !== []) {
-            $chunks[] = $current;
+
+        $chunks = [];
+        foreach ($groups as $kind => $group) {
+            $limit  = $kind === 'update' ? self::UPDATE_BATCH_SIZE : self::BATCH_LIMIT;
+            $chunks = array_merge($chunks, array_chunk($group, $limit));
         }
 
         return $chunks;
@@ -1153,13 +1206,21 @@ class QuickBooksClient
     /**
      * @param array<string, mixed> $row
      *
-     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}
+     * @return array{
+     *     ok: bool,
+     *     body: array<string, mixed>,
+     *     rows: array<int, array<string, mixed>>,
+     *     error: string|null,
+     *     status: int,
+     *     halt: bool,
+     *     code?: string
+     * }
      */
     private function batchItemResult(array $row): array
     {
         $fault = $row['Fault']['Error'][0] ?? null;
         if (is_array($fault) === true) {
-            return $this->batchFaultResult($fault);
+            return $this->batchFaultResult($fault, (string) ($row['Fault']['type'] ?? ''));
         }
 
         if (isset($row['QueryResponse']) === true && is_array($row['QueryResponse']) === true) {
@@ -1191,20 +1252,49 @@ class QuickBooksClient
     /**
      * @param array<string, mixed> $fault
      *
-     * @return array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}
+     * @return array{
+     *     ok: bool,
+     *     body: array<string, mixed>,
+     *     rows: array<int, array<string, mixed>>,
+     *     error: string|null,
+     *     status: int,
+     *     halt: bool,
+     *     code?: string
+     * }
      */
-    private function batchFaultResult(array $fault): array
+    private function batchFaultResult(array $fault, string $type = ''): array
     {
         $detail = trim((string) ($fault['Detail'] ?? $fault['Message'] ?? ''));
+        $code   = trim((string) ($fault['code'] ?? ''));
 
-        return [
+        $result = [
             'ok'     => false,
             'body'   => [],
             'rows'   => [],
             'error'  => $detail !== '' ? $detail : 'quickbooks.messages.item-rejected',
-            'status' => 400,
+            'status' => self::batchFaultStatus($type, $code),
             'halt'   => false,
         ];
+        // Intuit's fault code (for example 6240, duplicate name) lets the engine explain the fault.
+        if ($code !== '') {
+            $result['code'] = $code;
+        }
+
+        return $result;
+    }
+
+    /**
+     * The HTTP status a refused batch item stands for. A QuickBooks server fault may pass on
+     * retry (503), and so may a stale SyncToken (5010), which only means the record changed in
+     * QuickBooks after it was read (409). Other faults are the request's own (400).
+     */
+    private static function batchFaultStatus(string $type, string $code): int
+    {
+        if (strtoupper($type) === 'SYSTEMFAULT') {
+            return 503;
+        }
+
+        return $code === '5010' ? 409 : 400;
     }
 
     /**
@@ -1282,6 +1372,10 @@ class QuickBooksClient
         $url       = $base . '/v3/company/' . rawurlencode((string) $connection['realm_id']) . '/' . $path;
         $separator = str_contains($url, '?') === true ? '&' : '?';
         $url .= $separator . 'minorversion=75';
+        $requestId = $this->requestId((string) $connection['realm_id'], $method, $path, $payload);
+        if ($requestId !== null) {
+            $url .= '&requestid=' . $requestId;
+        }
 
         try {
             $pending  = Http::withToken((string) $connection['access_token'])->acceptJson();
@@ -1293,6 +1387,65 @@ class QuickBooksClient
         $this->throwIfFailed($response);
 
         return $response;
+    }
+
+    /**
+     * Intuit applies a write whose requestid it has already seen only once and answers with
+     * the first result, so a create that timed out after QuickBooks saved it is not saved
+     * again when the run retries it. The id hashes the realm, the request, the Fleetbase
+     * record (the bIds of a batch, or the key set by withWriteKey) and the UTC day: a retry
+     * of the same write reuses it, while a changed body, another record or a later day (a
+     * record deleted in QuickBooks and created again) gets a new one. Reads, a batch of
+     * queries only, and a single write with no record key carry none. Intuit allows at most
+     * 36 characters on a batch, so the id is a UUID-shaped 36 characters.
+     *
+     * @param array<string, mixed>|null $payload
+     */
+    private function requestId(string $realmId, string $method, string $path, ?array $payload): ?string
+    {
+        if ($method === 'get') {
+            return null;
+        }
+        $isBatch = $path === 'batch';
+        if (
+            ($isBatch === true && self::batchWrites($payload ?? []) === false)
+            || ($isBatch === false && $this->writeKey === null)
+        ) {
+            return null;
+        }
+
+        $body = json_encode($payload ?? []);
+        $hash = sha1(implode("\n", [
+            $realmId,
+            $method,
+            $path,
+            $isBatch === true ? '' : (string) $this->writeKey,
+            is_string($body) === true ? $body : '',
+            gmdate('Y-m-d'),
+        ]));
+
+        return implode('-', [
+            substr($hash, 0, 8),
+            substr($hash, 8, 4),
+            substr($hash, 12, 4),
+            substr($hash, 16, 4),
+            substr($hash, 20, 12),
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private static function batchWrites(array $payload): bool
+    {
+        $requests = $payload['BatchItemRequest'] ?? [];
+        foreach (is_array($requests) === true ? $requests : [] as $request) {
+            if (is_array($request) === true && isset($request['operation']) === true) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function throwIfFailed(Response $response): void

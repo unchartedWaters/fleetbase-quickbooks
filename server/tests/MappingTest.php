@@ -110,6 +110,23 @@ test('cents convert to a decimal string and quickbooks major units convert back 
     expect($payload['Line'][0]['Amount'])->toBe('1.99');
 });
 
+test('a zero-decimal currency amount is whole units in fleetbase and in quickbooks', function () {
+    expect(Amounts::centsToDecimal(5000, 'JPY'))->toBe('5000.00')
+        ->and(Amounts::centsToDecimal(-12, 'krw'))->toBe('-12.00')
+        ->and(Amounts::toMinorUnits('5000', 'JPY'))->toBe(5000)
+        ->and(Amounts::toMinorUnits(5000, 'JPY'))->toBe(5000)
+        ->and(Amounts::toMinorUnits('5000.50', 'JPY'))->toBe(5001)
+        ->and(Amounts::toMinorUnits('5000.49', 'JPY'))->toBe(5000)
+        ->and(Amounts::toMinorUnits('-12.5', 'JPY'))->toBe(-13)
+        ->and(Amounts::toMinorUnits('10.5', 'KWD'))->toBe(1050)
+        ->and(Amounts::centsToDecimal(1050, 'KWD'))->toBe('10.50')
+        ->and(Amounts::centsToDecimal(199, 'USD'))->toBe('1.99');
+
+    // 3 x 333.333 = 999.999, which rounds to the ¥1,000 line amount.
+    expect(Amounts::unitPriceDecimal(1000, 3, 'JPY'))->toBe('333.333')
+        ->and(Amounts::unitPriceDecimal(10000, 2, 'JPY'))->toBe('5000.00');
+});
+
 test('an uneven quantity sends a unit price that rounds half-up back to the line amount', function () {
     $invoices = new InvoiceMapper();
     $omitted  = $invoices->toQuickBooks([

@@ -21,8 +21,12 @@
   install-wide verifier, then stale/replay checks, then queues work for every
   organization connected to that realm. `WebhookPayload` reads Intuit's
   CloudEvents array and the older `eventNotifications` body. Only a missing or
-  bad signature gets 401; a signed stale or already processed delivery gets 200
-  and is not applied, because Intuit retries any other answer for days.
+  bad signature gets 401, because Intuit retries any other answer for days. A
+  signed already processed delivery gets 200 and is not applied. A signed stale
+  one (older than `max_age_seconds`) gets 200 and is used only to read current
+  records: creates and updates are applied, deletes and merges are not. Every
+  processed body is remembered for `stale_replay_seconds`. One older than that
+  window gets 200 and is not applied.
 - Global settings (installation admin only, `scope=admin`) are credentials and
   a sync template. An organization (`scope=company`, rows marked
   `scope: organization`) has its own complete copy of the sync options, made
@@ -55,8 +59,8 @@
 ## Stack
 
 - PHP 8.2 (CI), Laravel via `fleetbase/core-api ^1.6`,
-  `fleetbase/fleetops-api ^0.6.73`, `fleetbase/ledger-api ^0.0.13`. QuickBooks
-  HTTP goes through Laravel's `Http` client in `QuickBooksClient`.
+  `fleetbase/fleetops-api ^0.6.73`, `fleetbase/ledger-api >=0.0.13 <0.1`.
+  QuickBooks HTTP goes through Laravel's `Http` client in `QuickBooksClient`.
 - Ember 4.8 engine (`ember-engines`, Glimmer), Node 22+, pnpm.
   `ember-engines` is a peer and dev dependency only: as a runtime dependency
   it bundles ember-asset-loader into the engine, which then fails to boot in

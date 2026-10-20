@@ -11,6 +11,9 @@ use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Services\TokenRefresher;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
+use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\SafeLog;
+use Fleetbase\Quickbooks\Support\WebhookRetry;
 use Illuminate\Bus\Queueable;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
@@ -32,7 +35,8 @@ class ResolveWebhookPayments implements ShouldQueue
 
     /**
      * Intuit already received HTTP 200. Laravel must not run this job again on its own.
-     * A refresh that could not run is the exception: that delivery is queued again here.
+     * A refresh that could not run, and a payment read QuickBooks could not answer for a
+     * temporary reason, are the exceptions: that delivery is queued again here.
      */
     public int $tries = 1;
 
@@ -41,6 +45,12 @@ class ResolveWebhookPayments implements ShouldQueue
     public const RETRY_LIMIT = 3;
 
     public const RETRY_DELAY_SECONDS = 5;
+
+    /**
+     * Retries made after QuickBooks could not answer. Not a constructor argument, so a job
+     * queued before this counter existed still loads, and starts at 0.
+     */
+    public int $quickbooksAttempt = 0;
 
     /**
      * The events come back from the queue payload, so handle() checks each one again.
@@ -75,6 +85,12 @@ class ResolveWebhookPayments implements ShouldQueue
         if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false) {
             return;
         }
+        $hold = WebhookRetry::rateLimitedFor($connection, time());
+        if ($hold > 0) {
+            $this->retryQuickBooks($directory, $hold, WebhookRetry::MESSAGE);
+
+            return;
+        }
 
         $now        = time();
         $connection = $tokens->refreshIfDue($connection, $now);
@@ -88,6 +104,22 @@ class ResolveWebhookPayments implements ShouldQueue
             return;
         }
 
+        try {
+            $this->resolve($settings, $store);
+        } catch (QuickBooksException $exception) {
+            if ($exception->isTransient() === false) {
+                throw $exception;
+            }
+            $this->quickbooksUnavailable($directory, $connection, $exception);
+        }
+    }
+
+    /**
+     * Read the keyed payments and queue the inbound apply and outbound push they need.
+     * A QuickBooks read that fails for a temporary reason throws before anything is queued.
+     */
+    private function resolve(SettingsService $settings, SettingsStore $store): void
+    {
         $listener = (new EnqueueWebhookSync($settings))->readingQuickBooks();
         foreach ($this->events as $event) {
             if (is_array($event) === false) {
@@ -107,6 +139,50 @@ class ResolveWebhookPayments implements ShouldQueue
     }
 
     /**
+     * QuickBooks answered the payment read with a 429 or a 5xx, or did not answer. Store a
+     * rate limit on the connection, then queue this delivery again.
+     *
+     * @param array<string, mixed> $connection
+     */
+    private function quickbooksUnavailable(
+        FleetbaseDirectory $directory,
+        array $connection,
+        QuickBooksException $exception,
+    ): void {
+        $now  = time();
+        $wait = WebhookRetry::delay($exception, $connection, $this->quickbooksAttempt, $now);
+        if ($exception->isRateLimit() === true) {
+            $directory->saveRateLimit(WebhookRetry::withRateLimit($connection, $exception, $wait, $now));
+        }
+        $this->retryQuickBooks($directory, $wait, WebhookRetry::failedMessage($exception));
+    }
+
+    /**
+     * Queue this delivery again after $wait seconds, or record it as failed with $message
+     * once the retries are used up.
+     */
+    private function retryQuickBooks(FleetbaseDirectory $directory, int $wait, string $message): void
+    {
+        if ($this->quickbooksAttempt >= WebhookRetry::LIMIT) {
+            SafeLog::warning('QuickBooks webhook payments dropped after their last retry.', [
+                'company_uuid' => $this->companyUuid,
+                'retries'      => $this->quickbooksAttempt,
+            ]);
+            $directory->saveFailed($this->companyUuid, 'webhook', 'inbound', $message);
+
+            return;
+        }
+
+        $retry                    = new self($this->companyUuid, $this->events, $this->attempt);
+        $retry->quickbooksAttempt = $this->quickbooksAttempt + 1;
+        $retry->delay(WebhookRetry::spread($wait));
+        $dispatcher = Container::getInstance()->make(Dispatcher::class);
+        if ($dispatcher instanceof Dispatcher === true) {
+            $dispatcher->dispatch($retry);
+        }
+    }
+
+    /**
      * The token could not be refreshed for a temporary reason. Queue this delivery again.
      */
     private function retryLater(): void
@@ -115,7 +191,8 @@ class ResolveWebhookPayments implements ShouldQueue
             return;
         }
 
-        $retry = new self($this->companyUuid, $this->events, $this->attempt + 1);
+        $retry                    = new self($this->companyUuid, $this->events, $this->attempt + 1);
+        $retry->quickbooksAttempt = $this->quickbooksAttempt;
         $retry->delay(self::RETRY_DELAY_SECONDS * ($this->attempt + 1));
         $dispatcher = Container::getInstance()->make(Dispatcher::class);
         if ($dispatcher instanceof Dispatcher === true) {

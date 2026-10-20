@@ -43,6 +43,13 @@ class WebhookController extends Controller
         'mergedaway' => 'merge',
     ];
 
+    /**
+     * Operations a stale delivery does not apply: they would act on the payload alone.
+     *
+     * @var array<int, string>
+     */
+    private const STALE_SKIPPED = ['delete', 'merge'];
+
     private WebhookReplayGuard $replay;
 
     public function __construct(
@@ -65,12 +72,16 @@ class WebhookController extends Controller
         if ($matched === null) {
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
-        // HMAC already matched. A captured body is not applied once its change
-        // timestamps are older than the configured maximum age. It is still answered
-        // with 200: Intuit retries anything else for days and may hold back later
-        // deliveries until this one is acknowledged.
-        if ($this->replay->isStale($rawBody, time()) === true) {
-            SafeLog::warning('QuickBooks webhook delivery is older than the maximum age and was not applied.');
+        // HMAC already matched. A body older than the configured maximum age is stale: its
+        // creates and updates only make Fleetbase read the current record from QuickBooks,
+        // so they are still used (Intuit can deliver late), but its deletes and merges are
+        // not applied from the payload. A body older than the stale replay window is not
+        // applied at all. Both are answered with 200: Intuit retries anything else for days
+        // and may hold back later deliveries until this one is acknowledged.
+        $now   = time();
+        $stale = $this->replay->isStale($rawBody, $now);
+        if ($stale === true && $this->replay->isExpired($rawBody, $now) === true) {
+            SafeLog::warning('QuickBooks webhook delivery is older than the stale replay window and was not applied.');
 
             return response()->json(['ok' => true]);
         }
@@ -101,13 +112,14 @@ class WebhookController extends Controller
         // and a worker that dies here leaves a key that expires on its own, so Intuit's
         // retry of the identical body is processed and the events are not lost.
         try {
-            $this->dispatchEntities($this->entitiesByRealm($rawBody), $matched);
+            $this->dispatchEntities($this->entitiesByRealm($rawBody, $stale), $matched);
             app(EnqueueWebhookSync::class)->flush($this->store);
         } catch (\Throwable $exception) {
             $this->replay->forget($rawBody);
 
             throw $exception;
         }
+        // A stale body is remembered for the longer stale replay window, as long as it is accepted.
         $this->replay->keep($rawBody);
 
         return response()->json(['ok' => true]);
@@ -178,11 +190,18 @@ class WebhookController extends Controller
     }
 
     /**
+     * The body's changes by realm. A stale body leaves out its deletes and merges: by the
+     * time it arrives the record may have been restored or changed again, and reading it
+     * back cannot stand in for them (a deleted record and a merged-away one both read as
+     * gone, and a voided invoice reads as an invoice with no lines). Intuit reports the
+     * surviving record of a merge as an update, so that record is still read.
+     *
      * @return array<int, WebhookGroup>
      */
-    private function entitiesByRealm(string $rawBody): array
+    private function entitiesByRealm(string $rawBody, bool $stale): array
     {
-        $groups = [];
+        $groups  = [];
+        $skipped = 0;
         foreach (WebhookPayload::changes($rawBody) as $change) {
             $realmId = $this->stringId($change['realm']);
             if ($realmId === null) {
@@ -192,7 +211,15 @@ class WebhookController extends Controller
             if ($mapped === null) {
                 continue;
             }
+            if ($stale === true && in_array($mapped['operation'], self::STALE_SKIPPED, true) === true) {
+                $skipped++;
+                continue;
+            }
             $this->addEntity($groups, $realmId, $mapped);
+        }
+        if ($stale === true) {
+            SafeLog::warning('QuickBooks webhook delivery is older than the maximum age: its records are read again'
+                . ' from QuickBooks and its deletes and merges were not applied.', ['skipped' => $skipped]);
         }
 
         return $groups;

@@ -8,11 +8,36 @@ use Fleetbase\Casts\Money;
  * QuickBooks speaks major units. Fleetbase stores integer minor units.
  * Money::apply("10.00") is 1000 and Money::apply(10) is 10, so major units
  * are normalized to a 2-decimal string before apply. Floats are rejected.
+ * A zero-decimal currency (ZERO_DECIMAL) is stored in whole units instead.
  */
 class Amounts
 {
-    public static function centsToDecimal(int $cents): string
+    /**
+     * Currencies Fleetbase stores in whole units, not 1/100. These are the
+     * currencies with an empty decimalSeparator (precision 0) in fleetbase/ember-ui
+     * addon/utils/get-currency.js; its money-input and format-currency skip the
+     * /100 for them. Every other currency, including 3-decimal ones such as
+     * KWD, is stored in 1/100.
+     */
+    public const ZERO_DECIMAL = [
+        'BIF', 'CDF', 'CLP', 'GNF', 'HUF', 'ISK', 'JPY', 'KRW',
+        'LAK', 'LBP', 'MNT', 'MUR', 'VND', 'VUV', 'XAF', 'XPF',
+    ];
+
+    public static function zeroDecimal(?string $currency): bool
     {
+        return in_array(strtoupper(trim((string) $currency)), self::ZERO_DECIMAL, true);
+    }
+
+    /**
+     * A Fleetbase amount as a QuickBooks decimal string. For a zero-decimal
+     * currency the amount is whole units, so 5000 is "5000.00".
+     */
+    public static function centsToDecimal(int $cents, ?string $currency = null): string
+    {
+        if (self::zeroDecimal($currency) === true) {
+            $cents *= 100;
+        }
         $negative = $cents < 0;
         $cents    = $negative === true ? -$cents : $cents;
         $decimal  = intdiv($cents, 100) . '.' . str_pad((string) ($cents % 100), 2, '0', STR_PAD_LEFT);
@@ -25,10 +50,13 @@ class Amounts
      * to minor units, equals the line amount. Even splits stay at 2 decimals.
      * Otherwise the search continues through 7 decimal places.
      */
-    public static function unitPriceDecimal(int $amountMinor, int $quantity): string
+    public static function unitPriceDecimal(int $amountMinor, int $quantity, ?string $currency = null): string
     {
         if ($quantity <= 0) {
-            return self::centsToDecimal($amountMinor);
+            return self::centsToDecimal($amountMinor, $currency);
+        }
+        if (self::zeroDecimal($currency) === true) {
+            $amountMinor *= 100;
         }
 
         $negative    = $amountMinor < 0;
@@ -49,7 +77,11 @@ class Amounts
         return $negative === true ? '-' . $decimal : $decimal;
     }
 
-    public static function toMinorUnits(int|string $amount): int
+    /**
+     * A QuickBooks amount in Fleetbase units. For a zero-decimal currency that
+     * is whole units, rounded half-up when QuickBooks sends a fraction.
+     */
+    public static function toMinorUnits(int|string $amount, ?string $currency = null): int
     {
         $negative = false;
         if (is_int($amount) === true) {
@@ -71,6 +103,9 @@ class Amounts
         }
 
         $minor = Money::apply($normalized);
+        if (self::zeroDecimal($currency) === true) {
+            $minor = intdiv($minor + 50, 100);
+        }
 
         return $negative === true ? -$minor : $minor;
     }

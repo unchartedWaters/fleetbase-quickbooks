@@ -719,6 +719,184 @@ test('oauth complete exchanges the code with the same computed callback', functi
     }
 });
 
+test('oauth complete sends the redirect uri used at start even if the saved one changed since', function () {
+    session(['company' => 'company-uuid', 'user' => 'user-uuid']);
+    $previous = qbRememberConfig(['app.url', 'fleetbase.url', 'fleetbase.console.host', 'quickbooks.console_host']);
+    config()->set('app.url', null);
+    config()->set('fleetbase.url', null);
+    config()->set('fleetbase.console.host', 'http://10.30.0.34:4200');
+    config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
+    $atStart = 'https://example.com/quickbooks/int/v1/oauth/callback';
+    Http::swap(new Illuminate\Http\Client\Factory());
+    Http::fake([
+        'oauth.platform.intuit.com/*' => Http::response([
+            'access_token'  => 'a',
+            'refresh_token' => 'r',
+            'expires_in'    => 3600,
+        ]),
+        'sandbox-quickbooks.api.intuit.com/*' => Http::response([], 503),
+    ]);
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'                 => 'client-id',
+        'client_secret'             => (new SecretCipher())->encrypt('secret'),
+        'environment'               => 'sandbox',
+        'public_oauth_redirect_url' => $atStart,
+    ];
+    $authorizer = new Authorizer(static fn () => true);
+    $flow       = new OAuthFlow(new QuickBooksClient());
+    $settings   = new SettingsService(
+        new CredentialResolver(),
+        new Fleetbase\Quickbooks\Support\SyncSettingsResolver(),
+        new SecretCipher()
+    );
+    $probe      = new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient());
+    $controller = new class($authorizer, $flow, $settings, $store, $probe) extends ConnectionController {
+        public bool $stored = false;
+
+        protected function persist(array $connection): void
+        {
+            $this->stored = true;
+        }
+
+        protected function connectionIsStored(string $companyUuid): bool
+        {
+            return $this->stored;
+        }
+    };
+
+    try {
+        $started = $controller->start(Request::create('/oauth/start', 'POST'));
+        expect(qbOAuthRedirect($started))->toBe($atStart);
+        $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
+            'state'   => (string) $started->getData(true)['state'],
+            'code'    => 'code',
+            'realmId' => '9341453000000001',
+        ]));
+        parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
+
+        // The administrator changes the public URL while the user is at Intuit.
+        $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url'] = 'https://example.net/quickbooks/cb';
+        $completed                                                           = null;
+        qbCaptureDispatches(function () use ($controller, $query, &$completed): void {
+            $completed = $controller->complete(Request::create('/oauth/complete', 'POST', [
+                'state' => (string) $query['oauth_state'],
+            ]));
+        });
+        $exchanges = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
+        parse_str($exchanges[0][0]->body(), $form);
+
+        expect($completed->getStatusCode())->toBe(200)
+            ->and($form['redirect_uri'])->toBe($atStart);
+    } finally {
+        qbRestoreConfig($previous);
+        session(['company' => null, 'user' => null]);
+    }
+});
+
+test('an operator may only reconnect the QuickBooks company the organization already uses', function (
+    bool $administrator,
+    ?string $lastRealm,
+    bool $allowed,
+) {
+    session(['company' => 'company-uuid', 'user' => 'user-uuid']);
+    $previous = qbRememberConfig(['app.url', 'fleetbase.url', 'fleetbase.console.host', 'quickbooks.console_host']);
+    config()->set('app.url', 'https://example.com');
+    config()->set('fleetbase.url', null);
+    config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
+    Http::swap(new Illuminate\Http\Client\Factory());
+    Http::fake([
+        'oauth.platform.intuit.com/*' => Http::response([
+            'access_token'  => 'a',
+            'refresh_token' => 'r',
+            'expires_in'    => 3600,
+        ]),
+        'sandbox-quickbooks.api.intuit.com/*' => Http::response([], 503),
+    ]);
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'     => 'client-id',
+        'client_secret' => (new SecretCipher())->encrypt('secret'),
+        'environment'   => 'sandbox',
+    ];
+    $operator = (new Quickbooks())->policies[1]['permissions'];
+    $checker  = $administrator === true
+        ? static fn (): bool => true
+        : static fn (string $permission): bool => in_array($permission, $operator, true);
+    $authorizer = new Authorizer($checker);
+    $flow       = new OAuthFlow(new QuickBooksClient());
+    $settings   = new SettingsService(
+        new CredentialResolver(),
+        new Fleetbase\Quickbooks\Support\SyncSettingsResolver(),
+        new SecretCipher()
+    );
+    $probe      = new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient());
+    $controller = new class($authorizer, $flow, $settings, $store, $probe) extends ConnectionController {
+        public ?string $last = null;
+
+        /** @var array<string, mixed>|null */
+        public ?array $saved = null;
+
+        protected function persist(array $connection): void
+        {
+            $this->saved = $connection;
+        }
+
+        protected function connectionIsStored(string $companyUuid): bool
+        {
+            return $this->saved !== null;
+        }
+
+        protected function lastRealm(string $companyUuid): ?string
+        {
+            return $this->last;
+        }
+    };
+    $controller->last = $lastRealm;
+
+    try {
+        $started  = $controller->start(Request::create('/oauth/start', 'POST'));
+        $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
+            'state'   => (string) $started->getData(true)['state'],
+            'code'    => 'code',
+            'realmId' => '9341453000000001',
+        ]));
+        parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
+        $completed = null;
+        $jobs      = qbCaptureDispatches(function () use ($controller, $query, &$completed): void {
+            $completed = $controller->complete(Request::create('/oauth/complete', 'POST', [
+                'state' => (string) $query['oauth_state'],
+            ]));
+        });
+        $exchanges = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
+
+        if ($allowed === true) {
+            expect($completed->getStatusCode())->toBe(200)
+                ->and($controller->saved['realm_id'])->toBe('9341453000000001')
+                ->and($jobs)->not->toBe([]);
+
+            return;
+        }
+        expect($completed->getStatusCode())->toBe(403)
+            ->and($completed->getData(true)['message'])->toBe(
+                'Only a QuickBooks Administrator can connect this organization to a new or different QuickBooks '
+                . 'company. You can connect again to the QuickBooks company it already uses.'
+            )
+            ->and($controller->saved)->toBeNull()
+            ->and($jobs)->toBe([])
+            ->and($exchanges)->toHaveCount(0);
+    } finally {
+        qbRestoreConfig($previous);
+        session(['company' => null, 'user' => null]);
+    }
+})->with([
+    'operator, same company'           => [false, '9341453000000001', true],
+    'operator, different company'      => [false, '9341453000000999', false],
+    'operator, first connection'       => [false, null, false],
+    'administrator, different company' => [true, '9341453000000999', true],
+    'administrator, first connection'  => [true, null, true],
+]);
+
 test('oauth complete skips customer import when customers are turned off', function () {
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     $previous = qbRememberConfig([
@@ -1290,6 +1468,12 @@ test('the permission schema uses the quickbooks prefix and three word permission
     foreach ($permissions as $permission) {
         expect(count(explode(' ', $permission)))->toBe(3);
     }
+
+    // Connecting a new or different QuickBooks company is for the Administrator (`quickbooks * connection`).
+    expect($schema->resources[0]['actions'])->toContain('change-company')
+        ->and($schema->policies[0]['permissions'])->toContain('quickbooks * connection')
+        ->and($schema->policies[1]['permissions'])->not->toContain('quickbooks change-company connection')
+        ->and($schema->policies[1]['permissions'])->not->toContain('quickbooks * connection');
 });
 
 test('summary last sync is the latest finished batch and stays empty when every batch was skipped', function () {

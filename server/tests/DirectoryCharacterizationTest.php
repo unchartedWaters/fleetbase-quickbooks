@@ -162,6 +162,21 @@ function dctSchema(Illuminate\Database\Schema\Builder $schema): void
         $table->timestamps();
         $table->softDeletes();
     });
+    $schema->create('companies', function (Blueprint $table) {
+        $table->char('uuid', 36)->primary();
+        $table->string('timezone')->nullable();
+    });
+    $schema->create('transactions', function (Blueprint $table) {
+        $table->increments('id');
+        $table->string('uuid', 191)->nullable();
+        $table->string('company_uuid', 191)->nullable();
+        $table->string('subject_uuid', 191)->nullable();
+        $table->string('type', 191)->nullable();
+        $table->integer('amount')->nullable();
+        $table->softDeletes();
+        $table->timestamp('created_at')->nullable();
+        $table->timestamp('updated_at')->nullable();
+    });
     foreach (['templates', 'orders', 'tracking_numbers'] as $tableName) {
         $schema->create($tableName, function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
@@ -581,6 +596,61 @@ test('a quickbooks payment writes amount paid, paid at, status, and a balance fr
             ->and((int) $replace->amount_paid)->toBe(300)
             ->and((string) $replace->status)->toBe('sent')
             ->and((int) DB::table('ledger_invoices')->where('uuid', 'inv-total-only')->value('total_amount'))->toBe(1000);
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a paid date is the day in the company timezone and a date-only paid date keeps its day', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        dctContact('cust-a', 'Ada');
+        DB::table('companies')->insert(['uuid' => 'company-uuid', 'timezone' => 'America/New_York']);
+        // 02:30 UTC on the 21st is the evening of the 20th in New York.
+        dctInvoice('inv-evening', 'cust-a', ['status' => 'paid', 'paid_at' => '2026-09-21 02:30:00']);
+        // A QuickBooks payment date is stored at midnight and is already that day.
+        dctInvoice('inv-from-qb', 'cust-a', ['status' => 'paid', 'paid_at' => '2026-09-21 00:00:00']);
+
+        $ledger = (new FleetbaseDirectory())->load('company-uuid')['ledger'];
+
+        expect($ledger->invoices['inv-evening']['paid_at'])->toBe('2026-09-20')
+            ->and($ledger->invoices['inv-from-qb']['paid_at'])->toBe('2026-09-21');
+
+        DB::table('companies')->where('uuid', 'company-uuid')->update(['timezone' => null]);
+        $fallback = (new FleetbaseDirectory())->load('company-uuid')['ledger'];
+
+        expect($fallback->invoices['inv-evening']['paid_at'])->toBe('2026-09-21');
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a part-paid invoice without a paid date takes the day of the last payment ledger recorded', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        dctContact('cust-a', 'Ada');
+        DB::table('companies')->insert(['uuid' => 'company-uuid', 'timezone' => 'America/New_York']);
+        dctInvoice('inv-part', 'cust-a', ['status' => 'partial', 'amount_paid' => 400]);
+        dctInvoice('inv-none', 'cust-a', ['status' => 'partial', 'amount_paid' => 200]);
+        $payment = [
+            'company_uuid' => 'company-uuid', 'subject_uuid' => 'inv-part', 'type' => 'invoice_payment',
+            'amount'       => 200, 'deleted_at' => null,
+        ];
+        DB::table('transactions')->insert([
+            ['uuid' => 't1', 'created_at' => '2026-09-18 15:00:00'] + $payment,
+            // 02:30 UTC on the 21st is the evening of the 20th in New York.
+            ['uuid' => 't2', 'created_at' => '2026-09-21 02:30:00'] + $payment,
+            ['uuid' => 't3', 'created_at' => '2026-09-25 15:00:00', 'deleted_at' => '2026-09-26 10:00:00'] + $payment,
+            ['uuid' => 't4', 'created_at' => '2026-09-27 15:00:00', 'type' => 'refund'] + $payment,
+        ]);
+
+        $ledger = (new FleetbaseDirectory())->load('company-uuid')['ledger'];
+
+        expect($ledger->invoices['inv-part']['paid_at'])->toBe('')
+            ->and($ledger->invoices['inv-part']['payment_date'])->toBe('2026-09-20')
+            ->and($ledger->invoices['inv-none']['payment_date'] ?? '')->toBe('');
     } finally {
         $restore();
     }
