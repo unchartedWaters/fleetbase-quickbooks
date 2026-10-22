@@ -59,6 +59,18 @@ class FakeQuickBooks extends QuickBooksClient
 
     public string $serviceItemId = '';
 
+    /**
+     * Item ids made inactive in QuickBooks. A line that newly uses one is refused with fault 2500.
+     *
+     * @var array<int, string>
+     */
+    public array $inactiveItems = [];
+
+    public ?\Throwable $failServiceItem = null;
+
+    /** Refuses every invoice create and update, as an item fault. */
+    public ?QuickBooksException $rejectInvoicesWith = null;
+
     /** @var array<int, array<string, mixed>> */
     public array $remoteInvoiceList = [];
 
@@ -119,6 +131,7 @@ class FakeQuickBooks extends QuickBooksClient
     public function createInvoice(array $connection, array $payload): array
     {
         $this->calls[] = 'createInvoice';
+        $this->refuseInvoiceLines($payload, true);
         $this->invoiceCreates++;
         if ($this->customTxnNumbers === false && empty($payload['DocNumber']) === true) {
             $payload['DocNumber'] = $this->autoDocNumber();
@@ -147,6 +160,7 @@ class FakeQuickBooks extends QuickBooksClient
         if ($this->failInvoiceUpdates === true) {
             throw new QuickBooksException(400, 'quickbooks.messages.batch-item-unsupported');
         }
+        $this->refuseInvoiceLines($payload, false);
         $payload       = $this->withLineIds($payload);
         $record        = array_merge($this->invoices[$id] ?? [], $payload, [
             'Id'        => $id,
@@ -686,6 +700,9 @@ class FakeQuickBooks extends QuickBooksClient
     public function ensureServiceItem(array $connection): string
     {
         $this->calls[] = 'ensureServiceItem';
+        if ($this->failServiceItem !== null) {
+            throw $this->failServiceItem;
+        }
 
         return $this->serviceItemId;
     }
@@ -718,6 +735,38 @@ class FakeQuickBooks extends QuickBooksClient
         }
 
         return $matches;
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     */
+    public function itemActive(array $connection, string $id): bool
+    {
+        $this->calls[] = 'itemActive';
+
+        return in_array($id, $this->inactiveItems, true) === false;
+    }
+
+    /**
+     * QuickBooks refuses an inactive item on a new invoice or a new line (fault 2500). An
+     * existing line that already holds the item is accepted.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function refuseInvoiceLines(array $payload, bool $create): void
+    {
+        if ($this->rejectInvoicesWith !== null) {
+            throw $this->rejectInvoicesWith;
+        }
+        foreach (is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [] as $line) {
+            $item = is_array($line) === true ? (string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? '') : '';
+            $new  = $create === true || trim((string) ($line['Id'] ?? '')) === '';
+            if ($new === true && in_array($item, $this->inactiveItems, true) === true) {
+                $message = 'Invalid Reference Id : you must restore Fleetbase service (deleted).';
+
+                throw new QuickBooksException(400, $message, null, '2500');
+            }
+        }
     }
 
     /**

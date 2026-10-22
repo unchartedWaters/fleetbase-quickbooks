@@ -4031,3 +4031,211 @@ function engineLink(string $type, string $uuid, string $qboId): array
         'sync_token'   => '0',
     ];
 }
+
+test('a fleetbase edit keeps the product, tax code and note line QuickBooks has on the invoice', function () {
+    [$engine, $client]                          = qbEngine();
+    $ledger                                     = engineLedger();
+    $ledger->customers['cust-1']                = engineCustomer('cust-1');
+    $ledger->links[]                            = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->links[]                            = engineLink('invoice', 'inv-1', 'qb-1');
+    $sales                                      = InvoiceLines::sales('1', 'Delivery', '10.00');
+    $sales['SalesItemLineDetail']['ItemRef']    = ['value' => '55', 'name' => 'Delivery: Base'];
+    $sales['SalesItemLineDetail']['TaxCodeRef'] = ['value' => 'TAX'];
+    $note                                       = [
+        'Id'                    => '2',
+        'DetailType'            => 'DescriptionOnly',
+        'Description'           => 'Dock B',
+        'DescriptionLineDetail' => [],
+    ];
+    $client->invoices['qb-1'] = [
+        'Id'          => 'qb-1',
+        'SyncToken'   => '0',
+        'DocNumber'   => 'INV-1',
+        'TxnDate'     => '2026-09-01',
+        'DueDate'     => '2026-09-15',
+        'CustomerRef' => ['value' => 'qbo-customer'],
+        'TotalAmt'    => '10.00',
+        'Line'        => [$sales, $note],
+    ];
+    $ledger->invoices['inv-1'] = engineInvoice('inv-1', [
+        'total' => 1200,
+        'items' => [InvoiceLines::tracked('item-a', 'Delivery', 1200, '1')],
+    ]);
+    $ledger->pending[] = enginePending('invoice', 'inv-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+    $lines = $client->invoices['qb-1']['Line'];
+
+    expect($batch['updated'])->toBe(1)
+        ->and($lines[0]['Amount'])->toBe('12.00')
+        ->and($lines[0]['SalesItemLineDetail']['ItemRef']['value'])->toBe('55')
+        ->and($lines[0]['SalesItemLineDetail']['TaxCodeRef'])->toBe(['value' => 'TAX'])
+        ->and($lines[1]['DetailType'])->toBe('DescriptionOnly')
+        ->and($lines[1]['Description'])->toBe('Dock B');
+});
+
+test('a QuickBooks bundle line alone does not make a fleetbase primary invoice look changed', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->links[]             = engineLink('invoice', 'inv-1', 'qb-1');
+    $client->invoices['qb-1']    = [
+        'Id'          => 'qb-1',
+        'SyncToken'   => '0',
+        'DocNumber'   => 'INV-1',
+        'TxnDate'     => '2026-09-01',
+        'DueDate'     => '2026-09-15',
+        'CustomerRef' => ['value' => 'qbo-customer'],
+        'TotalAmt'    => '30.00',
+        'Line'        => [
+            InvoiceLines::sales('1', 'Delivery', '10.00'),
+            [
+                'Id'              => '3',
+                'Amount'          => '20.00',
+                'DetailType'      => 'GroupLineDetail',
+                'GroupLineDetail' => ['Quantity' => 1, 'Line' => []],
+            ],
+        ],
+    ];
+    $ledger->invoices['inv-1'] = engineInvoice('inv-1');
+    $ledger->pending[]         = enginePending('invoice', 'inv-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and($client->invoices['qb-1']['SyncToken'])->toBe('0');
+});
+
+test('an inactive service item is forgotten so the next sync finds or creates an active one', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $client->inactiveItems       = ['item-1'];
+    $client->serviceItemId       = 'item-2';
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1');
+    $ledger->invoices['inv-2']   = engineInvoice('inv-2', ['number' => 'INV-2']);
+    $ledger->pending[]           = enginePending('invoice', 'inv-1');
+    $ledger->pending[]           = enginePending('invoice', 'inv-2');
+
+    $failed = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+    $errors = array_column($ledger->attempts, 'error', 'local_uuid');
+
+    expect($failed['failed'])->toBe(2)
+        ->and(qbText($errors['inv-1'] ?? null))->toContain('Fleetbase service (deleted)')
+        ->and(array_count_values($client->calls)['itemActive'] ?? 0)->toBe(1)
+        ->and($ledger->connections['company-uuid']['default_item_id'])->toBeNull();
+
+    $ledger->connections['company-uuid']['last_batch_at'] = null;
+    foreach ($ledger->pending as $index => $row) {
+        $ledger->pending[$index]['next_attempt_at'] = null;
+        $ledger->pending[$index]['status']          = 'pending';
+    }
+    $created = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time() + 600);
+
+    expect($created['created'])->toBe(2)
+        ->and($ledger->connections['company-uuid']['default_item_id'])->toBe('item-2')
+        ->and($client->invoices['inv-1']['Line'][0]['SalesItemLineDetail']['ItemRef'])->toBe(['value' => 'item-2']);
+});
+
+test('the stored service item is kept when an invalid reference is about something else', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $client->inactiveItems       = ['other'];
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1');
+    $ledger->pending[]           = enginePending('invoice', 'inv-1');
+    $client->rejectInvoicesWith  = new QuickBooksException(400, 'Invalid Reference Id : Names element 9', null, '2500');
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->calls)->toContain('itemActive')
+        ->and($ledger->connections['company-uuid']['default_item_id'])->toBe('item-1');
+});
+
+test('a service item QuickBooks refuses to create is asked for once per block', function () {
+    // Intuit's duplicate name fault, for a service item QuickBooks will not create.
+    $taken = new QuickBooksException(400, 'Name already exists', null, '6240');
+
+    [$engine, $client]                                      = qbEngine();
+    $ledger                                                 = engineLedger();
+    $ledger->connections['company-uuid']['default_item_id'] = null;
+    $client->failServiceItem                                = $taken;
+    $ledger->customers['cust-1']                            = engineCustomer('cust-1');
+    $ledger->links[]                                        = engineLink('customer', 'cust-1', 'qbo-customer');
+    foreach (['inv-1', 'inv-2', 'inv-3'] as $index => $uuid) {
+        $ledger->invoices[$uuid] = engineInvoice($uuid, ['number' => 'INV-' . ($index + 1)]);
+        $ledger->pending[]       = enginePending('invoice', $uuid);
+    }
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['failed'])->toBe(3)
+        ->and(array_count_values($client->calls)['ensureServiceItem'])->toBe(1)
+        ->and($client->calls)->not->toContain('createInvoice');
+});
+
+test('a refused service item does not end the run when QuickBooks numbers new invoices', function () {
+    // Intuit's duplicate name fault, for a service item QuickBooks will not create.
+    $taken = new QuickBooksException(400, 'Name already exists', null, '6240');
+
+    [$engine, $client]                                      = qbEngine();
+    $ledger                                                 = engineLedger();
+    $ledger->connections['company-uuid']['default_item_id'] = null;
+    $client->customTxnNumbers                               = true;
+    $client->failServiceItem                                = $taken;
+    $ledger->customers['cust-1']                            = engineCustomer('cust-1');
+    $ledger->links[]                                        = engineLink('customer', 'cust-1', 'qbo-customer');
+    foreach (['inv-1', 'inv-2'] as $uuid) {
+        $ledger->invoices[$uuid] = engineInvoice($uuid, ['number' => null]);
+        $ledger->pending[]       = enginePending('invoice', $uuid);
+    }
+
+    $settings = qbSettings(['interval_minutes' => 1, 'invoice_reference' => 'quickbooks']);
+    $batch    = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+    $errors   = array_column($ledger->attempts, 'error', 'local_uuid');
+
+    expect($batch['failed'])->toBe(2)
+        ->and(qbText($errors['inv-1'] ?? null))->toContain('already exists')
+        ->and($client->calls)->not->toContain('createInvoice');
+});
+
+test('a blank fleetbase line and its blank QuickBooks line stay aligned', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->links[]             = engineLink('invoice', 'inv-1', 'qb-1');
+    $blank                       = InvoiceLines::sales('1', '', '10.00');
+    // QuickBooks names the product on every read; the line itself has no description.
+    $blank['SalesItemLineDetail']['ItemRef'] = ['value' => 'item-1', 'name' => 'Fleetbase service'];
+    $client->invoices['qb-1']                = [
+        'Id'          => 'qb-1',
+        'SyncToken'   => '0',
+        'DocNumber'   => 'INV-1',
+        'TxnDate'     => '2026-09-01',
+        'DueDate'     => '2026-09-15',
+        'CustomerRef' => ['value' => 'qbo-customer'],
+        'TotalAmt'    => '10.00',
+        'Line'        => [$blank],
+    ];
+    $ledger->invoices['inv-1'] = engineInvoice('inv-1', [
+        'items' => [['description' => '', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000]],
+    ]);
+
+    foreach (['fleetbase', 'quickbooks'] as $conflict) {
+        $settings = qbSettings(['interval_minutes' => 1, 'invoice_conflict' => $conflict]);
+
+        $ledger->pending[]                                    = enginePending('invoice', 'inv-1');
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+
+        $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+        expect($batch['aligned'])->toBe(1)
+            ->and($ledger->invoices['inv-1']['items'][0]['description'])->toBe('');
+    }
+    expect($client->calls)->not->toContain('updateInvoice');
+});

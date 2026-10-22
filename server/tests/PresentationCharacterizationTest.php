@@ -632,7 +632,7 @@ function pctSalesLine(?string $id, string $amount, string $description = 'Line',
     return $line;
 }
 
-test('withExistingLineIds pairs kept ids first, fills the rest in order and keeps tax, discount and subtotal lines', function () {
+test('withExistingLineIds pairs kept ids first, fills the rest in order and keeps every other line type', function () {
     $mapper   = new InvoiceMapper();
     $discount = ['Id' => 'd1', 'Amount' => '1.00', 'DetailType' => 'DiscountLineDetail', 'DiscountLineDetail' => ['PercentBased' => false]];
     $subtotal = ['Amount' => '20.00', 'DetailType' => 'SubTotalLineDetail', 'SubTotalLineDetail' => []];
@@ -661,7 +661,8 @@ test('withExistingLineIds pairs kept ids first, fills the rest in order and keep
     expect(array_keys($merged))->toBe(['CustomerRef', 'Line', 'DocNumber'])
         ->and($merged['DocNumber'])->toBe('INV-1')
         ->and(array_slice($merged['Line'], 0, 6))->toBe([
-            pctSalesLine('r2', '5.00', 'Has r2', 'item-l'),
+            // A line matched by id keeps the product QuickBooks has on it; one paired by position does not.
+            pctSalesLine('r2', '5.00', 'Has r2', 'item-r'),
             pctSalesLine(null, '6.00', 'No id', 'item-l') + ['Id' => 'r1'],
             pctSalesLine(null, '7.00', 'Third', 'item-l'),
             pctSalesLine(null, '0.75', InvoiceMapper::TAX_LINE_DESCRIPTION, 'item-l') + ['Id' => 't9'],
@@ -669,7 +670,10 @@ test('withExistingLineIds pairs kept ids first, fills the rest in order and keep
             $discount,
         ])
         // QuickBooks sends the subtotal detail as {}; it must go back as {}, not [], or the update is refused.
-        ->and(json_encode(array_slice($merged['Line'], 6)))->toBe('[{"Amount":"20.00","DetailType":"SubTotalLineDetail","SubTotalLineDetail":{}}]');
+        ->and(json_encode(array_slice($merged['Line'], 6)))->toBe(
+            '[{"Amount":"20.00","DetailType":"SubTotalLineDetail","SubTotalLineDetail":{}},'
+                . '{"Amount":"9.99","DetailType":"DescriptionOnly"}]'
+        );
 });
 
 test('withExistingLineIds sends an empty discount detail back as an object', function () {

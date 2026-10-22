@@ -9,6 +9,12 @@ class InvoiceMapper
      */
     public const TAX_LINE_DESCRIPTION = "\u{2060}Tax";
 
+    /**
+     * Characters a Ledger invoice line description holds (ledger_invoice_items.description).
+     * QuickBooks allows 4000, so a longer description is cut to this on the way in.
+     */
+    public const LINE_DESCRIPTION_MAX = 191;
+
     public const PAYMENT_REF_MAX_LENGTH = 21;
 
     /**
@@ -117,10 +123,11 @@ class InvoiceMapper
      * QuickBooks replaces the invoice Line array on update, including a sparse
      * update. Copy the Ids QuickBooks already stored onto the sales lines this
      * payload replaces. A line that already carries one of those ids keeps it;
-     * other Fleetbase lines take the remaining ids in order. Extra sales lines,
-     * and discount and subtotal lines, are included unchanged so the update
-     * does not delete them. A cleared tax amount updates the existing tax line
-     * to zero instead of leaving it. Sales lines whose item was deleted in Fleetbase
+     * other Fleetbase lines take the remaining ids in order. A matched line keeps
+     * its QuickBooks product and tax code. Extra sales lines, and every other line
+     * type, are included unchanged so the update does not delete them. A cleared
+     * tax amount updates the existing tax line to zero instead of leaving it.
+     * Sales lines whose item was deleted in Fleetbase
      * ($removed) are left out, so QuickBooks removes them. Once the invoice has stored
      * line ids ($mapped), a line without one pairs only with a line of the same content.
      *
@@ -162,13 +169,15 @@ class InvoiceMapper
             ];
             $itemId    = self::itemRef($line) ?? $itemId;
         }
-        $paired          = $this->pairSalesLines($wanted, $remoteSales, $mapped);
+        $byPosition      = [];
+        $paired          = $this->pairSalesLines($wanted, $remoteSales, $mapped, $byPosition);
         $payload['Line'] = $this->applyPairedLineIds(
             $lines,
             $remote,
             $remoteSales,
             $salesAt,
             $paired,
+            $byPosition,
             $hasTax,
             $taxId,
             $itemId
@@ -183,6 +192,7 @@ class InvoiceMapper
      * @param array<int, array<string, mixed>> $remoteSales
      * @param array<int, int>                  $salesAt
      * @param array<int, int|null>             $paired      remote sales index by Fleetbase line
+     * @param array<int, true>                 $byPosition  Fleetbase lines paired only by their position
      *
      * @return array<int, mixed>
      */
@@ -192,6 +202,7 @@ class InvoiceMapper
         array $remoteSales,
         array $salesAt,
         array $paired,
+        array $byPosition,
         bool $hasTax,
         ?string $taxId,
         string $itemId,
@@ -209,7 +220,13 @@ class InvoiceMapper
             if ($remoteLineId === '') {
                 continue;
             }
-            $lines[$salesAt[$localIndex]]['Id'] = $remoteLineId;
+            $at   = $salesAt[$localIndex];
+            $line = $lines[$at];
+            if (is_array($line) === true) {
+                $line['Id'] = $remoteLineId;
+                $keepCodes  = isset($byPosition[$localIndex]) === false;
+                $lines[$at] = self::withRemoteLineCodes($line, $remoteSales[$remoteIndex], $keepCodes);
+            }
         }
         if ($hasTax === false && $taxId !== null) {
             $zero    = Amounts::centsToDecimal(0);
@@ -233,8 +250,66 @@ class InvoiceMapper
     }
 
     /**
-     * Unmatched sales lines, discounts, and subtotals. A Line array replaces
-     * the invoice lines, so these have to travel with the update unchanged.
+     * A line Fleetbase is updating keeps the product/service and tax code QuickBooks holds on it,
+     * since Fleetbase only knows its own service item. Not for a line paired only by position,
+     * which may be a different line, and not for a product made inactive (renamed "... (deleted)").
+     * A description Fleetbase holds as fleetbaseDescription() gives it is sent as the QuickBooks
+     * text, so a cut description or a product name shown for an empty one is not written back.
+     *
+     * @param array<string, mixed> $line
+     * @param array<string, mixed> $remote
+     *
+     * @return array<string, mixed>
+     */
+    private static function withRemoteLineCodes(array $line, array $remote, bool $keepCodes): array
+    {
+        $detail = is_array($remote['SalesItemLineDetail'] ?? null) === true ? $remote['SalesItemLineDetail'] : [];
+        foreach ($keepCodes === true ? ['ItemRef', 'TaxCodeRef'] : [] as $key) {
+            $ref     = is_array($detail[$key] ?? null) === true ? $detail[$key] : [];
+            $deleted = str_ends_with((string) ($ref['name'] ?? ''), ' (deleted)');
+            if (trim((string) ($ref['value'] ?? '')) !== '' && $deleted === false) {
+                $line['SalesItemLineDetail'][$key] = $ref;
+            }
+        }
+        if ((string) ($line['Description'] ?? '') === self::fleetbaseDescription($remote)) {
+            $line['Description'] = (string) ($remote['Description'] ?? '');
+        }
+
+        return $line;
+    }
+
+    /**
+     * A QuickBooks line's description as a Fleetbase line holds it: the product name when the line
+     * has no description, cut to LINE_DESCRIPTION_MAX characters.
+     *
+     * @param array<string, mixed> $line
+     */
+    private static function fleetbaseDescription(array $line): string
+    {
+        $description = (string) ($line['Description'] ?? '');
+        if (trim($description) === '' && is_array($line['SalesItemLineDetail']['ItemRef'] ?? null) === true) {
+            $description = (string) ($line['SalesItemLineDetail']['ItemRef']['name'] ?? '');
+        }
+
+        return mb_substr($description, 0, self::LINE_DESCRIPTION_MAX);
+    }
+
+    /**
+     * A Fleetbase description matches a QuickBooks line as fleetbaseDescription() gives it. An empty
+     * Fleetbase description also matches a line with none, which shows its product name instead.
+     *
+     * @param array<string, mixed> $line
+     */
+    private static function sameDescription(string $local, array $line): bool
+    {
+        return $local === self::fleetbaseDescription($line)
+            || ($local === '' && trim((string) ($line['Description'] ?? '')) === '');
+    }
+
+    /**
+     * Unmatched sales lines and every line type Fleetbase does not write (discounts, subtotals,
+     * description-only lines, bundles). A Line array replaces the invoice lines, so these have to
+     * travel with the update unchanged.
      *
      * @param array<string, mixed> $remote
      * @param array<int, true>     $pairedSales remote sales indexes already copied onto Fleetbase lines
@@ -261,10 +336,11 @@ class InvoiceMapper
                 $sales++;
                 continue;
             }
-            if ($detail === 'DiscountLineDetail' || $detail === 'SubTotalLineDetail') {
+            if ($detail !== '') {
                 // QuickBooks sends an empty detail as {}, which decodes to []. Sent back as [], the update is refused.
-                if (($line[$detail] ?? null) === []) {
-                    $line[$detail] = new \stdClass();
+                $key = $detail === 'DescriptionOnly' ? 'DescriptionLineDetail' : $detail;
+                if (($line[$key] ?? null) === []) {
+                    $line[$key] = new \stdClass();
                 }
                 $extra[] = $line;
             }
@@ -311,6 +387,10 @@ class InvoiceMapper
         $lines   = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
         foreach ($lines as $line) {
             $sales = is_array($line) === true && $this->isProductSalesLine($line) === true;
+            if (is_array($line) === true && (string) ($line['DetailType'] ?? '') === 'GroupLineDetail') {
+                // Fleetbase does not read bundles, and an update sends them back unchanged.
+                $omitted += $this->lineAmount($line['Amount'] ?? 0);
+            }
             if ($sales === false || $this->isRemovedLine($line, $removed) === true) {
                 $kept[] = $line;
                 continue;
@@ -440,7 +520,7 @@ class InvoiceMapper
      */
     private function sameContent(array $local, array $line): bool
     {
-        return $local['description'] === (string) ($line['Description'] ?? '')
+        return self::sameDescription($local['description'], $line)
             && $local['amount'] === $this->lineAmount($line['Amount'] ?? 0);
     }
 
@@ -483,11 +563,16 @@ class InvoiceMapper
      *
      * @param array<int, array{id: string, description: string, amount: int}> $wantedLines
      * @param array<int, array<string, mixed>>                                $remoteSales
+     * @param array<int, true>                                                $byPosition  lines paired in order
      *
      * @return array<int, int|null>
      */
-    private function pairSalesLines(array $wantedLines, array $remoteSales, bool $mapped = false): array
-    {
+    private function pairSalesLines(
+        array $wantedLines,
+        array $remoteSales,
+        bool $mapped = false,
+        array &$byPosition = [],
+    ): array {
         $pairs   = [];
         $used    = [];
         $pending = [];
@@ -518,8 +603,9 @@ class InvoiceMapper
                 if (isset($used[$index]) === true) {
                     continue;
                 }
-                $used[$index]       = true;
-                $pairs[$localIndex] = $index;
+                $used[$index]            = true;
+                $pairs[$localIndex]      = $index;
+                $byPosition[$localIndex] = true;
                 break;
             }
         }
@@ -612,15 +698,17 @@ class InvoiceMapper
 
     /**
      * Copy the QuickBooks fields this mapper already understands.
-     * Sales item lines become description, quantity, unit price, and amount.
+     * Sales item lines become description (see fleetbaseDescription), quantity, unit price, and amount.
      * Only the synthetic tax line this mapper writes is stored as tax. Discounts, products, and other
-     * line types are omitted; TotalAmt is still returned.
+     * line types are omitted; TotalAmt is still returned. A line with no description stays empty
+     * when the Fleetbase line in its place ($localItems) is empty too, so it is not a change.
      *
      * @param array<string, mixed> $remote
+     * @param array<int, mixed>    $localItems
      *
      * @return array{items: array<int, array<string, mixed>>, tax: int, total: int}
      */
-    public function fromQuickBooks(array $remote): array
+    public function fromQuickBooks(array $remote, array $localItems = []): array
     {
         $items = [];
         $tax   = 0;
@@ -630,11 +718,16 @@ class InvoiceMapper
                 continue;
             }
 
-            $description = (string) ($line['Description'] ?? '');
+            $description = self::fleetbaseDescription($line);
             $amountCents = $this->lineAmount($line['Amount'] ?? 0);
             if ($description === self::TAX_LINE_DESCRIPTION) {
                 $tax += $amountCents;
                 continue;
+            }
+            $local            = $localItems[count($items)] ?? null;
+            $localDescription = is_array($local) === true ? (string) ($local['description'] ?? '') : null;
+            if ($localDescription !== null && self::sameDescription($localDescription, $line) === true) {
+                $description = $localDescription;
             }
 
             $detail   = is_array($line['SalesItemLineDetail'] ?? null) === true ? $line['SalesItemLineDetail'] : [];

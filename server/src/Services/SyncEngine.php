@@ -126,6 +126,20 @@ class SyncEngine
     private ?array $serviceItemByCompany = null;
 
     /**
+     * Service item lookups QuickBooks refused in the current invoice block, by company uuid.
+     * Each later invoice in the block fails with the same error instead of asking again.
+     *
+     * @var array<string, QuickBooksException>|null
+     */
+    private ?array $serviceItemErrors = null;
+
+    /**
+     * Whether the current invoice block has checked the stored service item after an invalid
+     * reference fault. Null outside a block, where every such fault checks.
+     */
+    private ?bool $serviceItemChecked = null;
+
+    /**
      * Prefetched QuickBooks invoices for a block, keyed by Id. Null means load per invoice.
      *
      * @var array<string, array<string, mixed>>|null
@@ -1979,8 +1993,20 @@ class SyncEngine
         if ($this->serviceItemByCompany !== null && array_key_exists($companyUuid, $this->serviceItemByCompany) === true) {
             return $this->serviceItemByCompany[$companyUuid];
         }
+        if (isset($this->serviceItemErrors[$companyUuid]) === true) {
+            throw $this->serviceItemErrors[$companyUuid];
+        }
 
-        $itemId = $this->client->ensureServiceItem($connection);
+        try {
+            $itemId = $this->client->ensureServiceItem($connection);
+        } catch (QuickBooksException $exception) {
+            $remembered = $exception->isUnauthorized() === false && $exception->isRateLimit() === false;
+            if ($this->serviceItemErrors !== null && $remembered === true) {
+                $this->serviceItemErrors[$companyUuid] = $exception;
+            }
+
+            throw $exception;
+        }
         if ($this->serviceItemByCompany !== null) {
             $this->serviceItemByCompany[$companyUuid] = $itemId;
         }
@@ -1989,6 +2015,51 @@ class SyncEngine
         }
 
         return $itemId;
+    }
+
+    /**
+     * Fault 2500 (invalid reference) on an invoice can mean the stored service item was made
+     * inactive in QuickBooks, which renames it "... (deleted)" and refuses it on new lines.
+     * When the stored item is no longer active it is forgotten, so the next sync finds or creates
+     * an active "Fleetbase service". A block checks once.
+     *
+     * @param array<string, mixed> $connection
+     */
+    private function forgetInactiveServiceItem(
+        SyncLedger $ledger,
+        array &$connection,
+        string $type,
+        ?string $faultCode,
+    ): void {
+        if ($type !== 'invoice' || $faultCode !== '2500' || $this->serviceItemChecked === true) {
+            return;
+        }
+        if ($this->serviceItemChecked === false) {
+            $this->serviceItemChecked = true;
+        }
+        $companyUuid = (string) $connection['company_uuid'];
+        $stored      = $ledger->connections[$companyUuid] ?? null;
+        $itemId      = trim((string) (is_array($stored) === true ? ($stored['default_item_id'] ?? '') : ''));
+        if ($itemId === '') {
+            $itemId = trim((string) ($connection['default_item_id'] ?? ''));
+        }
+        if ($itemId === '') {
+            return;
+        }
+        try {
+            if ($this->client->itemActive($connection, $itemId) === true) {
+                return;
+            }
+        } catch (QuickBooksException) {
+            return;
+        }
+        if (is_array($stored) === true) {
+            $ledger->connections[$companyUuid]['default_item_id'] = null;
+        }
+        $connection['default_item_id'] = null;
+        if ($this->serviceItemByCompany !== null) {
+            unset($this->serviceItemByCompany[$companyUuid]);
+        }
     }
 
     /**
@@ -2147,7 +2218,7 @@ class SyncEngine
                 $other['currency'] = $remoteCurrency;
             }
         }
-        $mapped         = $this->invoiceMapper($invoice)->fromQuickBooks($compared);
+        $mapped         = $this->invoiceMapper($invoice)->fromQuickBooks($compared, $localItems);
         $local['items'] = $this->hashableInvoiceItems($localItems);
         $local['tax']   = (int) ($invoice['tax'] ?? 0);
         $other['items'] = $mapped['items'];
@@ -2644,9 +2715,9 @@ class SyncEngine
             $changed                          = true;
         }
 
-        $mapped  = $this->invoiceMapper($ledger->invoices[$uuid])->fromQuickBooks($remote);
         $current = $ledger->invoices[$uuid]['items'] ?? [];
         $current = is_array($current) === true ? $current : [];
+        $mapped  = $this->invoiceMapper($ledger->invoices[$uuid])->fromQuickBooks($remote, $current);
         if ($mapped['items'] !== [] && $mapped['items'] !== $this->hashableInvoiceItems($current)) {
             $ledger->invoices[$uuid]['items']                 = $mapped['items'];
             $ledger->invoices[$uuid]['items_from_quickbooks'] = true;
@@ -3764,6 +3835,7 @@ class SyncEngine
                 $uuid       = (string) $row['local_uuid'];
                 $nameTaken  = $this->customerNameTakenError($ledger, $type, $uuid, $exception->faultCode);
                 $retryError = $nameTaken ?? $retryError;
+                $this->forgetInactiveServiceItem($ledger, $connection, $type, $exception->faultCode);
             }
             $outcome = $this->failure($ledger, $connection, $row, $exception, $settings, $now);
         }
@@ -3914,6 +3986,8 @@ class SyncEngine
 
         $this->customersPrepared    = true;
         $this->serviceItemByCompany = [];
+        $this->serviceItemErrors    = [];
+        $this->serviceItemChecked   = false;
         $this->reservedDocNumbers   = null;
         try {
             $this->prefetchInvoices($connection, $ledger, $rows);
@@ -3947,6 +4021,8 @@ class SyncEngine
             $this->paymentById          = null;
             $this->paymentReadFailed    = [];
             $this->serviceItemByCompany = null;
+            $this->serviceItemErrors    = null;
+            $this->serviceItemChecked   = null;
             $this->customersPrepared    = false;
             $this->customerLookupFailed = [];
         }
@@ -4060,6 +4136,7 @@ class SyncEngine
                         $now
                     );
                     $code  = $this->batchFaultCode($result);
+                    $this->forgetInactiveServiceItem($ledger, $connection, $kind, $code);
                     $error = $this->customerNameTakenError($ledger, $kind, (string) $uuid, $code)
                         ?? $this->batchItemAttemptError(
                             (string) ($result['error'] ?? ''),
@@ -4664,7 +4741,16 @@ class SyncEngine
         if (count($creates) <= 1) {
             return;
         }
-        if ($this->serviceItemId($ledger, $connection) === '') {
+        try {
+            if ($this->serviceItemId($ledger, $connection) === '') {
+                return;
+            }
+        } catch (QuickBooksException $exception) {
+            if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
+                throw $exception;
+            }
+
+            // Each create fails on its own with this error; the rest of the block still runs.
             return;
         }
 
@@ -5927,5 +6013,15 @@ class QuickBooksHttpGate extends QuickBooksClient
     public function ensureServiceItem(array $connection): string
     {
         return $this->engine->runAuthorized($connection, fn (array $connection): string => $this->inner->ensureServiceItem($connection));
+    }
+
+    public function itemActive(array $connection, string $id): bool
+    {
+        $active = $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): bool => $this->inner->itemActive($connection, $id)
+        );
+
+        return $active === true;
     }
 }

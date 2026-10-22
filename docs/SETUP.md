@@ -30,7 +30,17 @@ screens without the surrounding Fleetbase console menus.
   them, so they are left out when the totals are compared and do not cause
   another update. When QuickBooks shows such an invoice as fully paid (no
   balance left), its Fleetbase status is paid, although the amount paid is less
-  than the Fleetbase total.
+  than the Fleetbase total. A new line from Fleetbase uses the QuickBooks
+  product "Fleetbase service", which Fleetbase creates against the first Income
+  account QuickBooks lists. When Fleetbase updates an invoice, a line it matches
+  by its stored line id or its content keeps its QuickBooks product and tax
+  code, and description-only and bundle lines stay. A QuickBooks line with no
+  description arrives in Fleetbase with its product name, and a description
+  longer than 191 characters is cut to fit a Ledger line. An update from
+  Fleetbase leaves the QuickBooks text of such a line as it is. If "Fleetbase
+  service" is made inactive in QuickBooks, the first invoice QuickBooks then
+  refuses makes Fleetbase forget it, and the next sync finds or creates an
+  active one.
 - **Payments** — a payment for a paid Fleetbase invoice. Amount and date are
   compared when a payment already exists. The payload includes `TxnDate`: the
   day the invoice was paid in the organization's timezone (the app timezone when
