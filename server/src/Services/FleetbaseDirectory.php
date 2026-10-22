@@ -2372,7 +2372,8 @@ class FleetbaseDirectory
     private function lineTaxRows(array $invoice): array
     {
         $live = $this->lineMeta[(string) ($invoice['uuid'] ?? '')]['live'] ?? null;
-        if (empty($invoice['line_taxes_from_quickbooks']) === true || self::replacesLines($invoice) === true || is_array($live) === false) {
+        $copy = empty($invoice['line_taxes_from_quickbooks']) === false && self::replacesLines($invoice) === false;
+        if ($copy === false || is_array($live) === false) {
             return [];
         }
         $rows = [];
@@ -2401,7 +2402,8 @@ class FleetbaseDirectory
     {
         $merged = [];
         foreach ($rows as $row) {
-            $merged[$row['uuid']] = ['uuid' => $row['uuid'], 'columns' => $row['columns'] + ($merged[$row['uuid']]['columns'] ?? [])];
+            $columns              = $row['columns'] + ($merged[$row['uuid']]['columns'] ?? []);
+            $merged[$row['uuid']] = ['uuid' => $row['uuid'], 'columns' => $columns];
         }
 
         return array_values($merged);

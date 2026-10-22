@@ -643,7 +643,9 @@ test('the sales tax settings read the preferences and the company country once p
             return Http::response(['CompanyInfo' => ['CompanyName' => 'Sandbox', 'Country' => 'US']], 200);
         }
 
-        return Http::response(['Preferences' => ['TaxPrefs' => ['UsingSalesTax' => true, 'TaxGroupCodeRef' => ['value' => '2']]]], 200);
+        $prefs = ['TaxPrefs' => ['UsingSalesTax' => true, 'TaxGroupCodeRef' => ['value' => '2']]];
+
+        return Http::response(['Preferences' => $prefs], 200);
     });
     $client = new QuickBooksClient();
 
@@ -653,10 +655,9 @@ test('the sales tax settings read the preferences and the company country once p
 });
 
 test('an item is read by id, inactive or not', function () {
-    Http::fake([
-        'sandbox-quickbooks.api.intuit.com/*' => Http::response(['Item' => ['Id' => '20', 'Active' => false, 'Taxable' => true]], 200),
-    ]);
+    $item = ['Id' => '20', 'Active' => false, 'Taxable' => true];
+    Http::fake(['sandbox-quickbooks.api.intuit.com/*' => Http::response(['Item' => $item], 200)]);
 
-    expect((new QuickBooksClient())->item(clientConnection(), '20'))->toBe(['Id' => '20', 'Active' => false, 'Taxable' => true]);
+    expect((new QuickBooksClient())->item(clientConnection(), '20'))->toBe($item);
     Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/item/20'));
 });

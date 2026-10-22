@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Observers\FlagInvoiceObserver;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Container\Container;
 use Illuminate\Database\QueryException;
@@ -683,8 +684,14 @@ test('line taxes are read, and the tax QuickBooks worked out is written on the l
         });
         directoryWebhookRows();
         DB::table('ledger_invoice_items')->insert([
-            ['uuid' => 'item-1', 'invoice_uuid' => 'inv-9', 'description' => 'Delivery', 'amount' => 1000, 'tax_rate' => 15, 'tax_amount' => 150],
-            ['uuid' => 'item-2', 'invoice_uuid' => 'inv-9', 'description' => 'Fuel', 'amount' => 500, 'tax_rate' => 0, 'tax_amount' => 0],
+            [
+                'uuid'     => 'item-1', 'invoice_uuid' => 'inv-9', 'description' => 'Delivery', 'amount' => 1000,
+                'tax_rate' => 15, 'tax_amount' => 150,
+            ],
+            [
+                'uuid'     => 'item-2', 'invoice_uuid' => 'inv-9', 'description' => 'Fuel', 'amount' => 500,
+                'tax_rate' => 0, 'tax_amount' => 0,
+            ],
         ]);
         $directory = new FleetbaseDirectory();
         $ledger    = $directory->load('company-uuid')['ledger'];
@@ -715,7 +722,7 @@ test('line taxes are read, and the tax QuickBooks worked out is written on the l
         $ledger->invoices['inv-9']['replace_from_quickbooks'] = true;
         $ledger->invoices['inv-9']['items_from_quickbooks']   = true;
         $ledger->invoices['inv-9']['items']                   = [
-            ['description' => 'Delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000, 'tax_rate' => '8.00', 'tax_amount' => 80],
+            InvoiceMapper::item('Delivery', 1, 1000, 1000, '8.00', 80),
         ];
         $directory->save($ledger);
         $live = DB::table('ledger_invoice_items')->where('invoice_uuid', 'inv-9')->whereNull('deleted_at')->get();

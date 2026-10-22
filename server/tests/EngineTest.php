@@ -2,6 +2,7 @@
 
 use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WalletMapper;
@@ -4254,7 +4255,9 @@ function engineTaxedCompany(array $invoiceOverrides = []): array
         'Taxable'          => true,
         'IncomeAccountRef' => ['value' => '1', 'name' => 'Services'],
     ];
-    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'Taxable' => true];
+    $client->customers['qbo-customer'] = [
+        'Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'Taxable' => true,
+    ];
     $ledger                            = engineLedger();
     $ledger->customers['cust-1']       = engineCustomer('cust-1');
     $ledger->links[]                   = engineLink('customer', 'cust-1', 'qbo-customer');
@@ -4266,7 +4269,7 @@ function engineTaxedCompany(array $invoiceOverrides = []): array
 
 test('QuickBooks works out the tax of a new invoice and Fleetbase takes it', function () {
     [$engine, $client, $ledger] = engineTaxedCompany(['tax' => 150, 'total' => 1150, 'items' => [
-        ['description' => 'Delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000, 'tax_rate' => '15.00', 'tax_amount' => 150],
+        InvoiceMapper::item('Delivery', 1, 1000, 1000, '15.00', 150),
     ]]);
     $settings = qbSettings(['interval_minutes' => 1]);
 
@@ -4350,7 +4353,8 @@ test('with sales tax off in QuickBooks no tax codes are sent', function () {
 test('Fleetbase to QuickBooks only keeps the Fleetbase tax', function () {
     [$engine, $client, $ledger] = engineTaxedCompany(['tax' => 150, 'total' => 1150]);
 
-    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_direction' => 'outbound']), time());
+    $settings = qbSettings(['interval_minutes' => 1, 'invoice_direction' => 'outbound']);
+    $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
     expect($client->invoices['inv-1']['TxnTaxDetail']['TotalTax'])->toBe('0.80')
         ->and($ledger->invoices['inv-1']['tax'])->toBe(150)
@@ -4384,7 +4388,9 @@ test('an invoice block reads the tax settings, customers and service item once',
     [$engine, $client, $ledger]        = engineTaxedCompany();
     $ledger->customers['cust-2']       = engineCustomer('cust-2', ['name' => 'Bea', 'email' => 'bea@example.test']);
     $ledger->links[]                   = engineLink('customer', 'cust-2', 'qbo-bea');
-    $client->customers['qbo-bea']      = ['Id' => 'qbo-bea', 'SyncToken' => '0', 'DisplayName' => 'Bea', 'Taxable' => false];
+    $client->customers['qbo-bea']      = [
+        'Id' => 'qbo-bea', 'SyncToken' => '0', 'DisplayName' => 'Bea', 'Taxable' => false,
+    ];
     $ledger->invoices['inv-2']         = engineInvoice('inv-2', ['number' => 'INV-2', 'customer_uuid' => 'cust-2']);
     $ledger->pending[]                 = enginePending('invoice', 'inv-2');
 
@@ -4429,7 +4435,7 @@ test('QuickBooks Primary copies the line taxes and the next sync is aligned', fu
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
-test('a paid invoice with no amount recorded stays paid when QuickBooks adds tax, and its payment covers the tax', function () {
+test('a paid invoice with no amount stays paid when QuickBooks adds tax, and its payment covers it', function () {
     [$engine, $client, $ledger] = engineTaxedCompany(['status' => 'paid', 'amount_paid' => 0]);
 
     $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
@@ -4465,10 +4471,12 @@ test('an invoice QuickBooks holds with tax included is aligned and its total sta
 });
 
 test('an invoice that is not sent to QuickBooks does not read the QuickBooks tax settings', function () {
-    [$engine, $client, $ledger] = engineLinkedInvoice([], ['CustomerRef' => ['value' => 'qbo-customer'], 'PrivateNote' => 'From QuickBooks']);
+    $remote                     = ['CustomerRef' => ['value' => 'qbo-customer'], 'PrivateNote' => 'From QuickBooks'];
+    [$engine, $client, $ledger] = engineLinkedInvoice([], $remote);
     $client->failSalesTax       = new QuickBooksException(500, 'Intuit is down');
 
-    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_direction' => 'inbound']), time());
+    $settings = qbSettings(['interval_minutes' => 1, 'invoice_direction' => 'inbound']);
+    $batch    = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
     expect($batch['failed'])->toBe(0)
         ->and($ledger->invoices['inv-1']['notes'])->toBe('From QuickBooks')

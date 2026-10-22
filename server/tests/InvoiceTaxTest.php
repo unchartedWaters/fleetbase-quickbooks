@@ -8,7 +8,8 @@ use Fleetbase\Quickbooks\Support\InvoiceTax;
  */
 
 test('the sales tax settings come from the QuickBooks preferences and company country', function () {
-    $manual    = InvoiceTax::settings(['TaxPrefs' => ['UsingSalesTax' => true, 'TaxGroupCodeRef' => ['value' => '2']]], 'US');
+    $prefs     = ['TaxPrefs' => ['UsingSalesTax' => true, 'TaxGroupCodeRef' => ['value' => '2']]];
+    $manual    = InvoiceTax::settings($prefs, 'US');
     $automated = InvoiceTax::settings(['TaxPrefs' => ['UsingSalesTax' => true, 'PartnerTaxEnabled' => false]], 'US');
 
     expect($manual)->toBe(['mode' => InvoiceTax::US, 'automated' => false, 'rate' => '2'])
@@ -20,6 +21,7 @@ test('the sales tax settings come from the QuickBooks preferences and company co
 
 test('a line is taxed when both its QuickBooks product and customer are taxable', function () {
     $us      = ['mode' => InvoiceTax::US, 'automated' => false, 'rate' => '2'];
+    $off     = ['mode' => InvoiceTax::OFF, 'automated' => false, 'rate' => null];
     $taxable = ['Taxable' => true];
     $exempt  = ['Taxable' => false];
 
@@ -28,32 +30,35 @@ test('a line is taxed when both its QuickBooks product and customer are taxable'
         ->and(InvoiceTax::lineCode($us, $exempt, $taxable))->toBe('NON')
         ->and(InvoiceTax::lineCode($us, null, $taxable))->toBe('NON')
         ->and(InvoiceTax::lineCode($us, $taxable, null))->toBe('NON')
-        ->and(InvoiceTax::lineCode(['mode' => InvoiceTax::OFF, 'automated' => false, 'rate' => null], $taxable, $taxable))->toBeNull();
+        ->and(InvoiceTax::lineCode($off, $taxable, $taxable))->toBeNull();
 });
 
 test('outside the US a line takes the product tax code, then the customer default', function () {
-    $global = ['mode' => InvoiceTax::GLOBAL, 'automated' => false, 'rate' => null];
+    $global   = ['mode' => InvoiceTax::GLOBAL, 'automated' => false, 'rate' => null];
+    $customer = ['DefaultTaxCodeRef' => ['value' => '7']];
 
-    expect(InvoiceTax::lineCode($global, ['DefaultTaxCodeRef' => ['value' => '7']], ['SalesTaxCodeRef' => ['value' => '3']]))->toBe('3')
-        ->and(InvoiceTax::lineCode($global, ['DefaultTaxCodeRef' => ['value' => '7']], []))->toBe('7')
+    expect(InvoiceTax::lineCode($global, $customer, ['SalesTaxCodeRef' => ['value' => '3']]))->toBe('3')
+        ->and(InvoiceTax::lineCode($global, $customer, []))->toBe('7')
         ->and(InvoiceTax::lineCode($global, [], []))->toBeNull();
 });
 
 test('the invoice rate is the customer rate, then the company rate, never TAX or NON', function () {
     $us = ['mode' => InvoiceTax::US, 'automated' => false, 'rate' => '2'];
+    $as = fn (string $mode, string $rate): array => ['mode' => $mode, 'automated' => false, 'rate' => $rate];
 
     expect(InvoiceTax::invoiceRate($us, ['DefaultTaxCodeRef' => ['value' => '3']]))->toBe('3')
         ->and(InvoiceTax::invoiceRate($us, ['DefaultTaxCodeRef' => ['value' => 'TAX']]))->toBe('2')
         ->and(InvoiceTax::invoiceRate($us, ['DefaultTaxCodeRef' => ['value' => 'NON']]))->toBe('2')
         ->and(InvoiceTax::invoiceRate($us, null))->toBe('2')
-        ->and(InvoiceTax::invoiceRate(['mode' => InvoiceTax::US, 'automated' => false, 'rate' => 'TAX'], null))->toBeNull()
-        ->and(InvoiceTax::invoiceRate(['mode' => InvoiceTax::GLOBAL, 'automated' => false, 'rate' => '2'], null))->toBeNull()
-        ->and(InvoiceTax::invoiceRate(['mode' => InvoiceTax::OFF, 'automated' => false, 'rate' => '2'], null))->toBeNull();
+        ->and(InvoiceTax::invoiceRate($as(InvoiceTax::US, 'TAX'), null))->toBeNull()
+        ->and(InvoiceTax::invoiceRate($as(InvoiceTax::GLOBAL, '2'), null))->toBeNull()
+        ->and(InvoiceTax::invoiceRate($as(InvoiceTax::OFF, '2'), null))->toBeNull();
 });
 
-test('the tax plan holds each line code, the invoice rate, and the tax-exclusive flag only outside the US', function () {
+test('the tax plan holds each line code, the invoice rate, and the tax-exclusive flag outside the US', function () {
     $us       = ['mode' => InvoiceTax::US, 'automated' => false, 'rate' => '2'];
     $global   = ['mode' => InvoiceTax::GLOBAL, 'automated' => false, 'rate' => null];
+    $off      = ['mode' => InvoiceTax::OFF, 'automated' => false, 'rate' => null];
     $customer = ['Taxable' => true, 'DefaultTaxCodeRef' => ['value' => '3']];
     $items    = ['svc' => ['Taxable' => true, 'SalesTaxCodeRef' => ['value' => '9']], 'other' => ['Taxable' => false]];
 
@@ -65,7 +70,7 @@ test('the tax plan holds each line code, the invoice rate, and the tax-exclusive
         'lines'  => ['9', '3'],
         'rate'   => null,
         'global' => 'TaxExcluded',
-    ])->and(InvoiceTax::plan(['mode' => InvoiceTax::OFF, 'automated' => false, 'rate' => null], $customer, $items, ['svc']))->toBe([
+    ])->and(InvoiceTax::plan($off, $customer, $items, ['svc']))->toBe([
         'lines'  => [null],
         'rate'   => null,
         'global' => null,

@@ -38,14 +38,20 @@ class InvoiceMapper
      * $tax['lines'] (by position), the invoice its rate, and a new invoice outside the US whether
      * its amounts include tax (see InvoiceTax::plan).
      *
+     * $pushClears includes an empty note and due date so a Fleetbase clear is sent.
+     *
      * @param array<string, mixed>                                                             $invoice
-     * @param bool                                                                             $pushClears include an empty note and due date so a Fleetbase clear is sent
      * @param array{lines?: array<int, string|null>, rate?: string|null, global?: string|null} $tax
      *
      * @return array<string, mixed>
      */
-    public function toQuickBooks(array $invoice, string $customerRef, string $itemId, bool $pushClears = false, array $tax = []): array
-    {
+    public function toQuickBooks(
+        array $invoice,
+        string $customerRef,
+        string $itemId,
+        bool $pushClears = false,
+        array $tax = [],
+    ): array {
         $lines    = [];
         $items    = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
         $currency = (string) ($invoice['currency'] ?? '');
@@ -751,9 +757,9 @@ class InvoiceMapper
         $taxed  = [];
         $base   = 0;
         foreach (is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [] as $line) {
-            $id = is_array($line) === true ? trim((string) ($line['Id'] ?? '')) : '';
-            if ($id !== '' && $this->isProductSalesLine($line) === true
-                && trim((string) ($line['SalesItemLineDetail']['TaxCodeRef']['value'] ?? '')) === 'TAX') {
+            $id   = is_array($line) === true ? trim((string) ($line['Id'] ?? '')) : '';
+            $code = $id !== '' ? trim((string) ($line['SalesItemLineDetail']['TaxCodeRef']['value'] ?? '')) : '';
+            if ($code === 'TAX' && $this->isProductSalesLine($line) === true) {
                 $taxed[$id] = $this->lineAmount($line['Amount'] ?? 0);
                 $base += $taxed[$id];
             }
@@ -808,10 +814,18 @@ class InvoiceMapper
     /**
      * A Fleetbase invoice line, with its tax fields in the order the directory reads them.
      *
-     * @return array{description: string, quantity: int, unit_price: int, amount: int, tax_rate: string, tax_amount: int}
+     * @return array{
+     *     description: string, quantity: int, unit_price: int, amount: int, tax_rate: string, tax_amount: int
+     * }
      */
-    public static function item(string $description, int $quantity, int $unitPrice, int $amount, string $rate = '0.00', int $tax = 0): array
-    {
+    public static function item(
+        string $description,
+        int $quantity,
+        int $unitPrice,
+        int $amount,
+        string $rate = '0.00',
+        int $tax = 0,
+    ): array {
         return [
             'description' => $description,
             'quantity'    => $quantity,
@@ -861,7 +875,8 @@ class InvoiceMapper
         $left = $tax;
         $last = end($taxed);
         foreach ($taxed as $index) {
-            $share                         = $index === $last ? $left : self::share($tax, (int) $items[$index]['amount'], $base);
+            $amount                        = (int) $items[$index]['amount'];
+            $share                         = $index === $last ? $left : self::share($tax, $amount, $base);
             $left -= $share;
             $items[$index]['tax_rate']     = self::taxRate($rate);
             $items[$index]['tax_amount']   = $share;
@@ -880,7 +895,8 @@ class InvoiceMapper
         $lines = is_array($taxDetail['TaxLine'] ?? null) === true ? $taxDetail['TaxLine'] : [];
         $sum   = 0.0;
         foreach ($lines as $line) {
-            $detail = is_array($line) === true && is_array($line['TaxLineDetail'] ?? null) === true ? $line['TaxLineDetail'] : [];
+            $detail = is_array($line) === true ? ($line['TaxLineDetail'] ?? null) : null;
+            $detail = is_array($detail) === true ? $detail : [];
             if (($detail['PercentBased'] ?? false) !== true || is_numeric($detail['TaxPercent'] ?? null) === false) {
                 return null;
             }

@@ -13,7 +13,10 @@ return new class extends Migration {
      */
     public function up(): void
     {
-        if (Schema::hasTable($this->table) === false || Schema::hasColumn($this->table, 'default_item_account') === true) {
+        if (Schema::hasTable($this->table) === false) {
+            return;
+        }
+        if (Schema::hasColumn($this->table, 'default_item_account') === true) {
             return;
         }
 
@@ -24,7 +27,10 @@ return new class extends Migration {
 
     public function down(): void
     {
-        if (Schema::hasTable($this->table) === false || Schema::hasColumn($this->table, 'default_item_account') === false) {
+        if (Schema::hasTable($this->table) === false) {
+            return;
+        }
+        if (Schema::hasColumn($this->table, 'default_item_account') === false) {
             return;
         }
 

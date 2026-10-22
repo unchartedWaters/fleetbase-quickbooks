@@ -64,11 +64,16 @@ test('an update leaves out the tax-exclusive flag so a QuickBooks choice stays',
         ['lines' => ['3'], 'rate' => null, 'global' => 'TaxExcluded']
     );
 
-    expect((new InvoiceMapper())->withExistingLineIds($payload, $remote, [], true))->not->toHaveKey('GlobalTaxCalculation');
+    $updated = (new InvoiceMapper())->withExistingLineIds($payload, $remote, [], true);
+
+    expect($updated)->not->toHaveKey('GlobalTaxCalculation');
 });
 
 test('an update keeps the sales tax rate QuickBooks has over the customer rate', function () {
-    $remote  = ['Line' => [InvoiceLines::sales('1', 'Base Fee', '10.00')], 'TxnTaxDetail' => ['TxnTaxCodeRef' => ['value' => '5']]];
+    $remote  = [
+        'Line'         => [InvoiceLines::sales('1', 'Base Fee', '10.00')],
+        'TxnTaxDetail' => ['TxnTaxCodeRef' => ['value' => '5']],
+    ];
     $payload = (new InvoiceMapper())->toQuickBooks(
         ['items' => [['description' => 'Base Fee', 'quantity' => 1, 'amount' => 1000, 'qbo_line_id' => '1']]],
         'cust-1',
@@ -97,10 +102,7 @@ test('the tax QuickBooks calculated is read onto the invoice and shared over the
         'TxnTaxDetail' => [
             'TxnTaxCodeRef' => ['value' => '3'],
             'TotalTax'      => '2.73',
-            'TaxLine'       => [
-                ['Amount' => '2.13', 'DetailType' => 'TaxLineDetail', 'TaxLineDetail' => ['PercentBased' => true, 'TaxPercent' => '7.1']],
-                ['Amount' => '0.60', 'DetailType' => 'TaxLineDetail', 'TaxLineDetail' => ['PercentBased' => true, 'TaxPercent' => '2']],
-            ],
+            'TaxLine'       => [InvoiceLines::tax('2.13', '7.1'), InvoiceLines::tax('0.60', '2')],
         ],
     ];
 
@@ -135,8 +137,13 @@ test('no line rate is worked out when nothing taxed has a positive amount, or th
     $tiny                                        = InvoiceLines::sales('2', 'Tiny', '0.01');
     $tiny['SalesItemLineDetail']['TaxCodeRef']   = ['value' => 'TAX'];
 
-    $negative = (new InvoiceMapper())->fromQuickBooks(['TotalAmt' => '-4.00', 'Line' => [$credit], 'TxnTaxDetail' => ['TotalTax' => '1.00']]);
-    $huge     = (new InvoiceMapper())->fromQuickBooks(['TotalAmt' => '500.01', 'Line' => [$tiny], 'TxnTaxDetail' => ['TotalTax' => '500.00']]);
+    $mapper   = new InvoiceMapper();
+    $negative = $mapper->fromQuickBooks(
+        ['TotalAmt' => '-4.00', 'Line' => [$credit], 'TxnTaxDetail' => ['TotalTax' => '1.00']]
+    );
+    $huge     = $mapper->fromQuickBooks(
+        ['TotalAmt' => '500.01', 'Line' => [$tiny], 'TxnTaxDetail' => ['TotalTax' => '500.00']]
+    );
 
     expect($negative['tax'])->toBe(100)
         ->and($negative['items'][0]['tax_rate'])->toBe('0.00')
@@ -146,7 +153,8 @@ test('no line rate is worked out when nothing taxed has a positive amount, or th
 });
 
 test('an invoice with no tax gives lines with no tax', function () {
-    $mapped = (new InvoiceMapper())->fromQuickBooks(['TotalAmt' => '10.00', 'Line' => [InvoiceLines::sales('1', 'Base Fee', '10.00')]]);
+    $line   = InvoiceLines::sales('1', 'Base Fee', '10.00');
+    $mapped = (new InvoiceMapper())->fromQuickBooks(['TotalAmt' => '10.00', 'Line' => [$line]]);
 
     expect($mapped['tax'])->toBe(0)
         ->and($mapped['items'][0]['tax_rate'])->toBe('0.00')
@@ -167,12 +175,14 @@ test('the tax copied onto Fleetbase lines leaves out the tax of QuickBooks lines
     $mine['SalesItemLineDetail']['TaxCodeRef']  = ['value' => 'TAX'];
     $extra                                      = InvoiceLines::sales('2', 'Added in QuickBooks', '5.00');
     $extra['SalesItemLineDetail']['TaxCodeRef'] = ['value' => 'TAX'];
-    $remote                                     = ['Line' => [$mine, $extra], 'TxnTaxDetail' => ['TotalTax' => '1.20', 'TaxLine' => [
-        ['Amount' => '1.20', 'DetailType' => 'TaxLineDetail', 'TaxLineDetail' => ['PercentBased' => true, 'TaxPercent' => '8']],
-    ]]];
+    $remote                                     = [
+        'Line'         => [$mine, $extra],
+        'TxnTaxDetail' => ['TotalTax' => '1.20', 'TaxLine' => [InvoiceLines::tax('1.20', '8')]],
+    ];
 
-    $taxed  = (new InvoiceMapper())->quickBooksTax($remote, [['description' => 'Delivery', 'amount' => 1000, 'qbo_line_id' => '1']]);
-    $exempt = (new InvoiceMapper())->quickBooksTax($remote, [['description' => 'Other', 'amount' => 500, 'qbo_line_id' => '9']]);
+    $mapper = new InvoiceMapper();
+    $taxed  = $mapper->quickBooksTax($remote, [['description' => 'Delivery', 'amount' => 1000, 'qbo_line_id' => '1']]);
+    $exempt = $mapper->quickBooksTax($remote, [['description' => 'Other', 'amount' => 500, 'qbo_line_id' => '9']]);
 
     expect($taxed['tax'])->toBe(80)
         ->and($taxed['items'][0]['tax_amount'])->toBe(80)
@@ -185,7 +195,8 @@ test('a tax that cannot be shared over lines is copied whole onto the invoice', 
     $line   = InvoiceLines::sales('1', 'Delivery', '10.00');
     $remote = ['Line' => [$line], 'TxnTaxDetail' => ['TotalTax' => '2.00']];
 
-    $copied = (new InvoiceMapper())->quickBooksTax($remote, [['description' => 'Delivery', 'amount' => 1000, 'qbo_line_id' => '1']]);
+    $items  = [['description' => 'Delivery', 'amount' => 1000, 'qbo_line_id' => '1']];
+    $copied = (new InvoiceMapper())->quickBooksTax($remote, $items);
 
     // Outside the US lines carry rate codes, not TAX, so nothing says which line holds the tax.
     expect($copied['tax'])->toBe(200)

@@ -60,7 +60,8 @@ class InvoiceTax
             return $taxable === true ? 'TAX' : 'NON';
         }
         if ($settings['mode'] === self::GLOBAL) {
-            return self::refValue($item['SalesTaxCodeRef'] ?? null) ?? self::refValue($customer['DefaultTaxCodeRef'] ?? null);
+            return self::refValue($item['SalesTaxCodeRef'] ?? null)
+                ?? self::refValue($customer['DefaultTaxCodeRef'] ?? null);
         }
 
         return null;

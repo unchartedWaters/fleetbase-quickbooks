@@ -1641,7 +1641,8 @@ class QuickBooksClient
     private function decodeBody(Response $response): array
     {
         $json = preg_replace(
-            '/"(Amount|TotalAmt|Balance|UnitPrice|TotalTax|TaxPercent|NetAmountTaxable)"\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/',
+            '/"(Amount|TotalAmt|Balance|UnitPrice|TotalTax|TaxPercent|NetAmountTaxable)"'
+                . '\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/',
             '"$1":"$2"',
             $response->body()
         );

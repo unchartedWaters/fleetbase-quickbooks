@@ -556,10 +556,22 @@ test('QuickBooks works out the tax of the lines Fleetbase sends and Fleetbase co
     expect($account)->not->toBeNull()
         ->and($itemId)->not->toBe('');
 
-    $engine                                = new SyncEngine($client, new CustomerMapper(), new InvoiceMapper(), new WalletMapper(), new BackoffPolicy(static fn (int $wait): int => $wait));
+    $backoff                               = new BackoffPolicy(static fn (int $wait): int => $wait);
+    $engine                                = new SyncEngine(
+        $client,
+        new CustomerMapper(),
+        new InvoiceMapper(),
+        new WalletMapper(),
+        $backoff
+    );
     $ledger                                = new SyncLedger();
     $ledger->connections[$company]         = $connection + ['default_item_id' => $itemId];
-    $ledger->customers['cust-tax']         = ['uuid' => 'cust-tax', 'company_uuid' => $company, 'name' => 'Fleetbase Test Tax ' . $tag, 'email' => 'fbqb-tax-' . $tag . '@example.com'];
+    $ledger->customers['cust-tax']         = [
+        'uuid'         => 'cust-tax',
+        'company_uuid' => $company,
+        'name'         => 'Fleetbase Test Tax ' . $tag,
+        'email'        => 'fbqb-tax-' . $tag . '@example.com',
+    ];
     $ledger->invoices['inv-tax']           = [
         'uuid'          => 'inv-tax',
         'company_uuid'  => $company,
@@ -576,8 +588,12 @@ test('QuickBooks works out the tax of the lines Fleetbase sends and Fleetbase co
             ['description' => 'Wait time', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000],
         ],
     ];
+    $pending = fn (string $type, string $uuid): array => [
+        'company_uuid' => $company, 'local_type' => $type, 'local_uuid' => $uuid,
+        'status'       => 'pending', 'attempts' => 0,
+    ];
     foreach (['customer' => 'cust-tax', 'invoice' => 'inv-tax'] as $type => $uuid) {
-        $ledger->pending[] = ['company_uuid' => $company, 'local_type' => $type, 'local_uuid' => $uuid, 'status' => 'pending', 'attempts' => 0];
+        $ledger->pending[] = $pending($type, $uuid);
     }
     $settings = qbSettings(['interval_minutes' => 1]);
 
@@ -603,10 +619,11 @@ test('QuickBooks works out the tax of the lines Fleetbase sends and Fleetbase co
     $ledger->invoices['inv-tax']['items'][1]['amount']     = 1500;
     $ledger->invoices['inv-tax']['items'][1]['unit_price'] = 1500;
     $ledger->connections[$company]['last_batch_at']        = null;
-    $ledger->pending                                       = [['company_uuid' => $company, 'local_type' => 'invoice', 'local_uuid' => 'inv-tax', 'status' => 'pending', 'attempts' => 0]];
-    $second                                                = $engine->runScheduled($ledger, $company, $settings, time() + 5, true);
-    $remote                                                = $client->getInvoice($connection, (string) $link['qbo_id']);
-    $tax                                                   = sandboxCents($remote['TxnTaxDetail']['TotalTax'] ?? 0);
+    $ledger->pending                                       = [$pending('invoice', 'inv-tax')];
+
+    $second = $engine->runScheduled($ledger, $company, $settings, time() + 5, true);
+    $remote = $client->getInvoice($connection, (string) $link['qbo_id']);
+    $tax    = sandboxCents($remote['TxnTaxDetail']['TotalTax'] ?? 0);
 
     expect($second['updated'] ?? 0)->toBe(1)
         ->and(sandboxCents($remote['TotalAmt'] ?? null))->toBe(3500 + $tax)
@@ -615,7 +632,8 @@ test('QuickBooks works out the tax of the lines Fleetbase sends and Fleetbase co
 
     $ledger->connections[$company]['last_batch_at'] = null;
     $ledger->pending[0]['status']                   = 'pending';
-    $third                                          = $engine->runScheduled($ledger, $company, $settings, time() + 10, true);
+
+    $third = $engine->runScheduled($ledger, $company, $settings, time() + 10, true);
 
     expect($third['aligned'] ?? 0)->toBe(1)
         ->and($third['updated'] ?? 0)->toBe(0);
