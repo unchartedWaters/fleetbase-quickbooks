@@ -4239,3 +4239,36 @@ test('a blank fleetbase line and its blank QuickBooks line stay aligned', functi
     }
     expect($client->calls)->not->toContain('updateInvoice');
 });
+
+test('a fleetbase edit of an invoice with a QuickBooks sales tax rate is accepted', function () {
+    [$engine, $client]                          = qbEngine();
+    $ledger                                     = engineLedger();
+    $ledger->customers['cust-1']                = engineCustomer('cust-1');
+    $ledger->links[]                            = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->links[]                            = engineLink('invoice', 'inv-1', 'qb-1');
+    $sales                                      = InvoiceLines::sales('1', 'Delivery', '10.00');
+    $sales['SalesItemLineDetail']['TaxCodeRef'] = ['value' => 'TAX'];
+    $client->invoices['qb-1']                   = [
+        'Id'           => 'qb-1',
+        'SyncToken'    => '0',
+        'DocNumber'    => 'INV-1',
+        'TxnDate'      => '2026-09-01',
+        'DueDate'      => '2026-09-15',
+        'CustomerRef'  => ['value' => 'qbo-customer'],
+        'TotalAmt'     => '10.80',
+        'Line'         => [$sales],
+        'TxnTaxDetail' => ['TxnTaxCodeRef' => ['value' => '2'], 'TotalTax' => '0.80'],
+    ];
+    $ledger->invoices['inv-1'] = engineInvoice('inv-1', [
+        'total' => 1200,
+        'items' => [InvoiceLines::tracked('item-a', 'Delivery', 1200, '1')],
+    ]);
+    $ledger->pending[] = enginePending('invoice', 'inv-1');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['failed'])->toBe(0)
+        ->and($batch['updated'])->toBe(1)
+        ->and($client->invoices['qb-1']['Line'][0]['Amount'])->toBe('12.00')
+        ->and($client->invoices['qb-1']['TxnTaxDetail']['TxnTaxCodeRef'])->toBe(['value' => '2']);
+});

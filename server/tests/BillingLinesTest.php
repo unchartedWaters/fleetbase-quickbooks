@@ -179,3 +179,27 @@ test('an empty QuickBooks description stays empty next to an empty fleetbase lin
         ->and($mapper->fromQuickBooks($remote)['items'][0]['description'])->toBe('Concrete')
         ->and($mapper->pairedLineIds([InvoiceLines::item('a', '', 200)], $remote, [], true))->toBe(['1']);
 });
+
+test('an update sends back the sales tax rate QuickBooks has on the invoice', function () {
+    $remote  = [
+        'Line'         => [InvoiceLines::sales('1', 'Base Fee', '10.00')],
+        'TxnTaxDetail' => ['TxnTaxCodeRef' => ['value' => '2'], 'TotalTax' => '0.80'],
+    ];
+    $payload = (new InvoiceMapper())->toQuickBooks(['items' => [
+        ['description' => 'Base Fee', 'quantity' => 1, 'amount' => 1200, 'qbo_line_id' => '1'],
+    ]], 'cust-1', 'svc');
+
+    $merged = (new InvoiceMapper())->withExistingLineIds($payload, $remote, [], true);
+
+    // Without the rate, QuickBooks refuses a line update with fault 6000 ("error while calculating tax").
+    expect($merged['TxnTaxDetail'])->toBe(['TxnTaxCodeRef' => ['value' => '2']]);
+});
+
+test('an update of an invoice without a sales tax rate sends no tax detail', function () {
+    $remote  = ['Line' => [InvoiceLines::sales('1', 'Base Fee', '10.00')], 'TxnTaxDetail' => ['TotalTax' => 0]];
+    $payload = (new InvoiceMapper())->toQuickBooks(['items' => [
+        ['description' => 'Base Fee', 'quantity' => 1, 'amount' => 1200, 'qbo_line_id' => '1'],
+    ]], 'cust-1', 'svc');
+
+    expect((new InvoiceMapper())->withExistingLineIds($payload, $remote, [], true))->not->toHaveKey('TxnTaxDetail');
+});

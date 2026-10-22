@@ -161,6 +161,7 @@ class FakeQuickBooks extends QuickBooksClient
             throw new QuickBooksException(400, 'quickbooks.messages.batch-item-unsupported');
         }
         $this->refuseInvoiceLines($payload, false);
+        $this->refuseUntaxedLineUpdate($this->invoices[$id] ?? [], $payload);
         $payload       = $this->withLineIds($payload);
         $record        = array_merge($this->invoices[$id] ?? [], $payload, [
             'Id'        => $id,
@@ -766,6 +767,26 @@ class FakeQuickBooks extends QuickBooksClient
 
                 throw new QuickBooksException(400, $message, null, '2500');
             }
+        }
+    }
+
+    /**
+     * QuickBooks refuses new lines on an invoice that has a sales tax rate unless the update sends
+     * that rate again (checked in the sandbox, fault 6000).
+     *
+     * @param array<string, mixed> $stored
+     * @param array<string, mixed> $payload
+     */
+    private function refuseUntaxedLineUpdate(array $stored, array $payload): void
+    {
+        $rate = $stored['TxnTaxDetail']['TxnTaxCodeRef']['value'] ?? null;
+        if ($rate === null || array_key_exists('Line', $payload) === false) {
+            return;
+        }
+        if (($payload['TxnTaxDetail']['TxnTaxCodeRef']['value'] ?? null) === null) {
+            $message = 'We\'re sorry, QuickBooks encountered an error while calculating tax.';
+
+            throw new QuickBooksException(400, $message, null, '6000');
         }
     }
 

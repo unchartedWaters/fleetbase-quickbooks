@@ -183,6 +183,28 @@ class InvoiceMapper
             $itemId
         );
 
+        return self::withRemoteTaxRate($payload, $remote);
+    }
+
+    /**
+     * An invoice given a sales tax rate in QuickBooks keeps it. QuickBooks refuses a line update
+     * that does not send the rate again (fault 6000, "error while calculating tax").
+     *
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $remote
+     *
+     * @return array<string, mixed>
+     */
+    private static function withRemoteTaxRate(array $payload, array $remote): array
+    {
+        $ref  = $remote['TxnTaxDetail']['TxnTaxCodeRef'] ?? null;
+        $rate = is_array($ref) === true ? trim((string) ($ref['value'] ?? '')) : '';
+        if ($rate === '' || isset($payload['TxnTaxDetail']['TxnTaxCodeRef']) === true) {
+            return $payload;
+        }
+        $detail                  = is_array($payload['TxnTaxDetail'] ?? null) === true ? $payload['TxnTaxDetail'] : [];
+        $payload['TxnTaxDetail'] = ['TxnTaxCodeRef' => ['value' => $rate]] + $detail;
+
         return $payload;
     }
 

@@ -73,7 +73,7 @@ test('the fleetbase service item is created against an income account', function
     });
 
     expect((new QuickBooksClient())->ensureServiceItem(clientConnection()))->toBe('12');
-    Http::assertSent(fn (Request $request) => str_contains(urldecode($request->url()), "AccountType = 'Income' maxresults 1"));
+    Http::assertSent(fn (Request $request) => str_contains(urldecode($request->url()), "AccountType = 'Income'"));
     Http::assertSent(fn (Request $request) => $request->method() === 'POST'
         && $request['Type'] === 'NonInventory'
         && $request['IncomeAccountRef'] === ['value' => '79']);
@@ -566,4 +566,45 @@ test('credential and token parameters are hidden from stack traces', function ()
         ->and($sensitive('tokenRequest', 'credentials'))->toBeTrue()
         ->and($sensitive('tokenRequest', 'form'))->toBeTrue()
         ->and($sensitive('accounting', 'connection'))->toBeTrue();
+});
+
+test('the fleetbase service item posts to a service income account, not a discount or billable expense one', function () {
+    $accounts = [
+        ['Id' => '85', 'Name' => 'Billable Expense Income', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true],
+        ['Id' => '86', 'Name' => 'Discounts given', 'AccountSubType' => 'DiscountsRefundsGiven', 'Active' => true],
+        ['Id' => '87', 'Name' => 'Unapplied Cash Payment Income', 'AccountSubType' => 'UnappliedCashPaymentIncome', 'Active' => true],
+        ['Id' => '30', 'Name' => 'Uncategorized Income', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true],
+        ['Id' => '3', 'Name' => 'Old services', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => false],
+        ['Id' => '79', 'Name' => 'Sales of Product Income', 'AccountSubType' => 'SalesOfProductIncome', 'Active' => true],
+        ['Id' => '52', 'Name' => 'Installation', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true, 'SubAccount' => true],
+        ['Id' => '5', 'Name' => 'Fees Billed', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true],
+        ['Id' => '45', 'Name' => 'Landscaping Services', 'AccountSubType' => 'OtherPrimaryIncome', 'Active' => true],
+    ];
+
+    expect(QuickBooksClient::serviceIncomeAccount($accounts))->toBe('5')
+        ->and(QuickBooksClient::serviceIncomeAccount(array_slice($accounts, 0, 6)))->toBe('79')
+        ->and(QuickBooksClient::serviceIncomeAccount([$accounts[8], $accounts[0]]))->toBe('45')
+        // QuickBooks' own catch-all accounts are a last resort; a discount account never is.
+        ->and(QuickBooksClient::serviceIncomeAccount(array_slice($accounts, 0, 5)))->toBe('30')
+        ->and(QuickBooksClient::serviceIncomeAccount(array_slice($accounts, 1, 2)))->toBeNull();
+});
+
+test('a new fleetbase service item uses the service income account QuickBooks lists', function () {
+    Http::fake(function (Request $request) {
+        $url = urldecode($request->url());
+        if (str_contains($url, 'from Item') === true) {
+            return Http::response(['QueryResponse' => []], 200);
+        }
+        if (str_contains($url, 'from Account') === true) {
+            return Http::response(['QueryResponse' => ['Account' => [
+                ['Id' => '85', 'Name' => 'Billable Expense Income', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true],
+                ['Id' => '1', 'Name' => 'Services', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true],
+            ]]], 200);
+        }
+
+        return Http::response(['Item' => ['Id' => '12']], 200);
+    });
+
+    expect((new QuickBooksClient())->ensureServiceItem(clientConnection()))->toBe('12');
+    Http::assertSent(fn (Request $request) => $request->method() === 'POST' && $request['IncomeAccountRef'] === ['value' => '1']);
 });

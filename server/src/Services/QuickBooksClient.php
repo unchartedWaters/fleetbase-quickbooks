@@ -1021,18 +1021,56 @@ class QuickBooksClient
             return (string) $existing[0]['Id'];
         }
 
-        $income = $this->query($connection, "select * from Account where AccountType = 'Income' maxresults 1", 'Account');
-        if (isset($income[0]['Id']) === false) {
+        $income  = $this->query($connection, "select * from Account where AccountType = 'Income' maxresults 1000", 'Account');
+        $account = self::serviceIncomeAccount($income);
+        if ($account === null) {
             return '';
         }
 
         $created = $this->entity($connection, 'post', 'item', [
             'Name'             => 'Fleetbase service',
             'Type'             => 'NonInventory',
-            'IncomeAccountRef' => ['value' => (string) $income[0]['Id']],
+            'IncomeAccountRef' => ['value' => $account],
         ], 'Item');
 
         return (string) ($created['Id'] ?? '');
+    }
+
+    /**
+     * The income account a new Fleetbase product posts to: an active service income account, then
+     * product sales, then other primary income, top-level accounts before sub-accounts, oldest first.
+     * QuickBooks' own "Billable Expense Income" and "Uncategorized Income" (English names) come
+     * last. Discount, refund and unapplied cash accounts reduce income, so they are never used.
+     *
+     * @param array<int, array<string, mixed>> $accounts
+     */
+    public static function serviceIncomeAccount(array $accounts): ?string
+    {
+        $subtypes = ['ServiceFeeIncome' => 0, 'SalesOfProductIncome' => 1, 'OtherPrimaryIncome' => 2];
+        $never    = ['DiscountsRefundsGiven', 'UnappliedCashPaymentIncome'];
+        $fallback = ['billable expense income', 'uncategorized income'];
+        $best     = null;
+        $bestRank = null;
+        foreach ($accounts as $account) {
+            $id      = trim((string) ($account['Id'] ?? ''));
+            $subtype = (string) ($account['AccountSubType'] ?? '');
+            if ($id === '' || ($account['Active'] ?? true) === false || in_array($subtype, $never, true) === true) {
+                continue;
+            }
+            $name = strtolower(trim((string) ($account['Name'] ?? '')));
+            $rank = [
+                in_array($name, $fallback, true) === true ? 1 : 0,
+                $subtypes[$subtype] ?? count($subtypes),
+                ($account['SubAccount'] ?? false) === true ? 1 : 0,
+                ctype_digit($id) === true ? (int) $id : PHP_INT_MAX,
+            ];
+            if ($bestRank === null || $rank < $bestRank) {
+                $best     = $id;
+                $bestRank = $rank;
+            }
+        }
+
+        return $best;
     }
 
     /**
