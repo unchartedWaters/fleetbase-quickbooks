@@ -569,12 +569,12 @@ test('credential and token parameters are hidden from stack traces', function ()
 });
 
 test('the fleetbase service item posts to a service income account, not a discount one', function () {
-    $income   = static fn (string $id, string $name, string $subtype, array $extra = []): array => [
+    $income   = static fn (string $id, string $name, string $subtype, array $extra = []): array => $extra + [
         'Id'             => $id,
         'Name'           => $name,
         'AccountSubType' => $subtype,
         'Active'         => true,
-    ] + $extra;
+    ];
     $accounts = [
         $income('85', 'Billable Expense Income', 'ServiceFeeIncome'),
         $income('86', 'Discounts given', 'DiscountsRefundsGiven'),
