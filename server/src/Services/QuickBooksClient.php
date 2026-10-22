@@ -2,6 +2,7 @@
 
 namespace Fleetbase\Quickbooks\Services;
 
+use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\NextDocNumber;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\Translation;
@@ -24,6 +25,9 @@ class QuickBooksClient
 
     /** @var array<string, array<string, mixed>> */
     private array $preferencesByRealm = [];
+
+    /** @var array<string, string> */
+    private array $countryByRealm = [];
 
     /**
      * The Fleetbase record a single write belongs to (for example invoice:<uuid>), set by
@@ -169,6 +173,36 @@ class QuickBooksClient
         $value = $this->preferences($connection)['CurrencyPrefs']['MultiCurrencyEnabled'] ?? false;
 
         return filter_var($value, FILTER_VALIDATE_BOOLEAN) === true;
+    }
+
+    /**
+     * How QuickBooks taxes invoices for this company (see InvoiceTax::settings). The country is
+     * read once per company, like the preferences.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array{mode: string, automated: bool, rate: string|null}
+     */
+    public function salesTax(array $connection): array
+    {
+        $realm = (string) ($connection['realm_id'] ?? '');
+        if (array_key_exists($realm, $this->countryByRealm) === false) {
+            $this->countryByRealm[$realm] = (string) ($this->companyInfo($connection)['Country'] ?? '');
+        }
+
+        return InvoiceTax::settings($this->preferences($connection), $this->countryByRealm[$realm]);
+    }
+
+    /**
+     * An item by id, active or not, or null when QuickBooks has none.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    public function item(array $connection, string $id): ?array
+    {
+        return $this->read($connection, 'item/' . rawurlencode($id), 'Item');
     }
 
     /**
@@ -1607,7 +1641,7 @@ class QuickBooksClient
     private function decodeBody(Response $response): array
     {
         $json = preg_replace(
-            '/"(Amount|TotalAmt|Balance|UnitPrice)"\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/',
+            '/"(Amount|TotalAmt|Balance|UnitPrice|TotalTax|TaxPercent|NetAmountTaxable)"\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/',
             '"$1":"$2"',
             $response->body()
         );

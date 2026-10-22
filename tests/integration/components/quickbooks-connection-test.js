@@ -268,6 +268,21 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assertConnectionButtons(assert, ['connect']);
     });
 
+    test('connected status names the income account invoice lines post to', async function (assert) {
+        this.set('connection', { realm_id: '123', environment: 'sandbox', default_item_account: 'Services' });
+
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} />`);
+
+        assert
+            .dom('[data-test-income-account]')
+            .hasText(
+                'Invoice lines use the QuickBooks product "Fleetbase service", which posts to the income account Services. QuickBooks taxes these lines only when that product and the customer are taxable. To change the account or whether the lines are taxed, edit that product in QuickBooks.'
+            );
+
+        this.set('connection', { realm_id: '123', environment: 'sandbox' });
+        assert.dom('[data-test-income-account]').doesNotExist('nothing is shown before the account is known');
+    });
+
     test('connected status explains invoice and wallet currency rules', async function (assert) {
         this.set('connection', { realm_id: '123', environment: 'sandbox', home_currency: 'USD' });
 

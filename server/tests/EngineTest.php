@@ -2,7 +2,6 @@
 
 use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
-use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WalletMapper;
@@ -3467,43 +3466,6 @@ test('a quickbooks primary sync clears an amount paid that no quickbooks payment
         ->and($client->calls)->not->toContain('createPayment');
 });
 
-test('clearing invoice tax updates the existing tax line instead of leaving it', function () {
-    [$engine, $client, $ledger] = engineLinkedInvoice(['tax' => 0], [
-        'TotalAmt' => '11.50',
-        'Line'     => [[
-            'Id'                  => '9',
-            'Amount'              => '10.00',
-            'DetailType'          => 'SalesItemLineDetail',
-            'Description'         => 'Delivery',
-            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00', 'ItemRef' => ['value' => 'item-1']],
-        ], [
-            'Id'                  => 'tax-1',
-            'Amount'              => '1.50',
-            'DetailType'          => 'SalesItemLineDetail',
-            'Description'         => InvoiceMapper::TAX_LINE_DESCRIPTION,
-            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '1.50', 'ItemRef' => ['value' => 'item-1']],
-        ]],
-    ]);
-    $settings = qbSettings(['interval_minutes' => 1]);
-
-    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
-    $tax   = null;
-    foreach ($client->invoices['qb-1']['Line'] as $line) {
-        if (($line['Description'] ?? '') === InvoiceMapper::TAX_LINE_DESCRIPTION) {
-            $tax = $line;
-        }
-    }
-
-    expect($first['updated'])->toBe(1)
-        ->and($tax['Id'])->toBe('tax-1')
-        ->and($tax['Amount'])->toBe('0.00');
-
-    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
-
-    expect($second['aligned'])->toBe(1)
-        ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
-});
-
 test('a fleetbase primary webhook does not copy quickbooks onto fleetbase', function () {
     [$engine, $client]           = qbEngine();
     $ledger                      = engineLedger();
@@ -4271,4 +4233,198 @@ test('a fleetbase edit of an invoice with a QuickBooks sales tax rate is accepte
         ->and($batch['updated'])->toBe(1)
         ->and($client->invoices['qb-1']['Line'][0]['Amount'])->toBe('12.00')
         ->and($client->invoices['qb-1']['TxnTaxDetail']['TxnTaxCodeRef'])->toBe(['value' => '2']);
+});
+
+/**
+ * A US company taxing at 8% (rate code 2), with a taxable customer and service item.
+ *
+ * @param array<string, mixed> $invoiceOverrides
+ *
+ * @return array{0: SyncEngine, 1: FakeQuickBooks, 2: SyncLedger}
+ */
+function engineTaxedCompany(array $invoiceOverrides = []): array
+{
+    [$engine, $client]                 = qbEngine();
+    $client->salesTax                  = ['mode' => 'us', 'automated' => false, 'rate' => '2'];
+    $client->taxRates                  = ['2' => '8'];
+    $client->assignLineIds             = true;
+    $client->items['item-1']           = [
+        'Id'               => 'item-1',
+        'Name'             => 'Fleetbase service',
+        'Taxable'          => true,
+        'IncomeAccountRef' => ['value' => '1', 'name' => 'Services'],
+    ];
+    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada', 'Taxable' => true];
+    $ledger                            = engineLedger();
+    $ledger->customers['cust-1']       = engineCustomer('cust-1');
+    $ledger->links[]                   = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']         = engineInvoice('inv-1', $invoiceOverrides);
+    $ledger->pending[]                 = enginePending('invoice', 'inv-1');
+
+    return [$engine, $client, $ledger];
+}
+
+test('QuickBooks works out the tax of a new invoice and Fleetbase takes it', function () {
+    [$engine, $client, $ledger] = engineTaxedCompany(['tax' => 150, 'total' => 1150, 'items' => [
+        ['description' => 'Delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000, 'tax_rate' => '15.00', 'tax_amount' => 150],
+    ]]);
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first   = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+    $created = $client->invoices['inv-1'];
+
+    expect($first['created'])->toBe(1)
+        ->and($created['Line'])->toHaveCount(1)
+        ->and($created['Line'][0]['SalesItemLineDetail']['TaxCodeRef'])->toBe(['value' => 'TAX'])
+        ->and($created['TxnTaxDetail']['TxnTaxCodeRef'])->toBe(['value' => '2'])
+        ->and($created['TxnTaxDetail']['TotalTax'])->toBe('0.80')
+        ->and($ledger->invoices['inv-1']['tax'])->toBe(80)
+        ->and($ledger->invoices['inv-1']['total'])->toBe(1080)
+        ->and($ledger->invoices['inv-1']['items'][0]['tax_rate'])->toBe('8.00')
+        ->and($ledger->invoices['inv-1']['items'][0]['tax_amount'])->toBe(80)
+        // The line had a Fleetbase tax rate, so Activity says it was replaced.
+        ->and($ledger->attempts[0]['error'])->toBe('quickbooks.messages.invoice-tax-from-quickbooks')
+        ->and($ledger->connections['company-uuid']['default_item_account'])->toBe('Services');
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice');
+});
+
+test('a Fleetbase edit is sent without its tax and QuickBooks works the tax out again', function () {
+    [$engine, $client, $ledger] = engineTaxedCompany();
+    $settings                   = qbSettings(['interval_minutes' => 1]);
+    $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    $ledger->invoices['inv-1']['items'][0]['amount']     = 2000;
+    $ledger->invoices['inv-1']['items'][0]['unit_price'] = 2000;
+    $second                                              = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['updated'])->toBe(1)
+        ->and($client->invoices['inv-1']['TxnTaxDetail']['TotalTax'])->toBe('1.60')
+        ->and($ledger->invoices['inv-1']['tax'])->toBe(160)
+        ->and($ledger->invoices['inv-1']['total'])->toBe(2160)
+        ->and($ledger->attempts[1]['error'])->toBeNull();
+
+    $third = engineRunAgain($engine, $ledger, $settings, time() + 20);
+
+    expect($third['aligned'])->toBe(1)
+        ->and(array_count_values($client->calls)['updateInvoice'])->toBe(1);
+});
+
+test('a customer QuickBooks does not tax gets lines that are not taxed', function () {
+    [$engine, $client, $ledger]                   = engineTaxedCompany();
+    $client->customers['qbo-customer']['Taxable'] = false;
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->invoices['inv-1']['Line'][0]['SalesItemLineDetail']['TaxCodeRef'])->toBe(['value' => 'NON'])
+        ->and($client->invoices['inv-1']['TxnTaxDetail']['TotalTax'])->toBe('0.00')
+        ->and($ledger->invoices['inv-1']['tax'])->toBe(0)
+        ->and($ledger->invoices['inv-1']['total'])->toBe(1000);
+});
+
+test('the customer sales tax rate is used before the company rate', function () {
+    [$engine, $client, $ledger]                             = engineTaxedCompany();
+    $client->taxRates['3']                                  = '10';
+    $client->customers['qbo-customer']['DefaultTaxCodeRef'] = ['value' => '3'];
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->invoices['inv-1']['TxnTaxDetail']['TxnTaxCodeRef'])->toBe(['value' => '3'])
+        ->and($ledger->invoices['inv-1']['tax'])->toBe(100);
+});
+
+test('with sales tax off in QuickBooks no tax codes are sent', function () {
+    [$engine, $client, $ledger] = engineTaxedCompany();
+    $client->salesTax           = ['mode' => 'off', 'automated' => false, 'rate' => null];
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->invoices['inv-1']['Line'][0]['SalesItemLineDetail'])->not->toHaveKey('TaxCodeRef')
+        ->and($client->invoices['inv-1'])->not->toHaveKey('TxnTaxDetail')
+        ->and($client->calls)->not->toContain('getCustomer:qbo-customer');
+});
+
+test('Fleetbase to QuickBooks only keeps the Fleetbase tax', function () {
+    [$engine, $client, $ledger] = engineTaxedCompany(['tax' => 150, 'total' => 1150]);
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_direction' => 'outbound']), time());
+
+    expect($client->invoices['inv-1']['TxnTaxDetail']['TotalTax'])->toBe('0.80')
+        ->and($ledger->invoices['inv-1']['tax'])->toBe(150)
+        ->and($ledger->invoices['inv-1']['total'])->toBe(1150);
+});
+
+test('a taxable invoice with no sales tax rate is sent and Activity says why it has no tax', function () {
+    [$engine, $client, $ledger] = engineTaxedCompany();
+    $client->salesTax['rate']   = null;
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['created'])->toBe(1)
+        ->and($client->invoices['inv-1'])->not->toHaveKey('TxnTaxDetail')
+        ->and($ledger->attempts[0]['outcome'])->toBe('created')
+        ->and($ledger->attempts[0]['error'])->toBe('quickbooks.messages.invoice-no-tax-rate');
+});
+
+test('a failed read of the QuickBooks tax settings fails the invoice instead of sending it untaxed', function () {
+    [$engine, $client, $ledger] = engineTaxedCompany();
+    $client->failSalesTax       = new QuickBooksException(500, 'Intuit is down');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['failed'])->toBe(1)
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and($client->calls)->not->toContain('batch');
+});
+
+test('an invoice block reads the tax settings, customers and service item once', function () {
+    [$engine, $client, $ledger]        = engineTaxedCompany();
+    $ledger->customers['cust-2']       = engineCustomer('cust-2', ['name' => 'Bea', 'email' => 'bea@example.test']);
+    $ledger->links[]                   = engineLink('customer', 'cust-2', 'qbo-bea');
+    $client->customers['qbo-bea']      = ['Id' => 'qbo-bea', 'SyncToken' => '0', 'DisplayName' => 'Bea', 'Taxable' => false];
+    $ledger->invoices['inv-2']         = engineInvoice('inv-2', ['number' => 'INV-2', 'customer_uuid' => 'cust-2']);
+    $ledger->pending[]                 = enginePending('invoice', 'inv-2');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    $codes = [];
+    foreach ($client->invoices as $invoice) {
+        $codes[(string) $invoice['DocNumber']] = $invoice['Line'][0]['SalesItemLineDetail']['TaxCodeRef']['value'];
+    }
+
+    expect($batch['created'])->toBe(2)
+        ->and($codes)->toBe(['INV-1' => 'TAX', 'INV-2' => 'NON'])
+        ->and($client->salesTaxReads)->toBe(1)
+        ->and($client->itemReads)->toBe(1)
+        ->and($client->calls)->not->toContain('getCustomer:qbo-customer')
+        ->and($client->calls)->not->toContain('getCustomer:qbo-bea')
+        ->and($ledger->invoices['inv-1']['tax'])->toBe(80)
+        ->and($ledger->invoices['inv-2']['tax'])->toBe(0);
+});
+
+test('QuickBooks Primary copies the line taxes and the next sync is aligned', function () {
+    $taxed                                      = InvoiceLines::sales('1', 'Delivery', '10.00');
+    $taxed['SalesItemLineDetail']['TaxCodeRef'] = ['value' => 'TAX'];
+    [$engine, $client, $ledger]                 = engineLinkedInvoice([], [
+        'TotalAmt'     => '10.80',
+        'Line'         => [$taxed],
+        'TxnTaxDetail' => ['TxnTaxCodeRef' => ['value' => '2'], 'TotalTax' => '0.80'],
+    ]);
+    $settings = qbSettings(['interval_minutes' => 1, 'invoice_conflict' => 'quickbooks']);
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($first['updated'])->toBe(1)
+        ->and($ledger->invoices['inv-1']['tax'])->toBe(80)
+        ->and($ledger->invoices['inv-1']['total'])->toBe(1080)
+        ->and($ledger->invoices['inv-1']['items'][0]['tax_rate'])->toBe('8.00')
+        ->and($ledger->invoices['inv-1']['items'][0]['tax_amount'])->toBe(80);
+
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($second['aligned'])->toBe(1)
+        ->and($client->calls)->not->toContain('updateInvoice');
 });

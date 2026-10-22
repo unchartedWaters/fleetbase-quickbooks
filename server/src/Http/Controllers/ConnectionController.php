@@ -635,16 +635,24 @@ class ConnectionController extends QuickbooksController
     /**
      * Tokens stay on the server. The console only needs enough to show status.
      *
-     * @return array{realm_id: string|null, environment: string|null, needs_reauth: bool, home_currency: string|null, last_batch_at: string|null}
+     * @return array{
+     *     realm_id: string|null,
+     *     environment: string|null,
+     *     needs_reauth: bool,
+     *     home_currency: string|null,
+     *     default_item_account: string|null,
+     *     last_batch_at: string|null
+     * }
      */
     private function forBrowser(Connection $connection): array
     {
         return [
-            'realm_id'      => $connection->realm_id,
-            'environment'   => $connection->environment,
-            'needs_reauth'  => (bool) $connection->needs_reauth,
-            'home_currency' => $connection->home_currency,
-            'last_batch_at' => $connection->last_batch_at?->toIso8601String(),
+            'realm_id'             => $connection->realm_id,
+            'environment'          => $connection->environment,
+            'needs_reauth'         => (bool) $connection->needs_reauth,
+            'home_currency'        => $connection->home_currency,
+            'default_item_account' => $connection->default_item_account,
+            'last_batch_at'        => $connection->last_batch_at?->toIso8601String(),
         ];
     }
 

@@ -596,12 +596,6 @@ test('toQuickBooks keeps its field order, line ids, quantity default and empty-v
                 'Description'         => '',
                 'SalesItemLineDetail' => ['ItemRef' => ['value' => 'item-9'], 'Qty' => 1, 'UnitPrice' => '2.50'],
             ],
-            [
-                'Amount'              => '0.25',
-                'DetailType'          => 'SalesItemLineDetail',
-                'Description'         => InvoiceMapper::TAX_LINE_DESCRIPTION,
-                'SalesItemLineDetail' => ['ItemRef' => ['value' => 'item-9'], 'Qty' => 1, 'UnitPrice' => '0.25'],
-            ],
         ]);
 
     $bare = $mapper->toQuickBooks(['number' => '0', 'tax' => -5, 'items' => 'not-a-list', 'currency' => ''], 'cust-1', 'item-9');
@@ -639,7 +633,6 @@ test('withExistingLineIds pairs kept ids first, fills the rest in order and keep
     $remote   = ['Line' => [
         pctSalesLine('r1', '1.00'),
         pctSalesLine('r2', '2.00'),
-        pctSalesLine('t9', '0.50', InvoiceMapper::TAX_LINE_DESCRIPTION),
         $discount,
         $subtotal,
         ['Amount' => '9.99', 'DetailType' => 'DescriptionOnly'],
@@ -650,7 +643,6 @@ test('withExistingLineIds pairs kept ids first, fills the rest in order and keep
             pctSalesLine('r2', '5.00', 'Has r2', 'item-l'),
             pctSalesLine(null, '6.00', 'No id', 'item-l'),
             pctSalesLine(null, '7.00', 'Third', 'item-l'),
-            pctSalesLine(null, '0.75', InvoiceMapper::TAX_LINE_DESCRIPTION, 'item-l'),
             'not-a-line',
         ],
         'DocNumber' => 'INV-1',
@@ -660,17 +652,16 @@ test('withExistingLineIds pairs kept ids first, fills the rest in order and keep
 
     expect(array_keys($merged))->toBe(['CustomerRef', 'Line', 'DocNumber'])
         ->and($merged['DocNumber'])->toBe('INV-1')
-        ->and(array_slice($merged['Line'], 0, 6))->toBe([
+        ->and(array_slice($merged['Line'], 0, 5))->toBe([
             // A line matched by id keeps the product QuickBooks has on it; one paired by position does not.
             pctSalesLine('r2', '5.00', 'Has r2', 'item-r'),
             pctSalesLine(null, '6.00', 'No id', 'item-l') + ['Id' => 'r1'],
             pctSalesLine(null, '7.00', 'Third', 'item-l'),
-            pctSalesLine(null, '0.75', InvoiceMapper::TAX_LINE_DESCRIPTION, 'item-l') + ['Id' => 't9'],
             'not-a-line',
             $discount,
         ])
         // QuickBooks sends the subtotal detail as {}; it must go back as {}, not [], or the update is refused.
-        ->and(json_encode(array_slice($merged['Line'], 6)))->toBe(
+        ->and(json_encode(array_slice($merged['Line'], 5)))->toBe(
             '[{"Amount":"20.00","DetailType":"SubTotalLineDetail","SubTotalLineDetail":{}},'
                 . '{"Amount":"9.99","DetailType":"DescriptionOnly"}]'
         );
@@ -684,11 +675,10 @@ test('withExistingLineIds sends an empty discount detail back as an object', fun
     expect(json_encode($merged['Line']))->toBe('[{"Amount":"1.00","DetailType":"DiscountLineDetail","DiscountLineDetail":{}}]');
 });
 
-test('withExistingLineIds zeroes a cleared tax line and appends unpaired remote sales lines', function () {
+test('withExistingLineIds appends unpaired remote sales lines', function () {
     $mapper = new InvoiceMapper();
     $remote = ['Line' => [
         pctSalesLine('r1', '1.00', 'One', 'item-first'),
-        pctSalesLine('t9', '0.50', InvoiceMapper::TAX_LINE_DESCRIPTION),
         pctSalesLine('r2', '2.00', 'Two'),
         pctSalesLine('r3', '3.00', 'Three'),
     ]];
@@ -697,30 +687,12 @@ test('withExistingLineIds zeroes a cleared tax line and appends unpaired remote 
     $merged = $mapper->withExistingLineIds(['Line' => [pctSalesLine('gone', '5.00', 'Local', 'item-local')]], $remote);
     expect($merged)->toBe(['Line' => [
         pctSalesLine('r1', '5.00', 'Local', 'item-local'),
-        [
-            'Id'                  => 't9',
-            'Amount'              => '0.00',
-            'DetailType'          => 'SalesItemLineDetail',
-            'Description'         => InvoiceMapper::TAX_LINE_DESCRIPTION,
-            'SalesItemLineDetail' => ['ItemRef' => ['value' => 'item-local'], 'Qty' => 1, 'UnitPrice' => '0.00'],
-        ],
         pctSalesLine('r2', '2.00', 'Two'),
         pctSalesLine('r3', '3.00', 'Three'),
     ]]);
 
-    // With no local sales line the zero tax line takes the first remote item ref.
     $noLocal = $mapper->withExistingLineIds([], $remote);
-    expect($noLocal['Line'][0]['SalesItemLineDetail']['ItemRef'])->toBe(['value' => 'item-first'])
-        ->and(array_column($noLocal['Line'], 'Id'))->toBe(['t9', 'r1', 'r2', 'r3']);
-
-    // A remote tax line without an item ref and no other ref falls back to item 1.
-    $bareTax = $mapper->withExistingLineIds(['Line' => []], ['Line' => [[
-        'Id'          => 't1',
-        'Amount'      => '0.10',
-        'DetailType'  => 'SalesItemLineDetail',
-        'Description' => InvoiceMapper::TAX_LINE_DESCRIPTION,
-    ]]]);
-    expect($bareTax['Line'][0]['SalesItemLineDetail']['ItemRef'])->toBe(['value' => '1']);
+    expect(array_column($noLocal['Line'], 'Id'))->toBe(['r1', 'r2', 'r3']);
 });
 
 test('withExistingLineIds pairs a blank remote id without copying it and does not resend that line', function () {

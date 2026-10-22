@@ -170,8 +170,9 @@ class OAuthFlow
      */
     private function withCompanyDetails(array $connection): array
     {
-        $connection['home_currency']   = null;
-        $connection['default_item_id'] = null;
+        $connection['home_currency']        = null;
+        $connection['default_item_id']      = null;
+        $connection['default_item_account'] = null;
 
         try {
             $homeCurrency = $this->client->homeCurrency($connection);
@@ -191,8 +192,29 @@ class OAuthFlow
 
         $connection['home_currency']   = $homeCurrency;
         $connection['default_item_id'] = ($defaultItemId !== '' && $defaultItemId !== '0') ? $defaultItemId : null;
+        if ($connection['default_item_id'] !== null) {
+            $connection['default_item_account'] = $this->incomeAccount($connection, $defaultItemId);
+        }
 
         return $connection;
+    }
+
+    /**
+     * The name of the income account the service item posts to, for the connection card. A failed
+     * read leaves it for the next invoice sync to fill in.
+     *
+     * @param array<string, mixed> $connection
+     */
+    private function incomeAccount(array $connection, string $itemId): ?string
+    {
+        try {
+            $item = $this->client->item($connection, $itemId);
+        } catch (QuickBooksException) {
+            return null;
+        }
+        $name = is_array($item) === true ? trim((string) ($item['IncomeAccountRef']['name'] ?? '')) : '';
+
+        return $name !== '' ? $name : null;
     }
 
     /**

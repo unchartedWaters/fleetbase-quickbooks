@@ -36,6 +36,11 @@
                         </ul>
                     </div>
                 {{/if}}
+                {{#if @connection.default_item_account}}
+                    <p class="text-sm text-gray-500 mb-4" data-test-income-account>
+                        {{t "quickbooks.connection.income-account" account=@connection.default_item_account}}
+                    </p>
+                {{/if}}
             {{else}}
                 <p class="text-sm text-gray-500 mb-4" data-test-disconnected>
                     {{#if this.connectPermissionDenied}}

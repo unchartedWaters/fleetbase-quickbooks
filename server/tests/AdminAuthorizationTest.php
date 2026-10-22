@@ -347,3 +347,27 @@ test('the redirect sent to intuit must be public https', function () {
         expect(PublicHttps::isPublicHttpsUrl($url))->toBeFalse();
     }
 });
+
+test('the connection card gets the income account of the service item and never the tokens', function () {
+    $connection = new Fleetbase\Quickbooks\Models\Connection();
+    $connection->setRawAttributes([
+        'realm_id'             => 'realm-1',
+        'environment'          => 'sandbox',
+        'needs_reauth'         => false,
+        'home_currency'        => 'USD',
+        'default_item_account' => 'Services',
+        'access_token'         => 'sealed-access',
+        'refresh_token'        => 'sealed-refresh',
+    ]);
+    $forBrowser = Closure::bind(
+        fn (Fleetbase\Quickbooks\Models\Connection $row): array => $this->forBrowser($row),
+        installConnectionController(),
+        ConnectionController::class
+    );
+
+    $payload = $forBrowser($connection);
+
+    expect($payload['default_item_account'])->toBe('Services')
+        ->and($payload)->not->toHaveKey('access_token')
+        ->and($payload)->not->toHaveKey('refresh_token');
+});

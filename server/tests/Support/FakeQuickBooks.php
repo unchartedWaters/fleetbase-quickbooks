@@ -75,6 +75,30 @@ class FakeQuickBooks extends QuickBooksClient
     public array $remoteInvoiceList = [];
 
     /**
+     * How the company taxes invoices (InvoiceTax::settings). Sales tax is off unless a test turns it on.
+     *
+     * @var array{mode: string, automated: bool, rate: string|null}
+     */
+    public array $salesTax = ['mode' => 'off', 'automated' => false, 'rate' => null];
+
+    public ?\Throwable $failSalesTax = null;
+
+    public int $salesTaxReads = 0;
+
+    /** @var array<string, array<string, mixed>> */
+    public array $items = [];
+
+    public int $itemReads = 0;
+
+    /**
+     * Sales tax percent by invoice rate code. An invoice with one of these rates is taxed on its
+     * lines coded TAX, as QuickBooks works it out.
+     *
+     * @var array<string, string>
+     */
+    public array $taxRates = [];
+
+    /**
      * @param array<string, mixed> $connection
      * @param array<string, mixed> $payload
      *
@@ -138,11 +162,11 @@ class FakeQuickBooks extends QuickBooksClient
         }
         $id      = 'inv-' . $this->invoiceCreates;
         $payload = $this->withLineIds($payload);
-        $record  = array_merge($payload, [
+        $record  = $this->withTax(array_merge($payload, [
             'Id'        => $id,
             'SyncToken' => '0',
             'TotalAmt'  => $this->lineTotal($payload),
-        ]);
+        ]));
         $this->invoices[$id] = $record;
 
         return $record;
@@ -168,6 +192,7 @@ class FakeQuickBooks extends QuickBooksClient
             'SyncToken' => (string) ((int) $syncToken + 1),
         ]);
         $record['TotalAmt']  = $this->lineTotal($payload, $record['TxnTaxDetail'] ?? null);
+        $record              = $this->withTax($record);
         $this->invoices[$id] = $record;
 
         return $record;
@@ -740,6 +765,33 @@ class FakeQuickBooks extends QuickBooksClient
 
     /**
      * @param array<string, mixed> $connection
+     *
+     * @return array{mode: string, automated: bool, rate: string|null}
+     */
+    public function salesTax(array $connection): array
+    {
+        $this->salesTaxReads++;
+        if ($this->failSalesTax !== null) {
+            throw $this->failSalesTax;
+        }
+
+        return $this->salesTax;
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    public function item(array $connection, string $id): ?array
+    {
+        $this->itemReads++;
+
+        return $this->items[$id] ?? null;
+    }
+
+    /**
+     * @param array<string, mixed> $connection
      */
     public function itemActive(array $connection, string $id): bool
     {
@@ -788,6 +840,42 @@ class FakeQuickBooks extends QuickBooksClient
 
             throw new QuickBooksException(400, $message, null, '6000');
         }
+    }
+
+    /**
+     * The tax QuickBooks works out for an invoice with a rate in taxRates: the percent of its
+     * lines coded TAX, added to the total.
+     *
+     * @param array<string, mixed> $record
+     *
+     * @return array<string, mixed>
+     */
+    private function withTax(array $record): array
+    {
+        $rate    = (string) ($record['TxnTaxDetail']['TxnTaxCodeRef']['value'] ?? '');
+        $percent = $this->taxRates[$rate] ?? null;
+        if ($percent === null) {
+            return $record;
+        }
+        $taxable = 0;
+        foreach (is_array($record['Line'] ?? null) === true ? $record['Line'] : [] as $line) {
+            if (is_array($line) === true && ($line['SalesItemLineDetail']['TaxCodeRef']['value'] ?? '') === 'TAX') {
+                $taxable += $this->minorUnits($line['Amount'] ?? 0);
+            }
+        }
+        $tax                    = (int) round($taxable * (float) $percent / 100);
+        $record['TxnTaxDetail'] = [
+            'TxnTaxCodeRef' => ['value' => $rate],
+            'TotalTax'      => Amounts::centsToDecimal($tax),
+            'TaxLine'       => [[
+                'Amount'        => Amounts::centsToDecimal($tax),
+                'DetailType'    => 'TaxLineDetail',
+                'TaxLineDetail' => ['PercentBased' => true, 'TaxPercent' => $percent],
+            ]],
+        ];
+        $record['TotalAmt'] = $this->lineTotal(['Line' => $record['Line'] ?? []], $record['TxnTaxDetail']);
+
+        return $record;
     }
 
     /**

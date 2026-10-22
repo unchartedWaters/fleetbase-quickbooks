@@ -11,8 +11,8 @@
  * Each run creates its own customers, invoices, payments and accounts, named with a run tag,
  * in the sandbox company. Intuit rotates refresh tokens about once a day; when the stored one
  * stops working the run fails with invalid_grant and a new one is needed from Intuit's
- * OAuth 2.0 Playground. Tokens stay in memory and are never printed. The sandbox company must
- * not use automated sales tax, or the invoice totals asserted here will include tax.
+ * OAuth 2.0 Playground. Tokens stay in memory and are never printed. QuickBooks works out
+ * invoice tax, so totals are checked against the tax it reports. Automated sales tax is not tested.
  */
 
 // Keep secrets out of stack traces however php.ini is set.
@@ -31,6 +31,7 @@ use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
+use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
@@ -464,9 +465,9 @@ test('the sync engine pushes a customer, invoice, payment and wallet end to end'
         'date'          => gmdate('Y-m-d'),
         'due_date'      => gmdate('Y-m-d', time() + 14 * 86400),
         'currency'      => $client->homeCurrency($connection),
-        'tax'           => 100,
-        'total'         => 2100,
-        'amount_paid'   => 2100,
+        'tax'           => 0,
+        'total'         => 2000,
+        'amount_paid'   => 2000,
         'status'        => 'paid',
         'items'         => [['description' => 'Delivery', 'quantity' => 2, 'unit_price' => 1000, 'amount' => 2000]],
     ];
@@ -500,9 +501,14 @@ test('the sync engine pushes a customer, invoice, payment and wallet end to end'
     $remoteInvoice  = $client->getInvoice($connection, $links['invoice:inv-e2e']);
     $remoteAccount  = $client->getAccount($connection, $links['wallet:wal-e2e']);
 
+    // QuickBooks works out the tax; Fleetbase takes it, so the payment of 20.00 leaves the tax owing.
+    $tax = sandboxCents($remoteInvoice['TxnTaxDetail']['TotalTax'] ?? 0);
+
     expect($remoteCustomer['DisplayName'] ?? null)->toBe('Fleetbase Test Engine ' . $tag)
-        ->and(sandboxCents($remoteInvoice['TotalAmt'] ?? null))->toBe(2100)
-        ->and(sandboxCents($remoteInvoice['Balance'] ?? null))->toBe(0)
+        ->and(sandboxCents($remoteInvoice['TotalAmt'] ?? null))->toBe(2000 + $tax)
+        ->and(sandboxCents($remoteInvoice['Balance'] ?? null))->toBe($tax)
+        ->and($ledger->invoices['inv-e2e']['tax'])->toBe($tax)
+        ->and($ledger->invoices['inv-e2e']['total'])->toBe(2000 + $tax)
         ->and($remoteInvoice['CustomerRef']['value'] ?? null)->toBe($links['customer:cust-e2e'])
         ->and($remoteAccount['Name'] ?? null)->toBe('Fleetbase Test Engine Wallet ' . $tag);
 
@@ -516,7 +522,101 @@ test('the sync engine pushes a customer, invoice, payment and wallet end to end'
     $remotePayment = $client->getPayment($connection, $paymentIds[0]);
     $linkedTxnIds  = array_column(array_merge(...array_map(fn (array $line): array => $line['LinkedTxn'] ?? [], $remotePayment['Line'] ?? [])), 'TxnId');
 
-    expect(sandboxCents($remotePayment['TotalAmt'] ?? null))->toBe(2100)
+    expect(sandboxCents($remotePayment['TotalAmt'] ?? null))->toBe(2000)
         ->and($remotePayment['CustomerRef']['value'] ?? null)->toBe($links['customer:cust-e2e'])
         ->and($linkedTxnIds)->toContain($links['invoice:inv-e2e']);
+})->group('sandbox');
+
+test('QuickBooks works out the tax of the lines Fleetbase sends and Fleetbase copies it', function () {
+    $client     = new QuickBooksClient();
+    $connection = sandboxConnection();
+    if ($client->salesTax($connection)['mode'] !== InvoiceTax::US) {
+        test()->markTestSkipped('The sandbox company does not use US sales tax.');
+    }
+    $tag     = sandboxTag();
+    $company = 'sandbox-company';
+    $income  = $client->batch($connection, [[
+        'bId'   => 'income',
+        'query' => "select * from Account where AccountType = 'Income' maxresults 1000",
+    ]]);
+    $account = QuickBooksClient::serviceIncomeAccount($income['income']['rows'] ?? []);
+    $item    = $client->batch($connection, [[
+        'bId'       => 'item',
+        'operation' => 'create',
+        'entity'    => 'Item',
+        'payload'   => [
+            'Name'             => 'Fleetbase Test Taxable ' . $tag,
+            'Type'             => 'Service',
+            'Taxable'          => true,
+            'IncomeAccountRef' => ['value' => (string) $account],
+        ],
+    ]]);
+    $itemId = (string) ($item['item']['body']['Id'] ?? '');
+
+    expect($account)->not->toBeNull()
+        ->and($itemId)->not->toBe('');
+
+    $engine                                = new SyncEngine($client, new CustomerMapper(), new InvoiceMapper(), new WalletMapper(), new BackoffPolicy(static fn (int $wait): int => $wait));
+    $ledger                                = new SyncLedger();
+    $ledger->connections[$company]         = $connection + ['default_item_id' => $itemId];
+    $ledger->customers['cust-tax']         = ['uuid' => 'cust-tax', 'company_uuid' => $company, 'name' => 'Fleetbase Test Tax ' . $tag, 'email' => 'fbqb-tax-' . $tag . '@example.com'];
+    $ledger->invoices['inv-tax']           = [
+        'uuid'          => 'inv-tax',
+        'company_uuid'  => $company,
+        'customer_uuid' => 'cust-tax',
+        'number'        => 'FT' . $tag,
+        'date'          => gmdate('Y-m-d'),
+        'due_date'      => gmdate('Y-m-d', time() + 14 * 86400),
+        'currency'      => $client->homeCurrency($connection),
+        'tax'           => 0,
+        'total'         => 3000,
+        'status'        => 'sent',
+        'items'         => [
+            ['description' => 'Delivery', 'quantity' => 2, 'unit_price' => 1000, 'amount' => 2000],
+            ['description' => 'Wait time', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000],
+        ],
+    ];
+    foreach (['customer' => 'cust-tax', 'invoice' => 'inv-tax'] as $type => $uuid) {
+        $ledger->pending[] = ['company_uuid' => $company, 'local_type' => $type, 'local_uuid' => $uuid, 'status' => 'pending', 'attempts' => 0];
+    }
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first  = $engine->runScheduled($ledger, $company, $settings, time(), true);
+    $errors = array_values(array_filter(array_column($ledger->attempts, 'error')));
+    $link   = $ledger->link($company, (string) $connection['realm_id'], 'invoice', 'inv-tax');
+    $remote = $client->getInvoice($connection, (string) ($link['qbo_id'] ?? ''));
+    $tax    = sandboxCents($remote['TxnTaxDetail']['TotalTax'] ?? 0);
+    $items  = $ledger->invoices['inv-tax']['items'];
+
+    expect($errors)->toBe([])
+        ->and($first['failed'] ?? 0)->toBe(0)
+        ->and($remote['Line'][0]['SalesItemLineDetail']['TaxCodeRef']['value'] ?? null)->toBe('TAX')
+        ->and($remote['TxnTaxDetail']['TxnTaxCodeRef']['value'] ?? null)->not->toBeNull()
+        ->and($tax)->toBeGreaterThan(0)
+        ->and(sandboxCents($remote['TotalAmt'] ?? null))->toBe(3000 + $tax)
+        ->and($ledger->invoices['inv-tax']['tax'])->toBe($tax)
+        ->and($ledger->invoices['inv-tax']['total'])->toBe(3000 + $tax)
+        ->and(array_sum(array_column($items, 'tax_amount')))->toBe($tax)
+        ->and((float) $items[0]['tax_rate'])->toBeGreaterThan(0.0);
+
+    // A Fleetbase edit is sent without tax; QuickBooks works it out again, and the next sync is aligned.
+    $ledger->invoices['inv-tax']['items'][1]['amount']     = 1500;
+    $ledger->invoices['inv-tax']['items'][1]['unit_price'] = 1500;
+    $ledger->connections[$company]['last_batch_at']        = null;
+    $ledger->pending                                       = [['company_uuid' => $company, 'local_type' => 'invoice', 'local_uuid' => 'inv-tax', 'status' => 'pending', 'attempts' => 0]];
+    $second                                                = $engine->runScheduled($ledger, $company, $settings, time() + 5, true);
+    $remote                                                = $client->getInvoice($connection, (string) $link['qbo_id']);
+    $tax                                                   = sandboxCents($remote['TxnTaxDetail']['TotalTax'] ?? 0);
+
+    expect($second['updated'] ?? 0)->toBe(1)
+        ->and(sandboxCents($remote['TotalAmt'] ?? null))->toBe(3500 + $tax)
+        ->and($ledger->invoices['inv-tax']['tax'])->toBe($tax)
+        ->and($ledger->invoices['inv-tax']['total'])->toBe(3500 + $tax);
+
+    $ledger->connections[$company]['last_batch_at'] = null;
+    $ledger->pending[0]['status']                   = 'pending';
+    $third                                          = $engine->runScheduled($ledger, $company, $settings, time() + 10, true);
+
+    expect($third['aligned'] ?? 0)->toBe(1)
+        ->and($third['updated'] ?? 0)->toBe(0);
 })->group('sandbox');

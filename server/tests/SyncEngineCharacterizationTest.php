@@ -9,6 +9,7 @@
 
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Illuminate\Support\Facades\Http;
@@ -373,8 +374,8 @@ test('sec a remote invoice update copies dates note lines and totals and marks i
         ->and($invoice['due_date'])->toBe('2026-10-31')
         ->and($invoice['notes'])->toBe('Gate code 9')
         ->and($invoice['items'])->toBe([
-            ['description' => 'Delivery', 'quantity' => 3, 'unit_price' => 500, 'amount' => 1500],
-            ['description' => 'Wait time', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000],
+            InvoiceMapper::item('Delivery', 3, 500, 1500),
+            InvoiceMapper::item('Wait time', 1, 1000, 1000),
         ])
         ->and($invoice['items_from_quickbooks'])->toBeTrue()
         ->and($invoice['total'])->toBe(2500)

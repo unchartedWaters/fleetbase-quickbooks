@@ -13,6 +13,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $token_expires_at
  * @property string|null $environment
  * @property string|null $default_item_id
+ * @property string|null $default_item_account
  * @property Carbon|null $rate_limited_until
  * @property int|null    $last_rate_limit_wait
  * @property bool        $needs_reauth

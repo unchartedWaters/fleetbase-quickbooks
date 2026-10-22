@@ -667,6 +667,67 @@ test('lines replaced from quickbooks store their quickbooks ids and the old rows
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
+test('line taxes are read, and the tax QuickBooks worked out is written on the lines and the invoice', function () {
+    [$restore] = directorySqlite();
+    try {
+        $schema = DB::connection('sqlite')->getSchemaBuilder();
+        directoryWebhookSchema($schema);
+        $schema->table('ledger_invoices', function (Blueprint $table) {
+            $table->integer('subtotal')->default(0);
+            $table->integer('balance')->default(0);
+        });
+        $schema->table('ledger_invoice_items', function (Blueprint $table) {
+            $table->decimal('tax_rate', 5, 2)->default(0);
+            $table->integer('tax_amount')->default(0);
+            $table->timestamps();
+        });
+        directoryWebhookRows();
+        DB::table('ledger_invoice_items')->insert([
+            ['uuid' => 'item-1', 'invoice_uuid' => 'inv-9', 'description' => 'Delivery', 'amount' => 1000, 'tax_rate' => 15, 'tax_amount' => 150],
+            ['uuid' => 'item-2', 'invoice_uuid' => 'inv-9', 'description' => 'Fuel', 'amount' => 500, 'tax_rate' => 0, 'tax_amount' => 0],
+        ]);
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->load('company-uuid')['ledger'];
+        $items     = $ledger->invoices['inv-9']['items'];
+
+        expect(array_column($items, 'tax_rate'))->toBe(['15.00', '0.00'])
+            ->and(array_column($items, 'tax_amount'))->toBe([150, 0]);
+
+        $ledger->invoices['inv-9']['items'][0]['tax_rate']       = '9.10';
+        $ledger->invoices['inv-9']['items'][0]['tax_amount']     = 91;
+        $ledger->invoices['inv-9']['tax']                        = 91;
+        $ledger->invoices['inv-9']['total']                      = 1591;
+        $ledger->invoices['inv-9']['replace_from_quickbooks']    = true;
+        $ledger->invoices['inv-9']['line_taxes_from_quickbooks'] = true;
+        $directory->save($ledger);
+        $line    = static fn (string $uuid): object => DB::table('ledger_invoice_items')->where('uuid', $uuid)->first();
+        $invoice = DB::table('ledger_invoices')->where('uuid', 'inv-9')->first();
+
+        expect(number_format((float) $line('item-1')->tax_rate, 2))->toBe('9.10')
+            ->and((int) $line('item-1')->tax_amount)->toBe(91)
+            ->and((int) $line('item-2')->tax_amount)->toBe(0)
+            ->and($line('item-1')->deleted_at)->toBeNull()
+            ->and((int) $invoice->tax)->toBe(91)
+            ->and((int) $invoice->total_amount)->toBe(1591)
+            ->and((int) $invoice->subtotal)->toBe(1500);
+
+        $ledger                                               = $directory->load('company-uuid')['ledger'];
+        $ledger->invoices['inv-9']['replace_from_quickbooks'] = true;
+        $ledger->invoices['inv-9']['items_from_quickbooks']   = true;
+        $ledger->invoices['inv-9']['items']                   = [
+            ['description' => 'Delivery', 'quantity' => 1, 'unit_price' => 1000, 'amount' => 1000, 'tax_rate' => '8.00', 'tax_amount' => 80],
+        ];
+        $directory->save($ledger);
+        $live = DB::table('ledger_invoice_items')->where('invoice_uuid', 'inv-9')->whereNull('deleted_at')->get();
+
+        expect($live)->toHaveCount(1)
+            ->and(number_format((float) $live[0]->tax_rate, 2))->toBe('8.00')
+            ->and((int) $live[0]->tax_amount)->toBe(80);
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
 test('stale invoice payment links for a chunk are deleted in one statement', function () {
     [$restore] = directorySqlite();
     try {
@@ -827,6 +888,8 @@ test('a pending invoice load includes a payment stored under its quickbooks id a
                     'quantity'    => 2,
                     'unit_price'  => 500,
                     'amount'      => 1000,
+                    'tax_rate'    => '0.00',
+                    'tax_amount'  => 0,
                     'uuid'        => 'line-9',
                 ],
             ])

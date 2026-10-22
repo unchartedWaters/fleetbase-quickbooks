@@ -14,6 +14,7 @@ test('a late connection write keeps the live row and only its own columns', func
         'last_batch_at'        => null,
         'home_currency'        => 'USD',
         'default_item_id'      => 'item-1',
+        'default_item_account' => 'Services',
         'needs_reauth'         => true,
     ];
 

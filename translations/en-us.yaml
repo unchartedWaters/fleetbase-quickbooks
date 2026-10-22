@@ -16,6 +16,7 @@ quickbooks:
     home-currency-invoices: Invoices in another currency are sent only when Multicurrency is turned on in QuickBooks. Otherwise they fail and show in Activity.
     home-currency-wallet: A wallet in another currency fails when it has no QuickBooks account yet and Fleetbase is Primary. A wallet already linked to an account is still sent.
     home-currency-primary: "When QuickBooks is Primary for Accounts / Wallets and changes come from QuickBooks (Both or From QuickBooks), the wallet takes the QuickBooks account's currency."
+    income-account: 'Invoice lines use the QuickBooks product "Fleetbase service", which posts to the income account {account}. QuickBooks taxes these lines only when that product and the customer are taxable. To change the account or whether the lines are taxed, edit that product in QuickBooks.'
     disconnected-status: Not connected. Choose Connect to QuickBooks. Fleetbase then syncs customers, invoices, payments, and wallets with QuickBooks Online.
     disconnected-no-permission: Not connected. You do not have permission to connect QuickBooks. Fleetbase syncs customers, invoices, payments, and wallets with QuickBooks Online after QuickBooks is connected.
     disconnected-unknown: Not connected.
@@ -264,6 +265,8 @@ quickbooks:
     invoice-customer-failed: Invoice customer could not be synced to QuickBooks.
     invoice-customer-invalid: Invoice customer is not a Fleetbase customer.
     invoice-item-missing: "QuickBooks has no item for invoice lines. Fleetbase could not create its \"Fleetbase service\" item; add an Income account in QuickBooks and try again."
+    invoice-no-tax-rate: The invoice was sent, but QuickBooks added no tax because neither the customer nor the company has a sales tax rate in QuickBooks. Set a sales tax rate in QuickBooks and edit the invoice to add the tax.
+    invoice-tax-from-quickbooks: QuickBooks worked out the tax of this invoice, so the tax rate set on its lines in Fleetbase was replaced with the QuickBooks tax.
     invoice-number-unconfirmed: QuickBooks did not confirm a free invoice number, so Fleetbase did not create this invoice.
     invoice-number-taken: "QuickBooks invoice number {number} was not copied because another Fleetbase invoice already uses it."
     invoice-number-kept: "This invoice keeps {number}."
