@@ -94,6 +94,66 @@ class CustomerImporter
     }
 
     /**
+     * Import the QuickBooks customers a webhook named, for example one just created in
+     * QuickBooks. Customers already linked are not read again, and when none is left nothing
+     * is read or recorded. The catalog cursor is left alone.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<int, string>   $ids
+     *
+     * @return array<string, mixed>
+     */
+    public function importIds(SyncLedger $ledger, array $connection, array $ids): array
+    {
+        $realm = (string) ($connection['realm_id'] ?? '');
+        $ledger->ensureIndex();
+        $wanted = [];
+        foreach (array_unique(array_map('strval', $ids)) as $id) {
+            if ($id !== '' && $ledger->linkForRemote($realm, 'Customer', $id) === null) {
+                $wanted[] = $id;
+            }
+        }
+        $batch = [
+            'company_uuid' => $connection['company_uuid'],
+            'trigger'      => 'import',
+            'direction'    => 'inbound',
+            'status'       => 'finished',
+            'created'      => 0,
+            'linked'       => 0,
+            'skipped'      => 0,
+            'failed'       => 0,
+            'continue'     => false,
+            'finished_at'  => time(),
+        ];
+        if ($wanted === []) {
+            return $batch;
+        }
+
+        $this->companyCandidates = null;
+        $this->unsavedCursor     = null;
+        $page                    = [];
+        foreach ($wanted as $id) {
+            $remote = $this->client->getCustomer($connection, $id);
+            if (is_array($remote) === true) {
+                $page[] = $remote;
+            }
+        }
+        if ($page === []) {
+            return $batch;
+        }
+        $fleetbaseCustomers = [];
+        if ($this->rememberCandidates($ledger, $connection, $page) === false) {
+            $this->failPage($ledger, $connection, $page, $batch);
+        } else {
+            $this->tallyImportedPage($ledger, $connection, $page, $batch, $fleetbaseCustomers);
+        }
+        $batch['finished_at'] = time();
+        $ledger->batches[]    = $batch;
+
+        return $batch;
+    }
+
+    /**
      * @param array<int, mixed> $fleetbaseCustomers
      */
     private function rememberFleetbaseCustomers(SyncLedger $ledger, array $fleetbaseCustomers): void

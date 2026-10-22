@@ -9,6 +9,8 @@ class InvoiceMapper
      */
     public const TAX_LINE_DESCRIPTION = "\u{2060}Tax";
 
+    public const PAYMENT_REF_MAX_LENGTH = 21;
+
     /**
      * The invoice currency amounts are read and written in. See Amounts::ZERO_DECIMAL.
      */
@@ -702,8 +704,14 @@ class InvoiceMapper
     /**
      * @return array<string, mixed>
      */
-    public function payment(string $customerRef, string $invoiceId, int $amountCents, ?string $txnDate = null): array
-    {
+    public function payment(
+        string $customerRef,
+        string $invoiceId,
+        int $amountCents,
+        ?string $txnDate = null,
+        ?string $reference = null,
+        ?string $method = null,
+    ): array {
         $amount  = Amounts::centsToDecimal($amountCents, $this->currency);
         $payload = [
             'TotalAmt'    => $amount,
@@ -719,6 +727,19 @@ class InvoiceMapper
         $txnDate = trim((string) $txnDate);
         if ($txnDate !== '') {
             $payload['TxnDate'] = substr($txnDate, 0, 10);
+        }
+        // QuickBooks keeps at most 21 characters of a payment reference number.
+        $reference = trim((string) $reference);
+        if ($reference !== '') {
+            $payload['PaymentRefNum'] = mb_substr($reference, 0, self::PAYMENT_REF_MAX_LENGTH);
+        }
+        // "manual" is Ledger's default when nobody chose a method, so it says nothing.
+        $method = trim((string) $method);
+        if ($method !== '' && strtolower($method) !== 'manual') {
+            $payload['PrivateNote'] = Translation::get(
+                'quickbooks.messages.payment-method-note',
+                ['method' => mb_substr($method, 0, 100)]
+            );
         }
 
         return $payload;

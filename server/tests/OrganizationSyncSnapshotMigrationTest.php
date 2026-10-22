@@ -115,6 +115,48 @@ test('the migration gives connected organizations and legacy rows a complete cop
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
+test('the migration keeps fleetbase primary for organizations that had it before quickbooks became the'
+. ' default', function () {
+    snapshotWithDatabase(function () {
+        snapshotTables();
+        snapshotConnect('org-default', 'realm-1');
+        snapshotConnect('org-chosen', 'realm-2');
+        $chosenRow = orgRow(['invoice_conflict' => 'quickbooks', 'invoice_reference' => 'quickbooks']);
+        snapshotPut(SettingsKeys::companySync('org-chosen'), $chosenRow);
+        $before = config('quickbooks.sync');
+        // Read from the config source: requiring the file calls env(), which this test environment cannot load.
+        $source  = (string) file_get_contents(dirname(__DIR__) . '/config/quickbooks.php');
+        $shipped = qbSettings();
+        foreach (['customer', 'invoice', 'payment', 'wallet'] as $type) {
+            foreach (['conflict', 'reference'] as $field) {
+                $key = $type . '_' . $field;
+                expect(preg_match("/'" . $key . "'\\s*=>\\s*'([a-z]+)'/", $source, $match))->toBe(1);
+                $shipped[$key] = $match[1];
+            }
+        }
+        config()->set('quickbooks.sync', $shipped);
+
+        try {
+            snapshotMigration()->up();
+        } finally {
+            $packaged = config('quickbooks.sync');
+            config()->set('quickbooks.sync', $before);
+        }
+
+        $default = snapshotGet(SettingsKeys::companySync('org-default'));
+        $chosen  = snapshotGet(SettingsKeys::companySync('org-chosen'));
+        foreach (['customer', 'invoice', 'payment', 'wallet'] as $type) {
+            expect($packaged[$type . '_conflict'])->toBe('quickbooks')
+                ->and($packaged[$type . '_reference'])->toBe('quickbooks')
+                ->and($default[$type . '_conflict'])->toBe('fleetbase')
+                ->and($default[$type . '_reference'])->toBe('fleetbase');
+        }
+        expect($chosen['invoice_conflict'])->toBe('quickbooks')
+            ->and($chosen['invoice_reference'])->toBe('quickbooks')
+            ->and($chosen['customer_conflict'])->toBe('fleetbase');
+    });
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
 test('the migration skips complete copies, is idempotent, and later global edits do not change a migrated organization', function () {
     snapshotWithDatabase(function () {
         snapshotTables();

@@ -789,7 +789,7 @@ test('a quickbooks payment copied onto the invoice matches on the next sync', fu
     expect($first['updated'])->toBe(1)
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(500)
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
-        ->and($ledger->invoices['inv-1']['paid_at'])->toBe('2026-09-01')
+        ->and($ledger->invoices['inv-1']['paid_at'])->toBe('')
         ->and($ledger->invoices['inv-1']['total'])->toBe(1000)
         ->and($client->calls)->not->toContain('updatePayment');
 
@@ -802,7 +802,7 @@ test('a quickbooks payment copied onto the invoice matches on the next sync', fu
         ->and($second['updated'])->toBe(0)
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(500)
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
-        ->and($ledger->invoices['inv-1']['paid_at'])->toBe('2026-09-01')
+        ->and($ledger->invoices['inv-1']['paid_at'])->toBe('')
         ->and($client->calls)->not->toContain('updatePayment')
         ->and($client->payments['pay-9']['TotalAmt'])->toBe(5);
 });

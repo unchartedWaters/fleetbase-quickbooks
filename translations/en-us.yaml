@@ -46,14 +46,17 @@ quickbooks:
       trigger: Trigger
       status: Status
       direction: Direction
-      created: Created
-      updated: Updated
-      aligned: Aligned
-      linked: Linked
-      skipped: Skipped
-      unmatched: Unmatched
-      voided: Voided
-      failed: Failed
+      results: Results
+    results:
+      created: "{count} created"
+      updated: "{count} updated"
+      aligned: "{count} unchanged"
+      linked: "{count} linked"
+      voided: "{count} voided"
+      unmatched: "{count} not matched"
+      skipped: "{count} skipped"
+      failed: "{count} failed"
+      none: No changes
     trigger:
       scheduled: Scheduled
       now: Sync now
@@ -71,6 +74,11 @@ quickbooks:
       running: Running
       failed: Failed
       pending: Pending
+    record-error: "{record}: {message}"
+    record:
+      customer: Customer "{name}"
+      invoice: Invoice {name}
+      wallet: Wallet "{name}"
   widget:
     title: QuickBooks Sync
     refresh: Refresh QuickBooks status
@@ -114,7 +122,7 @@ quickbooks:
     data-resolution: Data Resolution
     data-resolution-description: Which records sync, which system wins when they differ, and which way changes move.
     primary: Primary
-    primary-help: Which system wins when records differ, and which supplies identifiers.
+    primary-help: Which system wins when records differ, and which supplies identifiers such as invoice numbers. With Fleetbase as Primary, edits made in QuickBooks are replaced and payments recorded in QuickBooks are not copied to Fleetbase.
     entity-primary: "{entity} Primary"
     sync-direction: Sync direction
     sync-direction-help: Both keeps the two systems in step. To QuickBooks only sends Fleetbase changes. From QuickBooks only brings QuickBooks changes into Fleetbase.
@@ -151,6 +159,7 @@ quickbooks:
       internal-oauth-hint: Fleetbase receives the QuickBooks sign-in return here. Copy the Public OAuth Redirect URL into Intuit.
       public-oauth: Public OAuth Redirect URL
       public-oauth-hint: Paste this into Intuit Redirect URIs.
+      not-public: This is not a public https:// address, so Intuit cannot reach it. Enter the address Fleetbase is reached at from the internet.
     options:
       sandbox: Sandbox
       production: Production
@@ -192,6 +201,7 @@ quickbooks:
     organization-required: Sign in to an organization to manage QuickBooks.
     organization-mismatch: You may only manage the QuickBooks connection for your own organization.
     not-set-up: "QuickBooks is not set up yet. Ask an installation administrator to enter the Client ID, Client secret and Public OAuth Redirect URL in Admin → QuickBooks → Settings."
+    redirect-not-public: "QuickBooks cannot be connected yet: Intuit needs a public https:// address to send you back to. Ask an installation administrator to enter the Public OAuth Redirect URL in Admin → QuickBooks → Settings and add the same URL to the Intuit app."
     not-connected: QuickBooks is not connected.
     not-connected-connect: QuickBooks is not connected. Connect from QuickBooks Setup.
     not-connected-reconnect: QuickBooks is not connected. Connect again from QuickBooks Setup.
@@ -221,6 +231,9 @@ quickbooks:
     transport: QuickBooks could not be reached. Try again in a few minutes.
     request-failed: "QuickBooks request failed with status {status}"
     request-failed-detail: "QuickBooks request failed with status {status}: {detail}"
+    request-rejected: "QuickBooks rejected the request: {detail}"
+    payment-method-note: "Fleetbase payment method: {method}"
+    fleetbase-primary-replaced: Fleetbase is Primary here, so the change made in QuickBooks was replaced with the Fleetbase values. Choose QuickBooks as Primary to keep changes made in QuickBooks.
     access-token-refused: "QuickBooks request failed with status 401: the access token was refused."
     query-failed: QuickBooks query failed.
     invoice-lookup-failed: QuickBooks invoice lookup failed.

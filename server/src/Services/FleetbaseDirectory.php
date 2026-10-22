@@ -78,6 +78,14 @@ class FleetbaseDirectory
     private bool $linksWithRecords = false;
 
     /**
+     * Customers this save links to a QuickBooks customer for the first time (or to another one),
+     * by company. Their invoices that failed while they had no QuickBooks customer are queued again.
+     *
+     * @var array<string, array<int, string>>
+     */
+    private array $linkedCustomers = [];
+
+    /**
      * Rows as loadLedger() read them, so save() writes only what the engine changed.
      *
      * @var array{connections: array<string, array<string, mixed>>, pending: array<string, array<string, mixed>>, customers: array<string, array<string, mixed>>, invoices: array<string, array<string, mixed>>, wallets: array<string, array<string, mixed>>, links: array<string, array<string, mixed>>}
@@ -411,11 +419,14 @@ class FleetbaseDirectory
      */
     private function writeLinks(SyncLedger $ledger, array $skipped): void
     {
-        $loadedByUuid     = $this->loadedLinksByUuid();
-        $linkFields       = ['company_uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_entity', 'qbo_id', 'sync_token'];
-        $freshLinks       = [];
-        $changedLinks     = [];
-        $identityReleases = [];
+        $loadedByUuid          = $this->loadedLinksByUuid();
+        $linkFields            = [
+            'company_uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_entity', 'qbo_id', 'sync_token',
+        ];
+        $freshLinks            = [];
+        $changedLinks          = [];
+        $identityReleases      = [];
+        $this->linkedCustomers = [];
         foreach ($ledger->links as $link) {
             if (is_array($link) === false || isset($skipped[(string) ($link['company_uuid'] ?? '')]) === true) {
                 continue;
@@ -425,6 +436,10 @@ class FleetbaseDirectory
             $changed = self::changedColumns($link, is_array($loaded) === true ? $loaded : null, $linkFields);
             if ($changed === [] && is_array($loaded) === true) {
                 continue;
+            }
+            $relinked = is_array($loaded) === false || isset($changed['qbo_id']) === true;
+            if (($link['local_type'] ?? '') === 'customer' && $relinked === true) {
+                $this->linkedCustomers[(string) $link['company_uuid']][] = (string) ($link['local_uuid'] ?? '');
             }
             if (is_array($loaded) === true) {
                 $uuid = (string) ($loaded['uuid'] ?? '');
@@ -515,6 +530,7 @@ class FleetbaseDirectory
         }
         $this->updatePendingRows($changedPending);
         $this->writePendingMany($freshPending);
+        $this->requeueInvoicesOfLinkedCustomers();
         $this->insertBatchAttempts($ledger);
         $this->persistCustomers($ledger, $skipped);
         $this->persistInvoices($ledger, $skipped);
@@ -571,6 +587,59 @@ class FleetbaseDirectory
             }
         }
         $this->insertAttempts($ledger->attempts);
+    }
+
+    /**
+     * An invoice fails for good when its customer cannot be created in QuickBooks. Once that
+     * customer is linked, its failed invoices are queued again, with their retries reset.
+     */
+    private function requeueInvoicesOfLinkedCustomers(): void
+    {
+        $class = 'Fleetbase\\Ledger\\Models\\Invoice';
+        if ($this->linkedCustomers === [] || class_exists($class) === false) {
+            return;
+        }
+        foreach ($this->linkedCustomers as $companyUuid => $customerUuids) {
+            $customers = array_flip(array_filter($customerUuids));
+            if ($customers === []) {
+                continue;
+            }
+            // Failed invoice rows are few, so they are read first and only their invoices are checked.
+            $failed = PendingSync::query()
+                ->where('company_uuid', $companyUuid)
+                ->where('local_type', 'invoice')
+                ->where('status', 'failed')
+                ->pluck('local_uuid')
+                ->map(static fn (mixed $uuid): string => (string) $uuid)
+                ->all();
+            foreach (array_chunk(array_values(array_unique($failed)), 500) as $chunk) {
+                $owners = $class::query()
+                    ->toBase()
+                    ->where('company_uuid', $companyUuid)
+                    ->whereIn('uuid', $chunk)
+                    ->pluck('customer_uuid', 'uuid')
+                    ->all();
+                $requeue = array_keys(array_filter(
+                    $owners,
+                    static fn (mixed $customerUuid): bool => isset($customers[(string) $customerUuid]) === true
+                ));
+                if ($requeue === []) {
+                    continue;
+                }
+                PendingSync::query()
+                    ->where('company_uuid', $companyUuid)
+                    ->where('local_type', 'invoice')
+                    ->where('status', 'failed')
+                    ->whereIn('local_uuid', array_map('strval', $requeue))
+                    ->update([
+                        'status'          => 'pending',
+                        'attempts'        => 0,
+                        'next_attempt_at' => null,
+                        'updated_at'      => now(),
+                    ]);
+            }
+        }
+        $this->linkedCustomers = [];
     }
 
     /**
@@ -1312,6 +1381,11 @@ class FleetbaseDirectory
         $this->loaded['customers'] = $ledger->customers;
         $this->loaded['invoices']  = $ledger->invoices;
         $this->loaded['wallets']   = $ledger->wallets;
+        // Only rows this run needs are loaded. Whether a QuickBooks account already belongs to
+        // another wallet, of any organization on that company, is read when it is asked.
+        $ledger->remoteLinkReader = function (string $realm, string $entity, array $ids, string $localUuid): array {
+            return $this->linkedRemoteIds(null, $realm, $entity, $ids, $localUuid);
+        };
 
         return $ledger;
     }
@@ -1483,6 +1557,50 @@ class FleetbaseDirectory
         }
 
         return $ids;
+    }
+
+    /**
+     * Which of these QuickBooks ids this organization already links on that realm. With no
+     * organization, links from every organization on that realm count. A link of $exceptLocalUuid does not.
+     *
+     * @param array<int, string> $ids
+     *
+     * @return array<int, string>
+     */
+    public function linkedRemoteIds(
+        ?string $companyUuid,
+        string $realm,
+        string $entity,
+        array $ids,
+        ?string $exceptLocalUuid = null,
+    ): array {
+        $ids = array_values(array_unique(array_filter(array_map('strval', $ids))));
+        if ($ids === [] || $realm === '') {
+            return [];
+        }
+        if ($this->memory !== null) {
+            $wanted = array_flip($ids);
+            $linked = array_filter($this->memory->links, static fn (array $link): bool => ($companyUuid === null
+                    || ($link['company_uuid'] ?? null) === $companyUuid)
+                && ($exceptLocalUuid === null || ($link['local_uuid'] ?? null) !== $exceptLocalUuid)
+                && (string) ($link['realm_id'] ?? '') === $realm
+                && ($link['qbo_entity'] ?? null) === $entity
+                && isset($wanted[(string) ($link['qbo_id'] ?? '')]) === true);
+
+            return array_values(array_unique(array_map(
+                static fn (mixed $id): string => (string) $id,
+                array_column($linked, 'qbo_id')
+            )));
+        }
+
+        return array_values(array_map(static fn (mixed $id): string => (string) $id, Link::query()
+            ->when($companyUuid !== null, static fn ($query) => $query->where('company_uuid', $companyUuid))
+            ->when($exceptLocalUuid !== null, static fn ($query) => $query->where('local_uuid', '!=', $exceptLocalUuid))
+            ->where('realm_id', $realm)
+            ->where('qbo_entity', $entity)
+            ->whereIn('qbo_id', $ids)
+            ->pluck('qbo_id')
+            ->all()));
     }
 
     /**
@@ -2115,6 +2233,14 @@ class FleetbaseDirectory
                 $rows[$uuid]['payment_date'] = $day;
             }
         }
+        // A new QuickBooks payment carries the reference and method of the last Ledger payment.
+        $paid = array_keys(array_filter($rows, static fn (array $row): bool => $row['amount_paid'] > 0));
+        foreach ($dates->lastPaymentDetails($db, $companyUuid, array_map('strval', $paid)) as $uuid => $detail) {
+            if (isset($rows[$uuid]) === true) {
+                $rows[$uuid]['payment_reference'] = $detail['reference'];
+                $rows[$uuid]['payment_method']    = $detail['method'];
+            }
+        }
 
         return $rows;
     }
@@ -2564,6 +2690,10 @@ class FleetbaseDirectory
         if (empty($invoice['status']) === false) {
             $updates['status'] = (string) $invoice['status'];
         }
+        // An edit in QuickBooks can leave a paid invoice owing money. Only a fully paid one keeps a paid date.
+        if (in_array((string) ($invoice['status'] ?? ''), ['partial', 'sent'], true) === true) {
+            $updates['paid_at'] = null;
+        }
         if (empty($invoice['items_from_quickbooks']) === false && is_array($invoice['items'] ?? null) === true) {
             $lineMap = is_array($invoice['line_map'] ?? null) === true ? $invoice['line_map'] : null;
             $this->replaceInvoiceLines($uuid, $invoice['items'], $lineMap);
@@ -2589,6 +2719,10 @@ class FleetbaseDirectory
         }
         if (empty($invoice['status']) === false) {
             $updates['status'] = (string) $invoice['status'];
+        }
+        // Only a fully paid invoice keeps a paid date in Ledger.
+        if (in_array((string) ($invoice['status'] ?? ''), ['partial', 'sent'], true) === true) {
+            $updates['paid_at'] = null;
         }
         $updates['balance'] = self::invoiceAmounts(
             $this->storedInvoiceAmount($updates, $invoice, $loaded, 'total_amount', 'total'),

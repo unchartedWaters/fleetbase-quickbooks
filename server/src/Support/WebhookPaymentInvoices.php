@@ -31,28 +31,45 @@ class WebhookPaymentInvoices
     public array $deferred = [];
 
     /**
+     * realm|payment id => true for a payment with no link at all, such as one made in QuickBooks.
+     *
+     * @var array<string, true>
+     */
+    public array $unlinked = [];
+
+    /**
      * One payment-link query, one invoice-link query, and one local-invoice query
      * for the delivery. A link whose local_uuid is the QuickBooks payment id is not
      * the Fleetbase invoice; the invoice id comes from the payment's lines.
      *
      * @see EnqueueWebhookSync::quickbooksInvoiceIdsForPayments()
      *
+     * A payment made in QuickBooks has no link at all. With $readUnlinked its invoices are read
+     * from QuickBooks like a keyed payment's; deletes never are (there is nothing to read).
+     *
      * @param array<int, QuickBooksEntityChanged>                                                         $events
      * @param (\Closure(string, string, array<int, string>): array<string, array<int, string>|null>)|null $readInvoiceIds null defers keyed payments
      *
      * @return array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}>
      */
-    public function resolve(string $companyUuid, array $events, bool $allowDelete, ?\Closure $readInvoiceIds): array
-    {
-        $this->reads = [];
-        $idsByRealm  = $this->paymentIdsByRealm($events, $allowDelete);
+    public function resolve(
+        string $companyUuid,
+        array $events,
+        bool $allowDelete,
+        ?\Closure $readInvoiceIds,
+        bool $readUnlinked = false,
+    ): array {
+        $this->reads    = [];
+        $this->unlinked = [];
+        $idsByRealm     = $this->paymentIdsByRealm($events, $allowDelete);
         if ($idsByRealm === []) {
             return [];
         }
 
         $links            = new WebhookPaymentLinks();
         $byPayment        = $links->paymentLinksByKey($companyUuid, $idsByRealm);
-        [$direct, $keyed] = $this->directAndKeyedPayments($idsByRealm, $byPayment);
+        $unlinked         = $allowDelete === false && $readUnlinked === true;
+        [$direct, $keyed] = $this->directAndKeyedPayments($idsByRealm, $byPayment, $unlinked);
         $remote           = new WebhookPaymentReads($readInvoiceIds);
         try {
             [$remoteInvoices, $missingByRealm] = $remote->remoteInvoicesForKeyed($companyUuid, $keyed, $allowDelete);
@@ -91,7 +108,7 @@ class WebhookPaymentInvoices
      *
      * @return array{0: array<string, array<int, string>>, 1: array<string, array<int, string>>}
      */
-    private function directAndKeyedPayments(array $idsByRealm, array $byPayment): array
+    private function directAndKeyedPayments(array $idsByRealm, array $byPayment, bool $readUnlinked): array
     {
         $direct = [];
         $keyed  = [];
@@ -107,8 +124,11 @@ class WebhookPaymentInvoices
                 }
                 if ($invoices !== []) {
                     $direct[$key] = $invoices;
-                } elseif ($locals !== []) {
+                } elseif ($locals !== [] || $readUnlinked === true) {
                     $keyed[$realmId][] = (string) $paymentId;
+                }
+                if ($locals === []) {
+                    $this->unlinked[$key] = true;
                 }
             }
         }

@@ -20,6 +20,7 @@ use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Services\WebhookSubscriptions;
+use Fleetbase\Quickbooks\Support\ActivityErrors;
 use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\PublicHttps;
@@ -84,7 +85,7 @@ class ConnectionController extends QuickbooksController
             ], 'page', $page);
         [$batches, $meta] = $this->batchPage($paginator);
         $locale           = Translation::currentLocale();
-        $errors           = $this->errorsByBatch($this->batchUuids($batches), $locale);
+        $errors           = $this->errorsByBatch($this->batchUuids($batches), $locale, $this->companyUuid($request));
         $payload          = [];
         foreach ($batches as $batch) {
             if ($batch instanceof SyncBatch === false) {
@@ -119,28 +120,52 @@ class ConnectionController extends QuickbooksController
     /**
      * @param array<int, string> $batchUuids
      *
-     * Stored errors are rendered here, in the reader's locale, before duplicates are removed
+     * Stored errors are rendered here, in the reader's locale, and named by their record. A few
+     * more than are shown are read, so the same message for several unnamed records still
+     * leaves room for other messages once duplicates are removed.
      *
      * @return array<string, array<int, string>>
      */
-    private function errorsByBatch(array $batchUuids, string $locale): array
+    private function errorsByBatch(array $batchUuids, string $locale, string $companyUuid): array
     {
-        $errors   = [];
+        $shown    = [];
+        $uuids    = [];
         $attempts = SyncAttempt::query()
             ->whereIn('batch_uuid', $batchUuids)
             ->whereNotNull('error')
+            ->orderByRaw("case when outcome = 'failed' then 0 else 1 end")
             ->orderBy('created_at')
-            ->get(['batch_uuid', 'error']);
+            ->get(['batch_uuid', 'local_type', 'local_uuid', 'outcome', 'error']);
         foreach ($attempts as $attempt) {
             if ($attempt instanceof SyncAttempt === false) {
                 continue;
             }
             $batchUuid = (string) $attempt->batch_uuid;
             $message   = trim((string) Translation::render((string) $attempt->error, $locale));
-            if ($batchUuid === '' || $message === '') {
+            // Failures come first. A general note, not about the record it is on, shows once and unnamed.
+            $named     = ActivityErrors::isGeneralNote((string) $attempt->error) === false;
+            $type      = $named === true ? (string) $attempt->local_type : '';
+            $localUuid = $named === true ? (string) $attempt->local_uuid : '';
+            $key       = $type . '|' . $localUuid . '|' . $message;
+            if ($batchUuid === '' || $message === '' || isset($shown[$batchUuid][$key]) === true) {
                 continue;
             }
-            $errors[$batchUuid][] = $message;
+            if (count($shown[$batchUuid] ?? []) >= ActivityErrors::CANDIDATES) {
+                continue;
+            }
+            $shown[$batchUuid][$key] = [$type, $localUuid, $message];
+            if ($named === true) {
+                $uuids[$type][] = $localUuid;
+            }
+        }
+
+        $names  = ActivityErrors::names($companyUuid, $uuids);
+        $errors = [];
+        foreach ($shown as $batchUuid => $entries) {
+            foreach ($entries as [$type, $uuid, $message]) {
+                $name                 = $names[$type . '|' . $uuid] ?? null;
+                $errors[$batchUuid][] = ActivityErrors::labeled($type, $name, $message, $locale);
+            }
         }
 
         return $errors;
@@ -153,8 +178,7 @@ class ConnectionController extends QuickbooksController
      */
     private function presentBatch(SyncBatch $batch, array $errors, string $locale): array
     {
-        $messages = array_values(array_unique($errors[(string) $batch->uuid] ?? []));
-        $error    = $messages === [] ? null : implode('; ', array_slice($messages, 0, 3));
+        $error = ActivityErrors::join($errors[(string) $batch->uuid] ?? []);
         if ($error === null && (int) $batch->failed_count > 0) {
             $error = Translation::get(
                 'quickbooks.messages.failed-count',
@@ -196,9 +220,14 @@ class ConnectionController extends QuickbooksController
         $this->authorizeQuickbooks('quickbooks connect connection', $request);
         $companyUuid = $this->companyUuid($request);
         $credentials = $this->credentials($companyUuid);
-        if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '' || $this->isAbsoluteHttpUrl($credentials['redirect_uri']) === false) {
+        if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '') {
             return response()->json([
                 'message' => Translation::get('quickbooks.messages.not-set-up'),
+            ], 422);
+        }
+        if ($this->isAbsoluteHttpUrl($credentials['redirect_uri']) === false) {
+            return response()->json([
+                'message' => Translation::get('quickbooks.messages.redirect-not-public'),
             ], 422);
         }
         $begun       = $this->oauth->begin(

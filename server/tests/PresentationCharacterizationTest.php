@@ -503,7 +503,7 @@ test('sync activity presents each batch with paired counts, its first three dist
                 'linked_count'    => 7,
                 'skipped'         => 8,
                 'skipped_count'   => 8,
-                'error'           => 'first; second; third',
+                'error'           => 'first. second. third.',
                 'started_at'      => Carbon::parse('2026-03-01 10:00:00')->toIso8601String(),
                 'finished_at'     => Carbon::parse('2026-03-01 10:05:00')->toIso8601String(),
                 'created_at'      => Carbon::parse('2026-03-01 10:00:00')->toIso8601String(),
@@ -548,8 +548,8 @@ test('sync activity renders stored message keys for the reader and keeps older e
         );
         $body = $controller->batches(Request::create('/batches', 'GET'))->getData(true);
 
-        expect($body['batches'][0]['error'])->toBe('Sync failed.; Wallet currency EUR does not match the QuickBooks '
-            . 'home currency USD.; Duplicate Name Exists Error');
+        expect($body['batches'][0]['error'])->toBe('Sync failed. Wallet currency EUR does not match the QuickBooks '
+            . 'home currency USD. Duplicate Name Exists Error.');
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 

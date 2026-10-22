@@ -66,8 +66,17 @@ export default class QuickbooksActivityComponent extends Component {
             trigger: this.translated('quickbooks.activity.trigger', row.trigger),
             directionLabel: this.translated('quickbooks.activity.direction', row.direction),
             status: this.statusLabel(row.status),
+            resultsText: this.resultsText(row.results),
             error: this.displayError(row.error),
         }));
+    }
+
+    resultsText(results) {
+        if (!results.length) {
+            return this.intl.t('quickbooks.activity.results.none');
+        }
+
+        return results.map((result) => this.intl.t(`quickbooks.activity.results.${result.name}`, { count: result.count })).join(', ');
     }
 
     translated(prefix, value) {

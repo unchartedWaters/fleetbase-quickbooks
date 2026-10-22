@@ -439,7 +439,9 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
             ->and($shown['company_auth'])->not->toHaveKey('public_receiver_url')
             ->and($shown['company_auth'])->not->toHaveKey('webhook_url')
             ->and($shown['company_auth'])->not->toHaveKey('internal_webhook_receiver_url')
-            ->and($shown['company_auth'])->not->toHaveKey('public_oauth_redirect_url');
+            ->and($shown['company_auth'])->not->toHaveKey('public_oauth_redirect_url')
+            ->and($shown['auth']['public_oauth_redirect_ready'])->toBeTrue()
+            ->and($shown['auth']['public_webhook_receiver_ready'])->toBeTrue();
 
         config()->set('app.url', '   ');
         $pathOnly = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
@@ -451,7 +453,9 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
             ->and($pathOnly['internal_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback')
             ->and($pathOnly['public_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback')
             ->and($pathOnly['auth']['internal_webhook_receiver_url'])->toBe('/quickbooks/int/v1/webhooks')
-            ->and($pathOnly['auth']['public_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback');
+            ->and($pathOnly['auth']['public_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback')
+            ->and($pathOnly['auth']['public_oauth_redirect_ready'])->toBeFalse()
+            ->and($pathOnly['auth']['public_webhook_receiver_ready'])->toBeFalse();
 
         config()->set('fleetbase.console.host', 'https://console.example.test');
         config()->set('fleetbase.url', 'https://api.core.test/');

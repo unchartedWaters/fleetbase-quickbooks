@@ -47,12 +47,12 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         await render(hbs`<QuickbooksActivity @batches={{this.batches}} />`);
 
         assert.dom("[data-direction='outbound']").exists({ count: 2 });
-        assert.dom("[data-direction='outbound'] [data-test-activity-aligned]").hasText('2');
-        assert.dom("[data-direction='outbound'] [data-test-activity-linked]").hasText('0');
-        assert.dom("[data-direction='inbound'] [data-test-activity-created]").hasText('4');
-        assert.dom("[data-direction='inbound'] [data-test-activity-linked]").hasText('3');
+        // One Results column lists only the counts that are not zero.
+        const results = [...this.element.querySelectorAll('[data-test-activity-results]')].map((node) => node.textContent.trim());
+        assert.deepEqual(results, ['2 created, 2 unchanged', '4 created, 3 linked', 'No changes']);
         assert.dom('[data-test-activity-error]').hasText('QuickBooks timed out');
         assert.dom('[data-test-activity-error]').hasClass('dark:text-red-400');
+        assert.dom('[data-test-activity-error]').hasClass('whitespace-normal');
         assert.dom('[data-test-activity]').hasClass('overflow-x-auto');
         assert.dom('[data-test-activity] table').hasClass('whitespace-nowrap');
         assert.dom('[data-test-activity]').doesNotHaveClass('overflow-y-hidden');
@@ -60,7 +60,7 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         assert.dom('[data-test-activity-error]').hasAttribute('headers', 'quickbooks-activity-2');
         assert.dom('#quickbooks-activity-2').hasText('Reconcile');
         assert.dom('#quickbooks-activity-2').hasAttribute('scope', 'row');
-        assert.dom('thead th[scope="col"]').exists({ count: 12 });
+        assert.dom('thead th[scope="col"]').exists({ count: 5 });
         assert.dom('[data-test-activity-loading]').doesNotExist();
     });
 
@@ -198,7 +198,7 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
             },
         ]);
         assert.dom('[data-test-activity-row]').exists({ count: 1 });
-        assert.dom('[data-test-activity-created]').hasText('1');
+        assert.dom('[data-test-activity-results]').hasText('1 created');
         assert.dom('#fleetbase-pagination').exists({ count: 1 });
 
         await click('#fleetbase-pagination-forward-button');
@@ -211,7 +211,7 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         });
         assert.true(calls.every((call) => call.query.per_page === 25));
         assert.dom('[data-test-activity-row]').exists({ count: 1 });
-        assert.dom('[data-test-activity-created]').hasText('9');
+        assert.dom('[data-test-activity-results]').hasText('9 created');
         assert.dom('[data-test-activity-trigger]').hasText('Sync now');
     });
 
@@ -274,7 +274,7 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
 
         assert.dom('[data-test-activity-load-failed]').hasText('Sync activity could not be loaded.');
         assert.dom('[data-test-activity-row]').exists({ count: 1 });
-        assert.dom('[data-test-activity-created]').hasText('1');
+        assert.dom('[data-test-activity-results]').hasText('1 created');
         assert.dom('#fleetbase-pagination').exists({ count: 1 });
         assert.dom('[data-test-activity-load-failed]').hasAttribute('role', 'alert');
         assert.dom('[data-test-activity-load-failed]').isFocused('focus moves to the error, not to the page body');
@@ -283,6 +283,6 @@ module('Integration | Component | quickbooks-activity', function (hooks) {
         await click('#fleetbase-pagination-forward-button');
 
         assert.dom('[data-test-activity-load-failed]').doesNotExist();
-        assert.dom('[data-test-activity-created]').hasText('2');
+        assert.dom('[data-test-activity-results]').hasText('2 created');
     });
 });

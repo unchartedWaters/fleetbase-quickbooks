@@ -14,6 +14,21 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     private const COMPANY_KEY = '/^company\.([^.]+)\.quickbooks\.sync$/';
 
+    /**
+     * QuickBooks is now the default Primary, but an organization that synced before this upgrade
+     * did so with Fleetbase as Primary, so its copy keeps that unless it or the global template chose.
+     */
+    private const PRIMARY_BEFORE_UPGRADE = [
+        'customer_conflict'  => 'fleetbase',
+        'customer_reference' => 'fleetbase',
+        'invoice_conflict'   => 'fleetbase',
+        'invoice_reference'  => 'fleetbase',
+        'payment_conflict'   => 'fleetbase',
+        'payment_reference'  => 'fleetbase',
+        'wallet_conflict'    => 'fleetbase',
+        'wallet_reference'   => 'fleetbase',
+    ];
+
     public function up(): void
     {
         if (Schema::hasTable('settings') === false) {
@@ -23,7 +38,7 @@ return new class extends Migration {
         $admin    = $this->row(SettingsKeys::adminSync());
         $defaults = config('quickbooks.sync', []);
         $resolver = new SyncSettingsResolver();
-        $defaults = is_array($defaults) === true ? $defaults : [];
+        $defaults = array_merge(is_array($defaults) === true ? $defaults : [], self::PRIMARY_BEFORE_UPGRADE);
         foreach (array_chunk($this->companies(), 200) as $chunk) {
             foreach ($chunk as $companyUuid) {
                 $this->snapshot($companyUuid, $resolver, $admin, $defaults);

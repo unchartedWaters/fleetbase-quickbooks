@@ -284,6 +284,9 @@ class SettingController extends QuickbooksController
         $browser['public_webhook_receiver_url']   = $publicWebhook;
         $browser['internal_oauth_redirect_url']   = $oauth;
         $browser['public_oauth_redirect_url']     = $publicOauth;
+        // Intuit needs public https addresses; the page warns when the one shown is not.
+        $browser['public_webhook_receiver_ready'] = PublicHttps::isPublicHttpsUrl($publicWebhook, false);
+        $browser['public_oauth_redirect_ready']   = PublicHttps::isPublicHttpsUrl($publicOauth, false);
         unset($browser['sources']['webhook_url']);
 
         return [

@@ -2,6 +2,7 @@
 
 use Fleetbase\Quickbooks\Events\QuickBooksEntityChanged;
 use Fleetbase\Quickbooks\Jobs\ApplyRemoteChange;
+use Fleetbase\Quickbooks\Jobs\ImportCustomers;
 use Fleetbase\Quickbooks\Jobs\ResolveWebhookPayments;
 use Fleetbase\Quickbooks\Jobs\SyncWebhookBatch;
 use Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync;
@@ -424,7 +425,7 @@ test('a payment linked straight to invoices queues every linked or on-file invoi
         ]);
 })->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
 
-test('the request resolves direct payments, defers keyed ones in order, and ignores unlinked payments', function () {
+test('the request resolves direct payments and defers keyed and new unlinked ones in order', function () {
     $client    = new WplClient();
     $directory = wplDirectory();
     $links     = [
@@ -453,6 +454,7 @@ test('the request resolves direct payments, defers keyed ones in order, and igno
         ->and(wplJobs($jobs))->toBe([
             ['resolve', [
                 wplPayload('5', 'create', null),
+                wplPayload('6', 'create', null),
                 wplPayload('7', 'update', 'pay-local-7', 'realm-2'),
                 wplPayload('5', 'update', null),
                 wplPayload('8', 'delete', '8'),
@@ -497,6 +499,7 @@ test('fleetbase primary still queues the invoices of a direct payment but sends 
         wplRequest([
             new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'update', null),
             new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '5', 'update', null),
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '6', 'create', null),
         ], wplStore(['payment_conflict' => 'fleetbase']));
 
         return $dispatcher->jobs;
@@ -545,6 +548,33 @@ test('the job reads several keyed payments in one batch query and queues every i
                 ['local_type' => 'invoice', 'local_uuid' => 'inv-b'],
                 ['local_type' => 'invoice', 'local_uuid' => 'inv-c'],
             ]],
+        ]);
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('the job reads a payment made in quickbooks and queues the linked invoice it paid', function () {
+    $client                = new WplClient();
+    $client->payments['6'] = wplPayment('6', ['10']);
+    $directory             = wplDirectory();
+    $tokens                = wplTokens($client, $directory);
+    $links                 = [wplLink('link-inv-a', 'invoice', 'inv-a', 'Invoice', '10')];
+
+    $run  = function ($dispatcher) use ($directory, $tokens) {
+        // A payment made in QuickBooks has no link, so the webhook names no local record.
+        wplRunJob([wplPayload('6', 'create', null)], wplStore(), $directory, $tokens);
+
+        return $dispatcher->jobs;
+    };
+    $jobs = wplWithTables($links, [], fn () => wplWithServices($client, $directory, $tokens, $run));
+
+    // With no payment link to apply, the amount paid is read from the invoice's QuickBooks balance.
+    expect($client->calls)->toBe(['getPayment:6'])
+        ->and(wplJobs($jobs))->toBe([
+            ['apply', [
+                ['entity' => 'Payment', 'id' => '6', 'operation' => 'create'],
+                ['entity' => 'Invoice', 'id' => '10', 'operation' => 'update'],
+                ['entity' => 'InvoicePayments', 'id' => '10', 'operation' => 'update'],
+            ]],
+            ['sync', [['local_type' => 'invoice', 'local_uuid' => 'inv-a']]],
         ]);
 })->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
 
@@ -885,3 +915,41 @@ test('the payment job does not read quickbooks while the connection is rate limi
         ->and($jobs[0]->delay)->toBeGreaterThanOrEqual(199)
         ->and($jobs[0]->delay)->toBeLessThanOrEqual(221);
 });
+
+test('a customer created in quickbooks is imported after a delay, and only for the connected company', function () {
+    $client    = new WplClient();
+    $directory = wplDirectory();
+
+    $jobs = wplWithTables([], [], fn () => wplWithServices($client, $directory, null, function ($dispatcher) {
+        wplRequest([
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '95', 'create', null),
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '96', 'update', null),
+            new QuickBooksEntityChanged('company-a', 'realm-2', 'customer', '97', 'create', null),
+        ], wplStore());
+
+        return $dispatcher->jobs;
+    }));
+
+    expect($client->calls)->toBe([])
+        ->and($jobs)->toHaveCount(1)
+        ->and($jobs[0])->toBeInstanceOf(ImportCustomers::class)
+        ->and($jobs[0]->customerIds)->toBe(['95'])
+        ->and($jobs[0]->realmId)->toBe('realm-1')
+        ->and($jobs[0]->delay)->toBe(ImportCustomers::NAMED_IMPORT_DELAY_SECONDS);
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a customer created in quickbooks is not imported when customers only go to quickbooks', function () {
+    $client    = new WplClient();
+    $directory = wplDirectory();
+
+    $jobs = wplWithTables([], [], fn () => wplWithServices($client, $directory, null, function ($dispatcher) {
+        wplRequest(
+            [new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '95', 'create', null)],
+            wplStore(['customer_direction' => 'outbound'])
+        );
+
+        return $dispatcher->jobs;
+    }));
+
+    expect($jobs)->toBe([]);
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');

@@ -141,7 +141,7 @@ test('two records with identical bodies get different requestids'
         ->and($sent[3])->not->toHaveKey('requestid');
 });
 
-test('requestids fit the 36 characters Intuit allows on a batch', function () use ($requestIdConnection) {
+test('requestids are at most 36 characters', function () use ($requestIdConnection) {
     $ids = [];
     Http::fake(function (Request $request) use (&$ids) {
         parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
@@ -167,4 +167,116 @@ test('requestids fit the 36 characters Intuit allows on a batch', function () us
         ->and(strlen($ids[0]))->toBeLessThanOrEqual(36)
         ->and(strlen($ids[1]))->toBeLessThanOrEqual(36)
         ->and($ids[0])->toMatch('/^[a-f0-9-]+$/');
+});
+
+test('a batch keeps every requestid and bId pair within the 50 characters Intuit allows'
+. ' and returns results under the caller bIds', function () use ($requestIdConnection) {
+    $sent = [];
+    Http::fake(function (Request $request) use (&$sent) {
+        parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+        $wire   = array_column($request->data()['BatchItemRequest'] ?? [], 'bId');
+        $sent[] = ['requestid' => $query['requestid'] ?? '', 'bIds' => $wire];
+        $rows   = [];
+        foreach ($wire as $index => $bId) {
+            $rows[] = ['bId' => $bId, 'Customer' => ['Id' => (string) (90 + $index), 'SyncToken' => '0']];
+        }
+
+        return Http::response(['BatchItemResponse' => $rows], 200);
+    });
+    $client = new QuickBooksClient();
+    $items  = [
+        [
+            'bId'       => 'customer:46d5412d-a50d-46cc-a023-294340f62685',
+            'operation' => 'create',
+            'entity'    => 'Customer',
+            'payload'   => ['DisplayName' => 'Northwind'],
+        ],
+        [
+            'bId'       => 'customer:9b1f2c3d-1111-4222-8333-944455566677',
+            'operation' => 'create',
+            'entity'    => 'Customer',
+            'payload'   => ['DisplayName' => 'Bluewater'],
+        ],
+    ];
+
+    $results = $client->batch($requestIdConnection, $items);
+    $client->batch($requestIdConnection, $items);
+
+    expect($sent)->toHaveCount(2)
+        ->and($sent[0]['requestid'])->not->toBe('')
+        ->and($sent[1]['requestid'])->toBe($sent[0]['requestid'])
+        ->and(array_keys($results))->toBe(array_column($items, 'bId'))
+        ->and($results['customer:46d5412d-a50d-46cc-a023-294340f62685']['body']['Id'])->toBe('90')
+        ->and($results['customer:9b1f2c3d-1111-4222-8333-944455566677']['body']['Id'])->toBe('91');
+    foreach ($sent[0]['bIds'] as $bId) {
+        expect(strlen($sent[0]['requestid'] . $bId))->toBeLessThanOrEqual(50);
+    }
+});
+
+test('two records with identical batch bodies'
+. ' still get different requestids', function () use ($requestIdConnection) {
+    $ids = [];
+    Http::fake(function (Request $request) use (&$ids) {
+        parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+        $ids[] = $query['requestid'] ?? '';
+        $rows  = [];
+        foreach ($request->data()['BatchItemRequest'] as $item) {
+            $rows[] = ['bId' => $item['bId'], 'Account' => ['Id' => '7', 'SyncToken' => '0']];
+        }
+
+        return Http::response(['BatchItemResponse' => $rows], 200);
+    });
+    $client = new QuickBooksClient();
+    $body   = ['Name' => 'Personal Wallet', 'AccountType' => 'Other Current Asset'];
+
+    foreach (['11111111-2222-4333-8444-555555555555', '66666666-7777-4888-9999-000000000000'] as $uuid) {
+        $client->batch($requestIdConnection, [[
+            'bId'       => 'wallet:' . $uuid,
+            'operation' => 'create',
+            'entity'    => 'Account',
+            'payload'   => $body,
+        ]]);
+    }
+
+    expect($ids)->toHaveCount(2)
+        ->and($ids[0])->not->toBe('')
+        ->and($ids[1])->not->toBe($ids[0]);
+});
+
+test('a batch fault row without a bId keeps Intuit\'s message', function () use ($requestIdConnection) {
+    $detail = 'Business Validation Error: You cannot enter more than 50 characters in the request_id field.';
+    Http::fake(function (Request $request) use ($detail) {
+        $rows = [];
+        foreach ($request->data()['BatchItemRequest'] as $item) {
+            $rows[] = ['Fault' => ['Error' => [[
+                'Message' => 'A business validation error has occurred while processing your request',
+                'Detail'  => $detail,
+                'code'    => '6000',
+            ]], 'type' => 'ValidationFault']];
+        }
+
+        return Http::response(['BatchItemResponse' => $rows], 200);
+    });
+
+    $results = (new QuickBooksClient())->batch($requestIdConnection, [
+        ['bId' => 'a', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Ada']],
+        ['bId' => 'b', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Bea']],
+    ]);
+
+    expect($results['a']['ok'])->toBeFalse()
+        ->and($results['a']['error'])->toBe($detail)
+        ->and($results['b']['error'])->toBe($detail)
+        ->and($results['a']['code'] ?? null)->toBe('6000');
+});
+
+test('a batch refused with an authentication fault that names no item'
+. ' is treated as a refused access token', function () use ($requestIdConnection) {
+    Http::fake(fn () => Http::response(['BatchItemResponse' => [
+        ['Fault' => ['Error' => [['Message' => 'AuthenticationFailed', 'code' => '3200']], 'type' => 'AUTHENTICATION']],
+    ]], 200));
+
+    expect(fn () => (new QuickBooksClient())->batch($requestIdConnection, [
+        ['bId' => 'a', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Ada']],
+        ['bId' => 'b', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Bea']],
+    ]))->toThrow(Fleetbase\Quickbooks\Support\QuickBooksException::class);
 });

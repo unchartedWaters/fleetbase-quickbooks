@@ -103,6 +103,20 @@ class SyncEngine
     private ?array $accountsByName = null;
 
     /**
+     * Account names this run asked QuickBooks to create, lower case.
+     *
+     * @var array<string, true>
+     */
+    private array $accountNamesCreated = [];
+
+    /**
+     * Sync settings of the run in progress.
+     *
+     * @var array<string, mixed>
+     */
+    private array $runSettings = [];
+
+    /**
      * Service item id already resolved for this invoice block, keyed by company uuid.
      * An empty string means ensureServiceItem ran and QuickBooks has no item.
      * Null means this invoice is alone.
@@ -449,9 +463,70 @@ class SyncEngine
         }
 
         $ledger->rebuildIndex();
-        foreach ($this->wantedRemoteLinks($ledger, $connection, $entities, $settings) as $name => $linksById) {
-            $this->applyWantedRemote($ledger, $connection, $companyUuid, $settings, (string) $name, $linksById);
+        $before = ['customer' => $ledger->customers, 'invoice' => $ledger->invoices, 'wallet' => $ledger->wallets];
+        try {
+            foreach ($this->wantedRemoteLinks($ledger, $connection, $entities, $settings) as $name => $linksById) {
+                $this->applyWantedRemote($ledger, $connection, $companyUuid, $settings, (string) $name, $linksById);
+            }
+        } finally {
+            $this->recordInboundChanges($ledger, $companyUuid, $before, $now);
         }
+    }
+
+    /**
+     * Activity lists what a QuickBooks change altered in Fleetbase as one inbound run. A
+     * change that altered nothing, such as the echo of a Fleetbase write, adds no row.
+     *
+     * @param array<string, array<string, array<string, mixed>>> $before rows by local type, then uuid
+     */
+    private function recordInboundChanges(SyncLedger $ledger, string $companyUuid, array $before, int $now): void
+    {
+        $after    = ['customer' => $ledger->customers, 'invoice' => $ledger->invoices, 'wallet' => $ledger->wallets];
+        $attempts = [];
+        foreach ($after as $type => $rows) {
+            foreach ($rows as $uuid => $row) {
+                if (self::withoutRemoteMarkers($before[$type][$uuid] ?? null) === self::withoutRemoteMarkers($row)) {
+                    continue;
+                }
+                $attempts[] = [
+                    'company_uuid' => $companyUuid,
+                    'local_type'   => $type,
+                    'local_uuid'   => (string) $uuid,
+                    'outcome'      => 'updated',
+                    'error'        => null,
+                ];
+            }
+        }
+        if ($attempts === []) {
+            return;
+        }
+        $ledger->batches[] = array_merge($this->emptyBatch('webhook', 'finished'), [
+            'company_uuid' => $companyUuid,
+            'direction'    => 'inbound',
+            'updated'      => count($attempts),
+            'skipped'      => 0,
+            'started_at'   => $now,
+            'finished_at'  => $now,
+        ]);
+        array_push($ledger->attempts, ...$attempts);
+    }
+
+    /**
+     * A row without the *_from_quickbooks markers, which only say how a change is saved and are set on every apply.
+     *
+     * @return array<string, mixed>|null
+     */
+    private static function withoutRemoteMarkers(mixed $row): ?array
+    {
+        if (is_array($row) === false) {
+            return null;
+        }
+
+        return array_filter(
+            $row,
+            static fn (int|string $key): bool => str_ends_with((string) $key, '_from_quickbooks') === false,
+            ARRAY_FILTER_USE_KEY
+        );
     }
 
     /**
@@ -719,6 +794,7 @@ class SyncEngine
     private function process(SyncLedger $ledger, array $connection, array $rows, array $settings, int $now, string $trigger, bool $reportUnmatched): array
     {
         $this->customTxnNumbers  = [];
+        $this->runSettings       = $settings;
         $batch                   = $this->newOutboundBatch($connection, $trigger, $now);
         $companyUuid             = (string) $connection['company_uuid'];
         // A worker can reuse this engine, so a refresh that failed in an earlier run is tried again.
@@ -776,8 +852,9 @@ class SyncEngine
      */
     private function processRows(SyncLedger $ledger, array $connection, array $rows, array $settings, array &$batch, int $now, string $trigger, string $companyUuid): array
     {
-        $counts  = $this->rowTypeCounts($rows);
-        $handled = [];
+        $counts                    = $this->rowTypeCounts($rows);
+        $handled                   = [];
+        $this->accountNamesCreated = [];
         foreach ($rows as $row) {
             if ($this->isRateLimited($connection, $now) === true) {
                 break;
@@ -1144,7 +1221,8 @@ class SyncEngine
         if ($link !== null && $link['realm_id'] !== $connection['realm_id']) {
             $link = null;
         }
-        $hadLink = $link !== null;
+        $hadLink   = $link !== null;
+        $nameTaken = false;
 
         if ($link === null && empty($payload['AcctNum']) === false) {
             $acctNum = (string) $payload['AcctNum'];
@@ -1188,7 +1266,7 @@ class SyncEngine
 
                 return 'failed';
             }
-            $remote = $this->reattachWallet($ledger, $connection, $uuid, $wallet, $payload);
+            $remote = $this->reattachWallet($ledger, $connection, $uuid, $wallet, $payload, $nameTaken);
             $link   = $remote === null ? null : $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'wallet', $uuid);
         }
         if ($remote === null && $hadLink === true) {
@@ -1211,6 +1289,7 @@ class SyncEngine
 
                 return 'skipped';
             }
+            $payload = $this->newAccountName($wallet, $payload, $nameTaken);
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
                     'bId'       => 'wallet:' . $uuid,
@@ -1280,6 +1359,7 @@ class SyncEngine
                 $payload['Description'] = $withClears['Description'];
             }
         }
+        $payload = $this->wallets->keepUniqueName($ledger->wallets[$uuid], $payload, $remote);
 
         if ($this->writeBuffer !== null) {
             $payload['Id']        = (string) $remote['Id'];
@@ -1653,8 +1733,14 @@ class SyncEngine
             if ($amountCents <= 0) {
                 return null;
             }
-            $payload = $this->invoiceMapper($invoice)
-                ->payment($customerRef, $invoiceId, $amountCents, $this->paymentDate($invoice));
+            $payload = $this->invoiceMapper($invoice)->payment(
+                $customerRef,
+                $invoiceId,
+                $amountCents,
+                $this->paymentDate($invoice),
+                (string) ($invoice['payment_reference'] ?? ''),
+                (string) ($invoice['payment_method'] ?? '')
+            );
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
                     'bId'       => 'payment:' . $uuid,
@@ -2331,20 +2417,35 @@ class SyncEngine
      *
      * @return array<string, mixed>|null
      */
-    private function reattachWallet(SyncLedger $ledger, array $connection, string $uuid, array $wallet, array $payload): ?array
-    {
-        $name = trim((string) ($payload['Name'] ?? ''));
+    private function reattachWallet(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $wallet,
+        array $payload,
+        bool &$nameTaken,
+    ): ?array {
+        $nameTaken = false;
+        $name      = trim((string) ($payload['Name'] ?? ''));
         if ($name === '') {
             return null;
         }
 
         $currency = strtoupper(trim((string) ($wallet['currency'] ?? '')));
         $matches  = [];
-        $accounts = $this->accountsByName !== null
-            ? ($this->accountsByName[$name] ?? [])
-            : $this->client->findAccountsByName($connection, $name);
+        $accounts = array_values(array_filter($this->accountsNamed($connection, $name), 'is_array'));
+        $unique   = $this->wallets->uniqueName($wallet, $name);
+        if ($unique !== $name) {
+            $named    = array_filter($this->accountsNamed($connection, $unique), 'is_array');
+            $accounts = array_merge($accounts, array_values($named));
+        }
+        $nameTaken = $accounts !== [];
+        // An account another wallet is linked to is that wallet's, whatever its name.
+        $ids   = array_map(static fn (array $account): string => (string) ($account['Id'] ?? ''), $accounts);
+        $realm = (string) $connection['realm_id'];
+        $taken = $ledger->remoteIdsLinked($realm, 'Account', array_values(array_filter($ids)), $uuid);
         foreach ($accounts as $account) {
-            if (is_array($account) === false) {
+            if (in_array((string) ($account['Id'] ?? ''), $taken, true) === true) {
                 continue;
             }
             $remoteCurrency = strtoupper(trim((string) ($account['CurrencyRef']['value'] ?? '')));
@@ -2360,6 +2461,41 @@ class SyncEngine
         $ledger->putLink($this->linkFrom($connection, 'wallet', $uuid, 'Account', $matches[0]));
 
         return $matches[0];
+    }
+
+    /**
+     * A new account takes the wallet's own name unless another account, or one created earlier
+     * in this run, has it already.
+     *
+     * @param array<string, mixed> $wallet
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    private function newAccountName(array $wallet, array $payload, bool $nameTaken): array
+    {
+        $name = trim((string) ($payload['Name'] ?? ''));
+        if ($name === '') {
+            return $payload;
+        }
+        if ($nameTaken === true || isset($this->accountNamesCreated[mb_strtolower($name)]) === true) {
+            $payload['Name'] = $this->wallets->uniqueName($wallet, $name);
+        }
+        $this->accountNamesCreated[mb_strtolower((string) $payload['Name'])] = true;
+
+        return $payload;
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<int, mixed>
+     */
+    private function accountsNamed(array $connection, string $name): array
+    {
+        return $this->accountsByName !== null
+            ? ($this->accountsByName[$name] ?? [])
+            : $this->client->findAccountsByName($connection, $name);
     }
 
     /**
@@ -2604,7 +2740,7 @@ class SyncEngine
     {
         $name = trim((string) ($remote['Name'] ?? ''));
         if ($name !== '') {
-            $ledger->wallets[$uuid]['name'] = $name;
+            $ledger->wallets[$uuid]['name'] = $this->wallets->nameFromQuickBooks($ledger->wallets[$uuid], $name);
         }
 
         if (array_key_exists('Description', $remote) === true) {
@@ -3502,6 +3638,7 @@ class SyncEngine
         }
         if ($paid > 0 && $paid < $total) {
             $ledger->invoices[$uuid]['status'] = 'partial';
+            $this->clearQuickBooksPaidAt($ledger, $uuid);
 
             return;
         }
@@ -3509,7 +3646,19 @@ class SyncEngine
             $status = (string) ($invoice['status'] ?? '');
             if ($status === '' || in_array($status, ['paid', 'partial'], true) === true) {
                 $ledger->invoices[$uuid]['status'] = 'sent';
+                $this->clearQuickBooksPaidAt($ledger, $uuid);
             }
+        }
+    }
+
+    /**
+     * Ledger sets paid_at only when an invoice is paid in full (Invoice::markAsPaid), so a
+     * payment read from QuickBooks that leaves money owing does not give it a paid date.
+     */
+    private function clearQuickBooksPaidAt(SyncLedger $ledger, string $uuid): void
+    {
+        if (empty($ledger->invoices[$uuid]['payment_from_quickbooks']) === false) {
+            $ledger->invoices[$uuid]['paid_at'] = '';
         }
     }
 
@@ -5028,9 +5177,11 @@ class SyncEngine
             if ($linkedId === '' && empty($wallet['deleted_at']) === false) {
                 continue;
             }
+            $name         = trim((string) ($payload['Name'] ?? ''));
             $plans[$uuid] = [
                 'acct'   => trim((string) ($payload['AcctNum'] ?? '')),
-                'name'   => trim((string) ($payload['Name'] ?? '')),
+                'name'   => $name,
+                'unique' => $name === '' ? '' : $this->wallets->uniqueName($wallet, $name),
                 'linked' => $linkedId,
             ];
         }
@@ -5065,7 +5216,8 @@ class SyncEngine
             $this->accountByAcctNum[$acctNums[0]] = $loaded[0];
         }
 
-        $names = [];
+        $names   = [];
+        $uniques = [];
         foreach ($plans as $plan) {
             $linkedFound  = $plan['linked'] !== '' && isset($this->accountById[$plan['linked']]) === true;
             $linkedFailed = $plan['linked'] !== '' && isset($this->accountReadFailed[$plan['linked']]) === true;
@@ -5074,9 +5226,13 @@ class SyncEngine
                 continue;
             }
             $names[] = $plan['name'];
+            if (isset($plan['unique']) === true && $plan['unique'] !== '') {
+                $uniques[] = $plan['unique'];
+            }
         }
-        $names = array_values(array_unique($names));
-        $found = $this->readAccountsByField($connection, 'Name', $names);
+        $names   = array_values(array_unique($names));
+        $uniques = array_values(array_diff(array_unique($uniques), $names));
+        $found   = $this->readAccountsByField($connection, 'Name', array_merge($names, $uniques));
         foreach ($found as $account) {
             $name = trim((string) ($account['Name'] ?? ''));
             if ($name === '') {
@@ -5084,7 +5240,9 @@ class SyncEngine
             }
             $this->accountsByName[$name][] = $account;
         }
-        if (count($names) === 1 && $found !== [] && isset($this->accountsByName[$names[0]]) === false) {
+        $uniqueFound = $uniques !== [] && isset($this->accountsByName[$uniques[0]]) === true;
+        $nameFound   = $names !== [] && isset($this->accountsByName[$names[0]]) === true;
+        if (count($names) === 1 && $found !== [] && $nameFound === false && $uniqueFound === false) {
             $this->accountsByName[$names[0]] = $found;
         }
     }
@@ -5558,7 +5716,7 @@ class SyncEngine
             'local_type'   => $row['local_type'],
             'local_uuid'   => $row['local_uuid'],
             'outcome'      => $outcome,
-            'error'        => $this->lastError ?? $retryError,
+            'error'        => $this->lastError ?? $retryError ?? $this->primaryReplacedNote($row, $outcome),
         ];
         // A failure Fleetbase decided itself (lastError) is final for this data. A failure
         // from QuickBooks was classified by failure(). A row that did not fail is not counted.
@@ -5579,6 +5737,26 @@ class SyncEngine
             $ledger->updatePending((string) $connection['company_uuid'], (string) $row['local_type'], (string) $row['local_uuid'], ['status' => 'done']);
         }
         $this->closeSkipped = false;
+    }
+
+    /**
+     * A row queued by a QuickBooks webhook that Fleetbase then updated in QuickBooks had a change
+     * made there. With Fleetbase as Primary that change was replaced, which Activity says.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function primaryReplacedNote(array $row, string $outcome): ?string
+    {
+        $type     = (string) ($row['local_type'] ?? '');
+        $replaced = $outcome === 'updated' && ($row['reason'] ?? '') === 'webhook';
+        if ($replaced === false || in_array($type, ['customer', 'invoice', 'wallet'], true) === false) {
+            return null;
+        }
+        if ((string) ($this->runSettings[$type . '_conflict'] ?? 'fleetbase') === 'quickbooks') {
+            return null;
+        }
+
+        return Translation::encode('quickbooks.messages.fleetbase-primary-replaced');
     }
 
     /**

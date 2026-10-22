@@ -4,6 +4,8 @@ namespace Fleetbase\Quickbooks\Support;
 
 class SyncSettingsResolver
 {
+    public const DEFAULT_PRIMARY = 'quickbooks';
+
     /**
      * Config defaults, then the global template row, then the organization row,
      * per field. An organization with its own complete copy sets every field; a null or
@@ -32,14 +34,14 @@ class SyncSettingsResolver
         $retry    = $this->pickInt('retry_limit', $admin, (int) ($defaults['retry_limit'] ?? 5), 1);
         $backoff  = $this->pickInt('default_backoff_seconds', $admin, (int) ($defaults['default_backoff_seconds'] ?? 30), 5);
         $choices  = [
-            'customer_conflict'  => $this->pickChoice('customer_conflict', $admin, (string) ($defaults['customer_conflict'] ?? 'fleetbase'), ['fleetbase', 'quickbooks', 'report']),
-            'customer_reference' => $this->pickChoice('customer_reference', $admin, (string) ($defaults['customer_reference'] ?? 'fleetbase'), ['fleetbase', 'quickbooks']),
-            'invoice_conflict'   => $this->pickChoice('invoice_conflict', $admin, (string) ($defaults['invoice_conflict'] ?? 'fleetbase'), ['fleetbase', 'quickbooks', 'report']),
-            'invoice_reference'  => $this->pickChoice('invoice_reference', $admin, (string) ($defaults['invoice_reference'] ?? 'fleetbase'), ['fleetbase', 'quickbooks']),
-            'payment_conflict'   => $this->pickChoice('payment_conflict', $admin, (string) ($defaults['payment_conflict'] ?? 'fleetbase'), ['fleetbase', 'quickbooks', 'report']),
-            'payment_reference'  => $this->pickChoice('payment_reference', $admin, (string) ($defaults['payment_reference'] ?? 'fleetbase'), ['fleetbase', 'quickbooks']),
-            'wallet_conflict'    => $this->pickChoice('wallet_conflict', $admin, (string) ($defaults['wallet_conflict'] ?? 'fleetbase'), ['fleetbase', 'quickbooks', 'report']),
-            'wallet_reference'   => $this->pickChoice('wallet_reference', $admin, (string) ($defaults['wallet_reference'] ?? 'fleetbase'), ['fleetbase', 'quickbooks']),
+            'customer_conflict'  => $this->pickPrimary('customer_conflict', $admin, $defaults),
+            'customer_reference' => $this->pickPrimary('customer_reference', $admin, $defaults),
+            'invoice_conflict'   => $this->pickPrimary('invoice_conflict', $admin, $defaults),
+            'invoice_reference'  => $this->pickPrimary('invoice_reference', $admin, $defaults),
+            'payment_conflict'   => $this->pickPrimary('payment_conflict', $admin, $defaults),
+            'payment_reference'  => $this->pickPrimary('payment_reference', $admin, $defaults),
+            'wallet_conflict'    => $this->pickPrimary('wallet_conflict', $admin, $defaults),
+            'wallet_reference'   => $this->pickPrimary('wallet_reference', $admin, $defaults),
             'customer_direction' => $this->pickDirection('customer_direction', $admin),
             'invoice_direction'  => $this->pickDirection('invoice_direction', $admin),
             'payment_direction'  => $this->pickDirection('payment_direction', $admin),
@@ -113,6 +115,24 @@ class SyncSettingsResolver
         }
 
         return ['value' => max($minimum, $default), 'source' => 'default'];
+    }
+
+    /**
+     * Primary for one record type: QuickBooks unless the template or config chose otherwise.
+     *
+     * @param array<string, mixed> $admin
+     * @param array<string, mixed> $defaults
+     *
+     * @return array{value: string, source: string}
+     */
+    private function pickPrimary(string $field, array $admin, array $defaults): array
+    {
+        $allowed = ['fleetbase', 'quickbooks'];
+        if (str_ends_with($field, '_conflict') === true) {
+            $allowed[] = 'report';
+        }
+
+        return $this->pickChoice($field, $admin, (string) ($defaults[$field] ?? self::DEFAULT_PRIMARY), $allowed);
     }
 
     /**

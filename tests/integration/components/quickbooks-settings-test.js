@@ -362,9 +362,9 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.strictEqual(this.saved.auth.environment, 'sandbox');
         assert.strictEqual(this.saved.sync.enabled, undefined);
         assert.strictEqual(this.saved.sync.interval_minutes, 5);
-        // Stored invoice_reference is quickbooks, but conflict is unset, so Primary is Fleetbase for both keys.
-        assert.strictEqual(this.saved.sync.invoice_conflict, 'fleetbase');
-        assert.strictEqual(this.saved.sync.invoice_reference, 'fleetbase');
+        // Conflict is unset, so Primary is the default, QuickBooks, for both keys.
+        assert.strictEqual(this.saved.sync.invoice_conflict, 'quickbooks');
+        assert.strictEqual(this.saved.sync.invoice_reference, 'quickbooks');
         assert.strictEqual(this.saved.sync.customer_conflict, 'quickbooks');
         assert.strictEqual(this.saved.sync.customer_reference, 'quickbooks');
         assert.strictEqual(this.saved.sync.customer_direction, 'both');
@@ -453,6 +453,29 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         const order = [...this.element.querySelectorAll('[data-test-field]')].map((element) => element.dataset.testField);
         assert.deepEqual(order.slice(0, 4), ['environment', 'client_id', 'client_secret', 'webhook_verifier']);
+    });
+
+    test('a public url that is not a public https address is flagged until it is edited', async function (assert) {
+        this.set('settings', {
+            client_id: 'id',
+            environment: 'sandbox',
+            client_secret_set: true,
+            public_oauth_redirect_url: 'http://localhost/quickbooks/int/v1/oauth/callback',
+            public_oauth_redirect_ready: false,
+            public_webhook_receiver_url: 'https://fleet.example.com/quickbooks/int/v1/webhooks',
+            public_webhook_receiver_ready: true,
+        });
+        this.set('sync', { interval_minutes: 5, retry_limit: 5, default_backoff_seconds: 30 });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
+
+        assert
+            .dom("[data-test-url-not-public='public_oauth_redirect_url']")
+            .hasText('This is not a public https:// address, so Intuit cannot reach it. Enter the address Fleetbase is reached at from the internet.');
+        assert.dom("[data-test-url-not-public='public_webhook_receiver_url']").doesNotExist();
+
+        await fillIn("[data-test-field='public_oauth_redirect_url']", 'https://fleet.example.com/quickbooks/int/v1/oauth/callback');
+        assert.dom("[data-test-url-not-public='public_oauth_redirect_url']").doesNotExist();
     });
 
     test('a changed Client ID needs its Client secret, and an unchanged one keeps the saved secret', async function (assert) {
