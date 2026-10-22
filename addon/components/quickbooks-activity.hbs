@@ -19,14 +19,7 @@
                         <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.trigger"}}</th>
                         <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.status"}}</th>
                         <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.direction"}}</th>
-                        <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.created"}}</th>
-                        <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.updated"}}</th>
-                        <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.aligned"}}</th>
-                        <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.linked"}}</th>
-                        <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.skipped"}}</th>
-                        <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.unmatched"}}</th>
-                        <th scope="col" class="py-2 pr-4 font-medium">{{t "quickbooks.activity.columns.voided"}}</th>
-                        <th scope="col" class="py-2 font-medium">{{t "quickbooks.activity.columns.failed"}}</th>
+                        <th scope="col" class="py-2 font-medium">{{t "quickbooks.activity.columns.results"}}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -36,18 +29,11 @@
                             <th scope="row" id={{row.headerId}} class="py-2 pr-4 text-left font-normal" data-test-activity-trigger>{{row.trigger}}</th>
                             <td class="py-2 pr-4" data-test-activity-status>{{row.status}}</td>
                             <td class="py-2 pr-4">{{row.directionLabel}}</td>
-                            <td class="py-2 pr-4" data-test-activity-created>{{row.created}}</td>
-                            <td class="py-2 pr-4" data-test-activity-updated>{{row.updated}}</td>
-                            <td class="py-2 pr-4" data-test-activity-aligned>{{row.aligned}}</td>
-                            <td class="py-2 pr-4" data-test-activity-linked>{{row.linked}}</td>
-                            <td class="py-2 pr-4" data-test-activity-skipped>{{row.skipped}}</td>
-                            <td class="py-2 pr-4" data-test-activity-unmatched>{{row.unmatched}}</td>
-                            <td class="py-2 pr-4" data-test-activity-voided>{{row.voided}}</td>
-                            <td class="py-2">{{row.failed}}</td>
+                            <td class="py-2 whitespace-normal" data-test-activity-results>{{row.resultsText}}</td>
                         </tr>
                         {{#if row.error}}
                             <tr>
-                                <td colspan="12" headers={{row.headerId}} class="pb-2 text-red-600 dark:text-red-400" data-test-activity-error>{{row.error}}</td>
+                                <td colspan="5" headers={{row.headerId}} class="pb-2 whitespace-normal break-words text-red-600 dark:text-red-400" data-test-activity-error>{{row.error}}</td>
                             </tr>
                         {{/if}}
                     {{/each}}

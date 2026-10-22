@@ -414,6 +414,46 @@ test('a larger quickbooks total changes a paid invoice that no longer covers it'
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(1000);
 });
 
+foreach ([
+    'a check'          => [['payment_reference' => 'CHK-1001', 'payment_method' => 'check'], 'CHK-1001', 'check'],
+    'a long reference' => [
+        ['payment_reference' => str_repeat('R', 30), 'payment_method' => 'manual'],
+        str_repeat('R', 21),
+        null,
+    ],
+    'no reference'     => [['payment_reference' => '  ', 'payment_method' => ''], null, null],
+] as $paymentRefLabel => [$paymentRefFields, $paymentRefNum, $paymentRefMethod]) {
+    test('a new quickbooks payment carries the ledger payment reference and method: '
+    . $paymentRefLabel, function () use (
+        $paymentRefFields,
+        $paymentRefNum,
+        $paymentRefMethod
+    ) {
+        [$engine, $client]           = qbEngine();
+        $ledger                      = engineLedger();
+        $ledger->customers['cust-1'] = engineCustomer('cust-1');
+        $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+        $paidInvoice                 = array_merge(['status' => 'paid', 'amount_paid' => 1000], $paymentRefFields);
+        $ledger->invoices['inv-1']   = engineInvoice('inv-1', $paidInvoice);
+        $client->invoices['qb-1']    = [
+            'Id'      => 'qb-1', 'SyncToken' => '1', 'DocNumber' => 'INV-1', 'TotalAmt' => 10, 'Balance' => 10,
+            'TxnDate' => '2026-09-01', 'DueDate' => '2026-09-15',
+        ];
+        $ledger->links[]   = engineLink('invoice', 'inv-1', 'qb-1');
+        $ledger->pending[] = enginePending('invoice', 'inv-1');
+
+        $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+        $payload = $client->paymentPayloads[0] ?? [];
+
+        expect($payload['PaymentRefNum'] ?? null)->toBe($paymentRefNum);
+        if ($paymentRefMethod === null) {
+            expect($payload)->not->toHaveKey('PrivateNote');
+        } else {
+            expect($payload['PrivateNote'])->toBe('Fleetbase payment method: ' . $paymentRefMethod);
+        }
+    });
+}
+
 test('a partial payment sends the amount paid and matches on the next sync', function () {
     [$engine, $client]           = qbEngine();
     $ledger                      = engineLedger();
@@ -1539,8 +1579,7 @@ test('a failed payment flush is recorded on the invoice and a 401 leaves the res
         ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'pay-1')['qbo_id'])->toBe('pay-1')
         ->and($rows['inv-bad']['status'])->toBe('pending')
         ->and($rows['inv-bad']['attempts'])->toBe(1)
-        ->and(qbText($errors['inv-bad']))->toBe('QuickBooks request failed with status 400: The payment amount is '
-            . 'invalid.')
+        ->and(qbText($errors['inv-bad']))->toBe('QuickBooks rejected the request: The payment amount is invalid.')
         ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'inv-bad'))->toBeNull()
         ->and($ledger->connections['company-uuid']['needs_reauth'])->toBeFalse();
 
@@ -3684,6 +3723,195 @@ foreach ([1 => 'on its own', 2 => 'in a batch'] as $nameTakenCount => $nameTaken
             );
     });
 }
+
+test('changes copied in from a quickbooks webhook show in activity as one inbound run', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => 'Local Ada']);
+    $ledger->customers['cust-2'] = engineCustomer('cust-2', ['name' => 'Bea', 'email' => 'bea@example.test']);
+    $client->customers['qbo-1']  = [
+        'Id'               => 'qbo-1', 'SyncToken' => '1', 'DisplayName' => 'Remote Ada',
+        'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+    ];
+    $client->customers['qbo-2'] = [
+        'Id'               => 'qbo-2', 'SyncToken' => '1', 'DisplayName' => 'Bea',
+        'PrimaryEmailAddr' => ['Address' => 'bea@example.test'],
+    ];
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-1');
+    $ledger->links[]             = engineLink('customer', 'cust-2', 'qbo-2');
+    $settings                    = qbSettings([
+        'customer_conflict'  => 'quickbooks',
+        'customer_reference' => 'quickbooks',
+    ]);
+
+    $engine->acceptRemoteChanges($ledger, 'company-uuid', [
+        ['entity' => 'Customer', 'id' => 'qbo-1', 'operation' => 'Update'],
+        ['entity' => 'Customer', 'id' => 'qbo-2', 'operation' => 'Update'],
+    ], $settings, 1_000);
+
+    expect($ledger->batches)->toHaveCount(1)
+        ->and($ledger->batches[0])->toMatchArray([
+            'company_uuid' => 'company-uuid',
+            'trigger'      => 'webhook',
+            'direction'    => 'inbound',
+            'status'       => 'finished',
+            'updated'      => 1,
+            'failed'       => 0,
+        ])
+        ->and($ledger->attempts)->toBe([[
+            'company_uuid' => 'company-uuid',
+            'local_type'   => 'customer',
+            'local_uuid'   => 'cust-1',
+            'outcome'      => 'updated',
+            'error'        => null,
+        ]]);
+
+    // The echo of a change Fleetbase made itself changes nothing and adds no row.
+    $engine->acceptRemoteChanges($ledger, 'company-uuid', [
+        ['entity' => 'Customer', 'id' => 'qbo-1', 'operation' => 'Update'],
+    ], $settings, 2_000);
+
+    expect($ledger->batches)->toHaveCount(1);
+});
+
+test('a repeated quickbooks payment webhook that changes nothing adds no activity row', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1');
+    $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->invoices['inv-1']   = engineInvoice('inv-1');
+    $ledger->links[]             = engineLink('invoice', 'inv-1', 'qb-1');
+    $client->payments['pay-1']   = [
+        'Id'   => 'pay-1', 'SyncToken' => '1', 'TotalAmt' => 1, 'TxnDate' => '2026-09-10',
+        'Line' => [['Amount' => 1, 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]]],
+    ];
+    $ledger->links[] = engineLink('payment', 'inv-1', 'pay-1');
+    $settings        = qbSettings(['payment_conflict' => 'quickbooks', 'payment_reference' => 'quickbooks']);
+    $webhook         = [['entity' => 'Payment', 'id' => 'pay-1', 'operation' => 'Update']];
+
+    $engine->acceptRemoteChanges($ledger, 'company-uuid', $webhook, $settings, 1_000);
+    $batches = count($ledger->batches);
+    // The next webhook reads the invoice fresh from the database, without the markers of the last run.
+    $ledger->invoices['inv-1'] = array_filter(
+        $ledger->invoices['inv-1'],
+        static fn (string $key): bool => str_ends_with($key, '_from_quickbooks') === false,
+        ARRAY_FILTER_USE_KEY
+    );
+    $engine->acceptRemoteChanges($ledger, 'company-uuid', $webhook, $settings, 2_000);
+
+    expect($ledger->invoices['inv-1']['amount_paid'])->toBe(100)
+        ->and($batches)->toBe(1)
+        ->and($ledger->batches)->toHaveCount(1);
+});
+
+test('a quickbooks change that fleetbase primary replaces says so in activity', function () {
+    foreach (['fleetbase' => true, 'quickbooks' => false] as $primary => $noted) {
+        [$engine, $client]                 = qbEngine();
+        $ledger                            = engineLedger();
+        $ledger->customers['cust-1']       = engineCustomer('cust-1', ['name' => 'Ada']);
+        $ledger->links[]                   = engineLink('customer', 'cust-1', 'qbo-customer');
+        $client->customers['qbo-customer'] = [
+            'Id'               => 'qbo-customer', 'SyncToken' => '2', 'DisplayName' => 'Ada Renamed In QuickBooks',
+            'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+        ];
+        $ledger->pending[] = array_merge(enginePending('customer', 'cust-1'), ['reason' => 'webhook']);
+
+        $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+            'interval_minutes'   => 1,
+            'customer_conflict'  => $primary,
+            'customer_reference' => $primary,
+        ]), time());
+        $error = $ledger->attempts[0]['error'] ?? null;
+
+        expect($batch['updated'])->toBe(1, $primary)
+            ->and($batch['failed'])->toBe(0, $primary);
+        if ($noted === true) {
+            expect(qbText((string) $error))->toBe('Fleetbase is Primary here, so the change made in QuickBooks'
+                . ' was replaced with the Fleetbase values. Choose QuickBooks as Primary to keep changes made'
+                . ' in QuickBooks.');
+        } else {
+            expect($error)->toBeNull();
+        }
+    }
+});
+
+test('a new wallet named like an account another wallet uses gets its own account with its id added', function () {
+    [$engine, $client]          = qbEngine();
+    $ledger                     = engineLedger();
+    $ledger->wallets['wal-1']   = engineWallet('wal-1', ['name' => 'Personal Wallet']);
+    $ledger->wallets['wal-2']   = engineWallet('wal-2', ['name' => 'Personal Wallet']);
+    $ledger->links[]            = engineLink('wallet', 'wal-1', 'acct-9');
+    $client->accounts['acct-9'] = [
+        'Id'          => 'acct-9', 'SyncToken' => '0', 'Name' => 'Personal Wallet', 'Active' => true,
+        'Description' => 'Float', 'CurrencyRef' => ['value' => 'USD'],
+    ];
+    $ledger->pending[] = enginePending('wallet', 'wal-2');
+
+    $first = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+    $link  = $ledger->link('company-uuid', 'realm-1', 'wallet', 'wal-2');
+
+    expect($first['created'])->toBe(1)
+        ->and($link['qbo_id'])->not->toBe('acct-9')
+        ->and($client->accounts[$link['qbo_id']]['Name'])->toBe('Personal Wallet (wallet_wal-2)')
+        ->and($ledger->wallets['wal-2']['name'])->toBe('Personal Wallet');
+
+    // The added id is not a difference: Fleetbase primary leaves it, QuickBooks primary does not copy it.
+    foreach (['fleetbase', 'quickbooks'] as $primary) {
+        $again = engineRunAgain($engine, $ledger, qbSettings([
+            'interval_minutes' => 1,
+            'wallet_conflict'  => $primary,
+            'wallet_reference' => $primary,
+        ]), time() + 10);
+
+        expect($again['aligned'])->toBe(1)
+            ->and($client->calls)->not->toContain('updateAccount')
+            ->and($ledger->wallets['wal-2']['name'])->toBe('Personal Wallet');
+    }
+
+    // Renamed in Fleetbase, the account keeps the added id, so the new name cannot clash either.
+    $ledger->wallets['wal-2']['name'] = 'Business Wallet';
+    $renamed                          = engineRunAgain($engine, $ledger, qbSettings(), time() + 20);
+
+    expect($renamed['updated'])->toBe(1)
+        ->and($client->accounts[$link['qbo_id']]['Name'])->toBe('Business Wallet (wallet_wal-2)')
+        ->and($ledger->wallets['wal-2']['name'])->toBe('Business Wallet');
+});
+
+test('two new wallets with the same name in one run get two accounts', function () {
+    [$engine, $client] = qbEngine();
+    $ledger            = engineLedger();
+    foreach (['wal-1', 'wal-2'] as $uuid) {
+        $ledger->wallets[$uuid] = engineWallet($uuid, ['name' => 'Personal Wallet']);
+        $ledger->pending[]      = enginePending('wallet', $uuid);
+    }
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+    $names = array_column($client->accounts, 'Name');
+    sort($names);
+
+    expect($batch['created'])->toBe(2)
+        ->and($batch['failed'])->toBe(0)
+        ->and($names)->toBe(['Personal Wallet', 'Personal Wallet (wallet_wal-2)']);
+});
+
+test('a lost wallet link does not reattach an account another wallet is linked to', function () {
+    [$engine, $client]          = qbEngine();
+    $ledger                     = engineLedger();
+    $ledger->wallets['wal-2']   = engineWallet('wal-2');
+    $ledger->links[]            = engineLink('wallet', 'wal-2', 'gone');
+    $client->accounts['acct-9'] = [
+        'Id'          => 'acct-9', 'SyncToken' => '3', 'Name' => 'Operating', 'Active' => true,
+        'Description' => 'Float', 'CurrencyRef' => ['value' => 'USD'],
+    ];
+    $ledger->remoteLinkReader = static function (string $realm, string $entity, array $ids): array {
+        return $realm === 'realm-1' && $entity === 'Account' ? array_values(array_intersect($ids, ['acct-9'])) : [];
+    };
+    $ledger->pending[] = enginePending('wallet', 'wal-2');
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($ledger->link('company-uuid', 'realm-1', 'wallet', 'wal-2')['qbo_id'])->toBe('gone');
+});
 
 function engineLedger(): SyncLedger
 {

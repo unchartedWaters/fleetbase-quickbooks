@@ -173,6 +173,8 @@ function dctSchema(Illuminate\Database\Schema\Builder $schema): void
         $table->string('subject_uuid', 191)->nullable();
         $table->string('type', 191)->nullable();
         $table->integer('amount')->nullable();
+        $table->string('reference', 191)->nullable();
+        $table->string('payment_method', 191)->nullable();
         $table->softDeletes();
         $table->timestamp('created_at')->nullable();
         $table->timestamp('updated_at')->nullable();
@@ -554,6 +556,9 @@ test('a quickbooks payment writes amount paid, paid at, status, and a balance fr
         dctInvoice('inv-replace', 'cust-a', ['total_amount' => 1000, 'amount_paid' => 300]);
         dctInvoice('inv-total-only', 'cust-a', ['total_amount' => 1000]);
         dctInvoice('inv-same', 'cust-a');
+        dctInvoice('inv-grown', 'cust-a', [
+            'total_amount' => 1000, 'amount_paid' => 1000, 'status' => 'paid', 'paid_at' => '2026-09-01 10:00:00',
+        ]);
         $directory = new FleetbaseDirectory();
         $ledger    = $directory->load('company-uuid')['ledger'];
 
@@ -572,6 +577,11 @@ test('a quickbooks payment writes amount paid, paid at, status, and a balance fr
         $ledger->invoices['inv-replace']['status']                  = '';
         unset($ledger->invoices['inv-replace']['amount_paid']);
 
+        // A line added in QuickBooks leaves a paid invoice part-paid, so it loses its paid date too.
+        $ledger->invoices['inv-grown']['replace_from_quickbooks'] = true;
+        $ledger->invoices['inv-grown']['total']                   = 1500;
+        $ledger->invoices['inv-grown']['status']                  = 'partial';
+
         // Totals are written only from a QuickBooks replace or payment.
         $ledger->invoices['inv-total-only']['total'] = 5000;
 
@@ -580,12 +590,15 @@ test('a quickbooks payment writes amount paid, paid at, status, and a balance fr
         $kept    = DB::table('ledger_invoices')->where('uuid', 'inv-keep-paid')->first();
         $replace = DB::table('ledger_invoices')->where('uuid', 'inv-replace')->first();
 
-        expect(dctStatements($queries, 'update', 'ledger_invoices'))->toHaveCount(3)
+        $grown   = DB::table('ledger_invoices')->where('uuid', 'inv-grown')->first();
+
+        expect(dctStatements($queries, 'update', 'ledger_invoices'))->toHaveCount(4)
             ->and((int) $paid->amount_paid)->toBe(400)
             ->and((int) $paid->balance)->toBe(600)
             ->and((int) $paid->total_amount)->toBe(1000)
             ->and((string) $paid->status)->toBe('partial')
-            ->and((string) $paid->paid_at)->toContain('2026-09-01')
+            // Ledger keeps paid_at for a fully paid invoice only (Invoice::markAsPaid).
+            ->and($paid->paid_at)->toBeNull()
             ->and((int) $kept->amount_paid)->toBe(250)
             ->and((int) $kept->balance)->toBe(750)
             ->and((string) $kept->status)->toBe('partial')
@@ -595,6 +608,9 @@ test('a quickbooks payment writes amount paid, paid at, status, and a balance fr
             ->and((int) $replace->balance)->toBe(1700)
             ->and((int) $replace->amount_paid)->toBe(300)
             ->and((string) $replace->status)->toBe('sent')
+            ->and((string) $grown->status)->toBe('partial')
+            ->and((int) $grown->balance)->toBe(500)
+            ->and($grown->paid_at)->toBeNull()
             ->and((int) DB::table('ledger_invoices')->where('uuid', 'inv-total-only')->value('total_amount'))->toBe(1000);
     } finally {
         $restore();
@@ -651,6 +667,58 @@ test('a part-paid invoice without a paid date takes the day of the last payment 
         expect($ledger->invoices['inv-part']['paid_at'])->toBe('')
             ->and($ledger->invoices['inv-part']['payment_date'])->toBe('2026-09-20')
             ->and($ledger->invoices['inv-none']['payment_date'] ?? '')->toBe('');
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a paid invoice carries the reference and method of the last payment ledger recorded', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        dctContact('cust-a', 'Ada');
+        dctInvoice('inv-paid', 'cust-a', ['status' => 'paid', 'amount_paid' => 1000]);
+        dctInvoice('inv-none', 'cust-a', ['status' => 'paid', 'amount_paid' => 1000]);
+        $payment = [
+            'company_uuid' => 'company-uuid', 'subject_uuid' => 'inv-paid', 'type' => 'invoice_payment',
+            'amount'       => 500, 'deleted_at' => null, 'payment_method' => 'card',
+        ];
+        DB::table('transactions')->insert([
+            ['uuid' => 't1', 'created_at' => '2026-09-18 15:00:00', 'reference' => 'OLD-1', 'payment_method' => 'cash']
+            + $payment,
+            ['uuid' => 't2', 'created_at' => '2026-09-20 15:00:00', 'reference' => 'CHK-9', 'payment_method' => 'check']
+            + $payment,
+            ['uuid' => 't3', 'created_at' => '2026-09-25 15:00:00', 'reference' => 'GONE', 'deleted_at' => '2026-09-26']
+            + $payment,
+            ['uuid' => 't4', 'created_at' => '2026-09-27 15:00:00', 'reference' => 'OTHER', 'company_uuid' => 'other']
+            + $payment,
+        ]);
+
+        $ledger = (new FleetbaseDirectory())->load('company-uuid')['ledger'];
+
+        expect($ledger->invoices['inv-paid']['payment_reference'])->toBe('CHK-9')
+            ->and($ledger->invoices['inv-paid']['payment_method'])->toBe('check')
+            ->and($ledger->invoices['inv-none'])->not->toHaveKey('payment_reference');
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a loaded ledger can ask which quickbooks accounts any wallet in the realm is linked to', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        dctLinkRow('link-1', 'wallet', 'wal-other', 'Account', 'acct-9');
+        dctLinkRow('link-2', 'wallet', 'wal-org-b', 'Account', 'acct-10', 'realm-1', 'company-b');
+        dctLinkRow('link-3', 'wallet', 'wal-realm-2', 'Account', 'acct-11', 'realm-2');
+
+        $ledger = (new FleetbaseDirectory())->load('company-uuid')['ledger'];
+        $ids    = ['acct-9', 'acct-10', 'acct-11', 'acct-12'];
+        $linked = $ledger->remoteIdsLinked('realm-1', 'Account', $ids, 'wal-new');
+        sort($linked);
+
+        expect($linked)->toBe(['acct-10', 'acct-9'])
+            ->and($ledger->remoteIdsLinked('realm-1', 'Account', ['acct-9'], 'wal-other'))->toBe([]);
     } finally {
         $restore();
     }
@@ -1121,3 +1189,47 @@ test('memory deletes without a realm match every realm and an empty company or t
         ->and($ledger->customers)->toBe([])
         ->and($ledger->links)->toBe([]);
 });
+
+test('linking a customer queues again its invoices that failed while it had no QuickBooks customer', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        dctContact('cust-a', 'Ada');
+        dctContact('cust-b', 'Bea');
+        dctInvoice('inv-a1', 'cust-a');
+        dctInvoice('inv-a2', 'cust-a');
+        dctInvoice('inv-b1', 'cust-b');
+        dctPendingRow('pend-cust-a', 'customer', 'cust-a');
+        dctPendingRow('pend-a1', 'invoice', 'inv-a1', 'failed');
+        dctPendingRow('pend-a2', 'invoice', 'inv-a2', 'done');
+        dctPendingRow('pend-b1', 'invoice', 'inv-b1', 'failed');
+        DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-a1')->update(['attempts' => 6]);
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->loadPending('company-uuid', 100, time())['ledger'];
+
+        $ledger->putLink([
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'local_type'   => 'customer',
+            'local_uuid'   => 'cust-a',
+            'qbo_entity'   => 'Customer',
+            'qbo_id'       => '93',
+            'sync_token'   => '0',
+        ]);
+        $ledger->updatePending('company-uuid', 'customer', 'cust-a', ['status' => 'done']);
+        $queries  = dctQueries(fn () => $directory->save($ledger));
+        $rows     = DB::table('quickbooks_pending_syncs')->pluck('status', 'uuid')->all();
+        // Only invoices with a failed row are read, never every invoice the linked customers have.
+        $invoices = dctStatements($queries, 'select', 'ledger_invoices');
+
+        expect($rows['pend-a1'])->toBe('pending')
+            ->and((int) DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-a1')->value('attempts'))->toBe(0)
+            ->and($rows['pend-a2'])->toBe('done')
+            ->and($rows['pend-b1'])->toBe('failed')
+            ->and($rows['pend-cust-a'])->toBe('done')
+            ->and(array_filter($invoices, static fn (string $sql): bool => str_contains($sql, '"customer_uuid" in')))
+            ->toBe([]);
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');

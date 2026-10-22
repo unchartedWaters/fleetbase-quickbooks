@@ -231,3 +231,18 @@ test('the customer import reads the organization copy for its company', function
         ->and(orgResolutionPrivate($a, 'pageSize', [orgResolutionSettings(), $store]))->toBe(7)
         ->and(orgResolutionPrivate($b, 'pageSize', [orgResolutionSettings(), $store]))->toBe(80);
 });
+
+test('quickbooks is primary for every record type when nothing chose otherwise', function () {
+    $resolved = (new SyncSettingsResolver())->resolve([], [], []);
+    $legacy   = (new SyncSettingsResolver())->resolve([], [], [
+        'invoice_conflict'  => 'fleetbase',
+        'invoice_reference' => 'fleetbase',
+    ]);
+
+    foreach (['customer', 'invoice', 'payment', 'wallet'] as $type) {
+        expect($resolved[$type . '_conflict'])->toBe('quickbooks')
+            ->and($resolved[$type . '_reference'])->toBe('quickbooks');
+    }
+    expect($legacy['invoice_conflict'])->toBe('fleetbase')
+        ->and($legacy['invoice_reference'])->toBe('fleetbase');
+});

@@ -19,6 +19,9 @@ class QuickBooksClient
 
     public const UPDATE_BATCH_SIZE = 20;
 
+    /** Intuit's limit for the requestid and a batch item's bId together. */
+    private const REQUEST_ID_FIELD_LIMIT = 50;
+
     /** @var array<string, array<string, mixed>> */
     private array $preferencesByRealm = [];
 
@@ -1118,12 +1121,23 @@ class QuickBooksClient
      */
     private function postBatch(array $connection, array $items): array
     {
-        $response = $this->accounting($connection, 'post', 'batch', ['BatchItemRequest' => self::batchRequests($items)]);
+        $requests  = self::batchRequests($items);
+        $keyed     = ['BatchItemRequest' => $requests];
+        $requestId = $this->requestId((string) $connection['realm_id'], 'post', 'batch', $keyed);
+        $wireIds   = self::wireBatchIds(array_column($requests, 'bId'), $requestId);
+        foreach ($requests as $index => $request) {
+            $requests[$index]['bId'] = $wireIds[$index];
+        }
+        $response = $this->accounting($connection, 'post', 'batch', ['BatchItemRequest' => $requests], $keyed);
         $body     = $this->decodeBody($response);
         $rows     = $body['BatchItemResponse'] ?? [];
         if (is_array($rows) === false) {
             $rows = [];
         }
+        $callerIds = array_combine(
+            $wireIds,
+            array_map(static fn (array $item): string => (string) $item['bId'], $items)
+        );
 
         $results = [];
         foreach ($items as $item) {
@@ -1137,17 +1151,35 @@ class QuickBooksClient
             ];
         }
         $unauthorized = [];
+        $matched      = [];
+        $unnamedFault = null;
         foreach ($rows as $row) {
             if (is_array($row) === false) {
                 continue;
             }
-            $bId = (string) ($row['bId'] ?? '');
-            if ($bId === '' || isset($results[$bId]) === false) {
+            $bId = $callerIds[(string) ($row['bId'] ?? '')] ?? null;
+            if ($bId === null) {
+                // Intuit leaves the bId off an item it refused before reading it, for example
+                // over a requestid it will not accept. Accepted items always carry theirs.
+                $unnamedFault ??= isset($row['Fault']) === true ? $row : null;
                 continue;
             }
             $results[$bId] = $this->batchItemResult($row);
+            $matched[$bId] = true;
             if (self::isAuthenticationFault($row) === true) {
                 $unauthorized[$bId] = true;
+            }
+        }
+        // Items QuickBooks did not answer by name share the fault it gave without one, so
+        // Activity shows Intuit's reason rather than a missing answer.
+        if ($unnamedFault !== null) {
+            foreach (array_keys($results) as $bId) {
+                if (isset($matched[$bId]) === false) {
+                    $results[$bId] = $this->batchItemResult($unnamedFault);
+                    if (self::isAuthenticationFault($unnamedFault) === true) {
+                        $unauthorized[$bId] = true;
+                    }
+                }
             }
         }
         // QuickBooks can answer 200 with an authentication fault on each item instead of HTTP 401.
@@ -1184,6 +1216,28 @@ class QuickBooksClient
         }
 
         return $requests;
+    }
+
+    /**
+     * The bIds sent to Intuit. Intuit joins the requestid and each bId into one field of at most
+     * 50 characters, so when a caller bId (such as customer:<uuid>) would not fit, every item in
+     * the chunk is sent under its position instead. Results are mapped back to the caller bIds.
+     *
+     * @param array<int, mixed> $callerIds
+     *
+     * @return array<int, string>
+     */
+    private static function wireBatchIds(array $callerIds, ?string $requestId): array
+    {
+        $callerIds = array_map('strval', array_values($callerIds));
+        $room      = self::REQUEST_ID_FIELD_LIMIT - strlen((string) $requestId);
+        foreach ($callerIds as $bId) {
+            if (strlen($bId) > $room) {
+                return array_map(static fn (int $index): string => 'b' . $index, array_keys($callerIds));
+            }
+        }
+
+        return $callerIds;
     }
 
     /**
@@ -1363,16 +1417,24 @@ class QuickBooksClient
     /**
      * @param array<string, mixed>      $connection
      * @param array<string, mixed>|null $payload
+     * @param array<string, mixed>|null $requestKey the body the requestid is derived from, when the
+     *                                              body sent differs from it (a batch sent under
+     *                                              position bIds)
      */
-    private function accounting(#[\SensitiveParameter] array $connection, string $method, string $path, ?array $payload = null): Response
-    {
+    private function accounting(
+        #[\SensitiveParameter] array $connection,
+        string $method,
+        string $path,
+        ?array $payload = null,
+        ?array $requestKey = null,
+    ): Response {
         $base = ($connection['environment'] ?? 'sandbox') === 'production'
             ? 'https://quickbooks.api.intuit.com'
             : 'https://sandbox-quickbooks.api.intuit.com';
         $url       = $base . '/v3/company/' . rawurlencode((string) $connection['realm_id']) . '/' . $path;
         $separator = str_contains($url, '?') === true ? '&' : '?';
         $url .= $separator . 'minorversion=75';
-        $requestId = $this->requestId((string) $connection['realm_id'], $method, $path, $payload);
+        $requestId = $this->requestId((string) $connection['realm_id'], $method, $path, $requestKey ?? $payload);
         if ($requestId !== null) {
             $url .= '&requestid=' . $requestId;
         }
@@ -1396,8 +1458,8 @@ class QuickBooksClient
      * record (the bIds of a batch, or the key set by withWriteKey) and the UTC day: a retry
      * of the same write reuses it, while a changed body, another record or a later day (a
      * record deleted in QuickBooks and created again) gets a new one. Reads, a batch of
-     * queries only, and a single write with no record key carry none. Intuit allows at most
-     * 36 characters on a batch, so the id is a UUID-shaped 36 characters.
+     * queries only, and a single write with no record key carry none. The id is a UUID-shaped
+     * 36 characters; Intuit counts it together with each batch bId (see wireBatchIds).
      *
      * @param array<string, mixed>|null $payload
      */
@@ -1477,6 +1539,11 @@ class QuickBooksClient
                 'quickbooks.messages.request-failed-detail',
                 ['status' => $status, 'detail' => $detail]
             );
+        // A 400 with Intuit's own explanation is a refusal of what was sent, not a failed call.
+        $faultDetail = is_array($fault) === true ? trim((string) ($fault['Detail'] ?? $fault['Message'] ?? '')) : '';
+        if ($response->status() === 400 && $faultDetail !== '' && is_string($oauthError) === false) {
+            $message = Translation::encode('quickbooks.messages.request-rejected', ['detail' => $faultDetail]);
+        }
 
         throw new QuickBooksException($response->status(), $message, $response->header('Retry-After'), $faultCode);
     }

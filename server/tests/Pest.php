@@ -91,6 +91,10 @@ function qbTexts(array $errors): array
  */
 function qbRequestFailed(int $status, string $detail = ''): string
 {
+    if ($status === 400 && $detail !== '') {
+        return Translation::encode('quickbooks.messages.request-rejected', ['detail' => $detail]);
+    }
+
     return $detail === ''
         ? Translation::encode('quickbooks.messages.request-failed', ['status' => (string) $status])
         : Translation::encode(

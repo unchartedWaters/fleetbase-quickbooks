@@ -21,6 +21,7 @@ module('Unit | Utility | activity-view characterization', () => {
             'unmatched',
             'voided',
             'failed',
+            'results',
             'error',
             'when',
         ]);

@@ -11,6 +11,8 @@ use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
+use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\WebhookRetry;
 use Illuminate\Bus\Queueable;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
@@ -39,13 +41,29 @@ class ImportCustomers implements ShouldQueue
 
     public int $tries = 1;
 
+    /** Retries of a named import that could not read QuickBooks, as webhook jobs count them. */
+    public int $quickbooksAttempt = 0;
+
     public int $timeout = BatchRunner::LOCK_SECONDS;
 
+    /**
+     * How long a customer created in QuickBooks waits before it is imported. A webhook for a
+     * customer Fleetbase itself just created can arrive before that sync saved its link; by
+     * then the link is there and the customer is skipped instead of imported twice.
+     */
+    public const NAMED_IMPORT_DELAY_SECONDS = 120;
+
+    /**
+     * @param array<int, string> $customerIds QuickBooks customers to import; empty imports the catalog
+     * @param string             $realmId     the QuickBooks company those ids belong to
+     */
     public function __construct(
         public string $companyUuid,
         public ?int $continuationAttempt = null,
         public bool $waitForLock = false,
         public int $lockWaitSeconds = 0,
+        public array $customerIds = [],
+        public string $realmId = '',
     ) {
     }
 
@@ -66,6 +84,18 @@ class ImportCustomers implements ShouldQueue
     public static function dispatch(string $companyUuid): void
     {
         self::dispatchJob(new self($companyUuid));
+    }
+
+    /**
+     * Import the QuickBooks customers a webhook reported as created, after a short delay.
+     *
+     * @param array<int, string> $customerIds
+     */
+    public static function dispatchCustomers(string $companyUuid, string $realmId, array $customerIds): void
+    {
+        $job = new self($companyUuid, null, true, 0, array_values(array_unique($customerIds)), $realmId);
+        $job->delay(self::NAMED_IMPORT_DELAY_SECONDS);
+        self::dispatchJob($job);
     }
 
     /**
@@ -131,7 +161,14 @@ class ImportCustomers implements ShouldQueue
             return false;
         }
 
-        $retry = new self($this->companyUuid, $this->continuationAttempt, true, $waited);
+        $retry = new self(
+            $this->companyUuid,
+            $this->continuationAttempt,
+            true,
+            $waited,
+            $this->customerIds,
+            $this->realmId
+        );
         $retry->delay(self::LOCK_WAIT_DELAY_SECONDS);
         self::dispatchJob($retry);
 
@@ -145,7 +182,7 @@ class ImportCustomers implements ShouldQueue
         }
 
         $attempt = $this->continuationAttempt + 1;
-        $retry   = new self($this->companyUuid, $attempt, $this->waitForLock);
+        $retry   = new self($this->companyUuid, $attempt, $this->waitForLock, 0, $this->customerIds, $this->realmId);
         $retry->delay(self::CONTINUATION_RETRY_DELAY_SECONDS * $attempt);
         self::dispatchJob($retry);
     }
@@ -260,6 +297,9 @@ class ImportCustomers implements ShouldQueue
         $ledger                                  = $directory->memory ?? new SyncLedger();
         $ledger->connections[$this->companyUuid] = $connection;
         $started                                 = time();
+        if ($this->customerIds !== []) {
+            return $this->runNamedImport($importer, $directory, $lock, $ledger, $connection);
+        }
 
         try {
             $batch = $importer->import(
@@ -280,6 +320,69 @@ class ImportCustomers implements ShouldQueue
             $directory->saveImport($ledger);
             $importer->storeSavedCursor();
         }
+    }
+
+    /**
+     * Only the customers a webhook named, and only while the organization is still connected
+     * to the QuickBooks company they came from.
+     *
+     * @param array<string, mixed> $connection
+     */
+    private function runNamedImport(
+        CustomerImporter $importer,
+        FleetbaseDirectory $directory,
+        Lock $lock,
+        SyncLedger $ledger,
+        array $connection,
+    ): bool {
+        $realm = (string) ($connection['realm_id'] ?? '');
+        if ($this->realmId !== '' && $realm !== $this->realmId) {
+            return false;
+        }
+        $linked = array_flip($directory->linkedRemoteIds($this->companyUuid, $realm, 'Customer', $this->customerIds));
+        $ids    = array_values(array_filter(
+            $this->customerIds,
+            static fn (string $id): bool => isset($linked[$id]) === false
+        ));
+        if ($ids === []) {
+            return false;
+        }
+        try {
+            $importer->importIds($ledger, $connection, $ids);
+        } catch (QuickBooksException $exception) {
+            // Intuit does not send the webhook again, so a failed read is retried or shown in Activity.
+            $this->namedImportFailed($directory, $ledger, $connection, $exception);
+        } finally {
+            $this->ensureCompanyLock($lock);
+            $directory->saveImport($ledger);
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     */
+    private function namedImportFailed(
+        FleetbaseDirectory $directory,
+        SyncLedger $ledger,
+        array $connection,
+        QuickBooksException $exception,
+    ): void {
+        $now = time();
+        if ($exception->isTransient() === false || $this->quickbooksAttempt >= WebhookRetry::LIMIT) {
+            $ledger->fail($this->companyUuid, 'import', 'inbound', WebhookRetry::failedMessage($exception), $now);
+
+            return;
+        }
+        $wait = WebhookRetry::delay($exception, $connection, $this->quickbooksAttempt, $now);
+        if ($exception->isRateLimit() === true) {
+            $directory->saveRateLimit(WebhookRetry::withRateLimit($connection, $exception, $wait, $now));
+        }
+        $retry                    = new self($this->companyUuid, null, true, 0, $this->customerIds, $this->realmId);
+        $retry->quickbooksAttempt = $this->quickbooksAttempt + 1;
+        $retry->delay(WebhookRetry::spread($wait));
+        self::dispatchJob($retry);
     }
 
     private function releaseCompanyLock(Lock $lock): void

@@ -71,7 +71,7 @@ module('Integration | Component | quickbooks-settings present characterization',
         assert.dom("[data-test-field='environment']").hasValue('production');
         assert.dom("[data-test-sync='interval_minutes']").hasValue('5');
         assert.dom("[data-test-sync='periodic_interval_hours']").hasValue('24');
-        assert.dom("[data-test-sync='customer_conflict']").hasValue('fleetbase');
+        assert.dom("[data-test-sync='customer_conflict']").hasValue('quickbooks');
         assert.dom("[data-test-sync='customer_direction']").hasValue('both');
 
         await click(saveButton());
@@ -82,8 +82,8 @@ module('Integration | Component | quickbooks-settings present characterization',
         assert.strictEqual(this.saved.sync.retry_limit, 5);
         assert.strictEqual(this.saved.sync.default_backoff_seconds, 30);
         ['customer', 'invoice', 'payment', 'wallet'].forEach((entity) => {
-            assert.strictEqual(this.saved.sync[`${entity}_conflict`], 'fleetbase');
-            assert.strictEqual(this.saved.sync[`${entity}_reference`], 'fleetbase');
+            assert.strictEqual(this.saved.sync[`${entity}_conflict`], 'quickbooks');
+            assert.strictEqual(this.saved.sync[`${entity}_reference`], 'quickbooks');
             assert.strictEqual(this.saved.sync[`${entity}_direction`], 'both');
             assert.true(this.saved.sync[`${entity}_enabled`]);
         });

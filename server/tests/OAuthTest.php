@@ -607,9 +607,10 @@ test('a path-only computed callback uses a full public oauth url and otherwise s
             'company_uuid' => 'company-uuid',
         ]));
         expect($redirectOnly->getStatusCode())->toBe(422)
-            ->and($redirectOnly->getData(true)['message'])->toBe('QuickBooks is not set up yet. '
-                . 'Ask an installation administrator to enter the Client ID, Client secret and Public OAuth Redirect '
-                . 'URL in Admin → QuickBooks → Settings.');
+            ->and($redirectOnly->getData(true)['message'])->toBe('QuickBooks cannot be connected yet: Intuit needs a'
+                . ' public https:// address to send you back to. Ask an installation administrator to enter the'
+                . ' Public OAuth Redirect URL in Admin → QuickBooks → Settings and add the same URL to the'
+                . ' Intuit app.');
 
         $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']                 = 'not-a-url';
         $invalid                                                                             = $controller->start(Request::create('/oauth/start', 'POST', [

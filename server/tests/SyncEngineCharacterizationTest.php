@@ -219,8 +219,8 @@ test('sec a remote customer update copies name email phone notes and address and
         ->and($client->calls)->toBe(['getCustomer:qbo-1'])
         ->and($ledger->links)->toBe($linksBefore)
         ->and($ledger->pending)->toBe([])
-        ->and($ledger->attempts)->toBe([])
-        ->and($ledger->batches)->toBe([]);
+        ->and(array_column($ledger->attempts, 'outcome', 'local_uuid'))->toBe(['cust-1' => 'updated'])
+        ->and(array_column($ledger->batches, 'direction'))->toBe(['inbound']);
 });
 
 test('sec an empty remote customer field does not clear the fleetbase value', function () {
@@ -456,7 +456,7 @@ test('sec a remote payment on a legacy invoice keyed link copies amount date and
 
     expect($client->calls)->toBe(['getPayment:pay-1'])
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(400)
-        ->and($ledger->invoices['inv-1']['paid_at'])->toBe('2026-09-10')
+        ->and($ledger->invoices['inv-1']['paid_at'])->toBe('')
         ->and($ledger->invoices['inv-1']['payment_from_quickbooks'])->toBeTrue()
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
         ->and($ledger->links)->toBe($linksBefore)
@@ -533,7 +533,7 @@ test('sec a remote payment sums other payments linked to the invoice and skips u
         ->and($client->queries[0])->not->toContain("'pay-z'")
         ->and($client->queries[0])->not->toContain("'pay-a'")
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(500)
-        ->and($ledger->invoices['inv-1']['paid_at'])->toBe('2026-09-12')
+        ->and($ledger->invoices['inv-1']['paid_at'])->toBe('')
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
         ->and(array_key_exists('amount_paid', $ledger->invoices['inv-2']))->toBeFalse();
 });

@@ -41,6 +41,14 @@ class SyncLedger
     /** @var array<int, array<string, mixed>> */
     public array $remoteInvoices = [];
 
+    /**
+     * Reads which QuickBooks ids have a link in a realm other than one of the local record:
+     * (realm, entity, ids, local uuid) => linked ids.
+     *
+     * @var (\Closure(string, string, array<int, string>, string): array<int, string>)|null
+     */
+    public ?\Closure $remoteLinkReader = null;
+
     private bool $indexed = false;
 
     /** @var array<string, int> */
@@ -102,6 +110,31 @@ class SyncLedger
         $this->ensureIndex();
 
         return isset($this->linksByRemote[$realmId . '|' . $entity . '|' . $qboId]);
+    }
+
+    /**
+     * The QuickBooks ids among $ids that some local record in this realm is linked to, read
+     * beyond the rows loaded here when the directory set a reader.
+     *
+     * @param array<int, string> $ids
+     *
+     * @return array<int, string>
+     */
+    public function remoteIdsLinked(string $realmId, string $entity, array $ids, string $localUuid): array
+    {
+        $linked = [];
+        foreach ($ids as $id) {
+            $link = $this->linkForRemote($realmId, $entity, $id);
+            if ($link !== null && (string) ($link['local_uuid'] ?? '') !== $localUuid) {
+                $linked[] = $id;
+            }
+        }
+        if ($this->remoteLinkReader !== null && $ids !== []) {
+            $read   = ($this->remoteLinkReader)($realmId, $entity, array_values($ids), $localUuid);
+            $linked = array_merge($linked, $read);
+        }
+
+        return array_values(array_unique(array_map('strval', $linked)));
     }
 
     /**

@@ -132,7 +132,7 @@ test('page 1 of sync activity returns meta and omits later batches', function ()
             ->and(array_column($pageOne['batches'], 'uuid'))->toBe($expected)
             ->and(array_column($pageOne['batches'], 'uuid'))->not->toContain('batch-01')
             ->and(array_column($pageOne['batches'], 'uuid'))->not->toContain('other-company-batch')
-            ->and($pageOne['batches'][0]['error'])->toBe('newest failed')
+            ->and($pageOne['batches'][0]['error'])->toBe('newest failed.')
             ->and(array_column($pageOne['batches'], 'error'))->not->toContain('later page failed')
             ->and(array_keys($pageOne['batches'][0]))->toBe([
                 'uuid',
@@ -170,6 +170,163 @@ test('page 1 of sync activity returns meta and omits later batches', function ()
             ->and(array_column($clamped['batches'], 'uuid'))->toBe($expected);
     } finally {
         DB::purge('sqlite');
+        config()->set('database.default', $defaultConnection);
+        config()->set('database.connections.sqlite', $sqliteConnection);
+        session(['company' => null]);
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('activity errors read as sentences and name the record each one is about', function () {
+    $defaultConnection   = config('database.default');
+    $sqliteConnection    = config('database.connections.sqlite');
+    $fleetbaseConnection = config('fleetbase.connection.db');
+    config()->set('fleetbase.connection.db', 'sqlite');
+    config()->set('database.default', 'sqlite');
+    config()->set('database.connections.sqlite', [
+        'driver'   => 'sqlite',
+        'database' => ':memory:',
+        'prefix'   => '',
+    ]);
+    DB::purge('sqlite');
+    session(['company' => 'company-uuid']);
+    $schema = DB::connection('sqlite')->getSchemaBuilder();
+
+    try {
+        $schema->create('quickbooks_sync_batches', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36)->index();
+            $table->string('trigger');
+            $table->string('direction')->default('outbound');
+            $table->string('status');
+            $counts = ['created', 'updated', 'aligned', 'voided', 'unmatched', 'failed', 'linked', 'skipped'];
+            foreach ($counts as $count) {
+                $table->unsignedInteger($count . '_count')->default(0);
+            }
+            $table->timestamp('started_at')->nullable();
+            $table->timestamp('finished_at')->nullable();
+            $table->timestamps();
+        });
+        $schema->create('quickbooks_sync_attempts', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('batch_uuid', 36)->nullable()->index();
+            $table->char('company_uuid', 36)->index();
+            $table->string('local_type');
+            $table->char('local_uuid', 36);
+            $table->string('outcome');
+            $table->text('error')->nullable();
+            $table->json('diff')->nullable();
+            $table->timestamps();
+        });
+        $schema->create('ledger_invoices', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('number')->nullable();
+            $table->timestamp('deleted_at')->nullable();
+        });
+        $schema->create('contacts', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('company_uuid', 36);
+            $table->string('type')->nullable();
+            $table->string('name')->nullable();
+            $table->timestamp('deleted_at')->nullable();
+        });
+        DB::table('ledger_invoices')->insert([
+            ['uuid' => 'inv-1', 'company_uuid' => 'company-uuid', 'number' => 'INV-7', 'deleted_at' => null],
+            ['uuid' => 'inv-2', 'company_uuid' => 'other-company', 'number' => 'OTHER-1', 'deleted_at' => null],
+        ]);
+        DB::table('contacts')->insert([
+            [
+                'uuid'       => 'cust-1', 'company_uuid' => 'company-uuid', 'type' => 'customer', 'name' => 'Ada',
+                'deleted_at' => null,
+            ],
+        ]);
+
+        $batch = new SyncBatch();
+        $batch->fill([
+            'uuid'         => 'batch-1',
+            'company_uuid' => 'company-uuid',
+            'trigger'      => 'now',
+            'direction'    => 'outbound',
+            'status'       => 'finished',
+            'failed_count' => 3,
+        ]);
+        $batch->save();
+        // Notes on records that synced come after the failures and show once, however many records carry them.
+        $noted = new SyncBatch();
+        $noted->fill([
+            'uuid'         => 'batch-2',
+            'company_uuid' => 'company-uuid',
+            'trigger'      => 'now',
+            'direction'    => 'outbound',
+            'status'       => 'finished',
+            'failed_count' => 1,
+        ]);
+        $noted->save();
+        $notedAttempts = [
+            ['customer', 'cust-1', 'updated', 'quickbooks.messages.fleetbase-primary-replaced'],
+            ['customer', 'cust-2', 'updated', 'quickbooks.messages.fleetbase-primary-replaced'],
+            ['customer', 'cust-3', 'updated', 'quickbooks.messages.fleetbase-primary-replaced'],
+            ['invoice', 'inv-1', 'failed', 'quickbooks.messages.invoice-customer-failed'],
+        ];
+        foreach ($notedAttempts as $index => [$type, $uuid, $outcome, $error]) {
+            $attempt = new SyncAttempt();
+            $attempt->fill([
+                'uuid'         => 'noted-' . $index,
+                'batch_uuid'   => 'batch-2',
+                'company_uuid' => 'company-uuid',
+                'local_type'   => $type,
+                'local_uuid'   => $uuid,
+                'outcome'      => $outcome,
+                'error'        => $error,
+                'created_at'   => Carbon::parse('2026-01-01 00:00:00')->addSeconds($index),
+            ]);
+            $attempt->save();
+        }
+        $attempts = [
+            ['invoice', 'inv-1', 'quickbooks.messages.invoice-customer-failed'],
+            ['customer', 'cust-1', 'quickbooks.messages.batch-item-missing'],
+            ['invoice', 'inv-2', 'Intuit text without a stop'],
+        ];
+        foreach ($attempts as $index => [$type, $uuid, $error]) {
+            $attempt = new SyncAttempt();
+            $attempt->fill([
+                'uuid'         => 'attempt-' . $index,
+                'batch_uuid'   => 'batch-1',
+                'company_uuid' => 'company-uuid',
+                'local_type'   => $type,
+                'local_uuid'   => $uuid,
+                'outcome'      => 'failed',
+                'error'        => $error,
+                'created_at'   => Carbon::parse('2026-01-01 00:00:00')->addSeconds($index),
+            ]);
+            $attempt->save();
+        }
+
+        $controller = new ConnectionController(
+            new Authorizer(static fn () => true),
+            new OAuthFlow(new QuickBooksClient()),
+            new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
+            new MemorySettingsStore(),
+            new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
+        );
+        $page = $controller->batches(Request::create('/batches', 'GET'))->getData(true);
+
+        $errors = array_column($page['batches'], 'error', 'uuid');
+
+        // Another organization's invoice with that uuid is not named.
+        expect($errors['batch-1'])->toBe(
+            'Invoice INV-7: Invoice customer could not be synced to QuickBooks.'
+            . ' Customer "Ada": QuickBooks batch response did not include this item.'
+            . ' Intuit text without a stop.'
+        )
+            ->and($errors['batch-2'])->toBe(
+                'Invoice INV-7: Invoice customer could not be synced to QuickBooks.'
+                . ' Fleetbase is Primary here, so the change made in QuickBooks was replaced with the Fleetbase'
+                . ' values. Choose QuickBooks as Primary to keep changes made in QuickBooks.'
+            );
+    } finally {
+        DB::purge('sqlite');
+        config()->set('fleetbase.connection.db', $fleetbaseConnection);
         config()->set('database.default', $defaultConnection);
         config()->set('database.connections.sqlite', $sqliteConnection);
         session(['company' => null]);

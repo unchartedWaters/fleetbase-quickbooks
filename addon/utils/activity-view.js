@@ -30,9 +30,17 @@ function activityRow(batch, index) {
         unmatched: countField(batch, 'unmatched'),
         voided: countField(batch, 'voided'),
         failed: countField(batch, 'failed'),
+        results: activityResults(batch),
         error: activityError(batch),
         when: formatWhen(batch.finished_at || batch.created_at),
     };
+}
+
+// The order the Results column lists counts in. Only counts above zero are listed.
+export const RESULT_NAMES = ['created', 'updated', 'aligned', 'linked', 'voided', 'unmatched', 'skipped', 'failed'];
+
+function activityResults(batch) {
+    return RESULT_NAMES.map((name) => ({ name, count: Number(countField(batch, name)) || 0 })).filter((result) => result.count > 0);
 }
 
 function activityId(batch) {

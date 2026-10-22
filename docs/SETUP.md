@@ -40,8 +40,14 @@ screens without the surrounding Fleetbase console menus.
   payment is not compared or changed. A QuickBooks payment that also applies
   credits (a credit memo or an unapplied amount) or other invoices is left
   unchanged, because an update from Fleetbase would replace its lines; change it
-  in QuickBooks.
-- **Wallets** — a QuickBooks account (`Other Current Asset`). Fleetbase sends the wallet public ID as `AcctNum` only when that ID is 7 characters or fewer. Longer public IDs, such as `wallet_` plus 10 characters, are not sent. If the link is lost, a unique account with the same name and currency is reattached instead of creating a duplicate. When QuickBooks is primary, the account name and `AcctNum` are copied onto the wallet.
+  in QuickBooks. A new QuickBooks payment carries the reference of the last
+  Ledger payment on that invoice as its reference number (QuickBooks keeps 21
+  characters) and names the Ledger payment method in its private note, unless
+  the method is Ledger's default `manual`. A payment recorded in QuickBooks
+  sets the invoice's amount paid and status in Fleetbase when payments take
+  QuickBooks values (QuickBooks Primary, or From QuickBooks). A part-paid
+  invoice has no paid date in Fleetbase.
+- **Wallets** — a QuickBooks account (`Other Current Asset`). Fleetbase sends the wallet public ID as `AcctNum` only when that ID is 7 characters or fewer. Longer public IDs, such as `wallet_` plus 10 characters, are not sent. If the link is lost, a unique account with the same name and currency is reattached instead of creating a duplicate; an account another wallet is linked to is never reattached. QuickBooks account names are unique, and every user wallet is called "Personal Wallet", so a new account whose name another account already has is named with the wallet's public ID added, for example `Personal Wallet (wallet_abc1234567)`. That added ID is not copied back to the wallet name, is not a difference on later syncs, and stays when the wallet is renamed. When QuickBooks is primary, the account name and `AcctNum` are copied onto the wallet.
 
 Unknown QuickBooks invoices are not imported. An invoice is synced from QuickBooks only when this Fleetbase organization already has that invoice or a `quickbooks_links` row for it. The webhook event is still dispatched for those invoices.
 
@@ -236,6 +242,15 @@ differ and which system supplies identifiers. Primary and direction are
 separate. To QuickBooks still sends the Fleetbase record when Primary is
 QuickBooks.
 
+QuickBooks is the default Primary for every type. An organization that already
+has its own copy of the settings keeps its choice: organizations that synced
+before this default changed keep Fleetbase. With QuickBooks Primary for
+Invoices, invoice numbers come from QuickBooks, so a new Fleetbase invoice takes
+the number QuickBooks gives it on its first sync. With Fleetbase Primary,
+edits made in QuickBooks are replaced with the Fleetbase values and payments
+recorded in QuickBooks are not copied; when a QuickBooks change is replaced,
+its Activity row says so.
+
 Sync frequency is the schedule. It is separate from each entity switch. There is
 no Enable schedule control, and a stored `enabled` flag does not stop the
 scheduler. Sync now with no connection returns HTTP 422 and does not save an
@@ -269,7 +284,7 @@ wait, still capped at 900 seconds.
 
 Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved by an installation administrator in Admin → QuickBooks → Settings for the install and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
 
-The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The internal webhook path is `/quickbooks/int/v1/webhooks`. Admin → QuickBooks → Settings shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver URL stay editable and are saved on the install-wide settings row. Paste the public OAuth URL into Intuit Redirect URIs and the public webhook URL into the Intuit Endpoint URL. A blank public URL is shown as the matching internal URL.
+The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The internal webhook path is `/quickbooks/int/v1/webhooks`. Admin → QuickBooks → Settings shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver URL stay editable and are saved on the install-wide settings row. Paste the public OAuth URL into Intuit Redirect URIs and the public webhook URL into the Intuit Endpoint URL. A blank public URL is shown as the matching internal URL. When the address shown is not a public https address, the page says so under the field, and Connect answers that Intuit needs a public https address instead of saying QuickBooks is not set up.
 
 A new or changed public URL is checked when you save: it must be `https://` and
 its host must resolve to a public address. If it fails, the save is refused
@@ -398,7 +413,19 @@ again.
 
 Sync now with no connection returns HTTP 422 and does not save an activity row. The console shows that error. A stored realm that needs reconnect returns HTTP 422 and saves a skipped activity row.
 
-Activity rows show created, updated, aligned, linked, skipped, unmatched, voided, and failed. Aligned counts inbound matches as well as outbound ones, including an inbound customer or invoice that already matched and was not written. A From QuickBooks run that changes nothing can show aligned. Linked is the customer-import count.
+Activity rows list, under Results, only the counts above zero: created,
+updated, unchanged (aligned), linked, voided, not matched, skipped, and failed.
+The API still returns every `*_count` field. Unchanged counts inbound matches
+as well as outbound ones, including an inbound customer or invoice that already
+matched and was not written. Linked is the customer-import count. Changes a
+QuickBooks webhook copied into Fleetbase get their own QuickBooks change row,
+direction From QuickBooks; a webhook that changed nothing, such as the echo of
+a Fleetbase write, adds no row. Up to three errors are shown per row, failures
+first, each as a sentence naming its customer, invoice or wallet. The note that
+Fleetbase, as Primary, replaced a change made in QuickBooks shows once per row.
+A request QuickBooks refused
+with its own explanation reads "QuickBooks rejected the request" followed by
+that explanation.
 
 ![QuickBooks Activity: one row per run with trigger, status, direction,
 and counts; a failed run shows its error under the row][activity]
@@ -487,7 +514,19 @@ only to an organization connected to that QuickBooks company now: links kept
 after a disconnect, or after connecting another company, are left as they are.
 A deleted payment unmarks
 the invoice, then the invoice's amount paid is read again from the QuickBooks
-invoice balance, so payments still on the invoice keep counting. A wallet whose
+invoice balance, so payments still on the invoice keep counting.
+
+A payment created in QuickBooks has no link yet, so its invoices are read from
+QuickBooks. When payments take QuickBooks values, each linked invoice it pays
+takes its amount paid from that invoice's QuickBooks balance, shown in Activity
+as a QuickBooks change. A customer created in QuickBooks is imported like the
+customer import on connect, two minutes after the webhook, when customer sync
+is on and its direction takes QuickBooks changes; only customers from the
+QuickBooks company the organization is connected to now are imported. If
+QuickBooks cannot be reached, that import is tried again up to five times with
+longer waits, then shows as a failed import in Activity. An
+invoice that failed because its customer could not be created in QuickBooks is
+queued again, with its retries reset, once that customer is linked. A wallet whose
 balance is not zero is never closed from
 QuickBooks, whether by a delete or by an account that is made inactive: it stays
 open and linked, its pending sync is finished so the deleted account is not

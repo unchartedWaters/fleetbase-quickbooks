@@ -592,6 +592,14 @@ class FakeQuickBooks extends QuickBooksClient
             throw $this->failWith;
         }
 
+        // QuickBooks account names are unique.
+        $name = trim((string) ($payload['Name'] ?? ''));
+        foreach ($this->accounts as $account) {
+            if ($name !== '' && trim((string) ($account['Name'] ?? '')) === $name) {
+                throw new QuickBooksException(400, 'The name supplied already exists.', null, '6240');
+            }
+        }
+
         $id                   = 'acct-' . $this->accountCreates;
         $record               = array_merge($payload, ['Id' => $id, 'SyncToken' => '0']);
         $this->accounts[$id]  = $record;

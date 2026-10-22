@@ -5,6 +5,7 @@ namespace Fleetbase\Quickbooks\Listeners;
 use Fleetbase\Ledger\Models\Invoice;
 use Fleetbase\Quickbooks\Events\QuickBooksEntityChanged;
 use Fleetbase\Quickbooks\Jobs\ApplyRemoteChange;
+use Fleetbase\Quickbooks\Jobs\ImportCustomers;
 use Fleetbase\Quickbooks\Jobs\ResolveWebhookPayments;
 use Fleetbase\Quickbooks\Jobs\SyncWebhookBatch;
 use Fleetbase\Quickbooks\Models\Link;
@@ -58,6 +59,13 @@ class EnqueueWebhookSync
     /** @var array<int, QuickBooksEntityChanged> */
     private array $deferred = [];
 
+    /**
+     * QuickBooks customers this delivery reported as created that Fleetbase has no link for.
+     *
+     * @var array<string, array<int, string>> ids by realm
+     */
+    private array $createdCustomers = [];
+
     public function __construct(private SettingsService $settings)
     {
     }
@@ -108,6 +116,7 @@ class EnqueueWebhookSync
     {
         $this->paymentLookup()->deferred = [];
         $this->deferred                  = [];
+        $this->createdCustomers          = [];
 
         $settings = $this->settings->resolveSync(
             $store->companySync($companyUuid),
@@ -116,7 +125,10 @@ class EnqueueWebhookSync
         );
         $invoices = $this->knownInvoices($companyUuid, $events);
         $payable  = $this->payableEvents($settings, $events);
-        $payments = $this->paymentInvoices($companyUuid, $payable);
+        // A payment made in QuickBooks has no link yet. Its invoices are worth reading only when
+        // payments take QuickBooks values; otherwise the read would change nothing.
+        $readUnlinked = $this->quickbooksSupplies($settings, 'payment');
+        $payments     = $this->paymentInvoices($companyUuid, $payable, false, $readUnlinked);
         $this->rememberDeferredPayments($payable);
         [$records, $inbound, $deletes, $kept, $merges] = $this->collectFlushEvents(
             $settings,
@@ -128,6 +140,24 @@ class EnqueueWebhookSync
         [$notes, $refresh]         = $this->followMerges($companyUuid, $settings, $merges);
         $this->dispatchFlush($companyUuid, $records, array_merge($inbound, $refresh), $deletes);
         $this->noteKeptDeletes($companyUuid, $kept, $notes);
+        $this->importCreatedCustomers($companyUuid);
+    }
+
+    /**
+     * Customers created in QuickBooks are imported like the customer import on connect, but
+     * only the ones named here and only from the QuickBooks company this organization uses now.
+     */
+    private function importCreatedCustomers(string $companyUuid): void
+    {
+        if ($this->createdCustomers === []) {
+            return;
+        }
+        $connection = $this->deleteDirectory()?->connection($companyUuid);
+        $realm      = is_array($connection) === true ? trim((string) ($connection['realm_id'] ?? '')) : '';
+        $ids        = $realm === '' ? [] : ($this->createdCustomers[$realm] ?? []);
+        if ($ids !== []) {
+            ImportCustomers::dispatchCustomers($companyUuid, $realm, $ids);
+        }
     }
 
     /**
@@ -403,6 +433,17 @@ class EnqueueWebhookSync
                 ];
             }
         }
+        // A payment made in QuickBooks has no link to apply, so the amount paid is read from
+        // each invoice's QuickBooks balance, and Activity shows it as a change from QuickBooks.
+        if (isset($this->paymentLookup()->unlinked[$event->realmId . '|' . $event->quickbooksId]) === true) {
+            foreach ($target['quickbooks_invoices'] as $invoiceId) {
+                $inbound[] = [
+                    'entity'    => SyncEngine::INVOICE_PAYMENTS,
+                    'id'        => $invoiceId,
+                    'operation' => 'update',
+                ];
+            }
+        }
     }
 
     /**
@@ -437,6 +478,10 @@ class EnqueueWebhookSync
     {
         $localUuid = $this->localUuidForEvent($event, $invoices);
         if ($localUuid === null) {
+            if ($event->entityType === 'customer' && $event->operation === 'create') {
+                $this->createdCustomers[$event->realmId][] = $event->quickbooksId;
+            }
+
             return;
         }
         $records[$event->entityType . '|' . $localUuid] = [
@@ -781,13 +826,17 @@ class EnqueueWebhookSync
      *
      * @return array<string, array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>}>
      */
-    private function paymentInvoices(string $companyUuid, array $events, bool $allowDelete = false): array
-    {
+    private function paymentInvoices(
+        string $companyUuid,
+        array $events,
+        bool $allowDelete = false,
+        bool $readUnlinked = false,
+    ): array {
         $readInvoiceIds = $this->readsQuickBooks === true
             ? fn (string $company, string $realmId, array $paymentIds): array => $this->quickbooksInvoiceIdsForPayments($company, $realmId, $paymentIds)
             : null;
 
-        return $this->paymentLookup()->resolve($companyUuid, $events, $allowDelete, $readInvoiceIds);
+        return $this->paymentLookup()->resolve($companyUuid, $events, $allowDelete, $readInvoiceIds, $readUnlinked);
     }
 
     private function paymentLookup(): WebhookPaymentInvoices

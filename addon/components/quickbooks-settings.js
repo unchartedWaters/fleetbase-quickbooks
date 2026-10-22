@@ -30,14 +30,14 @@ const POLICY_FIELDS = [
 ];
 const PRIMARY_ENTITIES = ['customer', 'invoice', 'payment', 'wallet'];
 const CHOICE_DEFAULTS = {
-    customer_conflict: 'fleetbase',
-    customer_reference: 'fleetbase',
-    invoice_conflict: 'fleetbase',
-    invoice_reference: 'fleetbase',
-    payment_conflict: 'fleetbase',
-    payment_reference: 'fleetbase',
-    wallet_conflict: 'fleetbase',
-    wallet_reference: 'fleetbase',
+    customer_conflict: 'quickbooks',
+    customer_reference: 'quickbooks',
+    invoice_conflict: 'quickbooks',
+    invoice_reference: 'quickbooks',
+    payment_conflict: 'quickbooks',
+    payment_reference: 'quickbooks',
+    wallet_conflict: 'quickbooks',
+    wallet_reference: 'quickbooks',
     customer_direction: 'both',
     invoice_direction: 'both',
     payment_direction: 'both',
@@ -90,6 +90,7 @@ const DISPLAY_URLS = [
         key: 'public_webhook_receiver_url',
         editable: true,
         fallback: 'internal_webhook_receiver_url',
+        readyKey: 'public_webhook_receiver_ready',
     },
     {
         key: 'internal_webhook_receiver_url',
@@ -99,6 +100,7 @@ const DISPLAY_URLS = [
         key: 'public_oauth_redirect_url',
         editable: true,
         fallback: 'internal_oauth_redirect_url',
+        readyKey: 'public_oauth_redirect_ready',
     },
     {
         key: 'internal_oauth_redirect_url',
@@ -106,8 +108,13 @@ const DISPLAY_URLS = [
     },
 ];
 
-// The screen has one Primary. Anything other than quickbooks is Fleetbase, including a stored conflict of report.
+// The screen has one Primary. A blank one is the default, QuickBooks. Any other value than quickbooks is Fleetbase,
+// including a stored conflict of report.
 function displayedPrimary(conflict) {
+    if (isBlank(conflict)) {
+        return CHOICE_DEFAULTS.customer_conflict;
+    }
+
     return conflict === 'quickbooks' ? 'quickbooks' : 'fleetbase';
 }
 
@@ -273,6 +280,8 @@ export default class QuickbooksSettingsComponent extends Component {
                 label: this.intl.t(labelKey),
                 hint: this.intl.t(hintKey),
                 value: this.displayedUrl(field.key),
+                // The server checks the saved address; an edited one is checked again on save.
+                notPublic: Boolean(field.readyKey) && !Object.hasOwn(this.draft, field.key) && this.args.settings?.[field.readyKey] === false,
             };
         });
     }

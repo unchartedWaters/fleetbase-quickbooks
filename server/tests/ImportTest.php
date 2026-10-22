@@ -7,6 +7,8 @@ use Fleetbase\Quickbooks\Services\CustomerImporter;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\WebhookRetry;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
@@ -741,6 +743,87 @@ test('nothing is imported when the option is off', function () {
         ->and($batch['finished_at'])->toBeInt()
         ->and($batch['direction'])->toBe('inbound')
         ->and($client->calls)->toBe([]);
+});
+
+test('importing named quickbooks customers reads only those, creates the new one, and skips linked ones', function () {
+    $client                  = new FakeQuickBooks();
+    $client->customers['95'] = remoteCustomer('95', 'Seaside Haulers', 'dispatch@seaside.test', '4155550177');
+    $client->customers['94'] = remoteCustomer('94', 'Northwind Cargo', 'ap@northwind.test', null);
+    $ledger                  = importLedger();
+    $ledger->links[]         = [
+        'company_uuid' => 'company-uuid',
+        'realm_id'     => 'realm-1',
+        'local_type'   => 'customer',
+        'local_uuid'   => 'cust-northwind',
+        'qbo_entity'   => 'Customer',
+        'qbo_id'       => '94',
+        'sync_token'   => '0',
+    ];
+
+    $connection = $ledger->connections['company-uuid'];
+    $batch      = (new CustomerImporter($client))->importIds($ledger, $connection, ['95', '94', '96']);
+
+    expect($batch['created'])->toBe(1)
+        ->and($batch['trigger'])->toBe('import')
+        ->and($batch['direction'])->toBe('inbound')
+        ->and($client->calls)->toBe(['getCustomer:95', 'getCustomer:96'])
+        ->and($ledger->linkForRemote('realm-1', 'Customer', '95'))->not->toBeNull()
+        ->and($ledger->batches)->toHaveCount(1);
+});
+
+test('a named customer import that cannot reach quickbooks is queued again, then recorded as failed', function () {
+    withImportDispatcher(function ($dispatcher): void {
+        $client = new class extends FakeQuickBooks {
+            public function getCustomer(array $connection, string $id): ?array
+            {
+                $this->calls[] = 'getCustomer:' . $id;
+
+                throw new QuickBooksException(503, 'QuickBooks is down.');
+            }
+        };
+        $directory         = new FleetbaseDirectory();
+        $directory->memory = importLedger();
+        $previous          = Cache::getFacadeRoot();
+        Cache::swap(new Repository(new ArrayStore()));
+
+        try {
+            $job = new ImportCustomers('company-uuid', null, true, 0, ['95'], 'realm-1');
+            $job->handle(new CustomerImporter($client), $directory);
+            $last                    = new ImportCustomers('company-uuid', null, true, 0, ['95'], 'realm-1');
+            $last->quickbooksAttempt = WebhookRetry::LIMIT;
+            $last->handle(new CustomerImporter($client), $directory);
+        } finally {
+            Cache::swap($previous);
+        }
+
+        expect($dispatcher->jobs)->toHaveCount(1)
+            ->and($dispatcher->jobs[0]->customerIds)->toBe(['95'])
+            ->and($dispatcher->jobs[0]->realmId)->toBe('realm-1')
+            ->and($dispatcher->jobs[0]->quickbooksAttempt)->toBe(1)
+            ->and($dispatcher->jobs[0]->delay)->toBeGreaterThanOrEqual(WebhookRetry::BASE_DELAY_SECONDS)
+            ->and($directory->memory->batches)->toHaveCount(1)
+            ->and($directory->memory->batches[0]['status'])->toBe('failed')
+            ->and($directory->memory->batches[0]['trigger'])->toBe('import');
+    });
+});
+
+test('importing named customers that are all linked already records nothing', function () {
+    $client          = new FakeQuickBooks();
+    $ledger          = importLedger();
+    $ledger->links[] = [
+        'company_uuid' => 'company-uuid',
+        'realm_id'     => 'realm-1',
+        'local_type'   => 'customer',
+        'local_uuid'   => 'cust-northwind',
+        'qbo_entity'   => 'Customer',
+        'qbo_id'       => '94',
+        'sync_token'   => '0',
+    ];
+
+    (new CustomerImporter($client))->importIds($ledger, $ledger->connections['company-uuid'], ['94']);
+
+    expect($client->calls)->toBe([])
+        ->and($ledger->batches)->toBe([]);
 });
 
 function importWith(array $remote, array $local): array

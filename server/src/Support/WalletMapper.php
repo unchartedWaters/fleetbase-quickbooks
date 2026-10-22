@@ -9,6 +9,8 @@ class WalletMapper
 {
     public const ACCT_NUM_MAX_LENGTH = 7;
 
+    public const NAME_MAX_LENGTH = 100;
+
     /**
      * @param array<string, mixed> $wallet
      * @param bool                 $pushClears include an empty description so a Fleetbase clear is sent
@@ -57,6 +59,8 @@ class WalletMapper
      */
     public function matches(array $wallet, array $payload, array $remote): bool
     {
+        $payload = $this->keepUniqueName($wallet, $payload, $remote);
+
         return ContentHash::of($this->localCanonical($wallet, $payload)) === ContentHash::of($this->remoteCanonical($wallet, $payload, $remote));
     }
 
@@ -107,6 +111,67 @@ class WalletMapper
             'description' => (string) ($remote['Description'] ?? ''),
             'name'        => trim((string) ($remote['Name'] ?? '')),
         ];
+    }
+
+    /**
+     * QuickBooks account names are unique, and every user wallet is called "Personal Wallet".
+     * A wallet whose name another account already has gets its public id added.
+     *
+     * @param array<string, mixed> $wallet
+     */
+    public function uniqueName(array $wallet, string $name): string
+    {
+        $publicId = trim((string) ($wallet['public_id'] ?? ''));
+        if ($publicId === '') {
+            return $name;
+        }
+        $suffix = ' (' . $publicId . ')';
+
+        return rtrim(mb_substr($name, 0, max(0, self::NAME_MAX_LENGTH - mb_strlen($suffix)))) . $suffix;
+    }
+
+    /**
+     * An account named with the wallet's id added keeps the id, also after a rename, so an
+     * update does not rename it back to the name another account has.
+     *
+     * @param array<string, mixed> $wallet
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $remote
+     *
+     * @return array<string, mixed>
+     */
+    public function keepUniqueName(array $wallet, array $payload, array $remote): array
+    {
+        $name       = trim((string) ($payload['Name'] ?? ''));
+        $publicId   = trim((string) ($wallet['public_id'] ?? ''));
+        $remoteName = trim((string) ($remote['Name'] ?? ''));
+        if ($name !== '' && $publicId !== '' && str_ends_with($remoteName, ' (' . $publicId . ')') === true) {
+            $payload['Name'] = $this->uniqueName($wallet, $name);
+        }
+
+        return $payload;
+    }
+
+    /**
+     * The wallet name a QuickBooks account name stands for: the added id is not copied back.
+     *
+     * @param array<string, mixed> $wallet
+     */
+    public function nameFromQuickBooks(array $wallet, string $remoteName): string
+    {
+        $localName = trim((string) ($wallet['name'] ?? ''));
+        if ($localName !== '' && $remoteName === $this->uniqueName($wallet, $localName)) {
+            return $localName;
+        }
+        $publicId = trim((string) ($wallet['public_id'] ?? ''));
+        $suffix   = ' (' . $publicId . ')';
+        if ($publicId !== '' && str_ends_with($remoteName, $suffix) === true && $remoteName !== trim($suffix)) {
+            $base = rtrim(mb_substr($remoteName, 0, mb_strlen($remoteName) - mb_strlen($suffix)));
+
+            return $base === '' ? $remoteName : $base;
+        }
+
+        return $remoteName;
     }
 
     /**
