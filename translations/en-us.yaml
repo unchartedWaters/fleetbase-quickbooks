@@ -266,7 +266,7 @@ quickbooks:
     invoice-customer-invalid: Invoice customer is not a Fleetbase customer.
     invoice-item-missing: "QuickBooks has no item for invoice lines. Fleetbase could not create its \"Fleetbase service\" item; add an Income account in QuickBooks and try again."
     invoice-no-tax-rate: The invoice was sent, but QuickBooks added no tax because neither the customer nor the company has a sales tax rate in QuickBooks. Set a sales tax rate in QuickBooks and edit the invoice to add the tax.
-    invoice-tax-from-quickbooks: QuickBooks worked out the tax of this invoice, so the tax rate set on its lines in Fleetbase was replaced with the QuickBooks tax.
+    invoice-tax-from-quickbooks: QuickBooks worked out the tax of this invoice, so the tax rates on its lines in Fleetbase were changed to the QuickBooks rates.
     invoice-number-unconfirmed: QuickBooks did not confirm a free invoice number, so Fleetbase did not create this invoice.
     invoice-number-taken: "QuickBooks invoice number {number} was not copied because another Fleetbase invoice already uses it."
     invoice-number-kept: "This invoice keeps {number}."

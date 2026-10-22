@@ -49,8 +49,7 @@ class InvoiceMapper
         $lines    = [];
         $items    = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
         $currency = (string) ($invoice['currency'] ?? '');
-        $codes    = $tax['lines'] ?? [];
-        foreach (array_values($items) as $position => $item) {
+        foreach (array_values($items) as $item) {
             $amountCents = (int) ($item['amount'] ?? 0);
             $qty         = (int) ($item['quantity'] ?? 1);
             $line        = [
@@ -63,10 +62,6 @@ class InvoiceMapper
                     'UnitPrice' => Amounts::unitPriceDecimal($amountCents, $qty, $currency),
                 ],
             ];
-            $code = $codes[$position] ?? null;
-            if (is_string($code) === true && $code !== '') {
-                $line['SalesItemLineDetail']['TaxCodeRef'] = ['value' => $code];
-            }
             $lineId = trim((string) ($item['qbo_line_id'] ?? ''));
             if ($lineId !== '') {
                 $line['Id'] = $lineId;
@@ -78,6 +73,32 @@ class InvoiceMapper
             'CustomerRef' => ['value' => $customerRef],
             'Line'        => $lines,
         ];
+
+        return $this->withTax($this->withInvoiceFields($payload, $invoice, $pushClears), $tax);
+    }
+
+    /**
+     * Put the tax plan (InvoiceTax::plan) on a payload: each sales line its tax code, in order, and
+     * the invoice its rate and tax-exclusive flag. Nothing is added for a missing or empty value.
+     *
+     * @param array<string, mixed>                                                             $payload
+     * @param array{lines?: array<int, string|null>, rate?: string|null, global?: string|null} $tax
+     *
+     * @return array<string, mixed>
+     */
+    public function withTax(array $payload, array $tax): array
+    {
+        $codes    = $tax['lines'] ?? [];
+        $position = 0;
+        foreach (is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [] as $index => $line) {
+            if (is_array($line) === false || (string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
+                continue;
+            }
+            $code = $codes[$position++] ?? null;
+            if (is_string($code) === true && $code !== '') {
+                $payload['Line'][$index]['SalesItemLineDetail']['TaxCodeRef'] = ['value' => $code];
+            }
+        }
         if (is_string($tax['rate'] ?? null) === true && $tax['rate'] !== '') {
             $payload['TxnTaxDetail'] = ['TxnTaxCodeRef' => ['value' => $tax['rate']]];
         }
@@ -85,7 +106,7 @@ class InvoiceMapper
             $payload['GlobalTaxCalculation'] = $tax['global'];
         }
 
-        return $this->withInvoiceFields($payload, $invoice, $pushClears);
+        return $payload;
     }
 
     /**
@@ -643,7 +664,8 @@ class InvoiceMapper
     public function quickbooksAdjustmentCents(array $remote): int
     {
         $detail = is_array($remote['TxnTaxDetail'] ?? null) === true ? $remote['TxnTaxDetail'] : [];
-        $cents  = $this->lineAmount($detail['TotalTax'] ?? 0);
+        // Lines of a tax-inclusive invoice already hold the tax, so it is not added to them.
+        $cents  = self::taxInclusive($remote) === true ? 0 : $this->lineAmount($detail['TotalTax'] ?? 0);
         $lines  = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
         foreach ($lines as $line) {
             if (is_array($line) === true && (string) ($line['DetailType'] ?? '') === 'DiscountLineDetail') {
@@ -710,40 +732,77 @@ class InvoiceMapper
     }
 
     /**
-     * The tax QuickBooks worked out on the lines Fleetbase sent, shared over the Fleetbase items
-     * whose QuickBooks line (qbo_line_id) is taxed, as fromQuickBooks shares it. Other items get
-     * no tax.
+     * The tax QuickBooks worked out on the lines Fleetbase sent. The tax is shared by amount over
+     * the QuickBooks lines coded TAX (US), the rounding left on the last one, and each Fleetbase
+     * item takes the share of its QuickBooks line (qbo_line_id), so the tax of a line only
+     * QuickBooks has is left out and the item taxes add up to the invoice tax. When the tax cannot
+     * be shared (no TAX line with a positive taxed amount, or a rate a Ledger line cannot hold, as
+     * outside the US) the whole tax is kept on the invoice and the items get none.
      *
      * @param array<string, mixed> $remote
      * @param array<int, mixed>    $items
      *
-     * @return array{tax: int, items: array<int, array<string, mixed>>}
+     * @return array{tax: int, items: array<int, array<string, mixed>>, inclusive: bool}
      */
     public function quickBooksTax(array $remote, array $items): array
     {
-        $taxedLines = [];
+        $detail = is_array($remote['TxnTaxDetail'] ?? null) === true ? $remote['TxnTaxDetail'] : [];
+        $tax    = $this->lineAmount($detail['TotalTax'] ?? 0);
+        $taxed  = [];
+        $base   = 0;
         foreach (is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [] as $line) {
             $id = is_array($line) === true ? trim((string) ($line['Id'] ?? '')) : '';
             if ($id !== '' && $this->isProductSalesLine($line) === true
                 && trim((string) ($line['SalesItemLineDetail']['TaxCodeRef']['value'] ?? '')) === 'TAX') {
-                $taxedLines[$id] = true;
+                $taxed[$id] = $this->lineAmount($line['Amount'] ?? 0);
+                $base += $taxed[$id];
             }
         }
-        $clean   = [];
-        $taxable = [];
+        $rate   = $base > 0 ? (self::taxPercent($detail) ?? ($tax / $base * 100)) : 0.0;
+        $shares = [];
+        if ($tax !== 0 && $base > 0 && $rate > 0 && $rate <= self::LINE_TAX_RATE_MAX) {
+            $left = $tax;
+            $last = array_key_last($taxed);
+            foreach ($taxed as $id => $amount) {
+                $shares[$id] = $id === $last ? $left : self::share($tax, $amount, $base);
+                $left -= $shares[$id];
+            }
+        }
+        $clean = [];
+        $sum   = 0;
         foreach ($items as $index => $item) {
             if (is_array($item) === false) {
                 continue;
             }
-            $item['tax_rate']   = '0.00';
-            $item['tax_amount'] = 0;
+            $share              = $shares[trim((string) ($item['qbo_line_id'] ?? ''))] ?? null;
+            $item['tax_rate']   = $share === null ? '0.00' : self::taxRate($rate);
+            $item['tax_amount'] = $share ?? 0;
+            $sum += $item['tax_amount'];
             $clean[$index]      = $item;
-            $taxable[$index]    = isset($taxedLines[trim((string) ($item['qbo_line_id'] ?? ''))]) === true;
         }
-        $detail = is_array($remote['TxnTaxDetail'] ?? null) === true ? $remote['TxnTaxDetail'] : [];
-        $tax    = $this->lineAmount($detail['TotalTax'] ?? 0);
 
-        return ['tax' => $tax, 'items' => $this->lineTaxes($clean, $taxable, $tax, $detail)];
+        return ['tax' => $shares === [] ? $tax : $sum, 'items' => $clean, 'inclusive' => self::taxInclusive($remote)];
+    }
+
+    /**
+     * Whether the QuickBooks invoice amounts include tax (non-US companies only).
+     *
+     * @param array<string, mixed> $remote
+     */
+    public static function taxInclusive(array $remote): bool
+    {
+        return (string) ($remote['GlobalTaxCalculation'] ?? '') === 'TaxInclusive';
+    }
+
+    /**
+     * $tax times $amount over $base, rounded half away from zero, in integers.
+     */
+    private static function share(int $tax, int $amount, int $base): int
+    {
+        $product = $tax * $amount;
+        $sign    = $product < 0 ? -1 : 1;
+
+        return $sign * intdiv(2 * abs($product) + $base, 2 * $base);
     }
 
     /**
@@ -802,7 +861,7 @@ class InvoiceMapper
         $left = $tax;
         $last = end($taxed);
         foreach ($taxed as $index) {
-            $share                         = $index === $last ? $left : (int) round($tax * (int) $items[$index]['amount'] / $base);
+            $share                         = $index === $last ? $left : self::share($tax, (int) $items[$index]['amount'], $base);
             $left -= $share;
             $items[$index]['tax_rate']     = self::taxRate($rate);
             $items[$index]['tax_amount']   = $share;

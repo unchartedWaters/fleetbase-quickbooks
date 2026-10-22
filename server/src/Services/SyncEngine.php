@@ -441,8 +441,10 @@ class SyncEngine
      */
     public function runScheduled(SyncLedger $ledger, string $companyUuid, array $settings, int $now, bool $force = false, bool $ignoreInterval = false): array
     {
-        $trigger    = $force === true ? 'now' : 'scheduled';
-        $connection = $ledger->connection($companyUuid);
+        // A note left by a run that stopped before recording its row is not shown on this run.
+        $this->rowNotes = [];
+        $trigger        = $force === true ? 'now' : 'scheduled';
+        $connection     = $ledger->connection($companyUuid);
         if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false) {
             return $this->emptyBatch($trigger, 'skipped');
         }
@@ -479,7 +481,9 @@ class SyncEngine
      */
     public function reconcile(SyncLedger $ledger, string $companyUuid, array $settings, int $now): array
     {
-        $connection = $ledger->connection($companyUuid);
+        // A note left by a run that stopped before recording its row is not shown on this run.
+        $this->rowNotes = [];
+        $connection     = $ledger->connection($companyUuid);
         if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false) {
             return $this->emptyBatch('manual', 'skipped');
         }
@@ -503,7 +507,9 @@ class SyncEngine
      */
     public function acceptRemoteChanges(SyncLedger $ledger, string $companyUuid, array $entities, array $settings, int $now): void
     {
-        $connection = $ledger->connection($companyUuid);
+        // A note left by a run that stopped before recording its row is not shown on this run.
+        $this->rowNotes = [];
+        $connection     = $ledger->connection($companyUuid);
         if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false || empty($connection['needs_reauth']) === false) {
             return;
         }
@@ -746,7 +752,9 @@ class SyncEngine
      */
     public function syncEntities(SyncLedger $ledger, string $companyUuid, array $rows, array $settings, int $now): array
     {
-        $connection = $ledger->connection($companyUuid);
+        // A note left by a run that stopped before recording its row is not shown on this run.
+        $this->rowNotes = [];
+        $connection     = $ledger->connection($companyUuid);
         if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false || empty($connection['needs_reauth']) === false) {
             return $this->emptyBatch('catalog', 'skipped');
         }
@@ -1490,8 +1498,7 @@ class SyncEngine
 
         $stored     = $this->storedLineIds($ledger, $connection, $uuid, $voided);
         $invoice    = $ledger->invoices[$uuid];
-        $tax        = $voided === true ? [] : $this->invoiceTaxPlan($ledger, $connection, $uuid, (string) $customerLink['qbo_id'], $itemId);
-        $payload    = $this->invoices->toQuickBooks($invoice, (string) $customerLink['qbo_id'], $itemId, false, $tax);
+        $payload    = $this->invoices->toQuickBooks($invoice, (string) $customerLink['qbo_id'], $itemId);
         $reference  = (string) ($settings['invoice_reference'] ?? 'fleetbase');
         $conflict   = (string) ($settings['invoice_conflict'] ?? 'fleetbase');
         $pushClears = $this->sendsClears($conflict, $push, $copy);
@@ -1594,6 +1601,7 @@ class SyncEngine
             if ($this->rejectLongDocNumber($payload) === true) {
                 return 'failed';
             }
+            $payload = $this->invoices->withTax($payload, $this->invoiceTaxPlan($ledger, $connection, $uuid, (string) $customerLink['qbo_id'], $itemId));
             $this->noteMissingTaxRate($uuid, $payload);
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
@@ -1687,7 +1695,7 @@ class SyncEngine
                 );
             }
 
-            $payload = $this->invoices->toQuickBooks($ledger->invoices[$uuid], (string) $customerLink['qbo_id'], $itemId, false, $tax);
+            $payload = $this->invoices->toQuickBooks($ledger->invoices[$uuid], (string) $customerLink['qbo_id'], $itemId);
         }
 
         if ($push === false) {
@@ -1695,7 +1703,7 @@ class SyncEngine
         }
 
         if ($pushClears === true) {
-            $payload = $this->invoices->toQuickBooks($ledger->invoices[$uuid], (string) $customerLink['qbo_id'], $itemId, true, $tax);
+            $payload = $this->invoices->toQuickBooks($ledger->invoices[$uuid], (string) $customerLink['qbo_id'], $itemId, true);
             if ($reference === 'quickbooks') {
                 unset($payload['DocNumber']);
             }
@@ -1708,6 +1716,9 @@ class SyncEngine
         if ($this->rejectLongDocNumber($payload) === true) {
             return 'failed';
         }
+        // The tax plan goes on before the QuickBooks lines are paired, so a matched line and the
+        // invoice keep the tax code and rate QuickBooks holds.
+        $payload = $this->invoices->withTax($payload, $this->invoiceTaxPlan($ledger, $connection, $uuid, (string) $customerLink['qbo_id'], $itemId));
         $payload = $this->invoiceMapper($ledger->invoices[$uuid])
             ->withExistingLineIds($payload, $remote, $removed, $mapped);
         $this->rememberPushedLineIds($ledger, $uuid, $payload);
@@ -2257,8 +2268,8 @@ class SyncEngine
     /**
      * Copy the tax QuickBooks worked out on the lines Fleetbase sent onto the Fleetbase invoice:
      * the tax, each line's share of it, and the total that follows. The status follows the new
-     * total. Activity says when this replaced a line tax rate set in Fleetbase. Returns whether
-     * anything changed.
+     * total. Activity says when a line tax rate Fleetbase had changed. Returns whether anything
+     * changed.
      *
      * @param array<string, mixed> $remote
      */
@@ -2278,11 +2289,11 @@ class SyncEngine
             $before    = is_array($items[$index] ?? null) === true ? $items[$index] : [];
             $rate      = InvoiceMapper::taxRate($before['tax_rate'] ?? 0);
             $changed   = $changed || $rate !== $item['tax_rate'] || (int) ($before['tax_amount'] ?? 0) !== $item['tax_amount'];
-            // A rate Fleetbase set on a line, not one copied from QuickBooks before.
-            $replaced = $replaced || ($rate !== '0.00' && $rate !== $item['tax_rate']);
+            $replaced  = $replaced || ($rate !== '0.00' && $rate !== $item['tax_rate']);
         }
         $previous = (int) ($invoice['tax'] ?? 0);
-        $total    = $subtotal + $taxed['tax'];
+        // The lines of a tax-inclusive invoice already hold the tax.
+        $total = $taxed['inclusive'] === true ? $subtotal : $subtotal + $taxed['tax'];
         if ($changed === false && $previous === $taxed['tax'] && (int) ($invoice['total'] ?? 0) === $total) {
             return false;
         }
@@ -2294,7 +2305,11 @@ class SyncEngine
         $ledger->invoices[$uuid]['total']                      = $total;
         $ledger->invoices[$uuid]['replace_from_quickbooks']    = true;
         $ledger->invoices[$uuid]['line_taxes_from_quickbooks'] = true;
-        $this->applyPaymentStatus($ledger, $uuid);
+        // An invoice marked paid with no amount recorded is paid in full, whatever its new total
+        // (paymentAmountCents sends that total), so only a recorded amount moves the status.
+        if ((int) ($invoice['amount_paid'] ?? 0) !== 0) {
+            $this->applyPaymentStatus($ledger, $uuid);
+        }
         if ($replaced === true) {
             $this->rowNotes['invoice:' . $uuid] ??= Translation::encode('quickbooks.messages.invoice-tax-from-quickbooks');
         }
@@ -2339,9 +2354,11 @@ class SyncEngine
             return;
         }
         if (is_array($stored) === true) {
-            $ledger->connections[$companyUuid]['default_item_id'] = null;
+            $ledger->connections[$companyUuid]['default_item_id']      = null;
+            $ledger->connections[$companyUuid]['default_item_account'] = null;
         }
-        $connection['default_item_id'] = null;
+        $connection['default_item_id']      = null;
+        $connection['default_item_account'] = null;
         if ($this->serviceItemByCompany !== null) {
             unset($this->serviceItemByCompany[$companyUuid]);
         }

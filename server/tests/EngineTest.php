@@ -4428,3 +4428,77 @@ test('QuickBooks Primary copies the line taxes and the next sync is aligned', fu
     expect($second['aligned'])->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
+
+test('a paid invoice with no amount recorded stays paid when QuickBooks adds tax, and its payment covers the tax', function () {
+    [$engine, $client, $ledger] = engineTaxedCompany(['status' => 'paid', 'amount_paid' => 0]);
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+    $payment = array_values($client->payments)[0] ?? [];
+
+    expect($ledger->invoices['inv-1']['status'])->toBe('paid')
+        ->and($ledger->invoices['inv-1']['total'])->toBe(1080)
+        ->and($payment['TotalAmt'] ?? null)->toBe('10.80');
+});
+
+test('an invoice QuickBooks holds with tax included is aligned and its total stays the QuickBooks total', function () {
+    $taxed                                      = InvoiceLines::sales('1', 'Delivery', '10.00');
+    $taxed['SalesItemLineDetail']['TaxCodeRef'] = ['value' => 'TAX'];
+    [$engine, $client, $ledger]                 = engineLinkedInvoice([
+        'items' => [InvoiceLines::tracked('item-a', 'Delivery', 1000, '1')],
+    ], [
+        'CustomerRef'          => ['value' => 'qbo-customer'],
+        'GlobalTaxCalculation' => 'TaxInclusive',
+        'TotalAmt'             => '10.00',
+        'Line'                 => [$taxed],
+        'TxnTaxDetail'         => ['TotalTax' => '0.83'],
+    ]);
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first  = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($client->calls)->not->toContain('updateInvoice')
+        ->and($first['failed'])->toBe(0)
+        ->and($second['aligned'])->toBe(1)
+        ->and($ledger->invoices['inv-1']['tax'])->toBe(83)
+        ->and($ledger->invoices['inv-1']['total'])->toBe(1000);
+});
+
+test('an invoice that is not sent to QuickBooks does not read the QuickBooks tax settings', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([], ['CustomerRef' => ['value' => 'qbo-customer'], 'PrivateNote' => 'From QuickBooks']);
+    $client->failSalesTax       = new QuickBooksException(500, 'Intuit is down');
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_direction' => 'inbound']), time());
+
+    expect($batch['failed'])->toBe(0)
+        ->and($ledger->invoices['inv-1']['notes'])->toBe('From QuickBooks')
+        ->and($client->salesTaxReads)->toBe(0);
+});
+
+test('an Activity note from a sync that stopped is not shown on a later sync', function () {
+    [$engine, $client, $ledger] = engineTaxedCompany();
+    $client->salesTax['rate']   = null;
+    $client->rejectInvoicesWith = new QuickBooksException(401, 'Token refused');
+    $settings                   = qbSettings(['interval_minutes' => 1]);
+    $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    $client->rejectInvoicesWith                           = null;
+    $client->salesTax['rate']                             = '2';
+    $ledger->connections['company-uuid']['needs_reauth']  = false;
+    $ledger->attempts                                     = [];
+    engineRunAgain($engine, $ledger, $settings, time() + 10);
+
+    expect($ledger->invoices['inv-1']['tax'])->toBe(80)
+        ->and($ledger->attempts[0]['error'] ?? null)->toBeNull();
+});
+
+test('forgetting an inactive service item forgets its income account too', function () {
+    [$engine, $client, $ledger]                                   = engineTaxedCompany();
+    $ledger->connections['company-uuid']['default_item_account']  = 'Old income';
+    $client->inactiveItems                                        = ['item-1'];
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($ledger->connections['company-uuid']['default_item_id'])->toBeNull()
+        ->and($ledger->connections['company-uuid']['default_item_account'])->toBeNull();
+});

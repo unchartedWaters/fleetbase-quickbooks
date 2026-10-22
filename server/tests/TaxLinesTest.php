@@ -161,3 +161,33 @@ test('a line named like the old tax line is an ordinary line', function () {
     expect($mapped['tax'])->toBe(0)
         ->and($mapped['items'])->toHaveCount(1);
 });
+
+test('the tax copied onto Fleetbase lines leaves out the tax of QuickBooks lines Fleetbase does not have', function () {
+    $mine                                       = InvoiceLines::sales('1', 'Delivery', '10.00');
+    $mine['SalesItemLineDetail']['TaxCodeRef']  = ['value' => 'TAX'];
+    $extra                                      = InvoiceLines::sales('2', 'Added in QuickBooks', '5.00');
+    $extra['SalesItemLineDetail']['TaxCodeRef'] = ['value' => 'TAX'];
+    $remote                                     = ['Line' => [$mine, $extra], 'TxnTaxDetail' => ['TotalTax' => '1.20', 'TaxLine' => [
+        ['Amount' => '1.20', 'DetailType' => 'TaxLineDetail', 'TaxLineDetail' => ['PercentBased' => true, 'TaxPercent' => '8']],
+    ]]];
+
+    $taxed  = (new InvoiceMapper())->quickBooksTax($remote, [['description' => 'Delivery', 'amount' => 1000, 'qbo_line_id' => '1']]);
+    $exempt = (new InvoiceMapper())->quickBooksTax($remote, [['description' => 'Other', 'amount' => 500, 'qbo_line_id' => '9']]);
+
+    expect($taxed['tax'])->toBe(80)
+        ->and($taxed['items'][0]['tax_amount'])->toBe(80)
+        ->and($taxed['items'][0]['tax_rate'])->toBe('8.00')
+        ->and($exempt['tax'])->toBe(0)
+        ->and($exempt['items'][0]['tax_amount'])->toBe(0);
+});
+
+test('a tax that cannot be shared over lines is copied whole onto the invoice', function () {
+    $line   = InvoiceLines::sales('1', 'Delivery', '10.00');
+    $remote = ['Line' => [$line], 'TxnTaxDetail' => ['TotalTax' => '2.00']];
+
+    $copied = (new InvoiceMapper())->quickBooksTax($remote, [['description' => 'Delivery', 'amount' => 1000, 'qbo_line_id' => '1']]);
+
+    // Outside the US lines carry rate codes, not TAX, so nothing says which line holds the tax.
+    expect($copied['tax'])->toBe(200)
+        ->and($copied['items'][0]['tax_amount'])->toBe(0);
+});

@@ -57,16 +57,20 @@ screens without the surrounding Fleetbase console menus.
   tax code. When neither the customer nor the company has a rate, the invoice
   is sent without tax and Activity says so. When invoices sync both ways, the
   tax QuickBooks worked out is copied onto the Fleetbase invoice: the tax, each
-  line's tax rate and amount, and a total of the lines plus that tax. When this
-  replaces a tax rate set on a line in Fleetbase, Activity says so. The status
-  follows the new total, so a paid invoice can become part-paid when tax is
-  added. A payment larger than the QuickBooks balance is kept by QuickBooks as
-  unapplied credit. With invoices From Fleetbase only, Fleetbase keeps its own
-  tax and the two can differ. With QuickBooks as Primary, the QuickBooks lines,
-  tax and total are copied, and each taxed line gets its share of the tax. Tax
-  is compared only through the lines, so a tax difference does not cause
-  another update. A tax amount typed over in QuickBooks is worked out again
-  when Fleetbase next sends the lines.
+  line's tax rate and amount, and a total of the lines plus that tax. Tax on a
+  line only QuickBooks has is left out. When this changes a tax rate on a
+  Fleetbase line, Activity says so. When an amount paid is recorded, the
+  status follows the new total, so a paid invoice can become part-paid when
+  tax is added. An invoice marked paid with no amount recorded stays paid, and
+  its QuickBooks payment is the new total. A payment larger than the
+  QuickBooks balance is kept by QuickBooks as unapplied credit. With invoices
+  From Fleetbase only, Fleetbase keeps its own tax and the two can differ. With
+  QuickBooks as Primary, the QuickBooks lines, tax and total are copied, and
+  each taxed line gets its share of the tax. Tax is compared only through the
+  lines, so a tax difference does not cause another update. An invoice
+  QuickBooks holds with tax included in its amounts keeps the QuickBooks
+  total. A tax amount typed over in QuickBooks is worked out again when
+  Fleetbase next sends the lines.
 - **Payments** — a payment for a paid Fleetbase invoice. Amount and date are
   compared when a payment already exists. The payload includes `TxnDate`: the
   day the invoice was paid in the organization's timezone (the app timezone when
