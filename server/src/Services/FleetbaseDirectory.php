@@ -1587,10 +1587,13 @@ class FleetbaseDirectory
                 && ($link['qbo_entity'] ?? null) === $entity
                 && isset($wanted[(string) ($link['qbo_id'] ?? '')]) === true);
 
-            return array_values(array_unique(array_map('strval', array_column($linked, 'qbo_id'))));
+            return array_values(array_unique(array_map(
+                static fn (mixed $id): string => (string) $id,
+                array_column($linked, 'qbo_id')
+            )));
         }
 
-        return array_values(array_map('strval', Link::query()
+        return array_values(array_map(static fn (mixed $id): string => (string) $id, Link::query()
             ->when($companyUuid !== null, static fn ($query) => $query->where('company_uuid', $companyUuid))
             ->when($exceptLocalUuid !== null, static fn ($query) => $query->where('local_uuid', '!=', $exceptLocalUuid))
             ->where('realm_id', $realm)

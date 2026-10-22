@@ -1229,7 +1229,7 @@ class QuickBooksClient
      */
     private static function wireBatchIds(array $callerIds, ?string $requestId): array
     {
-        $callerIds = array_map('strval', array_values($callerIds));
+        $callerIds = array_map(static fn (mixed $id): string => (string) $id, array_values($callerIds));
         $room      = self::REQUEST_ID_FIELD_LIMIT - strlen((string) $requestId);
         foreach ($callerIds as $bId) {
             if (strlen($bId) > $room) {

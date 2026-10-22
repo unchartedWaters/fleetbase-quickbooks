@@ -141,14 +141,21 @@ class LedgerPaymentDates
             ->groupBy('subject_uuid')
             ->selectRaw('subject_uuid as latest_uuid, max(created_at) as latest_at');
 
-        return $payments($database, 'transactions')
+        $found = $payments($database, 'transactions')
             ->joinSub($latest, 'latest', static function ($join): void {
                 $join->on('transactions.subject_uuid', '=', 'latest.latest_uuid')
                     ->on('transactions.created_at', '=', 'latest.latest_at');
             })
             ->orderBy('transactions.id')
-            ->get(['transactions.subject_uuid', 'transactions.reference', 'transactions.payment_method'])
-            ->all();
+            ->get(['transactions.subject_uuid', 'transactions.reference', 'transactions.payment_method']);
+        $rows = [];
+        foreach ($found as $row) {
+            if ($row instanceof \stdClass) {
+                $rows[] = $row;
+            }
+        }
+
+        return $rows;
     }
 
     /**

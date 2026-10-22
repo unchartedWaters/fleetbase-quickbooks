@@ -5225,8 +5225,10 @@ class SyncEngine
             if ($linkedFound === true || $linkedFailed === true || $acctFound === true || $plan['name'] === '') {
                 continue;
             }
-            $names[]   = $plan['name'];
-            $uniques[] = $plan['unique'];
+            $names[] = $plan['name'];
+            if (isset($plan['unique']) === true && $plan['unique'] !== '') {
+                $uniques[] = $plan['unique'];
+            }
         }
         $names   = array_values(array_unique($names));
         $uniques = array_values(array_diff(array_unique($uniques), $names));
