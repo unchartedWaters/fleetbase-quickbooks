@@ -414,7 +414,7 @@ test('a larger quickbooks total changes a paid invoice that no longer covers it'
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(1000);
 });
 
-foreach ([
+$paymentRefCases = [
     'a check'          => [['payment_reference' => 'CHK-1001', 'payment_method' => 'check'], 'CHK-1001', 'check'],
     'a long reference' => [
         ['payment_reference' => str_repeat('R', 30), 'payment_method' => 'manual'],
@@ -422,7 +422,8 @@ foreach ([
         null,
     ],
     'no reference'     => [['payment_reference' => '  ', 'payment_method' => ''], null, null],
-] as $paymentRefLabel => [$paymentRefFields, $paymentRefNum, $paymentRefMethod]) {
+];
+foreach ($paymentRefCases as $paymentRefLabel => [$paymentRefFields, $paymentRefNum, $paymentRefMethod]) {
     test('a new quickbooks payment carries the ledger payment reference and method: '
     . $paymentRefLabel, function () use (
         $paymentRefFields,

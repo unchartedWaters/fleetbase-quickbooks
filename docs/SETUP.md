@@ -47,7 +47,18 @@ screens without the surrounding Fleetbase console menus.
   sets the invoice's amount paid and status in Fleetbase when payments take
   QuickBooks values (QuickBooks Primary, or From QuickBooks). A part-paid
   invoice has no paid date in Fleetbase.
-- **Wallets** — a QuickBooks account (`Other Current Asset`). Fleetbase sends the wallet public ID as `AcctNum` only when that ID is 7 characters or fewer. Longer public IDs, such as `wallet_` plus 10 characters, are not sent. If the link is lost, a unique account with the same name and currency is reattached instead of creating a duplicate; an account another wallet is linked to is never reattached. QuickBooks account names are unique, and every user wallet is called "Personal Wallet", so a new account whose name another account already has is named with the wallet's public ID added, for example `Personal Wallet (wallet_abc1234567)`. That added ID is not copied back to the wallet name, is not a difference on later syncs, and stays when the wallet is renamed. When QuickBooks is primary, the account name and `AcctNum` are copied onto the wallet.
+- **Wallets** — a QuickBooks account (`Other Current Asset`). Fleetbase sends
+  the wallet public ID as `AcctNum` only when that ID is 7 characters or fewer.
+  Longer public IDs, such as `wallet_` plus 10 characters, are not sent. If the
+  link is lost, a unique account with the same name and currency is reattached
+  instead of creating a duplicate; an account another wallet is linked to is
+  never reattached. QuickBooks account names are unique, and every user wallet
+  is called "Personal Wallet", so a new account whose name another account
+  already has is named with the wallet's public ID added, for example `Personal
+  Wallet (wallet_abc1234567)`. That added ID is not copied back to the wallet
+  name, is not a difference on later syncs, and stays when the wallet is
+  renamed. When QuickBooks is primary, the account name and `AcctNum` are copied
+  onto the wallet.
 
 Unknown QuickBooks invoices are not imported. An invoice is synced from QuickBooks only when this Fleetbase organization already has that invoice or a `quickbooks_links` row for it. The webhook event is still dispatched for those invoices.
 
@@ -284,7 +295,16 @@ wait, still capped at 900 seconds.
 
 Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved by an installation administrator in Admin → QuickBooks → Settings for the install and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
 
-The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The internal webhook path is `/quickbooks/int/v1/webhooks`. Admin → QuickBooks → Settings shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver URL stay editable and are saved on the install-wide settings row. Paste the public OAuth URL into Intuit Redirect URIs and the public webhook URL into the Intuit Endpoint URL. A blank public URL is shown as the matching internal URL. When the address shown is not a public https address, the page says so under the field, and Connect answers that Intuit needs a public https address instead of saying QuickBooks is not set up.
+The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The
+internal webhook path is `/quickbooks/int/v1/webhooks`. Admin → QuickBooks →
+Settings shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect
+as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver
+URL stay editable and are saved on the install-wide settings row. Paste the
+public OAuth URL into Intuit Redirect URIs and the public webhook URL into the
+Intuit Endpoint URL. A blank public URL is shown as the matching internal URL.
+When the address shown is not a public https address, the page says so under the
+field, and Connect answers that Intuit needs a public https address instead of
+saying QuickBooks is not set up.
 
 A new or changed public URL is checked when you save: it must be `https://` and
 its host must resolve to a public address. If it fails, the save is refused
@@ -526,8 +546,8 @@ QuickBooks company the organization is connected to now are imported. If
 QuickBooks cannot be reached, that import is tried again up to five times with
 longer waits, then shows as a failed import in Activity. An
 invoice that failed because its customer could not be created in QuickBooks is
-queued again, with its retries reset, once that customer is linked. A wallet whose
-balance is not zero is never closed from
+queued again, with its retries reset, once that customer is linked. A wallet
+whose balance is not zero is never closed from
 QuickBooks, whether by a delete or by an account that is made inactive: it stays
 open and linked, its pending sync is finished so the deleted account is not
 reactivated at once, and a warning is logged with its id. A later change to that
