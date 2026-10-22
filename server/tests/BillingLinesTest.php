@@ -9,7 +9,12 @@ use Fleetbase\Quickbooks\Tests\Support\InvoiceLines;
  */
 
 test('an update sends description-only and bundle lines back so QuickBooks keeps them', function () {
-    $note   = ['Id' => '2', 'DetailType' => 'DescriptionOnly', 'Description' => 'Deliver to dock B', 'DescriptionLineDetail' => []];
+    $note = [
+        'Id'                    => '2',
+        'DetailType'            => 'DescriptionOnly',
+        'Description'           => 'Deliver to dock B',
+        'DescriptionLineDetail' => [],
+    ];
     $bundle = [
         'Id'              => '3',
         'Amount'          => '20.00',
@@ -24,7 +29,10 @@ test('an update sends description-only and bundle lines back so QuickBooks keeps
     );
 
     $merged = (new InvoiceMapper())->withExistingLineIds($payload, $remote);
-    $types  = array_map(static fn (array $line): string => $line['DetailType'] . ':' . ($line['Id'] ?? ''), $merged['Line']);
+    $types  = array_map(
+        static fn (array $line): string => $line['DetailType'] . ':' . ($line['Id'] ?? ''),
+        $merged['Line']
+    );
 
     expect($types)->toBe(['SalesItemLineDetail:1', 'DescriptionOnly:2', 'GroupLineDetail:3'])
         // QuickBooks sends an empty detail as {}; it must go back as {}, not [], or the update is refused.
@@ -45,7 +53,7 @@ test('a bundle line is left out of the compared total, like an extra QuickBooks 
         ->and(count($limited['remote']['Line']))->toBe(3);
 });
 
-test('a matched line keeps the product and tax code QuickBooks has on it, and a new line uses the service item', function () {
+test('a matched line keeps its QuickBooks product and tax code, and a new line uses the service item', function () {
     $remote = ['Line' => [[
         'Id'                  => '1',
         'Amount'              => '10.00',
@@ -85,7 +93,8 @@ test('a QuickBooks line with no description arrives with its product name', func
 
 test('a QuickBooks description longer than a Fleetbase line holds is cut to fit', function () {
     $long   = str_repeat('é', 150) . str_repeat('x', 150);
-    $mapped = (new InvoiceMapper())->fromQuickBooks(['TotalAmt' => '1.00', 'Line' => [InvoiceLines::sales('1', $long, '1.00')]]);
+    $remote = ['TotalAmt' => '1.00', 'Line' => [InvoiceLines::sales('1', $long, '1.00')]];
+    $mapped = (new InvoiceMapper())->fromQuickBooks($remote);
 
     expect(mb_strlen($mapped['items'][0]['description']))->toBe(InvoiceMapper::LINE_DESCRIPTION_MAX)
         ->and(InvoiceMapper::LINE_DESCRIPTION_MAX)->toBe(191)
