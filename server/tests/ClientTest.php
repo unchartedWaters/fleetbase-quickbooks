@@ -88,6 +88,21 @@ test('no service item is created when quickbooks has no income account', functio
     Http::assertNotSent(fn (Request $request) => $request->method() === 'POST');
 });
 
+test('an item made inactive in quickbooks, or one quickbooks no longer has, is not active', function () {
+    $missing = ['Fault' => ['Error' => [['code' => '610', 'Message' => 'Object Not Found']]]];
+    Http::fake([
+        '*/item/19*'  => Http::response(['Item' => ['Id' => '19', 'Active' => true]], 200),
+        '*/item/20*'  => Http::response(['Item' => ['Id' => '20', 'Active' => false]], 200),
+        '*/item/404*' => Http::response($missing, 400),
+    ]);
+
+    $client = new QuickBooksClient();
+
+    expect($client->itemActive(clientConnection(), '19'))->toBeTrue()
+        ->and($client->itemActive(clientConnection(), '20'))->toBeFalse()
+        ->and($client->itemActive(clientConnection(), '404'))->toBeFalse();
+});
+
 test('a query value with a backslash or quote does not close the string', function () {
     $raw     = "O'Brien\\path";
     $escaped = QuickBooksClient::escapeQuery($raw);

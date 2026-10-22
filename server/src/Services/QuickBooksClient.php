@@ -1036,6 +1036,19 @@ class QuickBooksClient
     }
 
     /**
+     * Whether QuickBooks still holds this item as active. A made-inactive item is renamed
+     * "... (deleted)" and refused on new lines; a missing item is not active either.
+     *
+     * @param array<string, mixed> $connection
+     */
+    public function itemActive(array $connection, string $id): bool
+    {
+        $item = $this->read($connection, 'item/' . rawurlencode($id), 'Item');
+
+        return is_array($item) === true && ($item['Active'] ?? true) !== false;
+    }
+
+    /**
      * @param array{client_id: string, client_secret: string, redirect_uri: string, environment: string} $credentials
      * @param array<string, string>                                                                      $form
      *
