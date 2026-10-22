@@ -568,17 +568,23 @@ test('credential and token parameters are hidden from stack traces', function ()
         ->and($sensitive('accounting', 'connection'))->toBeTrue();
 });
 
-test('the fleetbase service item posts to a service income account, not a discount or billable expense one', function () {
+test('the fleetbase service item posts to a service income account, not a discount one', function () {
+    $income   = static fn (string $id, string $name, string $subtype, array $extra = []): array => [
+        'Id'             => $id,
+        'Name'           => $name,
+        'AccountSubType' => $subtype,
+        'Active'         => true,
+    ] + $extra;
     $accounts = [
-        ['Id' => '85', 'Name' => 'Billable Expense Income', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true],
-        ['Id' => '86', 'Name' => 'Discounts given', 'AccountSubType' => 'DiscountsRefundsGiven', 'Active' => true],
-        ['Id' => '87', 'Name' => 'Unapplied Cash Payment Income', 'AccountSubType' => 'UnappliedCashPaymentIncome', 'Active' => true],
-        ['Id' => '30', 'Name' => 'Uncategorized Income', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true],
-        ['Id' => '3', 'Name' => 'Old services', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => false],
-        ['Id' => '79', 'Name' => 'Sales of Product Income', 'AccountSubType' => 'SalesOfProductIncome', 'Active' => true],
-        ['Id' => '52', 'Name' => 'Installation', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true, 'SubAccount' => true],
-        ['Id' => '5', 'Name' => 'Fees Billed', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true],
-        ['Id' => '45', 'Name' => 'Landscaping Services', 'AccountSubType' => 'OtherPrimaryIncome', 'Active' => true],
+        $income('85', 'Billable Expense Income', 'ServiceFeeIncome'),
+        $income('86', 'Discounts given', 'DiscountsRefundsGiven'),
+        $income('87', 'Unapplied Cash Payment Income', 'UnappliedCashPaymentIncome'),
+        $income('30', 'Uncategorized Income', 'ServiceFeeIncome'),
+        $income('3', 'Old services', 'ServiceFeeIncome', ['Active' => false]),
+        $income('79', 'Sales of Product Income', 'SalesOfProductIncome'),
+        $income('52', 'Installation', 'ServiceFeeIncome', ['SubAccount' => true]),
+        $income('5', 'Fees Billed', 'ServiceFeeIncome'),
+        $income('45', 'Landscaping Services', 'OtherPrimaryIncome'),
     ];
 
     expect(QuickBooksClient::serviceIncomeAccount($accounts))->toBe('5')
@@ -597,7 +603,7 @@ test('a new fleetbase service item uses the service income account QuickBooks li
         }
         if (str_contains($url, 'from Account') === true) {
             return Http::response(['QueryResponse' => ['Account' => [
-                ['Id' => '85', 'Name' => 'Billable Expense Income', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true],
+                ['Id' => '85', 'Name' => 'Billable Expense Income', 'AccountSubType' => 'ServiceFeeIncome'],
                 ['Id' => '1', 'Name' => 'Services', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true],
             ]]], 200);
         }
@@ -606,5 +612,6 @@ test('a new fleetbase service item uses the service income account QuickBooks li
     });
 
     expect((new QuickBooksClient())->ensureServiceItem(clientConnection()))->toBe('12');
-    Http::assertSent(fn (Request $request) => $request->method() === 'POST' && $request['IncomeAccountRef'] === ['value' => '1']);
+    Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
+        && $request['IncomeAccountRef'] === ['value' => '1']);
 });

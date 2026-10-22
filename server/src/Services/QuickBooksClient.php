@@ -1021,8 +1021,8 @@ class QuickBooksClient
             return (string) $existing[0]['Id'];
         }
 
-        $income  = $this->query($connection, "select * from Account where AccountType = 'Income' maxresults 1000", 'Account');
-        $account = self::serviceIncomeAccount($income);
+        $query   = "select * from Account where AccountType = 'Income' maxresults 1000";
+        $account = self::serviceIncomeAccount($this->query($connection, $query, 'Account'));
         if ($account === null) {
             return '';
         }
