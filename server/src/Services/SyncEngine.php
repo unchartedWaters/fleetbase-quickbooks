@@ -210,6 +210,15 @@ class SyncEngine
     private ?array $taxCustomers = null;
 
     /**
+     * The currency of the invoice a customer is created for, by Fleetbase customer uuid. A
+     * QuickBooks customer's currency is fixed when it is created, so a customer first billed in
+     * a foreign currency is created in it.
+     *
+     * @var array<string, string>
+     */
+    private array $customerCreateCurrency = [];
+
+    /**
      * QuickBooks items read for the tax of an invoice block, by id, by company. Null is no such item.
      * Null outside a block.
      *
@@ -1481,6 +1490,7 @@ class SyncEngine
 
                 return 'skipped';
             }
+            $payload = $this->withCreateCurrency($ledger, $connection, $uuid, $payload);
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
                     'bId'       => 'customer:' . $uuid,
@@ -1880,7 +1890,8 @@ class SyncEngine
 
                 return 'failed';
             }
-            $customerOutcome = $this->syncCustomer($ledger, $connection, $customerUuid, $settings);
+            $currency        = (string) ($invoice['currency'] ?? '');
+            $customerOutcome = $this->syncCustomerFor($ledger, $connection, $customerUuid, $settings, $currency);
             if ($customerOutcome === 'failed') {
                 $this->lastError ??= 'quickbooks.messages.invoice-customer-failed';
 
@@ -4859,6 +4870,7 @@ class SyncEngine
                 continue;
             }
             if ($ledger->link($companyUuid, (string) $connection['realm_id'], 'customer', $customerUuid) === null) {
+                $this->customerCreateCurrency[$customerUuid] ??= (string) ($invoice['currency'] ?? '');
                 $needed[$customerUuid] = [
                     'company_uuid' => $companyUuid,
                     'local_type'   => 'customer',
@@ -4950,6 +4962,8 @@ class SyncEngine
             $this->taxCustomers         = null;
             $this->taxItems             = null;
             $this->rowNotes             = [];
+
+            $this->customerCreateCurrency = [];
         }
     }
 
@@ -6640,13 +6654,97 @@ class SyncEngine
     {
         $ref      = $payload['CurrencyRef'] ?? null;
         $currency = is_array($ref) === true ? (string) ($ref['value'] ?? '') : '';
-        $error    = $this->invoiceCurrencyError($ledger, $connection, $currency);
+        $error    = $this->invoiceCurrencyError($ledger, $connection, $currency)
+            ?? $this->customerCurrencyError($ledger, $connection, $payload, $currency);
         if ($error === null) {
             return false;
         }
         $this->lastError = $error;
 
         return true;
+    }
+
+    /**
+     * A QuickBooks customer has one currency, and QuickBooks refuses an invoice in another one.
+     * A home-currency invoice is checked against a customer already read in this run only, so it
+     * costs no extra read; a foreign-currency invoice reads its customer.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     */
+    private function customerCurrencyError(
+        SyncLedger $ledger,
+        array $connection,
+        array $payload,
+        string $currency,
+    ): ?string {
+        $currency    = strtoupper(trim($currency));
+        $ref         = $payload['CustomerRef'] ?? null;
+        $customerRef = is_array($ref) === true ? trim((string) ($ref['value'] ?? '')) : '';
+        if ($currency === '' || $customerRef === '') {
+            return null;
+        }
+        $customer = $this->taxCustomers[$customerRef] ?? null;
+        $customer = is_array($customer) === true ? $customer : null;
+        if ($customer === null && $currency !== $this->homeCurrency($ledger, $connection)) {
+            $customer = $this->taxCustomer($connection, $customerRef);
+        }
+        $held             = is_array($customer['CurrencyRef'] ?? null) === true ? $customer['CurrencyRef'] : [];
+        $customerCurrency = strtoupper(trim((string) ($held['value'] ?? '')));
+        if ($customerCurrency === '' || $customerCurrency === $currency) {
+            return null;
+        }
+
+        return Translation::encode('quickbooks.messages.invoice-customer-currency', [
+            'currency'          => $currency,
+            'customer_currency' => $customerCurrency,
+            'name'              => (string) ($customer['DisplayName'] ?? ''),
+        ]);
+    }
+
+    /**
+     * Sync an invoice's customer, created in the invoice currency if it does not exist yet.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $settings
+     */
+    private function syncCustomerFor(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $settings,
+        string $currency,
+    ): string {
+        $this->customerCreateCurrency[$uuid] = $currency;
+        try {
+            return $this->syncCustomer($ledger, $connection, $uuid, $settings);
+        } finally {
+            unset($this->customerCreateCurrency[$uuid]);
+        }
+    }
+
+    /**
+     * The create payload of a customer whose first invoice is in a foreign currency carries that
+     * currency, when QuickBooks multi-currency is on. Never sent on update: QuickBooks refuses a
+     * currency change.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    private function withCreateCurrency(SyncLedger $ledger, array $connection, string $uuid, array $payload): array
+    {
+        $currency = strtoupper(trim($this->customerCreateCurrency[$uuid] ?? ''));
+        if ($currency === '' || $currency === $this->homeCurrency($ledger, $connection)) {
+            return $payload;
+        }
+        if ($this->client->multiCurrencyEnabled($connection) === false) {
+            return $payload;
+        }
+        $payload['CurrencyRef'] = ['value' => $currency];
+
+        return $payload;
     }
 
     /**

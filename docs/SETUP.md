@@ -670,6 +670,11 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   another currency fails when it has no QuickBooks account yet and Fleetbase is
   Primary, whether or not multi-currency is on. With multi-currency on,
   QuickBooks applies its own exchange rate because no `ExchangeRate` is sent.
+  A QuickBooks customer has one currency, fixed when it is created. A customer
+  that Fleetbase creates takes the currency of the first invoice that creates
+  it. An invoice in another currency than its QuickBooks customer fails with a
+  message that names both currencies, and nothing is sent: QuickBooks needs a
+  separate customer for each currency.
   Invoices that were posted in the home currency by an earlier version stay
   aligned until a push is attempted. Earlier versions sent zero-decimal
   currency amounts (such as JPY) at 1/100; check those invoices in QuickBooks.
