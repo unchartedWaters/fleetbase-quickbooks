@@ -4967,9 +4967,10 @@ class SyncEngine
     /**
      * Applying a payment raises the SyncToken of the QuickBooks invoice it pays. Each invoice is
      * read again, so a payment Fleetbase sent does not look like a QuickBooks change of the
-     * invoice on the next sync; the token moves on by that one step only. Only QuickBooks Primary
-     * in two-way sync compares the token. A failed read keeps the older token: the next sync then
-     * lets QuickBooks win that invoice once.
+     * invoice on the next sync; the token moves on by that one step only, and only when the
+     * invoice read is still in sync: a payment that did not raise the token would otherwise hide
+     * a QuickBooks edit of that one step. Only QuickBooks Primary in two-way sync compares the
+     * token. A failed read keeps the older token: the next sync then lets QuickBooks win once.
      *
      * @param array<string, mixed>  $connection
      * @param array<string, string> $invoiceIds QuickBooks invoice ids by Fleetbase invoice uuid
@@ -4993,10 +4994,14 @@ class SyncEngine
         $company = (string) $connection['company_uuid'];
         $realm   = (string) $connection['realm_id'];
         foreach ($invoiceIds as $uuid => $id) {
+            $uuid   = (string) $uuid;
             $remote = $remotes[$id] ?? null;
-            $link   = $ledger->link($company, $realm, 'invoice', (string) $uuid);
-            if (is_array($remote) === true && $this->onePaymentLater($link, $remote) === true) {
-                $ledger->putLink($this->linkFrom($connection, 'invoice', (string) $uuid, 'Invoice', $remote));
+            $link   = $ledger->link($company, $realm, 'invoice', $uuid);
+            if (is_array($remote) === false || $this->onePaymentLater($link, $remote) === false) {
+                continue;
+            }
+            if ($this->invoiceInSync($ledger, $connection, $uuid, $remote, $settings, self::NO_STORED_LINES) === true) {
+                $ledger->putLink($this->linkFrom($connection, 'invoice', $uuid, 'Invoice', $remote));
                 $this->rememberWrittenInvoice($remote);
             }
         }

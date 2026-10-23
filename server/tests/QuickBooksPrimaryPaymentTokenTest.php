@@ -49,3 +49,28 @@ test('a payment batch that stops part way still keeps the invoice tokens of the 
         ->and($client->invoices['qb-1']['SyncToken'])->toBe('2')
         ->and(Primary::token($ledger, 'invoice', 'inv-1'))->toBe('2');
 });
+
+test('a quickbooks edit made while a payment is sent is kept when the payment leaves the invoice token', function () {
+    [$engine, $client, $ledger]   = Primary::linkedInvoice('1', ['status' => 'paid', 'amount_paid' => 1000]);
+    $client->paymentsBumpInvoices = false;
+    $client->beforeCreatePayment  = static function (FakeQuickBooks $fake): void {
+        $fake->invoices['qb-1']['DueDate']   = '2026-10-31';
+        $fake->invoices['qb-1']['SyncToken'] = (string) ((int) $fake->invoices['qb-1']['SyncToken'] + 1);
+    };
+    $settings = Primary::shippedSettings();
+    $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect(Primary::token($ledger, 'invoice', 'inv-1'))->toBe('1');
+
+    $client->beforeCreatePayment = null;
+    Primary::webhook($engine, $ledger, 'Invoice', 'qb-1');
+
+    expect($ledger->invoices['inv-1']['due_date'])->toBe('2026-10-31');
+
+    $ledger->invoices['inv-1'] = array_merge($ledger->invoices['inv-1'], Primary::withDetention());
+    Primary::runAgain($engine, $ledger, $settings, time() + 600);
+
+    expect($client->calls)->toContain('updateInvoice')
+        ->and($client->invoices['qb-1']['DueDate'])->toBe('2026-10-31')
+        ->and($ledger->invoices['inv-1']['due_date'])->toBe('2026-10-31');
+});
