@@ -1769,7 +1769,7 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
     [$sourceEngine, $sourceClient]    = qbEngine();
     $sourceLedger                     = engineLedger();
     $sourceLedger->wallets['wal-1']   = engineWallet('wal-1', ['description' => 'Keep']);
-    // Without a known baseline: QuickBooks wins only a whole record it changed since one.
+    // A first link copies QuickBooks, empties nothing, then sends what QuickBooks lacks.
     $sourceLedger->links[]            = array_merge(engineLink('wallet', 'wal-1', 'acct-9'), ['sync_token' => '']);
     $sourceClient->accounts['acct-9'] = [
         'Id'          => 'acct-9',
@@ -1786,10 +1786,11 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
         'wallet_conflict'  => 'quickbooks',
     ]), time());
 
-    expect($fromQuickBooks['aligned'])->toBe(1)
-        ->and($fromQuickBooks['updated'])->toBe(0)
+    expect($fromQuickBooks['aligned'])->toBe(0)
+        ->and($fromQuickBooks['updated'])->toBe(1)
         ->and($sourceLedger->wallets['wal-1']['description'])->toBe('Keep')
-        ->and($sourceClient->calls)->not->toContain('updateAccount');
+        ->and($sourceClient->accounts['acct-9']['Description'])->toBe('Keep')
+        ->and(array_count_values($sourceClient->calls)['updateAccount'] ?? 0)->toBe(1);
 
     [$inboundEngine, $inboundClient]   = qbEngine();
     $inboundLedger                     = engineLedger();

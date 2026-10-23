@@ -198,21 +198,19 @@ test('a due date quickbooks added is copied before the invoice token is stored',
     expect($ledger->invoices['inv-1']['due_date'])->toBe('2026-09-30');
 });
 
-test('a first link sends what fleetbase holds and quickbooks lacks on the next sync', function () {
+test('a first link copies quickbooks and sends what fleetbase holds and quickbooks lacks in the same run', function () {
     [$engine, $client, $ledger]           = Primary::linkedCustomer('', '3');
     $ledger->customers['cust-1']['notes'] = 'Back door';
     $ledger->pending[]                    = Primary::pending('customer', 'cust-1', 'reconcile');
 
     $engine->runScheduled($ledger, 'company-uuid', Primary::shippedSettings(), time());
 
-    expect($client->calls)->not->toContain('updateCustomer')
-        ->and($ledger->customers['cust-1']['phone'])->toBe('555-0000');
-
-    Primary::runAgain($engine, $ledger, Primary::shippedSettings(), time() + 120);
-
-    expect($client->calls)->toContain('updateCustomer')
+    expect(Primary::count($client, 'updateCustomer'))->toBe(1)
+        ->and($ledger->customers['cust-1']['phone'])->toBe('555-0000')
         ->and($client->customers['qbo-customer']['Notes'])->toBe('Back door')
-        ->and($client->customers['qbo-customer']['PrimaryPhone']['FreeFormNumber'])->toBe('555-0000');
+        ->and($client->customers['qbo-customer']['PrimaryPhone']['FreeFormNumber'])->toBe('555-0000')
+        ->and(array_column($ledger->attempts, 'outcome'))->toBe(['updated'])
+        ->and(Primary::token($ledger, 'customer', 'cust-1'))->toBe('4');
 });
 
 test('a customer renamed only in fleetbase takes the quickbooks name back', function () {
@@ -247,25 +245,17 @@ test('an invoice number still comes from quickbooks when quickbooks did not chan
         ->and($client->invoices['qb-1']['DocNumber'])->toBe('INV-1');
 });
 
-test('a first link keeps its row queued until what fleetbase holds and quickbooks lacks is sent', function () {
+test('a first link closes its row once what fleetbase holds and quickbooks lacks is sent', function () {
     [$engine, $client, $ledger]           = Primary::linkedCustomer('', '3', '555-0000', '555-0000');
     $ledger->customers['cust-1']['notes'] = 'Back door';
     $ledger->pending[]                    = Primary::pending('customer', 'cust-1', 'reconcile');
-    $settings                             = Primary::shippedSettings();
-    $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+    $engine->runScheduled($ledger, 'company-uuid', Primary::shippedSettings(), time());
 
-    expect($client->calls)->not->toContain('updateCustomer')
-        ->and(array_column($ledger->pending, 'status'))->toBe(['pending']);
-
-    $ledger->connections['company-uuid']['last_batch_at'] = null;
-    $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 120);
-
-    expect($client->calls)->toContain('updateCustomer')
-        ->and($client->customers['qbo-customer']['Notes'])->toBe('Back door')
+    expect($client->customers['qbo-customer']['Notes'])->toBe('Back door')
         ->and(array_column($ledger->pending, 'status'))->toBe(['done']);
 });
 
-test('a customer first matched by email keeps its row queued until its fleetbase notes are sent', function () {
+test('a customer first matched by email sends its fleetbase notes in the same run', function () {
     [$engine, $client]                 = qbEngine();
     $ledger                            = Primary::ledger();
     $ledger->customers['cust-1']       = Primary::customer(['notes' => 'Back door']);
@@ -275,13 +265,7 @@ test('a customer first matched by email keeps its row queued until its fleetbase
     $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
     expect(Primary::qboId($ledger, 'customer', 'cust-1'))->toBe('qbo-customer')
-        ->and($client->calls)->not->toContain('updateCustomer')
-        ->and(array_column($ledger->pending, 'status'))->toBe(['pending']);
-
-    $ledger->connections['company-uuid']['last_batch_at'] = null;
-    $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 120);
-
-    expect($client->customers['qbo-customer']['Notes'])->toBe('Back door')
+        ->and($client->customers['qbo-customer']['Notes'])->toBe('Back door')
         ->and(array_column($ledger->pending, 'status'))->toBe(['done']);
 });
 

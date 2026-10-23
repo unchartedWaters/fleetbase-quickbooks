@@ -27,6 +27,8 @@ test('payment invoice rows are looked up per company and results are unchanged',
             $table->string('name')->nullable();
             $table->string('state')->nullable();
             $table->text('invoice_tokens')->nullable();
+            $table->string('kept_customer')->nullable();
+            $table->string('kept_from')->nullable();
             $table->timestamps();
         });
         $now = now();

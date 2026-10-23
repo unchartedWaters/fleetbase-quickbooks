@@ -69,6 +69,8 @@ function dctSchema(Illuminate\Database\Schema\Builder $schema): void
         $table->string('name')->nullable();
         $table->string('state')->nullable();
         $table->text('invoice_tokens')->nullable();
+        $table->string('kept_customer')->nullable();
+        $table->string('kept_from')->nullable();
         $table->timestamps();
     });
     $schema->create('quickbooks_sync_attempts', function (Blueprint $table) {
@@ -1378,6 +1380,47 @@ test('linking a customer queues again its invoices that failed while it had no Q
             ->and($rows['pend-cust-a'])->toBe('done')
             ->and(array_filter($invoices, static fn (string $sql): bool => str_contains($sql, '"customer_uuid" in')))
             ->toBe([]);
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('linking a quickbooks customer queues the invoices kept on it, in any state', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        dctContact('cust-a', 'Ada');
+        dctContact('cust-b', 'Bea');
+        dctInvoice('inv-k', 'cust-b');
+        dctInvoice('inv-o', 'cust-b');
+        dctLinkRow('l-cust-b', 'customer', 'cust-b', 'Customer', '2');
+        dctLinkRow('l-inv-k', 'invoice', 'inv-k', 'Invoice', '10');
+        dctLinkRow('l-inv-o', 'invoice', 'inv-o', 'Invoice', '11');
+        DB::table('quickbooks_links')->where('uuid', 'l-inv-k')->update(['kept_customer' => '93']);
+        dctPendingRow('pend-cust-a', 'customer', 'cust-a');
+        dctPendingRow('pend-k', 'invoice', 'inv-k', 'done');
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->loadPending('company-uuid', 100, time())['ledger'];
+
+        $ledger->putLink([
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'local_type'   => 'customer',
+            'local_uuid'   => 'cust-a',
+            'qbo_entity'   => 'Customer',
+            'qbo_id'       => '93',
+            'sync_token'   => '0',
+        ]);
+        $ledger->updatePending('company-uuid', 'customer', 'cust-a', ['status' => 'done']);
+        $directory->save($ledger);
+
+        $open = DB::table('quickbooks_pending_syncs')
+            ->where('local_type', 'invoice')
+            ->where('status', 'pending')
+            ->pluck('reason', 'local_uuid')
+            ->all();
+
+        expect($open)->toBe(['inv-k' => 'customer-linked']);
     } finally {
         $restore();
     }

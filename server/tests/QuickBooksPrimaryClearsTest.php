@@ -146,15 +146,15 @@ test('an invoice note quickbooks emptied is emptied in fleetbase by the webhook'
         ->and(Primary::token($ledger, 'invoice', 'inv-1'))->toBe('2');
 });
 
-test('a quickbooks win that changed nothing in fleetbase is aligned, without the replaced note', function () {
+test('a first link that changed nothing sends what quickbooks lacks, without the replaced note', function () {
     [$engine, $client, $ledger]           = Primary::linkedCustomer('', '3', '555-0000', '555-0000');
     $ledger->customers['cust-1']['notes'] = 'Back door';
     $ledger->pending[]                    = Primary::pending('customer', 'cust-1');
 
     $engine->runScheduled($ledger, 'company-uuid', Primary::shippedSettings(), time());
 
-    expect(array_column($ledger->attempts, 'outcome'))->toBe(['aligned'])
+    expect(array_column($ledger->attempts, 'outcome'))->toBe(['updated'])
         ->and(Primary::notes($ledger))->toBe([])
         ->and($ledger->customers['cust-1']['notes'])->toBe('Back door')
-        ->and($client->calls)->not->toContain('updateCustomer');
+        ->and($client->customers['qbo-customer']['Notes'])->toBe('Back door');
 });

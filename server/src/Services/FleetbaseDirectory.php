@@ -118,6 +118,14 @@ class FleetbaseDirectory
     private array $linkedCustomers = [];
 
     /**
+     * The QuickBooks customers this save links a Fleetbase customer to, by company and realm.
+     * Invoices kept on one of them (kept_customer) are queued, so they follow it.
+     *
+     * @var array<string, array<string, array<int, string>>>
+     */
+    private array $linkedRemoteCustomers = [];
+
+    /**
      * Rows as loadLedger() read them, so save() writes only what the engine changed.
      *
      * @var array{connections: array<string, array<string, mixed>>, pending: array<string, array<string, mixed>>, customers: array<string, array<string, mixed>>, invoices: array<string, array<string, mixed>>, wallets: array<string, array<string, mixed>>, links: array<string, array<string, mixed>>}
@@ -459,12 +467,14 @@ class FleetbaseDirectory
         $loadedByUuid          = $this->loadedLinksByUuid();
         $linkFields            = [
             'company_uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_entity', 'qbo_id', 'sync_token',
-            'name', 'state', 'invoice_tokens',
+            'name', 'state', 'invoice_tokens', 'kept_customer',
+            'kept_from',
         ];
-        $freshLinks            = [];
-        $changedLinks          = [];
-        $identityReleases      = [];
-        $this->linkedCustomers = [];
+        $freshLinks                  = [];
+        $changedLinks                = [];
+        $identityReleases            = [];
+        $this->linkedCustomers       = [];
+        $this->linkedRemoteCustomers = [];
         foreach ($ledger->links as $link) {
             if (is_array($link) === false || isset($skipped[(string) ($link['company_uuid'] ?? '')]) === true) {
                 continue;
@@ -477,7 +487,7 @@ class FleetbaseDirectory
             }
             $relinked = is_array($loaded) === false || isset($changed['qbo_id']) === true;
             if (($link['local_type'] ?? '') === 'customer' && $relinked === true) {
-                $this->linkedCustomers[(string) $link['company_uuid']][] = (string) ($link['local_uuid'] ?? '');
+                $this->noteLinkedCustomer($link);
             }
             if (is_array($loaded) === true) {
                 $uuid = (string) ($loaded['uuid'] ?? '');
@@ -665,11 +675,27 @@ class FleetbaseDirectory
     }
 
     /**
+     * A customer link this save adds or points at another QuickBooks customer: its invoices are
+     * queued again (requeueInvoicesOfLinkedCustomers).
+     *
+     * @param array<string, mixed> $link
+     */
+    private function noteLinkedCustomer(array $link): void
+    {
+        $company = (string) ($link['company_uuid'] ?? '');
+        $realm   = (string) ($link['realm_id'] ?? '');
+
+        $this->linkedCustomers[$company][]               = (string) ($link['local_uuid'] ?? '');
+        $this->linkedRemoteCustomers[$company][$realm][] = (string) ($link['qbo_id'] ?? '');
+    }
+
+    /**
      * An invoice fails for good when its customer cannot be created in QuickBooks. Once that
      * customer is linked, its failed invoices are queued again, with their retries reset.
      */
     private function requeueInvoicesOfLinkedCustomers(): void
     {
+        $this->requeueInvoicesKeptOnLinkedCustomers();
         $class = 'Fleetbase\\Ledger\\Models\\Invoice';
         if ($this->linkedCustomers === [] || class_exists($class) === false) {
             return;
@@ -705,6 +731,34 @@ class FleetbaseDirectory
             }
         }
         $this->linkedCustomers = [];
+    }
+
+    /**
+     * An invoice QuickBooks moved to a QuickBooks customer no Fleetbase customer was linked to
+     * keeps that customer on its link. Once this save links it, the invoice is queued, so the
+     * next run moves it to the Fleetbase customer (SyncEngine::followKeptCustomer).
+     */
+    private function requeueInvoicesKeptOnLinkedCustomers(): void
+    {
+        foreach ($this->linkedRemoteCustomers as $companyUuid => $realms) {
+            foreach ($realms as $realm => $remoteIds) {
+                $remoteIds = array_values(array_unique(array_filter($remoteIds)));
+                foreach (array_chunk($remoteIds, 500) as $chunk) {
+                    $invoices = Link::query()
+                        ->where('company_uuid', $companyUuid)
+                        ->where('realm_id', $realm)
+                        ->where('local_type', 'invoice')
+                        ->whereIn('kept_customer', $chunk)
+                        ->pluck('local_uuid')
+                        ->map(static fn (mixed $uuid): string => (string) $uuid)
+                        ->all();
+                    if ($invoices !== []) {
+                        $this->reopenInvoices((string) $companyUuid, array_values(array_unique($invoices)));
+                    }
+                }
+            }
+        }
+        $this->linkedRemoteCustomers = [];
     }
 
     /**
@@ -5571,6 +5625,8 @@ class FleetbaseDirectory
                 'name'           => $link['name'] ?? null,
                 'state'          => $link['state'] ?? null,
                 'invoice_tokens' => $link['invoice_tokens'] ?? null,
+                'kept_customer'  => $link['kept_customer'] ?? null,
+                'kept_from'      => $link['kept_from'] ?? null,
                 'created_at'     => $now,
                 'updated_at'     => $now,
             ];
@@ -5626,6 +5682,8 @@ class FleetbaseDirectory
                     'name'           => $row['name'],
                     'state'          => $row['state'],
                     'invoice_tokens' => $row['invoice_tokens'],
+                    'kept_customer'  => $row['kept_customer'],
+                    'kept_from'      => $row['kept_from'],
                 ],
             ];
         }

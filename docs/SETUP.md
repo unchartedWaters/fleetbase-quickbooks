@@ -363,8 +363,11 @@ QuickBooks changes cannot be copied, and count as in sync once taken: an
 invoice moved to a QuickBooks customer that has no Fleetbase link keeps its
 Fleetbase customer, and Activity says so; a wallet that still holds money stays
 open when QuickBooks makes its account inactive. A later Fleetbase edit of that
-invoice or wallet is sent, keeps the QuickBooks customer and leaves the account
-inactive.
+invoice or wallet is sent and leaves the account inactive. It keeps the
+QuickBooks customer, unless the edit moves the invoice to another Fleetbase
+customer. Once Fleetbase links that QuickBooks customer, for example when the
+customer import brings it in, the invoice is queued and moves to the linked
+Fleetbase customer, so QuickBooks still wins.
 Identifiers still come from QuickBooks: customer names, invoice numbers and
 account numbers, so a customer renamed only in Fleetbase takes the QuickBooks
 name back on the next sync. QuickBooks decides tax, so a tax difference alone
@@ -372,8 +375,10 @@ is copied from QuickBooks. A record linked without a stored token, such as a
 customer matched by the customer import or a record moved by a QuickBooks
 merge, counts as changed in QuickBooks on its first sync.
 That sync copies the values QuickBooks holds and empties nothing in Fleetbase.
-When Fleetbase holds values QuickBooks lacks, the record stays queued, and the
-next run sends them.
+When Fleetbase holds values QuickBooks lacks, the same run sends them once the
+other records are done. If that cannot happen, for example because QuickBooks
+changed the record again, the record stays queued for the next run, and a
+QuickBooks change to it is copied without emptying anything in Fleetbase.
 
 Sync frequency is the schedule. It is separate from each entity switch. There is
 no Enable schedule control, and a stored `enabled` flag does not stop the

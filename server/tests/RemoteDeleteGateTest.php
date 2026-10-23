@@ -61,6 +61,8 @@ function rdgDeliver(
             $table->string('name')->nullable();
             $table->string('state')->nullable();
             $table->text('invoice_tokens')->nullable();
+            $table->string('kept_customer')->nullable();
+            $table->string('kept_from')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
