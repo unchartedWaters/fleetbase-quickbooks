@@ -110,6 +110,41 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.false(this.disconnected);
     });
 
+    test('connect stays off for a first connection the user cannot make', async function (assert) {
+        class OperatorAbilitiesStubService extends Service {
+            can(permission) {
+                return permission === 'quickbooks connect connection' || permission === 'quickbooks disconnect connection';
+            }
+        }
+
+        this.owner.register('service:abilities', OperatorAbilitiesStubService);
+        this.set('connection', null);
+        this.set('canConnectNew', false);
+        this.set('connected', false);
+        this.set('onConnect', () => this.set('connected', true));
+
+        await render(
+            hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @canConnectNew={{this.canConnectNew}} @onConnect={{this.onConnect}} />`
+        );
+
+        assert.dom('[data-test-connect]').isDisabled();
+        assert
+            .dom('[data-test-disconnected]')
+            .hasText("Not connected. A QuickBooks Administrator must make this organization's first connection to QuickBooks. After that, you can connect again to the same company.");
+        assert.dom('[data-test-first-connect-denied]').exists();
+        await click('[data-test-connect]');
+        assert.false(this.connected);
+
+        this.set('connection', { realm_id: '123', needs_reauth: true });
+        assert.dom('[data-test-connect]').isNotDisabled('reconnecting the same company stays open');
+        assert.dom('[data-test-first-connect-denied]').doesNotExist();
+
+        this.set('connection', null);
+        this.set('canConnectNew', true);
+        assert.dom('[data-test-connect]').isNotDisabled();
+        assert.dom('[data-test-disconnected]').includesText('Choose Connect to QuickBooks');
+    });
+
     test('missing credentials explain the admin step before a missing connect permission', async function (assert) {
         class DeniedAbilitiesStubService extends Service {
             can() {

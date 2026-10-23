@@ -20,6 +20,8 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     @tracked connection = undefined;
     @tracked connectionLoadFailed = false;
     @tracked connectionLoading = true;
+    // False when only a QuickBooks Administrator may make this organization's first connection.
+    @tracked canConnectNew = true;
     @tracked settingsLoadFailed = false;
     @tracked settingsLoaded = false;
     @tracked canEdit = false;
@@ -58,6 +60,7 @@ export default class QuickbooksCompanySettingsComponent extends Component {
         try {
             const result = await this.fetch.get('connection', { company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
             this.connection = result?.connection ?? null;
+            this.canConnectNew = result?.can_connect_new !== false;
             this.connectionLoadFailed = false;
         } catch (error) {
             this.connection = null;

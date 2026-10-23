@@ -51,10 +51,12 @@ class ConnectionController extends QuickbooksController
     public function show(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks view connection', $request);
-        $connection = $this->latestConnection($this->companyUuid($request));
+        $companyUuid = $this->companyUuid($request);
+        $connection  = $this->latestConnection($companyUuid);
 
         return response()->json([
-            'connection' => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
+            'connection'      => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
+            'can_connect_new' => $this->mayConnectFirst($request, $companyUuid),
         ]);
     }
 
@@ -219,6 +221,9 @@ class ConnectionController extends QuickbooksController
     {
         $this->authorizeQuickbooks('quickbooks connect connection', $request);
         $companyUuid = $this->companyUuid($request);
+        if ($this->mayConnectFirst($request, $companyUuid) === false) {
+            return response()->json(['message' => Translation::get(OAuthFlow::CHANGE_COMPANY_MESSAGE)], 403);
+        }
         $credentials = $this->credentials($companyUuid);
         if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '') {
             return response()->json([
@@ -495,6 +500,16 @@ class ConnectionController extends QuickbooksController
         $lastRealm = $this->lastRealm($companyUuid);
 
         return $lastRealm !== null && $lastRealm === $realmId;
+    }
+
+    /**
+     * An organization that never connected can only connect a new company, which needs change-company.
+     * complete() still checks the company picked at Intuit.
+     */
+    private function mayConnectFirst(Request $request, string $companyUuid): bool
+    {
+        return $this->authorizer->can('quickbooks change-company connection', $request) === true
+            || $this->lastRealm($companyUuid) !== null;
     }
 
     /**

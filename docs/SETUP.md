@@ -295,7 +295,9 @@ settings; for a connection made before this was remembered, the realm on its
 kept links). Connecting a different company, or a
 first connection, needs `quickbooks change-company connection`, which the
 Administrator gets from `quickbooks * connection`. Otherwise finishing the
-connection returns HTTP 403, and nothing is saved or queued. On an existing
+connection returns HTTP 403, and nothing is saved or queued. For a first
+connection, Connect is turned off on QuickBooks Setup with a note, and
+`oauth/start` answers HTTP 403 before Intuit sign-in. On an existing
 install, run `php artisan fleetbase:create-permissions` so the new permission
 exists; the Administrator's wildcard already covers it. Global settings
 (Admin → QuickBooks → Settings) need an installation administrator; no role

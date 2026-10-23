@@ -1,5 +1,6 @@
 <?php
 
+use Fleetbase\Quickbooks\Auth\Schemas\Quickbooks;
 use Fleetbase\Quickbooks\Http\Controllers\ConnectionController;
 use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Models\PendingSync;
@@ -82,10 +83,10 @@ function revokeWithDatabase(callable $work): void
     }
 }
 
-function revokeController(MemorySettingsStore $store): ConnectionController
+function revokeController(MemorySettingsStore $store, ?Authorizer $authorizer = null): ConnectionController
 {
     return new ConnectionController(
-        new Authorizer(static fn () => true),
+        $authorizer ?? new Authorizer(static fn () => true),
         new OAuthFlow(new QuickBooksClient()),
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
         $store,
@@ -353,5 +354,26 @@ test('after a disconnect an operator may reconnect only the company the organiza
         $controller->disconnect(Request::create('/disconnect', 'POST'));
 
         expect($controller->realmFor('company-uuid'))->toBe('9341453000000005');
+    });
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('connection show tells an operator whether it may make a first connection', function () {
+    revokeWithDatabase(function () {
+        $operator   = (new Quickbooks())->policies[1]['permissions'];
+        $authorizer = new Authorizer(static fn (string $permission): bool => in_array($permission, $operator, true));
+        session(['company' => 'company-uuid']);
+        $show = static fn (?Authorizer $authorizer = null): array => revokeController(revokeStore(), $authorizer)
+            ->show(Request::create('/connection', 'GET'))
+            ->getData(true);
+
+        $neverConnected = $show($authorizer);
+        $administrator  = $show();
+        revokeSeed();
+        $connected = $show($authorizer);
+
+        expect($neverConnected)->toBe(['connection' => null, 'can_connect_new' => false])
+            ->and($administrator['can_connect_new'])->toBeTrue()
+            ->and($connected['can_connect_new'])->toBeTrue()
+            ->and($connected['connection']['realm_id'])->toBe('9341453000000001');
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');

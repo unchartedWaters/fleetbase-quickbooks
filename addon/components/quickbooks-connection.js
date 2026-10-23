@@ -97,6 +97,11 @@ export default class QuickbooksConnectionComponent extends Component {
         return !this.isLoading && !this.loadFailed && !this.isConnected && this.isConfigured && !canConnect(this.abilities);
     }
 
+    // Only a QuickBooks Administrator may make an organization's first connection; the server says so with can_connect_new.
+    get firstConnectDenied() {
+        return !this.isLoading && !this.loadFailed && !this.isConnected && !this.needsReauth && this.isConfigured && canConnect(this.abilities) && this.args.canConnectNew === false;
+    }
+
     // A saved realm can be removed, including one that needs to be connected again. The button is off only for permission.
     get disconnectPermissionDenied() {
         return (this.isConnected || this.needsReauth) && !canDisconnect(this.abilities);
@@ -110,6 +115,9 @@ export default class QuickbooksConnectionComponent extends Component {
     // An active connection stays in the row and does not start a second sign-in.
     get connectDisabled() {
         if (this.busy || this.isLoading || this.loadFailed || this.isConnected || !canConnect(this.abilities)) {
+            return true;
+        }
+        if (this.args.canConnectNew === false && !this.needsReauth) {
             return true;
         }
 

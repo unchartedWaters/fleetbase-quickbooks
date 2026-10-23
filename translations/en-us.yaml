@@ -20,6 +20,7 @@ quickbooks:
     disconnected-status: Not connected. Choose Connect to QuickBooks. Fleetbase then syncs customers, invoices, payments, and wallets with QuickBooks Online.
     disconnected-no-permission: Not connected. You do not have permission to connect QuickBooks. Fleetbase syncs customers, invoices, payments, and wallets with QuickBooks Online after QuickBooks is connected.
     disconnected-unknown: Not connected.
+    disconnected-first-connect: Not connected. A QuickBooks Administrator must make this organization's first connection to QuickBooks. After that, you can connect again to the same company.
     disconnected-save-first: Not connected. An installation administrator must enter the QuickBooks credentials in Admin → QuickBooks → Settings before you can connect.
     disconnect: Disconnect
     disconnect-denied: You do not have permission to disconnect QuickBooks.

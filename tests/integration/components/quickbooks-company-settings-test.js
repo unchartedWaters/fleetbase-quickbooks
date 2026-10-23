@@ -137,6 +137,16 @@ class DisconnectedFetchStubService extends FetchStubService {
     }
 }
 
+class FirstConnectionFetchStubService extends DisconnectedFetchStubService {
+    async get(path) {
+        if (path === 'connection') {
+            return { connection: null, can_connect_new: false };
+        }
+
+        return super.get(path);
+    }
+}
+
 class SettingsLoadFailedFetchStubService extends FetchStubService {
     async get(path) {
         if (path === 'settings') {
@@ -264,6 +274,18 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-import]').doesNotExist();
         await click('[data-test-connect]');
         assert.deepEqual(this.notifications.messages.at(-1), ['error', 'Configure QuickBooks Client ID, Client secret, and Redirect URI before connecting.']);
+    });
+
+    test('connect is off when the server says only an administrator can make the first connection', async function (assert) {
+        this.owner.register('service:fetch', FirstConnectionFetchStubService);
+        const fetch = this.owner.lookup('service:fetch');
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        assert.dom('[data-test-connect]').isDisabled();
+        assert.dom('[data-test-first-connect-denied]').exists();
+        await click('[data-test-connect]');
+        assert.deepEqual(fetch.postCalls, []);
     });
 
     test('the connection screen stays loading until the connection request finishes', async function (assert) {
