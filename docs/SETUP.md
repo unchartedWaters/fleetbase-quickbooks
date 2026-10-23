@@ -477,10 +477,18 @@ refreshes the token. If that refresh fails for now, it is tried again an hour
 later.
 
 **Sync now** is on QuickBooks Setup. It uses the pending queue and does not load
-the whole organization. It processes one pending page and does not drain the
-rest of the queue. Leftover rows wait for the schedule above. Drain is chained
-from a finished reconcile, and from a finished drain that still has due rows.
-Sync now does not chain it. Reconcile is not a control on this screen. It covers
+the whole organization. It processes one pending page. When that page was full
+and rows are still due, it queues a drain, which works through the rest of the
+queue a page at a time. Drain is chained from a finished reconcile, from a
+finished Sync now that filled its page, and from a finished drain that still has
+due rows. A scheduled run does not chain it.
+
+Each page takes edits made in Fleetbase or QuickBooks first, then the reconcile
+and catalog backlog. Within each, rows not tried yet come before rows waiting to
+retry. A day-to-day edit therefore does not wait behind a large backlog after
+you connect or turn an entity on.
+
+Reconcile is not a control on this screen. It covers
 invoices already in this Fleetbase organization: a local non-draft invoice, or a
 `quickbooks_links` row for this organization whose local type is invoice. It
 does not list every invoice in the QuickBooks company.

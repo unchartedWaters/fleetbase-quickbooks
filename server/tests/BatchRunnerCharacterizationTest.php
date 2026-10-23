@@ -616,6 +616,21 @@ test('a scheduled run started early by a full update batch skips the interval wa
         ->and(brcDispatched($run['dispatcher']))->toBe([]);
 });
 
+test('a now run that fills its batch dispatches a drain', function () {
+    $uuids = [];
+    for ($index = 1; $index <= 150; $index++) {
+        $uuids[] = 'cust-' . str_pad((string) $index, 3, '0', STR_PAD_LEFT);
+    }
+    $built = brcRunner([], $uuids, ['batch_size' => 100]);
+
+    $run = brcRun($built['runner'], 'now');
+
+    expect($run['result']['status'])->toBe('finished')
+        ->and($built['engine']->calls)->toBe(['runScheduled:force:interval'])
+        ->and(brcDispatched($run['dispatcher']))->toBe(['batch:drain'])
+        ->and($run['dispatcher']->heldAtDispatch)->toBe([false]);
+});
+
 test('a scheduled run with only the catalog due runs one catalog page and does not queue another catalog', function () {
     $built = brcRunner(['last_batch_at' => time(), 'last_customer_catalog_at' => null], [], ['batch_size' => 5], null, ['c-1', 'c-2']);
 

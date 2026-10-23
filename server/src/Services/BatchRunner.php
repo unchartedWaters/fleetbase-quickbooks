@@ -188,6 +188,7 @@ class BatchRunner
         $ledger                            = $loaded['ledger'];
         $ledger->connections[$companyUuid] = $connection;
         $batchesBefore                     = count($ledger->batches);
+        $fullBatch                         = count($ledger->pending) >= (int) $resolved['batch_size'];
         $state['ledger']                   = $ledger;
         $state['save']                     = true;
         // The size trigger already decided this scheduled run may start early.
@@ -202,7 +203,10 @@ class BatchRunner
         $state['save']     = (($batch['status'] ?? null) === 'skipped' && $nothingRecorded === true) === false;
         // A run stopped by a token refresh that failed for now is not followed up at once:
         // each follow-up would try the refresh again for one row. The schedule retries it.
-        $state['follow_up'] = in_array($trigger, ['manual', 'drain'], true) === true
+        // Sync now that filled its batch chains drains too, so a backlog does not wait for the schedule.
+        $chains             = in_array($trigger, ['manual', 'drain'], true) === true
+            || ($trigger === 'now' && $fullBatch === true);
+        $state['follow_up'] = $chains === true
             && ($batch['status'] ?? '') === 'finished'
             && $this->engine->refreshFailed($companyUuid) === false;
 

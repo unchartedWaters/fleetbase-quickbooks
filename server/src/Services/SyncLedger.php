@@ -382,6 +382,9 @@ class SyncLedger
     }
 
     /**
+     * Due rows in the order FleetbaseDirectory loads them: edits before the reconcile backlog,
+     * then rows never tried before rows waiting out a backoff, then by due time.
+     *
      * @return array<int, Pending>
      */
     public function duePending(string $companyUuid, int $limit, int $now): array
@@ -396,12 +399,36 @@ class SyncLedger
                 continue;
             }
             $rows[] = $row;
-            if (count($rows) >= $limit) {
-                break;
-            }
+        }
+        usort($rows, static fn (array $left, array $right): int => self::dueOrder($left) <=> self::dueOrder($right));
+
+        return array_slice($rows, 0, max(1, $limit));
+    }
+
+    /**
+     * 0 for an edit made in Fleetbase or QuickBooks, 1 for a reconcile or catalog row.
+     *
+     * @param Pending $row
+     */
+    public static function pendingPriority(array $row): int
+    {
+        if (isset($row['priority']) === true && is_numeric($row['priority']) === true) {
+            return (int) $row['priority'];
         }
 
-        return $rows;
+        return ($row['reason'] ?? null) === 'reconcile' ? 1 : 0;
+    }
+
+    /**
+     * @param Pending $row
+     *
+     * @return array{0: int, 1: int, 2: int}
+     */
+    private static function dueOrder(array $row): array
+    {
+        $next = $row['next_attempt_at'] ?? null;
+
+        return [self::pendingPriority($row), $next === null ? 0 : 1, $next === null ? 0 : (int) $next];
     }
 
     /**
