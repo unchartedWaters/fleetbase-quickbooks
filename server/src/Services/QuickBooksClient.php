@@ -25,6 +25,14 @@ class QuickBooksClient
     /** Held per QuickBooks company while invoice numbers are chosen, so two runs never pick the same ones. */
     private const DOC_NUMBER_LOCK = 'quickbooks.docnumber.';
 
+    /**
+     * Longer than the slowest choice, so the lock never lapses while numbers are chosen. The
+     * choice makes at most six requests (the latest-invoice query and five single checks; a
+     * block of up to 100 creates checks in one Batch call), each up to Laravel's default 30 s
+     * timeout. The lock is released at once when the choice ends.
+     */
+    private const DOC_NUMBER_LOCK_SECONDS = 240;
+
     /** The last invoice number handed out per QuickBooks company, for creates that have not landed yet. */
     private const DOC_NUMBER_FLOOR = 'quickbooks.docnumber-last.';
 
@@ -353,7 +361,7 @@ class QuickBooksClient
         // realm lock and the floor keep a second run from picking numbers the first has not written.
         $realmId = (string) ($connection['realm_id'] ?? '');
         try {
-            $lock = Cache::lock(self::DOC_NUMBER_LOCK . $realmId, 30);
+            $lock = Cache::lock(self::DOC_NUMBER_LOCK . $realmId, self::DOC_NUMBER_LOCK_SECONDS);
             $lock->block($this->docNumberLockWait);
         } catch (LockTimeoutException) {
             // The creates fail with invoice-number-unconfirmed and are retried later.

@@ -515,6 +515,36 @@ test('invoice numbers are not reserved while another run holds the realm number 
     Http::assertNothingSent();
 });
 
+test('the realm number lock outlives the slowest choice of an invoice number', function () {
+    // Each request takes Laravel's default 30 s timeout, and every candidate is taken: the
+    // latest-invoice query plus five checks. Another run must not take the lock meanwhile.
+    $lockFree = [];
+    Http::fake(function (Request $request) use (&$lockFree) {
+        Illuminate\Support\Carbon::setTestNow(Illuminate\Support\Carbon::now()->addSeconds(30));
+        $probe      = Cache::lock('quickbooks.docnumber.realm-1', 30);
+        $lockFree[] = $probe->get();
+        if (end($lockFree) === true) {
+            $probe->release();
+        }
+        $url = urldecode($request->url());
+        if (str_contains($url, 'orderby MetaData.CreateTime') === true) {
+            return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1000']]]], 200);
+        }
+        preg_match("/DocNumber = '([^']+)'/", $url, $match);
+
+        return Http::response(['QueryResponse' => ['Invoice' => [['Id' => 'taken', 'DocNumber' => $match[1]]]]], 200);
+    });
+
+    try {
+        $numbers = (new QuickBooksClient())->nextInvoiceDocNumbers(clientConnection(), 1);
+    } finally {
+        Illuminate\Support\Carbon::setTestNow();
+    }
+
+    expect($numbers)->toBe([])
+        ->and($lockFree)->toBe([false, false, false, false, false, false]);
+});
+
 test('update writes are chunked at 20 and other batch calls stay at 30', function () {
     $updates = [];
     for ($i = 1; $i <= 21; $i++) {
