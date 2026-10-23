@@ -671,6 +671,9 @@ balance out first if the wallet should close.
 Deletes made in Fleetbase also reach QuickBooks when the type's direction sends
 to QuickBooks. A deleted Fleetbase customer or wallet makes its linked
 QuickBooks customer or account inactive (QuickBooks does not delete them). A
+deleted customer whose QuickBooks balance is not zero is left active, so its
+open balance is not written off; the Activity row says why. Settle or move
+the balance in QuickBooks, then make the customer inactive there. A
 line item deleted from a Fleetbase invoice is removed from the QuickBooks
 invoice on the next sync, and lines added in QuickBooks stay. The QuickBooks
 line id of each item is kept in the item's `meta` column. An invoice synced
@@ -706,6 +709,11 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   another currency fails when it has no QuickBooks account yet and Fleetbase is
   Primary, whether or not multi-currency is on. With multi-currency on,
   QuickBooks applies its own exchange rate because no `ExchangeRate` is sent.
+  A QuickBooks customer has one currency, fixed when it is created. A customer
+  that Fleetbase creates takes the currency of the first invoice that creates
+  it. An invoice in another currency than its QuickBooks customer fails with a
+  message that names both currencies, and nothing is sent: QuickBooks needs a
+  separate customer for each currency.
   Invoices that were posted in the home currency by an earlier version stay
   aligned until a push is attempted. Earlier versions sent zero-decimal
   currency amounts (such as JPY) at 1/100; check those invoices in QuickBooks.

@@ -694,3 +694,42 @@ test('an inactive quickbooks account closes a wallet whose balance is zero', fun
 
     expect($ledger->wallets['wal-1']['status'])->toBe('closed');
 });
+
+test('a wallet name and description are cut to what QuickBooks accepts, and the compare stays stable', function () {
+    $mapper  = new WalletMapper();
+    $wallet  = [
+        'public_id'   => 'wallet_fuel01',
+        'name'        => 'Fuel: Region "North"',
+        'description' => str_repeat('d', 150),
+        'currency'    => 'USD',
+        'status'      => 'active',
+    ];
+    $payload = $mapper->toQuickBooks($wallet);
+    $remote  = [
+        'Name'        => $payload['Name'],
+        'Description' => $payload['Description'],
+        'CurrencyRef' => ['value' => 'USD'],
+        'Active'      => true,
+    ];
+    $long = $mapper->toQuickBooks(['name' => str_repeat('n', 120) . ':x']);
+
+    expect($payload['Name'])->toBe('Fuel Region North')
+        ->and(mb_strlen($payload['Description']))->toBe(100)
+        ->and($mapper->matches($wallet, $payload, $remote))->toBeTrue()
+        ->and($mapper->nameFromQuickBooks($wallet, 'Fuel Region North'))->toBe('Fuel: Region "North"')
+        ->and(mb_strlen($long['Name']))->toBe(WalletMapper::NAME_MAX_LENGTH);
+});
+
+test('invoice and customer notes are cut to the QuickBooks limits', function () {
+    $invoice  = (new InvoiceMapper())->toQuickBooks([
+        'uuid'     => 'inv-1',
+        'number'   => 'INV-1',
+        'currency' => 'USD',
+        'notes'    => str_repeat('i', 4001),
+        'items'    => [],
+    ], '7', 'item-1');
+    $customer = (new CustomerMapper())->toQuickBooks(['name' => 'Ada', 'notes' => str_repeat('c', 2001)]);
+
+    expect(mb_strlen($invoice['PrivateNote']))->toBe(4000)
+        ->and(mb_strlen($customer['Notes']))->toBe(2000);
+});

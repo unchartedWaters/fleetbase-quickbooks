@@ -11,6 +11,7 @@ use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\ReservedDocNumbers;
 use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 
@@ -207,6 +208,15 @@ class SyncEngine
      * @var array<string, array<string, mixed>|string|null>|null
      */
     private ?array $taxCustomers = null;
+
+    /**
+     * The currency of the invoice a customer is created for, by Fleetbase customer uuid. A
+     * QuickBooks customer's currency is fixed when it is created, so a customer first billed in
+     * a foreign currency is created in it.
+     *
+     * @var array<string, string>
+     */
+    private array $customerCreateCurrency = [];
 
     /**
      * QuickBooks items read for the tax of an invoice block, by id, by company. Null is no such item.
@@ -1508,6 +1518,7 @@ class SyncEngine
 
                 return 'skipped';
             }
+            $payload = $this->withCreateCurrency($ledger, $connection, $uuid, $payload);
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
                     'bId'       => 'customer:' . $uuid,
@@ -1627,8 +1638,42 @@ class SyncEngine
         if ($remote === null || (array_key_exists('Active', $remote) === true && $remote['Active'] === false)) {
             return 'aligned';
         }
+        if ($kind === 'customer' && $this->keepsOpenBalance($uuid, $remote) === true) {
+            return 'skipped';
+        }
 
         return $this->writeInactive($ledger, $connection, $kind, $uuid, $remote);
+    }
+
+    /**
+     * Making a customer with an open balance inactive can write that balance off in QuickBooks
+     * (its own screens add a credit memo), so a deleted Fleetbase customer whose QuickBooks
+     * balance is not zero stays active, and the row says why.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function keepsOpenBalance(string $uuid, array $remote): bool
+    {
+        $ref      = $remote['CurrencyRef'] ?? null;
+        $currency = is_array($ref) === true ? (string) ($ref['value'] ?? '') : '';
+        $balance  = $remote['BalanceWithJobs'] ?? $remote['Balance'] ?? '0';
+        try {
+            $minor = Amounts::toMinorUnits(is_int($balance) === true ? $balance : (string) $balance, $currency);
+        } catch (\Throwable) {
+            // An amount that cannot be read is not taken as zero: the customer stays active.
+            $minor = 1;
+        }
+        if ($minor === 0) {
+            return false;
+        }
+        $note = Translation::encode('quickbooks.messages.customer-inactive-open-balance', [
+            'name'   => (string) ($remote['DisplayName'] ?? ''),
+            'amount' => Amounts::centsToDecimal($minor, $currency),
+        ]);
+        $this->closeSkipped                  = true;
+        $this->rowNotes['customer:' . $uuid] = $note;
+
+        return true;
     }
 
     /**
@@ -1907,7 +1952,8 @@ class SyncEngine
 
                 return 'failed';
             }
-            $customerOutcome = $this->syncCustomer($ledger, $connection, $customerUuid, $settings);
+            $currency        = (string) ($invoice['currency'] ?? '');
+            $customerOutcome = $this->syncCustomerFor($ledger, $connection, $customerUuid, $settings, $currency);
             if ($customerOutcome === 'failed') {
                 $this->lastError ??= 'quickbooks.messages.invoice-customer-failed';
 
@@ -1966,6 +2012,9 @@ class SyncEngine
                     $this->invoiceById[$matchedId] = $existing;
                 }
             }
+        }
+        if ($link === null && $voided === false && $reference === 'quickbooks') {
+            $link = $this->claimReservedInvoice($ledger, $connection, $uuid, (string) $customerLink['qbo_id']);
         }
 
         if ($voided === true) {
@@ -2038,6 +2087,7 @@ class SyncEngine
                     return 'failed';
                 }
                 $payload['DocNumber'] = $next;
+                ReservedDocNumbers::remember((string) $connection['realm_id'], $uuid, $next);
             }
             if ($this->rejectLongDocNumber($payload) === true) {
                 return 'failed';
@@ -3072,7 +3122,7 @@ class SyncEngine
             $other[$localKey] = (string) ($remote[$remoteKey] ?? '');
         }
         if ($pushClears === true || array_key_exists('PrivateNote', $remote) === true) {
-            $local['notes'] = (string) ($invoice['notes'] ?? '');
+            $local['notes'] = InvoiceMapper::privateNote((string) ($invoice['notes'] ?? ''));
             $other['notes'] = (string) ($remote['PrivateNote'] ?? '');
         }
         if ($pushClears === true) {
@@ -3570,6 +3620,47 @@ class SyncEngine
         $ledger->rememberInvoice($uuid, $ledger->invoices[$uuid]);
 
         return true;
+    }
+
+    /**
+     * The invoice an earlier create of this Fleetbase invoice saved under the number reserved for
+     * it, when the answer to that create was lost. It is linked instead of created a second time.
+     * An invoice under that number for another customer, or linked to another Fleetbase invoice,
+     * is not this one's.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    private function claimReservedInvoice(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        string $customerId,
+    ): ?array {
+        $realmId = (string) $connection['realm_id'];
+        $number  = ReservedDocNumbers::recall($realmId, $uuid);
+        if ($number === null) {
+            return null;
+        }
+        $existing = $this->client->findInvoiceByDocNumber($connection, $number);
+        if (is_array($existing) === false) {
+            return null;
+        }
+        $id = trim((string) ($existing['Id'] ?? ''));
+        if (
+            $id === ''
+            || $this->invoiceCustomerMatches($existing, $customerId) === false
+            || $ledger->remoteIdsLinked($realmId, 'Invoice', [$id], $uuid) !== []
+        ) {
+            return null;
+        }
+        $ledger->putLink($this->linkFrom($connection, 'invoice', $uuid, 'Invoice', $existing));
+        if ($this->invoiceById !== null) {
+            $this->invoiceById[$id] = $existing;
+        }
+
+        return $ledger->link((string) $connection['company_uuid'], $realmId, 'invoice', $uuid);
     }
 
     /**
@@ -4780,11 +4871,16 @@ class SyncEngine
         $companyUuid = (string) $connection['company_uuid'];
         $retryError  = null;
         try {
-            $outcome = match ($row['local_type']) {
-                'customer' => $this->syncCustomer($ledger, $connection, (string) $row['local_uuid'], $settings),
-                'wallet'   => $this->syncWallet($ledger, $connection, (string) $row['local_uuid'], $settings),
-                default    => $this->syncInvoice($ledger, $connection, (string) $row['local_uuid'], $settings),
-            };
+            // Every write of this row carries a requestid named for the row, so a retried create whose
+            // first answer was lost is applied once by QuickBooks. Nested writes share the key.
+            $outcome = $this->client->withWriteKey(
+                $row['local_type'] . ':' . $row['local_uuid'],
+                fn (): string => match ($row['local_type']) {
+                    'customer' => $this->syncCustomer($ledger, $connection, (string) $row['local_uuid'], $settings),
+                    'wallet'   => $this->syncWallet($ledger, $connection, (string) $row['local_uuid'], $settings),
+                    default    => $this->syncInvoice($ledger, $connection, (string) $row['local_uuid'], $settings),
+                }
+            );
         } catch (\Throwable $exception) {
             $this->lastError = null;
             if ($exception instanceof QuickBooksException && $exception->isUnauthorized() === true) {
@@ -4909,6 +5005,7 @@ class SyncEngine
                 continue;
             }
             if ($ledger->link($companyUuid, (string) $connection['realm_id'], 'customer', $customerUuid) === null) {
+                $this->customerCreateCurrency[$customerUuid] ??= (string) ($invoice['currency'] ?? '');
                 $needed[$customerUuid] = [
                     'company_uuid' => $companyUuid,
                     'local_type'   => 'customer',
@@ -4923,7 +5020,10 @@ class SyncEngine
         } elseif (count($needed) === 1) {
             $only = array_key_first($needed);
             try {
-                $customerOutcome = $this->syncCustomer($ledger, $connection, (string) $only, $settings);
+                $customerOutcome = $this->client->withWriteKey(
+                    'customer:' . $only,
+                    fn (): string => $this->syncCustomer($ledger, $connection, (string) $only, $settings)
+                );
             } catch (QuickBooksException $exception) {
                 if ($exception->isUnauthorized() === true) {
                     $this->tokenRejected($ledger, $companyUuid);
@@ -4997,6 +5097,8 @@ class SyncEngine
             $this->taxCustomers         = null;
             $this->taxItems             = null;
             $this->rowNotes             = [];
+
+            $this->customerCreateCurrency = [];
         }
     }
 
@@ -6676,13 +6778,97 @@ class SyncEngine
     {
         $ref      = $payload['CurrencyRef'] ?? null;
         $currency = is_array($ref) === true ? (string) ($ref['value'] ?? '') : '';
-        $error    = $this->invoiceCurrencyError($ledger, $connection, $currency);
+        $error    = $this->invoiceCurrencyError($ledger, $connection, $currency)
+            ?? $this->customerCurrencyError($ledger, $connection, $payload, $currency);
         if ($error === null) {
             return false;
         }
         $this->lastError = $error;
 
         return true;
+    }
+
+    /**
+     * A QuickBooks customer has one currency, and QuickBooks refuses an invoice in another one.
+     * A home-currency invoice is checked against a customer already read in this run only, so it
+     * costs no extra read; a foreign-currency invoice reads its customer.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     */
+    private function customerCurrencyError(
+        SyncLedger $ledger,
+        array $connection,
+        array $payload,
+        string $currency,
+    ): ?string {
+        $currency    = strtoupper(trim($currency));
+        $ref         = $payload['CustomerRef'] ?? null;
+        $customerRef = is_array($ref) === true ? trim((string) ($ref['value'] ?? '')) : '';
+        if ($currency === '' || $customerRef === '') {
+            return null;
+        }
+        $customer = $this->taxCustomers[$customerRef] ?? null;
+        $customer = is_array($customer) === true ? $customer : null;
+        if ($customer === null && $currency !== $this->homeCurrency($ledger, $connection)) {
+            $customer = $this->taxCustomer($connection, $customerRef);
+        }
+        $held             = is_array($customer['CurrencyRef'] ?? null) === true ? $customer['CurrencyRef'] : [];
+        $customerCurrency = strtoupper(trim((string) ($held['value'] ?? '')));
+        if ($customerCurrency === '' || $customerCurrency === $currency) {
+            return null;
+        }
+
+        return Translation::encode('quickbooks.messages.invoice-customer-currency', [
+            'currency'          => $currency,
+            'customer_currency' => $customerCurrency,
+            'name'              => (string) ($customer['DisplayName'] ?? ''),
+        ]);
+    }
+
+    /**
+     * Sync an invoice's customer, created in the invoice currency if it does not exist yet.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $settings
+     */
+    private function syncCustomerFor(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $settings,
+        string $currency,
+    ): string {
+        $this->customerCreateCurrency[$uuid] = $currency;
+        try {
+            return $this->syncCustomer($ledger, $connection, $uuid, $settings);
+        } finally {
+            unset($this->customerCreateCurrency[$uuid]);
+        }
+    }
+
+    /**
+     * The create payload of a customer whose first invoice is in a foreign currency carries that
+     * currency, when QuickBooks multi-currency is on. Never sent on update: QuickBooks refuses a
+     * currency change.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    private function withCreateCurrency(SyncLedger $ledger, array $connection, string $uuid, array $payload): array
+    {
+        $currency = strtoupper(trim($this->customerCreateCurrency[$uuid] ?? ''));
+        if ($currency === '' || $currency === $this->homeCurrency($ledger, $connection)) {
+            return $payload;
+        }
+        if ($this->client->multiCurrencyEnabled($connection) === false) {
+            return $payload;
+        }
+        $payload['CurrencyRef'] = ['value' => $currency];
+
+        return $payload;
     }
 
     /**
@@ -6913,6 +7099,20 @@ class QuickBooksHttpGate extends QuickBooksClient
 {
     public function __construct(private QuickBooksClient $inner, private SyncEngine $engine)
     {
+    }
+
+    /**
+     * The key must be held by the client that sends the request, or the write carries no requestid.
+     *
+     * @template T
+     *
+     * @param callable(): T $write
+     *
+     * @return T
+     */
+    public function withWriteKey(string $key, callable $write): mixed
+    {
+        return $this->inner->withWriteKey($key, $write);
     }
 
     public function homeCurrency(array $connection): ?string

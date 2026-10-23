@@ -251,6 +251,7 @@ quickbooks:
     import-failed: Customer import failed.
     customer-missing: Customer no longer exists in Fleetbase.
     customer-name-taken: 'QuickBooks did not accept customer "{name}": a QuickBooks customer, vendor or employee already uses that name. Rename one of them, then sync again.'
+    customer-inactive-open-balance: 'Customer "{name}" was deleted in Fleetbase but still has an open balance of {amount} in QuickBooks, so it was left active.'
     wallet-missing: Wallet no longer exists in Fleetbase.
     remote-delete-kept:
       customer: "A customer deleted in QuickBooks (ID {id}) was kept in Fleetbase. The customer sync settings do not let QuickBooks remove Fleetbase records."
@@ -288,3 +289,4 @@ quickbooks:
     payment-shared: This QuickBooks payment also applies credits or other invoices, so Fleetbase left it unchanged. Change it in QuickBooks.
     wallet-currency-mismatch: "Wallet currency {currency} does not match the QuickBooks home currency {home}."
     invoice-currency-mismatch: "Invoice currency {currency} does not match the QuickBooks home currency {home}."
+    invoice-customer-currency: 'Invoice currency {currency} does not match the currency of QuickBooks customer "{name}" ({customer_currency}). QuickBooks needs a separate customer for each currency.'

@@ -7,6 +7,9 @@ namespace Fleetbase\Quickbooks\Support;
  */
 class CustomerMapper
 {
+    /** QuickBooks keeps at most this many characters of a customer's Notes. */
+    public const NOTES_MAX_LENGTH = 2000;
+
     /**
      * The customer name in a form QuickBooks accepts as a DisplayName. QuickBooks rejects a
      * colon (it separates a sub-customer from its parent) and tabs or line breaks. A colon
@@ -47,7 +50,7 @@ class CustomerMapper
             $payload['PrimaryPhone'] = ['FreeFormNumber' => ''];
         }
         if (empty($customer['notes']) === false) {
-            $payload['Notes'] = $customer['notes'];
+            $payload['Notes'] = mb_substr((string) $customer['notes'], 0, self::NOTES_MAX_LENGTH);
         } elseif ($pushClears === true) {
             $payload['Notes'] = '';
         }
