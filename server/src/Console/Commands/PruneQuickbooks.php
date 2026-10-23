@@ -67,7 +67,8 @@ class PruneQuickbooks extends Command
             if ($scope !== null) {
                 $scope($query);
             }
-            $uuids = $query->limit(self::CHUNK)->pluck('uuid')->all();
+            // Ordered by the age column, so each chunk is a range read on that column's index.
+            $uuids = $query->orderBy($column)->limit(self::CHUNK)->pluck('uuid')->all();
             if ($uuids === []) {
                 break;
             }

@@ -5,6 +5,7 @@ use Illuminate\Console\OutputStyle;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
 
@@ -193,6 +194,45 @@ test('prune works through more rows than one chunk', function () {
 
         expect(DB::table('quickbooks_sync_attempts')->count())->toBe(0);
     } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('prune reads attempts through the created_at index', function () {
+    [$restore, $output] = pruneSetup();
+    $originalSchema     = Schema::getFacadeRoot();
+    Schema::swap(DB::connection('sqlite')->getSchemaBuilder());
+    try {
+        $files = glob(dirname(__DIR__) . '/migrations/*_add_history_indexes_to_quickbooks_tables.php');
+        expect($files)->toHaveCount(1)
+            ->and(basename($files[0]) > '2026_10_23_120000')->toBeTrue();
+        $migration = require $files[0];
+        $migration->up();
+        $migration->up();
+
+        $plan = DB::select(
+            'EXPLAIN QUERY PLAN select uuid from quickbooks_sync_attempts where created_at < ? '
+            . 'order by created_at limit 1000',
+            [now()]
+        );
+        $connection = DB::connection('sqlite');
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+        pruneRun($output);
+        $reads = array_values(array_filter(
+            array_column($connection->getQueryLog(), 'query'),
+            static fn (string $sql): bool => str_starts_with($sql, 'select "uuid" from "quickbooks_sync_attempts"')
+        ));
+
+        expect(json_encode($plan))->toContain('qb_attempts_created_idx')
+            ->and($reads)->toHaveCount(1)
+            ->and($reads[0])->toContain('order by "created_at" asc')
+            ->and(Schema::hasIndex('quickbooks_sync_batches', 'qb_batches_company_status_finished_idx'))->toBeTrue();
+
+        $migration->down();
+        expect(Schema::hasIndex('quickbooks_sync_attempts', 'qb_attempts_created_idx'))->toBeFalse();
+    } finally {
+        Schema::swap($originalSchema);
         $restore();
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
