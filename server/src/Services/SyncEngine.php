@@ -4763,8 +4763,9 @@ class SyncEngine
     /**
      * Applying a payment raises the SyncToken of the QuickBooks invoice it pays. Each invoice is
      * read again, so a payment Fleetbase sent does not look like a QuickBooks change of the
-     * invoice on the next sync. Only QuickBooks Primary in two-way sync compares the token. A
-     * failed read keeps the older token: the next sync then lets QuickBooks win that invoice once.
+     * invoice on the next sync; the token moves on by that one step only. Only QuickBooks Primary
+     * in two-way sync compares the token. A failed read keeps the older token: the next sync then
+     * lets QuickBooks win that invoice once.
      *
      * @param array<string, mixed>  $connection
      * @param array<string, string> $invoiceIds QuickBooks invoice ids by Fleetbase invoice uuid
@@ -4790,11 +4791,30 @@ class SyncEngine
         foreach ($invoiceIds as $uuid => $id) {
             $remote = $remotes[$id] ?? null;
             $link   = $ledger->link($company, $realm, 'invoice', (string) $uuid);
-            if (is_array($remote) === true && is_array($link) === true && (string) ($link['qbo_id'] ?? '') === $id) {
+            if (is_array($remote) === true && $this->onePaymentLater($link, $remote) === true) {
                 $ledger->putLink($this->linkFrom($connection, 'invoice', (string) $uuid, 'Invoice', $remote));
                 $this->rememberWrittenInvoice($remote);
             }
         }
+    }
+
+    /**
+     * Whether the invoice read after a payment is one QuickBooks version after the token this
+     * sync stored: the payment's own step. A larger step means a QuickBooks user also changed the
+     * invoice meanwhile, so the older token stays and the next sync lets QuickBooks win once.
+     *
+     * @param array<string, mixed>|null $link
+     * @param array<string, mixed>      $remote
+     */
+    private function onePaymentLater(?array $link, array $remote): bool
+    {
+        if ($link === null || (string) ($link['qbo_id'] ?? '') !== (string) ($remote['Id'] ?? '')) {
+            return false;
+        }
+        $stored  = trim((string) ($link['sync_token'] ?? ''));
+        $current = trim((string) ($remote['SyncToken'] ?? ''));
+
+        return ctype_digit($stored) === true && $current === (string) ((int) $stored + 1);
     }
 
     /**
@@ -6100,6 +6120,8 @@ class SyncEngine
                 $finished[$uuid]['outcome']   = $this->failure($ledger, $connection, $item['row'], new QuickBooksException($status, $message), $settings, $now);
                 $finished[$uuid]['error']     = $this->batchItemAttemptError($message, $status);
                 $finished[$uuid]['permanent'] = false;
+                // The payments before this one were sent: their invoices keep the step they took.
+                $this->rememberInvoicesAfterPayments($ledger, $connection, $paidInvoices, $settings);
                 $this->commitFinished($ledger, $connection, $this->finishedThrough($finished, (string) $uuid, true), $batch, $trigger, $record);
 
                 return true;

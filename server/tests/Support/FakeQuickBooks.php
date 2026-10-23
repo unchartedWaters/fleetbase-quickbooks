@@ -49,6 +49,14 @@ class FakeQuickBooks extends QuickBooksClient
     /** Applying a payment raises the SyncToken of each invoice it pays, as QuickBooks does. */
     public bool $paymentsBumpInvoices = false;
 
+    /**
+     * Runs before each payment create, with the fake and the payload: a test can edit an invoice
+     * meanwhile, as a QuickBooks user would, or throw to refuse the payment.
+     *
+     * @var (\Closure(FakeQuickBooks, array<string, mixed>): void)|null
+     */
+    public ?\Closure $beforeCreatePayment = null;
+
     public ?string $homeCurrency = null;
 
     public bool $customTxnNumbers = false;
@@ -349,7 +357,10 @@ class FakeQuickBooks extends QuickBooksClient
      */
     public function createPayment(array $connection, array $payload): array
     {
-        $this->calls[]            = 'createPayment';
+        $this->calls[] = 'createPayment';
+        if ($this->beforeCreatePayment !== null) {
+            ($this->beforeCreatePayment)($this, $payload);
+        }
         $this->paymentPayloads[]  = $payload;
         $id                       = 'pay-' . (count($this->payments) + 1);
         $record                   = array_merge($this->appliedPayment($payload), ['Id' => $id, 'SyncToken' => '0']);
