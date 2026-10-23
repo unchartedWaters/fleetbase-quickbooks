@@ -67,14 +67,10 @@ test('a quickbooks customer with no fleetbase match creates a contact', function
         ->and(array_values($batch['ledger']->customers)[0]['company_uuid'])->toBe('company-uuid');
 });
 
-test('email phone and name matches link instead of creating', function () {
+test('email and name matches link instead of creating', function () {
     $email = importWith(
         [remoteCustomer('1', 'Other', 'Ada@Example.test', '000')],
         [['uuid' => 'local-1', 'company_uuid' => 'company-uuid', 'name' => 'Kept', 'email' => 'ada@example.test', 'phone' => '111']]
-    );
-    $phone = importWith(
-        [remoteCustomer('2', 'Other', 'nope@example.test', '(555) 010-0')],
-        [['uuid' => 'local-2', 'company_uuid' => 'company-uuid', 'name' => 'Kept', 'email' => null, 'phone' => '5550100']]
     );
     $name = importWith(
         [remoteCustomer('3', 'Exact Name', null, null)],
@@ -82,8 +78,60 @@ test('email phone and name matches link instead of creating', function () {
     );
 
     expect($email['created'])->toBe(0)->and($email['linked'])->toBe(1)
-        ->and($phone['linked'])->toBe(1)
         ->and($name['linked'])->toBe(1);
+});
+
+test('a phone-only match creates a new customer', function () {
+    $phone = importWith(
+        [remoteCustomer('2', 'Other', 'nope@example.test', '(555) 010-0')],
+        [['uuid' => 'local-2', 'company_uuid' => 'company-uuid', 'name' => 'Kept', 'phone' => '5550100']]
+    );
+
+    expect($phone['created'])->toBe(1)
+        ->and($phone['linked'])->toBe(0)
+        ->and($phone['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-2'))->toBeNull();
+});
+
+test('a name match links even when the emails differ', function () {
+    $batch = importWith([remoteCustomer('41', 'John Smith', 'john@acme.test', null)], [[
+        'uuid'         => 'local-7',
+        'company_uuid' => 'company-uuid',
+        'name'         => 'John Smith',
+        'email'        => 'jsmith@other.test',
+        'phone'        => null,
+    ]]);
+
+    expect($batch['linked'])->toBe(1)
+        ->and($batch['created'])->toBe(0)
+        ->and($batch['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-7')['qbo_id'])->toBe('41');
+});
+
+test('a phone and name match links by name', function () {
+    $batch = importWith([remoteCustomer('42', 'Jane Doe', 'jane@acme.test', '555-0100')], [[
+        'uuid'         => 'local-8',
+        'company_uuid' => 'company-uuid',
+        'name'         => 'Jane Doe',
+        'email'        => 'jdoe@other.test',
+        'phone'        => '5550100',
+    ]]);
+
+    expect($batch['linked'])->toBe(1)
+        ->and($batch['created'])->toBe(0)
+        ->and($batch['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-8')['qbo_id'])->toBe('42');
+});
+
+test('a fleetbase name with a colon matches the name quickbooks stores with a dash', function () {
+    $batch = importWith([remoteCustomer('58', 'Harbor- West', null, null)], [[
+        'uuid'         => 'local-9',
+        'company_uuid' => 'company-uuid',
+        'name'         => 'Harbor: West',
+        'email'        => null,
+        'phone'        => null,
+    ]]);
+
+    expect($batch['linked'])->toBe(1)
+        ->and($batch['created'])->toBe(0)
+        ->and($batch['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-9')['qbo_id'])->toBe('58');
 });
 
 test('existing fleetbase field values are not overwritten', function () {
@@ -502,7 +550,7 @@ test('a failed candidate lookup does not create the page', function () {
     }
 });
 
-test('imported customers match stored email case and digits-only phone', function () {
+test('imported customers match stored email case, and a stored phone alone does not match', function () {
     qbEnsureCustomerTable();
     DB::connection('sqlite')->table('contacts')->insert([
         [
@@ -535,10 +583,10 @@ test('imported customers match stored email case and digits-only phone', functio
     $ledger = importLedger();
     $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true);
 
-    expect($batch['created'])->toBe(0)
-        ->and($batch['linked'])->toBe(2)
+    expect($batch['created'])->toBe(1)
+        ->and($batch['linked'])->toBe(1)
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-email')['qbo_id'])->toBe('1')
-        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-phone')['qbo_id'])->toBe('2');
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-phone'))->toBeNull();
 });
 
 test('customer matching compares normalized email and phone in php', function () {

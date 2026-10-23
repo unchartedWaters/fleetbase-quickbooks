@@ -1455,7 +1455,7 @@ class SyncEngine
             $remote = $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $cached, $link);
             $link   = $this->adoptRemoteCustomer($ledger, $connection, $uuid, $remote, $link);
         } elseif ($cacheHit === false && $link === null) {
-            $remote = $this->findRemoteCustomer($connection, $email, (string) ($payload['DisplayName'] ?? ''), $reference !== 'fleetbase');
+            $remote = $this->findRemoteCustomer($connection, $email, (string) ($payload['DisplayName'] ?? ''));
             $remote = $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $remote, null);
             if ($remote !== null) {
                 $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote));
@@ -3749,11 +3749,14 @@ class SyncEngine
     }
 
     /**
+     * The QuickBooks customer with this email, or else with this display name whatever its
+     * email. A phone number alone never matches.
+     *
      * @param array<string, mixed> $connection
      *
      * @return array<string, mixed>|null
      */
-    private function findRemoteCustomer(array $connection, string $email, string $displayName, bool $allowNameWhenEmailsDiffer = false): ?array
+    private function findRemoteCustomer(array $connection, string $email, string $displayName): ?array
     {
         $email = trim($email);
         if ($email !== '') {
@@ -3768,17 +3771,7 @@ class SyncEngine
             return null;
         }
 
-        $byName = $this->client->findCustomerByDisplayName($connection, $name);
-        if ($byName === null || $allowNameWhenEmailsDiffer === true || $email === '') {
-            return $byName;
-        }
-
-        $remoteEmail = strtolower(trim((string) ($byName['PrimaryEmailAddr']['Address'] ?? '')));
-        if ($remoteEmail === '' || $remoteEmail === strtolower($email)) {
-            return $byName;
-        }
-
-        return null;
+        return $this->client->findCustomerByDisplayName($connection, $name);
     }
 
     /**
@@ -4770,7 +4763,7 @@ class SyncEngine
             return $this->recordDisabledRows($ledger, $connection, $rows, $batch, $trigger, $record);
         }
         try {
-            $this->prefetchCustomers($connection, $ledger, $rows, $settings);
+            $this->prefetchCustomers($connection, $ledger, $rows);
 
             return $this->syncBufferedBlock($ledger, $connection, $rows, $settings, $batch, $now, $trigger, $record, 'customer');
         } catch (QuickBooksException $exception) {
@@ -5423,7 +5416,7 @@ class SyncEngine
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
      */
-    private function prefetchCustomers(array $connection, SyncLedger $ledger, array $rows, array $settings): void
+    private function prefetchCustomers(array $connection, SyncLedger $ledger, array $rows): void
     {
         $this->customerRemoteCache  = [];
         $this->customerLookupFailed = [];
@@ -5553,7 +5546,7 @@ class SyncEngine
                 $nameQueries[] = $query;
             }
         }
-        $this->prefetchCustomerNames($connection, $nameQueries, (string) ($settings['customer_reference'] ?? 'fleetbase') !== 'fleetbase');
+        $this->prefetchCustomerNames($connection, $nameQueries);
     }
 
     /**
@@ -5581,7 +5574,7 @@ class SyncEngine
      * @param array<string, mixed>                                                                     $connection
      * @param array<int, array{bId: string, query: string, uuid: string, email: string, name: string}> $queries
      */
-    private function prefetchCustomerNames(array $connection, array $queries, bool $allowDifferentEmail): void
+    private function prefetchCustomerNames(array $connection, array $queries): void
     {
         foreach (array_chunk($queries, QuickBooksClient::BATCH_LIMIT) as $chunk) {
             if ($chunk === []) {
@@ -5598,7 +5591,7 @@ class SyncEngine
                     $this->customerLookupFailed[$query['uuid']] = $this->exceptionError($exception);
                     continue;
                 }
-                $this->rememberCustomerByName($query, is_array($remote) === true ? $remote : null, $allowDifferentEmail);
+                $this->rememberCustomerByName($query, is_array($remote) === true ? $remote : null);
                 continue;
             }
             try {
@@ -5627,32 +5620,21 @@ class SyncEngine
                     continue;
                 }
                 $remote = $result['rows'][0] ?? null;
-                $this->rememberCustomerByName($query, is_array($remote) === true ? $remote : null, $allowDifferentEmail);
+                $this->rememberCustomerByName($query, is_array($remote) === true ? $remote : null);
             }
         }
     }
 
     /**
-     * A display-name miss is cached so the row is not queried again one name at a time.
+     * A display-name match is the same customer whatever the emails say. A miss is cached too,
+     * so the row is not queried again one name at a time.
      *
      * @param array{bId: string, query: string, uuid: string, email: string, name: string} $query
      * @param array<string, mixed>|null                                                    $remote
      */
-    private function rememberCustomerByName(array $query, ?array $remote, bool $allowDifferentEmail): void
+    private function rememberCustomerByName(array $query, ?array $remote): void
     {
-        if (is_array($remote) === false) {
-            $this->customerRemoteCache[$query['uuid']] = null;
-
-            return;
-        }
-        $remoteEmail = strtolower(trim((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')));
-        $localEmail  = strtolower($query['email']);
-        if ($allowDifferentEmail === true || $localEmail === '' || $remoteEmail === '' || $remoteEmail === $localEmail) {
-            $this->customerRemoteCache[$query['uuid']] = $remote;
-
-            return;
-        }
-        $this->customerRemoteCache[$query['uuid']] = null;
+        $this->customerRemoteCache[$query['uuid']] = $remote;
     }
 
     /**

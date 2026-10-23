@@ -33,7 +33,7 @@ class CustomerImporter
     private array $givenCustomers = [];
 
     /**
-     * Email and phone rows for one import(), keyed by company. Reset when import() starts.
+     * Customer identity rows for one import(), keyed by company. Reset when import() starts.
      *
      * @var array{company: string, rows: array<int, object>}|null
      */
@@ -373,14 +373,14 @@ class CustomerImporter
      */
     private function rememberCandidates(SyncLedger $ledger, array $connection, array $page): bool
     {
-        [$emails, $phones, $names] = $this->candidateKeys($page);
-        $class                     = 'Fleetbase\\FleetOps\\Models\\Customer';
-        $companyUuid               = (string) ($connection['company_uuid'] ?? '');
+        [$emails, $names] = $this->candidateKeys($page);
+        $class            = 'Fleetbase\\FleetOps\\Models\\Customer';
+        $companyUuid      = (string) ($connection['company_uuid'] ?? '');
         try {
             $matching = [];
-            if (($emails !== [] || $phones !== [] || $names !== []) && class_exists($class) === true) {
+            if (($emails !== [] || $names !== []) && class_exists($class) === true) {
                 $candidates = $this->candidateContacts($class, $companyUuid);
-                $matching   = $this->matchingCandidates($candidates, $companyUuid, $emails, $phones, $names);
+                $matching   = $this->matchingCandidates($candidates, $companyUuid, $emails, $names);
             }
             $this->loadLinks($ledger, $page, array_keys($matching));
         } catch (\Throwable $exception) {
@@ -415,46 +415,38 @@ class CustomerImporter
     }
 
     /**
+     * The emails and names a page can match by. A phone number alone never matches.
+     *
      * @param array<int, mixed> $page
      *
-     * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, string>}
+     * @return array{0: array<int, string>, 1: array<int, string>}
      */
     private function candidateKeys(array $page): array
     {
         $emails = [];
-        $phones = [];
         $names  = [];
         foreach ($page as $remote) {
             if (is_array($remote) === false) {
                 continue;
             }
             $email = strtolower(trim((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')));
-            $phone = $this->digits(trim((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')));
-            $name  = $this->displayName($remote);
+            $name  = CustomerMapper::displayName($this->displayName($remote));
             if ($email !== '') {
                 $emails[] = $email;
-            }
-            if ($phone !== '') {
-                $phones[] = $phone;
             }
             if ($name !== '') {
                 $names[] = $name;
             }
         }
 
-        return [
-            array_values(array_unique($emails)),
-            array_values(array_unique($phones)),
-            array_values(array_unique($names)),
-        ];
+        return [array_values(array_unique($emails)), array_values(array_unique($names))];
     }
 
     /**
-     * The local customers that share an email, phone or name with the page, keyed by uuid.
+     * The local customers that share an email or name with the page, keyed by uuid.
      *
      * @param iterable<mixed>    $candidates
      * @param array<int, string> $emails
-     * @param array<int, string> $phones
      * @param array<int, string> $names
      *
      * @return array<string, array<string, mixed>>
@@ -463,11 +455,9 @@ class CustomerImporter
         iterable $candidates,
         string $companyUuid,
         array $emails,
-        array $phones,
         array $names,
     ): array {
         $emailSet = array_fill_keys($emails, true);
-        $phoneSet = array_fill_keys($phones, true);
         $nameSet  = array_fill_keys($names, true);
         $matching = [];
         foreach ($candidates as $customer) {
@@ -475,7 +465,7 @@ class CustomerImporter
                 continue;
             }
             $uuid = (string) ($customer->uuid ?? '');
-            if ($uuid === '' || $this->candidateMatches($customer, $emailSet, $phoneSet, $nameSet) === false) {
+            if ($uuid === '' || $this->candidateMatches($customer, $emailSet, $nameSet) === false) {
                 continue;
             }
             $matching[$uuid] = [
@@ -493,17 +483,14 @@ class CustomerImporter
 
     /**
      * @param array<string, true> $emailSet
-     * @param array<string, true> $phoneSet
      * @param array<string, true> $nameSet
      */
-    private function candidateMatches(object $customer, array $emailSet, array $phoneSet, array $nameSet): bool
+    private function candidateMatches(object $customer, array $emailSet, array $nameSet): bool
     {
         $email = strtolower(trim((string) ($customer->email ?? '')));
-        $phone = $this->digits(trim((string) ($customer->phone ?? '')));
-        $name  = (string) ($customer->name ?? '');
+        $name  = CustomerMapper::displayName((string) ($customer->name ?? ''));
 
         return ($email !== '' && isset($emailSet[$email]) === true)
-            || ($phone !== '' && isset($phoneSet[$phone]) === true)
             || ($name !== '' && isset($nameSet[$name]) === true);
     }
 
@@ -538,7 +525,6 @@ class CustomerImporter
     {
         $match = $ledger->matchCustomer(
             strtolower((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')),
-            $this->digits((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')),
             $this->displayName($remote)
         );
         if ($match === null) {
@@ -647,15 +633,10 @@ class CustomerImporter
         return trim((string) ($remote['GivenName'] ?? '') . ' ' . (string) ($remote['FamilyName'] ?? ''));
     }
 
-    private function digits(string $value): string
-    {
-        return preg_replace('/\D+/', '', $value) ?? '';
-    }
-
     /**
      * Identity rows for this company's customers, loaded once per import.
      * The query filters on company and type so it can use that index. Email
-     * case and phone punctuation are compared in PHP, not in SQL.
+     * case and name punctuation are compared in PHP, not in SQL.
      *
      * @param class-string $class
      *

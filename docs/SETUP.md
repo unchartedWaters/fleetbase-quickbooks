@@ -713,7 +713,14 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   live Storefront products.
 - **Shared QuickBooks company.** Several Fleetbase organizations can connect to the same QuickBooks company (realm). `quickbooks_connections` is unique per organization, not per realm, and a webhook for a realm is applied to every organization connected to it (`WebhookController`). Intuit app credentials, the redirect, and the webhook verifier are install-wide, so every organization on the install uses the same Intuit app.
 - **Links.** `quickbooks_links` holds links for customers, invoices, and wallets, and also for payments. A payment link is keyed by the Fleetbase invoice uuid, or by the QuickBooks payment id when the payment was found in QuickBooks.
-- **Customer matching.** A Fleetbase customer is matched to an existing QuickBooks customer by email first, then by display name. When Primary is Fleetbase, a name match is rejected if both sides have an email and the emails differ, so that customer is not matched. Names are the only key when there is no email, so two different customers with the same name are treated as one.
+- **Customer matching.** A Fleetbase customer and a QuickBooks customer are
+  treated as the same customer when their emails match, or when their display
+  names match, whatever the emails say. A phone number alone never matches:
+  when only the phone matches, a new customer is created. Names are compared
+  the way QuickBooks stores them (a colon becomes `-`). A QuickBooks customer
+  that another Fleetbase customer already syncs with, in this organization or
+  another one on the same QuickBooks company, is not matched again; a new
+  customer is created instead.
 - **Customer names.** QuickBooks does not accept a colon, tab or line break in
   a customer's display name. Fleetbase sends a colon as `-` and a tab or line
   break as a space, and compares names the same way. The Fleetbase name is not
