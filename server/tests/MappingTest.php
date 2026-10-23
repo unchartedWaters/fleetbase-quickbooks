@@ -355,7 +355,8 @@ test('use the quickbooks invoice copies the total and understood line items', fu
     ];
     $ledger->links[]   = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-1',
-        'qbo_entity'   => 'Invoice', 'qbo_id' => 'qb-1', 'sync_token' => '2',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Invoice', 'qbo_id' => 'qb-1', 'sync_token' => '1',
     ];
     $ledger->pending[] = pending('invoice', 'inv-1');
 
@@ -432,7 +433,8 @@ test('use the quickbooks account copies wallet details and leaves the fleetbase 
     ];
     $ledger->links[] = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'wallet', 'local_uuid' => 'wal-1',
-        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '1',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '0',
     ];
     $ledger->pending[] = pending('wallet', 'wal-1');
     $settings          = qbSettings([
@@ -485,7 +487,8 @@ test('quickbooks primary copies the linked account currency onto the wallet', fu
     ];
     $ledger->links[] = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'wallet', 'local_uuid' => 'wal-1',
-        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '1',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '0',
     ];
     $ledger->pending[] = pending('wallet', 'wal-1');
 
@@ -522,7 +525,8 @@ test('quickbooks primary uses the home currency when the account has no currency
     ];
     $ledger->links[] = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'wallet', 'local_uuid' => 'wal-1',
-        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '1',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '0',
     ];
     $ledger->pending[] = pending('wallet', 'wal-1');
 
@@ -674,7 +678,8 @@ function inactiveAccountRun(int $balance): array
     $client->accounts['acct-9'] = ['Id' => 'acct-9', 'SyncToken' => '1', 'Name' => 'Operating', 'Description' => 'Float', 'Active' => false, 'CurrencyRef' => ['value' => 'USD']];
     $ledger->links[]            = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'wallet', 'local_uuid' => 'wal-1',
-        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '1',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '0',
     ];
     $ledger->pending[] = pending('wallet', 'wal-1');
     $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'wallet_conflict' => 'quickbooks']), time());

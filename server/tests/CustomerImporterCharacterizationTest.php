@@ -495,7 +495,7 @@ test('a remote id already linked is counted as linked without calling the creato
         ->and($ledger->links)->toHaveCount(1);
 });
 
-test('a fleetbase match links with the remote sync token unless it is already linked to another quickbooks id', function () {
+test('a fleetbase match links without a sync token unless it is already linked to another quickbooks id', function () {
     $client                = new CicQuickBooks();
     $client->customerPages = [1 => [
         cicRemote('31', 'Same', 'same@example.test'),
@@ -523,7 +523,8 @@ test('a fleetbase match links with the remote sync token unless it is already li
     expect($batch['linked'])->toBe(2)
         ->and($batch['created'])->toBe(1)
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-same')['qbo_id'])->toBe('31')
-        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-same')['sync_token'])->toBe('3')
+        // No baseline: the first sync lets QuickBooks, as Primary, win the differences.
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-same')['sync_token'])->toBe('')
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-taken')['qbo_id'])->toBe('99')
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'contact-32')['qbo_id'])->toBe('32')
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-noid'))->toBeNull()

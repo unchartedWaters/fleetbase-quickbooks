@@ -193,7 +193,8 @@ test('a quickbooks yen invoice is copied back in whole yen', function () {
     ];
     $ledger->links[] = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-1',
-        'qbo_entity'   => 'Invoice', 'qbo_id' => 'qb-1', 'sync_token' => '1',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Invoice', 'qbo_id' => 'qb-1', 'sync_token' => '0',
     ];
 
     $engine->runScheduled($ledger, 'company-uuid', qbSettings([

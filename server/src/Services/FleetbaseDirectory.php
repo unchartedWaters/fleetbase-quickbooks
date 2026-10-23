@@ -4044,7 +4044,8 @@ class FleetbaseDirectory
             if ($scope($intoId)->exists() === true) {
                 return false;
             }
-            $scope($fromId)->update(['qbo_id' => $intoId, 'sync_token' => '0', 'updated_at' => Carbon::now()]);
+            // No SyncToken: the next sync lets QuickBooks, as Primary, win on the surviving record.
+            $scope($fromId)->update(['qbo_id' => $intoId, 'sync_token' => '', 'updated_at' => Carbon::now()]);
 
             return true;
         } catch (\Illuminate\Database\QueryException $exception) {
@@ -4086,7 +4087,7 @@ class FleetbaseDirectory
             return null;
         }
         $memory->links[$from]['qbo_id']     = $intoId;
-        $memory->links[$from]['sync_token'] = '0';
+        $memory->links[$from]['sync_token'] = '';
         $memory->rebuildIndex();
 
         return true;

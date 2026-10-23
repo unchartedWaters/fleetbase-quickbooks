@@ -239,6 +239,7 @@ quickbooks:
     request-rejected: "QuickBooks rejected the request: {detail}"
     payment-method-note: "Fleetbase payment method: {method}"
     fleetbase-primary-replaced: Fleetbase is Primary here, so the change made in QuickBooks was replaced with the Fleetbase values. Choose QuickBooks as Primary to keep changes made in QuickBooks.
+    quickbooks-primary-replaced: QuickBooks, as Primary, replaced a change made in Fleetbase because the record was also changed in QuickBooks.
     access-token-refused: "QuickBooks request failed with status 401: the access token was refused."
     query-failed: QuickBooks query failed.
     invoice-lookup-failed: QuickBooks invoice lookup failed.

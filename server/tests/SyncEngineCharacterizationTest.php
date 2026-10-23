@@ -218,7 +218,8 @@ test('sec a remote customer update copies name email phone notes and address and
         'address'      => ['line1' => '1 Main St', 'line2' => null, 'city' => 'Springfield', 'state' => 'IL', 'postal_code' => '62701', 'country' => 'US'],
     ])
         ->and($client->calls)->toBe(['getCustomer:qbo-1'])
-        ->and($ledger->links)->toBe($linksBefore)
+        // Only the stored SyncToken moves to the version just applied.
+        ->and($ledger->links)->toBe([array_merge($linksBefore[0], ['sync_token' => '4'])])
         ->and($ledger->pending)->toBe([])
         ->and(array_column($ledger->attempts, 'outcome', 'local_uuid'))->toBe(['cust-1' => 'updated'])
         ->and(array_column($ledger->batches, 'direction'))->toBe(['inbound']);
@@ -460,7 +461,12 @@ test('sec a remote payment on a legacy invoice keyed link copies amount date and
         ->and($ledger->invoices['inv-1']['paid_at'])->toBe('')
         ->and($ledger->invoices['inv-1']['payment_from_quickbooks'])->toBeTrue()
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
-        ->and($ledger->links)->toBe($linksBefore)
+        // The link stays keyed by the invoice; only its SyncToken moves to the payment just applied.
+        ->and($ledger->links)->toBe([
+            $linksBefore[0],
+            $linksBefore[1],
+            array_merge($linksBefore[2], ['sync_token' => '1']),
+        ])
         ->and($ledger->pending)->toBe([]);
 });
 

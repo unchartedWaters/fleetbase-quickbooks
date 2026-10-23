@@ -16,7 +16,10 @@ class ActivityErrors
     public const CANDIDATES = 10;
 
     /** Notes about a run's settings rather than the record they are stored on. */
-    private const GENERAL_NOTES = ['quickbooks.messages.fleetbase-primary-replaced'];
+    private const GENERAL_NOTES = [
+        'quickbooks.messages.fleetbase-primary-replaced',
+        'quickbooks.messages.quickbooks-primary-replaced',
+    ];
 
     /** @var array<string, array{0: string, 1: string}> */
     private const RECORDS = [

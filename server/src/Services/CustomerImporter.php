@@ -560,6 +560,9 @@ class CustomerImporter
             return false;
         }
         if ($remoteId !== '') {
+            // The Fleetbase customer keeps its own details, so this link stores no SyncToken: the
+            // first sync treats the differences as QuickBooks changes. A stored token is kept.
+            $kept = is_array($link) === true && $storedId === $remoteId ? (string) ($link['sync_token'] ?? '') : '';
             $ledger->putLink([
                 'company_uuid' => $matchCompany,
                 'realm_id'     => $realm,
@@ -567,7 +570,7 @@ class CustomerImporter
                 'local_uuid'   => $match['uuid'],
                 'qbo_entity'   => 'Customer',
                 'qbo_id'       => $remoteId,
-                'sync_token'   => (string) ($remote['SyncToken'] ?? '0'),
+                'sync_token'   => $kept,
             ]);
         }
 

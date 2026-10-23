@@ -46,6 +46,9 @@ class FakeQuickBooks extends QuickBooksClient
     /** @var array<int, array<string, mixed>> */
     public array $paymentPayloads = [];
 
+    /** Applying a payment raises the SyncToken of each invoice it pays, as QuickBooks does. */
+    public bool $paymentsBumpInvoices = false;
+
     public ?string $homeCurrency = null;
 
     public bool $customTxnNumbers = false;
@@ -347,6 +350,7 @@ class FakeQuickBooks extends QuickBooksClient
         $id                       = 'pay-' . (count($this->payments) + 1);
         $record                   = array_merge($this->appliedPayment($payload), ['Id' => $id, 'SyncToken' => '0']);
         $this->payments[$id]      = $record;
+        $this->bumpPaidInvoices($payload);
 
         return $record;
     }
@@ -392,8 +396,26 @@ class FakeQuickBooks extends QuickBooksClient
             'SyncToken' => (string) ((int) $syncToken + 1),
         ]);
         $this->payments[$id] = $record;
+        $this->bumpPaidInvoices($payload);
 
         return $record;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function bumpPaidInvoices(array $payload): void
+    {
+        if ($this->paymentsBumpInvoices === false) {
+            return;
+        }
+        foreach (is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [] as $line) {
+            $invoiceId = (string) ($line['LinkedTxn'][0]['TxnId'] ?? '');
+            if (isset($this->invoices[$invoiceId]) === true) {
+                $token                                    = (int) ($this->invoices[$invoiceId]['SyncToken'] ?? 0);
+                $this->invoices[$invoiceId]['SyncToken']  = (string) ($token + 1);
+            }
+        }
     }
 
     /**

@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\ProductMapper;
+use Fleetbase\Quickbooks\Support\QuickBooksChanges;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Support\WalletMapper;
@@ -33,6 +34,9 @@ class SyncEngine
     private const SYNC_FAILED_MESSAGE = 'quickbooks.messages.sync-failed';
 
     private const ITEM_REJECTED_MESSAGE = 'quickbooks.messages.item-rejected';
+
+    /** Pending reasons that QuickBooks or a scheduled check queued, not a Fleetbase change. */
+    private const REMOTE_REASONS = ['webhook', 'reconcile', 'customer-linked'];
 
     /**
      * QuickBooks returns at most this many rows unless the query asks for more.
@@ -173,7 +177,14 @@ class SyncEngine
     /**
      * Line ids to record once a buffered invoice write succeeds, keyed by Fleetbase uuid.
      *
-     * @var array<string, array{invoice: string, payload: array<string, mixed>, cleared: array<int, string>}>
+     * Edited marks an update QuickBooks as Primary sent because only Fleetbase changed the invoice.
+     *
+     * @var array<string, array{
+     *     invoice: string,
+     *     payload: array<string, mixed>,
+     *     cleared: array<int, string>,
+     *     edited?: bool
+     * }>
      */
     private array $bufferedLineMaps = [];
 
@@ -222,6 +233,14 @@ class SyncEngine
      * @var array<string, string>
      */
     private array $rowNotes = [];
+
+    /**
+     * Rows whose Fleetbase difference QuickBooks as Primary replaced because QuickBooks had
+     * also changed the record, by "type:uuid". Read once, by recordRow.
+     *
+     * @var array<string, true>
+     */
+    private array $primaryCopies = [];
 
     /**
      * QuickBooks invoice ids whose block read failed. Absence from invoiceById is a miss only when the id is not here.
@@ -724,32 +743,86 @@ class SyncEngine
      */
     private function applyOneRemote(SyncLedger $ledger, array $connection, string $companyUuid, array $settings, string $name, array $link, array $remote, array $remotes): void
     {
+        $applied = $this->applyRemoteRecord(
+            $ledger,
+            $connection,
+            $companyUuid,
+            $settings,
+            $name,
+            $link,
+            $remote,
+            $remotes
+        );
+        if ($applied === true) {
+            $this->rememberAppliedToken($ledger, $link, $remote);
+        }
+    }
+
+    /**
+     * Apply one QuickBooks record. True when it was applied as a whole, so the link may store
+     * its SyncToken. An invoice payments refresh copies only the amount paid, so it is not.
+     *
+     * @param array<string, mixed>                $connection
+     * @param array<string, mixed>                $settings
+     * @param array<string, mixed>                $link
+     * @param array<string, mixed>                $remote
+     * @param array<string, array<string, mixed>> $remotes
+     */
+    private function applyRemoteRecord(
+        SyncLedger $ledger,
+        array $connection,
+        string $companyUuid,
+        array $settings,
+        string $name,
+        array $link,
+        array $remote,
+        array $remotes,
+    ): bool {
         $localUuid = (string) ($link['local_uuid'] ?? '');
         if ($name === 'Customer' && isset($ledger->customers[$localUuid]) === true) {
             $this->applyCustomerFromRemote($ledger, $localUuid, $remote);
 
-            return;
+            return true;
         }
         if ($name === self::INVOICE_PAYMENTS && isset($ledger->invoices[$localUuid]) === true) {
             $this->applyAmountPaidFromBalance($ledger, $localUuid, $remote);
 
-            return;
+            return false;
         }
         if ($name === 'Invoice' && isset($ledger->invoices[$localUuid]) === true) {
             $reference = (string) ($settings['invoice_reference'] ?? 'fleetbase');
             $this->applyInvoiceFromRemote($ledger, $localUuid, $remote, $reference, (string) $connection['realm_id']);
             $this->applyPaymentStatus($ledger, $localUuid);
 
-            return;
+            return true;
         }
         if ($name === 'Payment') {
-            $this->applyPaymentRemote($ledger, $connection, $companyUuid, $localUuid, $remote, $remotes);
-
-            return;
+            return $this->applyPaymentRemote($ledger, $connection, $companyUuid, $localUuid, $remote, $remotes);
         }
         if ($name === 'Account' && isset($ledger->wallets[$localUuid]) === true) {
-            $this->applyWalletFromRemote($ledger, $localUuid, $this->withoutEmptyDescription($remote), (string) ($settings['wallet_reference'] ?? 'fleetbase'));
+            $reference = (string) ($settings['wallet_reference'] ?? 'fleetbase');
+            $this->applyWalletFromRemote($ledger, $localUuid, $this->withoutEmptyDescription($remote), $reference);
+
+            return true;
         }
+
+        return false;
+    }
+
+    /**
+     * A QuickBooks change applied from a webhook leaves both sides equal, so the link stores its
+     * SyncToken: a later Fleetbase edit is then not taken for a QuickBooks change.
+     *
+     * @param array<string, mixed> $link
+     * @param array<string, mixed> $remote
+     */
+    private function rememberAppliedToken(SyncLedger $ledger, array $link, array $remote): void
+    {
+        $token = trim((string) ($remote['SyncToken'] ?? ''));
+        if ($token === '' || (string) ($link['qbo_id'] ?? '') !== (string) ($remote['Id'] ?? '')) {
+            return;
+        }
+        $ledger->putLink(array_merge($link, ['sync_token' => $token]));
     }
 
     /**
@@ -786,19 +859,27 @@ class SyncEngine
      * @param array<string, mixed>                $remote
      * @param array<string, array<string, mixed>> $remotes
      */
-    private function applyPaymentRemote(SyncLedger $ledger, array $connection, string $companyUuid, string $localUuid, array $remote, array $remotes): void
-    {
+    private function applyPaymentRemote(
+        SyncLedger $ledger,
+        array $connection,
+        string $companyUuid,
+        string $localUuid,
+        array $remote,
+        array $remotes,
+    ): bool {
         $invoiceUuid = isset($ledger->invoices[$localUuid]) === true
             ? $localUuid
             : $this->invoiceUuidForPayment($ledger, $connection, $remote);
         if ($invoiceUuid === null) {
-            return;
+            return false;
         }
         $invoiceLink = $ledger->link($companyUuid, (string) $connection['realm_id'], 'invoice', $invoiceUuid);
         $invoiceId   = is_array($invoiceLink) === true ? trim((string) ($invoiceLink['qbo_id'] ?? '')) : '';
         $payments    = $this->paymentsTouchingInvoice($ledger, $connection, $invoiceUuid, $invoiceId, $remote, $remotes);
         $this->applyPaymentsFromRemote($ledger, $invoiceUuid, $payments, $invoiceId);
         $this->applyPaymentStatus($ledger, $invoiceUuid);
+
+        return true;
     }
 
     /**
@@ -1471,6 +1552,7 @@ class SyncEngine
         if ($link !== null && $link['realm_id'] !== $connection['realm_id']) {
             $link = null;
         }
+        $baseline = $link;
         if (isset($this->customerLookupFailed[$uuid]) === true) {
             throw new QuickBooksException(500, $this->customerLookupFailed[$uuid]);
         }
@@ -1529,11 +1611,10 @@ class SyncEngine
         }
 
         if ($this->customerMatches($payload, $remote) === true) {
-            if ($copy === true && $pushClears === false && $this->copyCustomerNotesAndAddress($ledger, $uuid, $remote) === true) {
-                return 'updated';
-            }
+            $copied = $copy === true && $pushClears === false
+                && $this->copyCustomerNotesAndAddress($ledger, $uuid, $remote) === true;
 
-            return 'aligned';
+            return $this->syncedIf($ledger, $connection, 'customer', $uuid, $remote, $copied);
         }
 
         if ($reference === 'quickbooks' && $copy === true) {
@@ -1542,20 +1623,23 @@ class SyncEngine
         }
 
         if ($this->customerMatches($payload, $remote) === true) {
-            return 'updated';
+            return $this->synced($ledger, $connection, 'customer', $uuid, $remote, 'updated');
         }
 
         if ($push === false && $copy === true) {
             $before = $ledger->customers[$uuid];
             $this->applyCustomerFromRemote($ledger, $uuid, $remote);
+            $changed = $ledger->customers[$uuid] !== $before;
 
-            return $ledger->customers[$uuid] !== $before ? 'updated' : 'aligned';
+            return $this->syncedIf($ledger, $connection, 'customer', $uuid, $remote, $changed);
         }
 
-        if ($conflict === 'quickbooks' && $copy === true) {
+        // QuickBooks wins only a record it changed since the last sync; otherwise Fleetbase is sent.
+        if ($conflict === 'quickbooks' && $copy === true && QuickBooksChanges::since($baseline, $remote) === true) {
             $this->applyCustomerFromRemote($ledger, $uuid, $remote);
+            $this->notePrimaryCopy('customer', $uuid, true);
 
-            return 'updated';
+            return $this->synced($ledger, $connection, 'customer', $uuid, $remote, 'updated');
         }
 
         if ($reference === 'quickbooks') {
@@ -1711,6 +1795,7 @@ class SyncEngine
             $link = null;
         }
         $hadLink   = $link !== null;
+        $baseline  = $link;
         $nameTaken = false;
 
         if ($link === null && empty($payload['AcctNum']) === false) {
@@ -1802,31 +1887,38 @@ class SyncEngine
         }
 
         $before = $wallet;
-        if ($quickbooksPrimary === true && $copy === true) {
+        // QuickBooks wins only an account it changed since the last sync; otherwise Fleetbase is sent.
+        $leads  = $this->fleetbaseLeads($settings, 'wallet', $baseline, $remote);
+        if ($quickbooksPrimary === true && $copy === true && $leads === false) {
+            $differed = $this->wallets->matches($wallet, $payload, $remote) === false;
             $this->applyWalletFromRemote($ledger, $uuid, $walletCopy($remote), $reference);
             $this->copyWalletCurrency($ledger, $connection, $uuid, $remote);
-            $wallet  = $ledger->wallets[$uuid];
-            $payload = $this->wallets->toQuickBooks($wallet, $reference);
+            $wallet   = $ledger->wallets[$uuid];
+            $payload  = $this->wallets->toQuickBooks($wallet, $reference);
+            $replaced = $differed === true && $wallet !== $before;
+            $this->notePrimaryCopy('wallet', $uuid, $push === true && $conflict === 'quickbooks', $replaced);
         }
 
         if ($this->wallets->matches($wallet, $payload, $remote) === true) {
-            return $wallet !== $before ? 'updated' : 'aligned';
+            return $this->syncedIf($ledger, $connection, 'wallet', $uuid, $remote, $wallet !== $before);
         }
 
-        if ($conflict === 'quickbooks' && $copy === true) {
+        if ($conflict === 'quickbooks' && $copy === true && $leads === false) {
             $before = $ledger->wallets[$uuid];
             $this->applyWalletFromRemote($ledger, $uuid, $walletCopy($remote), $reference);
             $this->copyWalletCurrency($ledger, $connection, $uuid, $remote);
+            $this->notePrimaryCopy('wallet', $uuid, $push, $ledger->wallets[$uuid] !== $before);
 
-            return $ledger->wallets[$uuid] !== $before ? 'updated' : 'aligned';
+            return $this->syncedIf($ledger, $connection, 'wallet', $uuid, $remote, $ledger->wallets[$uuid] !== $before);
         }
 
         if ($push === false) {
             if ($copy === true) {
                 $before = $ledger->wallets[$uuid];
                 $this->applyWalletFromRemote($ledger, $uuid, $walletCopy($remote), $reference);
+                $changed = $ledger->wallets[$uuid] !== $before;
 
-                return $ledger->wallets[$uuid] !== $before ? 'updated' : 'aligned';
+                return $this->syncedIf($ledger, $connection, 'wallet', $uuid, $remote, $changed);
             }
 
             return 'aligned';
@@ -1947,6 +2039,8 @@ class SyncEngine
             unset($payload['DocNumber']);
         }
         $link = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'invoice', $uuid);
+        // The link before this sync adopts a QuickBooks invoice: a new match has no baseline.
+        $baseline = $link;
 
         if ($link === null && $voided === false && empty($invoice['number']) === false) {
             $number = (string) $invoice['number'];
@@ -2076,9 +2170,10 @@ class SyncEngine
             return $this->withPayment('created', $this->syncPayment($ledger, $connection, $ledger->invoices[$uuid], (string) $customerLink['qbo_id'], (string) ($created['Id'] ?? ''), $settings));
         }
 
+        $leads         = $this->fleetbaseLeads($settings, 'invoice', $baseline, $remote);
         $numberChanged = $this->copyInvoiceNumber($ledger, $uuid, $remote, $reference);
         $partyChanged  = false;
-        if ($this->quickbooksSupplies($settings, 'invoice') === true) {
+        if ($leads === false && $this->quickbooksSupplies($settings, 'invoice') === true) {
             $partyChanged = $this->copyInvoiceCustomerAndCurrency($ledger, $uuid, $remote);
         }
         $invoice     = $ledger->invoices[$uuid];
@@ -2115,6 +2210,10 @@ class SyncEngine
                 $managed
             ) === false;
         }
+        // QuickBooks did not change the invoice since the last sync, so a Fleetbase change is sent.
+        $edited  = $leads === true
+            && $this->fleetbaseEditedInvoice($invoice, $remote, $reference, (string) $customerLink['qbo_id'], $stored);
+        $matched = $matched === true && $edited === false;
         if ($matched === true) {
             $outcome = ($numberChanged === true || $partyChanged === true) ? 'updated' : 'aligned';
             $items   = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
@@ -2125,6 +2224,7 @@ class SyncEngine
                 $outcome = 'updated';
                 $invoice = $ledger->invoices[$uuid];
             }
+            $this->synced($ledger, $connection, 'invoice', $uuid, $remote, $outcome);
             if ($this->writeBuffer !== null) {
                 return $outcome;
             }
@@ -2135,7 +2235,7 @@ class SyncEngine
             );
         }
 
-        if (($conflict === 'quickbooks' && $copy === true) || ($push === false && $copy === true)) {
+        if ($copy === true && ($conflict === 'quickbooks' || $push === false) && $edited === false) {
             $beforeStatus = (string) ($ledger->invoices[$uuid]['status'] ?? '');
             $realmId      = (string) $connection['realm_id'];
             $applied      = $this->applyInvoiceFromRemote($ledger, $uuid, $remote, $reference, $realmId);
@@ -2144,9 +2244,11 @@ class SyncEngine
             if ((string) ($ledger->invoices[$uuid]['status'] ?? '') !== $beforeStatus) {
                 $changed = true;
             }
+            $this->notePrimaryCopy('invoice', $uuid, $push === true && $leads === false, $applied);
 
             $sendNumber = $push === true && $this->fleetbaseDocNumberDiffers($ledger->invoices[$uuid], $remote, $reference) === true;
             if ($sendNumber === false) {
+                $this->synced($ledger, $connection, 'invoice', $uuid, $remote, 'aligned');
                 if ($this->writeBuffer !== null) {
                     return $changed === true ? 'updated' : 'aligned';
                 }
@@ -2165,6 +2267,10 @@ class SyncEngine
 
         if ($push === false) {
             return ($numberChanged === true || $partyChanged === true) ? 'updated' : 'aligned';
+        }
+        if ($edited === true) {
+            // The lines Fleetbase deleted go from QuickBooks, as with Fleetbase Primary.
+            $removed = $stored['removed'];
         }
 
         if ($pushClears === true) {
@@ -2219,6 +2325,7 @@ class SyncEngine
                 'invoice' => (string) $remote['Id'],
                 'payload' => $payload,
                 'cleared' => $stored['uuids'],
+                'edited'  => $edited,
             ];
 
             return 'updated';
@@ -2229,7 +2336,7 @@ class SyncEngine
         $ledger->putLink($this->linkFrom($connection, 'invoice', $uuid, 'Invoice', $updated));
         $remoteId = (string) $remote['Id'];
         $this->recordPushedLines($ledger, $uuid, $connection, $remoteId, $payload, $updated, $stored['uuids']);
-        if ($copy === true && $remoteSuppliesLines === false) {
+        if ($copy === true && ($remoteSuppliesLines === false || $edited === true)) {
             $this->copyQuickBooksTax($ledger, $uuid, $updated);
         }
 
@@ -2306,10 +2413,13 @@ class SyncEngine
             }
             $created = $this->client->createPayment($connection, $payload);
             $this->storePaymentLink($ledger, $connection, $uuid, $invoiceId, $created, $remoteInvoice);
+            $this->rememberInvoicesAfterPayments($ledger, $connection, [$uuid => $invoiceId], $settings);
 
             return null;
         }
 
+        // Read before the links below store the tokens QuickBooks returns now.
+        $paymentChanged = $this->paymentsChangedInQuickBooks($ledger, $connection, $uuid, $payments);
         foreach ($payments as $remote) {
             $this->storePaymentLink($ledger, $connection, $uuid, $invoiceId, $remote, $remoteInvoice);
         }
@@ -2328,12 +2438,14 @@ class SyncEngine
             return $copies === true ? $this->markSettledPaid($ledger, $uuid, $remoteInvoice) : null;
         }
 
-        if ($conflict === 'quickbooks' && $copyPay === true) {
+        if ($conflict === 'quickbooks' && $copyPay === true && $paymentChanged === true) {
             $before = $ledger->invoices[$uuid];
             $this->applyPaymentsFromRemote($ledger, $uuid, $payments, $invoiceId);
             $this->applyPaymentStatus($ledger, $uuid, $remoteInvoice);
+            $changed = $this->paymentRecordChanged($before, $ledger->invoices[$uuid]);
+            $this->notePrimaryCopy('invoice', $uuid, $pushPay, $changed);
 
-            return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) === true ? 'updated' : null;
+            return $changed === true ? 'updated' : null;
         }
 
         if ($pushPay === false) {
@@ -2384,6 +2496,7 @@ class SyncEngine
 
         $updated = $this->client->updatePayment($connection, (string) $remote['Id'], (string) $remote['SyncToken'], $payload);
         $this->storePaymentLink($ledger, $connection, $uuid, $invoiceId, $updated, $remoteInvoice);
+        $this->rememberInvoicesAfterPayments($ledger, $connection, [$uuid => $invoiceId], $settings);
 
         return 'updated';
     }
@@ -3102,6 +3215,45 @@ class SyncEngine
     }
 
     /**
+     * Whether Fleetbase changed what it sends of an invoice QuickBooks did not change since the
+     * last sync: the lines and amounts, dates, notes or customer. The tax and discounts QuickBooks
+     * works out on those lines are not a Fleetbase change; QuickBooks decides them.
+     *
+     * @param array<string, mixed>                                                             $invoice
+     * @param array<string, mixed>                                                             $remote
+     * @param array{removed: array<int, RemovedLine>, uuids: array<int, string>, mapped: bool} $stored
+     */
+    private function fleetbaseEditedInvoice(
+        array $invoice,
+        array $remote,
+        string $reference,
+        string $customerRef,
+        array $stored,
+    ): bool {
+        $remoteCustomer = $this->remoteInvoiceCustomerId($remote);
+        if ($remoteCustomer !== '' && $remoteCustomer !== trim($customerRef)) {
+            return true;
+        }
+        $remoteCents = $this->majorUnits($remote['TotalAmt'] ?? 0, (string) ($invoice['currency'] ?? ''));
+        $lines       = ['removed' => $stored['removed'], 'mapped' => $stored['mapped']];
+        $localCents  = (int) ($invoice['total'] ?? 0);
+
+        return $this->invoiceHashesMatch(
+            $invoice,
+            $remote,
+            'fleetbase',
+            $remoteCents,
+            $localCents,
+            $reference,
+            false,
+            $customerRef,
+            false,
+            true,
+            $lines
+        ) === false;
+    }
+
+    /**
      * The content of each line, as InvoiceMapper::item builds it. The line id, item uuid and stored
      * line are how a sync pairs a line, so they are left out. The line tax is left out too when
      * QuickBooks works it out from the lines Fleetbase sends ($withTax false).
@@ -3532,6 +3684,85 @@ class SyncEngine
             'qbo_id'       => (string) ($remote['Id'] ?? ''),
             'sync_token'   => (string) ($remote['SyncToken'] ?? '0'),
         ];
+    }
+
+    /**
+     * Store the SyncToken of the QuickBooks record this sync left both sides equal with, so
+     * the next difference shows which system changed. Returns $outcome.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $remote
+     */
+    private function synced(
+        SyncLedger $ledger,
+        array $connection,
+        string $type,
+        string $uuid,
+        array $remote,
+        string $outcome,
+    ): string {
+        $entity = ['customer' => 'Customer', 'invoice' => 'Invoice', 'wallet' => 'Account'][$type] ?? '';
+        if ($entity !== '' && trim((string) ($remote['Id'] ?? '')) !== '') {
+            $ledger->putLink($this->linkFrom($connection, $type, $uuid, $entity, $remote));
+        }
+
+        return $outcome;
+    }
+
+    /**
+     * synced(), updated when this sync changed the Fleetbase record and aligned otherwise.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $remote
+     */
+    private function syncedIf(
+        SyncLedger $ledger,
+        array $connection,
+        string $type,
+        string $uuid,
+        array $remote,
+        bool $changed,
+    ): string {
+        return $this->synced($ledger, $connection, $type, $uuid, $remote, $changed === true ? 'updated' : 'aligned');
+    }
+
+    /**
+     * QuickBooks as Primary copies a difference only when QuickBooks changed the record since
+     * the last sync. When it did not, and the type syncs both ways, the Fleetbase change is sent.
+     *
+     * @param array<string, mixed>      $settings
+     * @param array<string, mixed>|null $baseline the link as it was before this sync
+     * @param array<string, mixed>      $remote
+     */
+    private function fleetbaseLeads(array $settings, string $kind, ?array $baseline, array $remote): bool
+    {
+        return $this->tokenDecides($settings, $kind) === true && QuickBooksChanges::since($baseline, $remote) === false;
+    }
+
+    /**
+     * The stored SyncToken decides a difference only for QuickBooks Primary in two-way sync.
+     * Fleetbase Primary always sends, and From QuickBooks always copies.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private function tokenDecides(array $settings, string $kind): bool
+    {
+        $direction = $this->direction($settings, $kind);
+
+        return (string) ($settings[$kind . '_conflict'] ?? 'fleetbase') === 'quickbooks'
+            && $this->copiesRemote($direction) === true
+            && $this->pushesRemote($direction) === true;
+    }
+
+    /**
+     * A two-way copy under QuickBooks Primary replaced a Fleetbase difference because QuickBooks
+     * had also changed the record. Activity says so when Fleetbase queued the row.
+     */
+    private function notePrimaryCopy(string $type, string $uuid, bool $push, bool $changed = true): void
+    {
+        if ($push === true && $changed === true) {
+            $this->primaryCopies[$type . ':' . $uuid] = true;
+        }
     }
 
     /**
@@ -4094,6 +4325,73 @@ class SyncEngine
         $ledger->putLink($attributes);
         if ($action === 'forget') {
             $this->forgetPaymentLink($ledger, $company, $realm, $invoiceUuid);
+        }
+    }
+
+    /**
+     * Whether QuickBooks changed one of these payments since the last sync. Each payment is
+     * compared with its own link, or with the older link stored under the invoice.
+     *
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $payments
+     */
+    private function paymentsChangedInQuickBooks(
+        SyncLedger $ledger,
+        array $connection,
+        string $invoiceUuid,
+        array $payments,
+    ): bool {
+        $company = (string) $connection['company_uuid'];
+        $realm   = (string) $connection['realm_id'];
+        $legacy  = $ledger->link($company, $realm, 'payment', $invoiceUuid);
+        foreach ($payments as $remote) {
+            $id   = trim((string) ($remote['Id'] ?? ''));
+            $link = $id === '' ? null : $ledger->link($company, $realm, 'payment', $id);
+            if ($link === null && is_array($legacy) === true && trim((string) ($legacy['qbo_id'] ?? '')) === $id) {
+                $link = $legacy;
+            }
+            if (QuickBooksChanges::since($link, $remote) === true) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Applying a payment raises the SyncToken of the QuickBooks invoice it pays. Each invoice is
+     * read again, so a payment Fleetbase sent does not look like a QuickBooks change of the
+     * invoice on the next sync. Only QuickBooks Primary in two-way sync compares the token. A
+     * failed read keeps the older token: the next sync then lets QuickBooks win that invoice once.
+     *
+     * @param array<string, mixed>  $connection
+     * @param array<string, string> $invoiceIds QuickBooks invoice ids by Fleetbase invoice uuid
+     * @param array<string, mixed>  $settings
+     */
+    private function rememberInvoicesAfterPayments(
+        SyncLedger $ledger,
+        array $connection,
+        array $invoiceIds,
+        array $settings,
+    ): void {
+        $invoiceIds = array_filter($invoiceIds, static fn (string $id): bool => $id !== '');
+        if ($invoiceIds === [] || $this->tokenDecides($settings, 'invoice') === false) {
+            return;
+        }
+        try {
+            $remotes = $this->readRemoteIds($connection, 'Invoice', array_values($invoiceIds));
+        } catch (\Throwable) {
+            return;
+        }
+        $company = (string) $connection['company_uuid'];
+        $realm   = (string) $connection['realm_id'];
+        foreach ($invoiceIds as $uuid => $id) {
+            $remote = $remotes[$id] ?? null;
+            $link   = $ledger->link($company, $realm, 'invoice', (string) $uuid);
+            if (is_array($remote) === true && is_array($link) === true && (string) ($link['qbo_id'] ?? '') === $id) {
+                $ledger->putLink($this->linkFrom($connection, 'invoice', (string) $uuid, 'Invoice', $remote));
+                $this->rememberWrittenInvoice($remote);
+            }
         }
     }
 
@@ -5257,7 +5555,8 @@ class SyncEngine
                     (string) ($settings['invoice_reference'] ?? 'fleetbase')
                 );
             }
-            if ($this->copiesTaxAfterPush($settings, $plan['outcome']) === true) {
+            $edited = ($lines['edited'] ?? false) === true;
+            if ($edited === true || $this->copiesTaxAfterPush($settings, $plan['outcome']) === true) {
                 $this->copyQuickBooksTax($ledger, (string) $uuid, $result['body']);
             }
         }
@@ -5366,6 +5665,7 @@ class SyncEngine
         }
 
         $this->writeBuffer = null;
+        $paidInvoices      = [];
         foreach ($finished as $uuid => $item) {
             $result = $paymentResults['payment:' . $uuid] ?? null;
             if (is_array($result) === false) {
@@ -5409,8 +5709,10 @@ class SyncEngine
                 $invoiceLink = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'invoice', (string) $uuid);
                 $invoiceId   = is_array($invoiceLink) === true ? trim((string) ($invoiceLink['qbo_id'] ?? '')) : '';
                 $this->storePaymentLink($ledger, $connection, (string) $uuid, $invoiceId, $result['body']);
+                $paidInvoices[(string) $uuid] = $invoiceId;
             }
         }
+        $this->rememberInvoicesAfterPayments($ledger, $connection, $paidInvoices, $settings);
         $this->commitFinished($ledger, $connection, $finished, $batch, $trigger, $record);
 
         return false;
@@ -6811,10 +7113,11 @@ class SyncEngine
     {
         $batch[$outcome] = ($batch[$outcome] ?? 0) + 1;
         // rowNote() is read once, so the error is worked out once.
-        $error = $this->lastError
+        $copied = $this->takePrimaryCopy($row);
+        $error  = $this->lastError
             ?? $retryError
             ?? $this->rowNote($row, $outcome)
-            ?? $this->primaryReplacedNote($row, $outcome);
+            ?? $this->primaryReplacedNote($row, $outcome, $copied);
         // The daily catalog finds most customers unchanged; the batch counts them, Activity skips them.
         if ($trigger !== 'catalog' || $outcome !== 'aligned' || $error !== null) {
             $ledger->attempts[] = [
@@ -6861,23 +7164,44 @@ class SyncEngine
     }
 
     /**
-     * A row queued by a QuickBooks webhook that Fleetbase then updated in QuickBooks had a change
-     * made there. With Fleetbase as Primary that change was replaced, which Activity says.
+     * Whether QuickBooks as Primary replaced this row's Fleetbase difference (notePrimaryCopy).
+     * Read once.
      *
      * @param array<string, mixed> $row
      */
-    private function primaryReplacedNote(array $row, string $outcome): ?string
+    private function takePrimaryCopy(array $row): bool
     {
-        $type     = (string) ($row['local_type'] ?? '');
-        $replaced = $outcome === 'updated' && ($row['reason'] ?? '') === 'webhook';
-        if ($replaced === false || in_array($type, ['customer', 'invoice', 'wallet'], true) === false) {
+        $key    = (string) ($row['local_type'] ?? '') . ':' . (string) ($row['local_uuid'] ?? '');
+        $copied = isset($this->primaryCopies[$key]);
+        unset($this->primaryCopies[$key]);
+
+        return $copied;
+    }
+
+    /**
+     * A row queued by a QuickBooks webhook that Fleetbase then updated in QuickBooks had a change
+     * made there. With Fleetbase as Primary that change was replaced, which Activity says. With
+     * QuickBooks as Primary, a row Fleetbase queued whose change was replaced because QuickBooks
+     * had also changed the record says that instead.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function primaryReplacedNote(array $row, string $outcome, bool $copied = false): ?string
+    {
+        $type   = (string) ($row['local_type'] ?? '');
+        $reason = (string) ($row['reason'] ?? '');
+        if ($outcome !== 'updated' || in_array($type, ['customer', 'invoice', 'wallet'], true) === false) {
             return null;
         }
         if ((string) ($this->runSettings[$type . '_conflict'] ?? 'fleetbase') === 'quickbooks') {
-            return null;
+            $queuedByFleetbase = $reason !== '' && in_array($reason, self::REMOTE_REASONS, true) === false;
+
+            return $copied === true && $queuedByFleetbase === true
+                ? Translation::encode('quickbooks.messages.quickbooks-primary-replaced')
+                : null;
         }
 
-        return Translation::encode('quickbooks.messages.fleetbase-primary-replaced');
+        return $reason === 'webhook' ? Translation::encode('quickbooks.messages.fleetbase-primary-replaced') : null;
     }
 
     /**

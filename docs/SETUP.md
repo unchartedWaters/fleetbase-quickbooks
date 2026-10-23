@@ -73,7 +73,8 @@ screens without the surrounding Fleetbase console menus.
   the new total. A payment is sent for at most the QuickBooks invoice total: the
   rest stays in Fleetbase only and Activity says so. With invoices From
   Fleetbase only, Fleetbase keeps its own tax and the two can differ. With
-  QuickBooks as Primary, the QuickBooks lines, tax and total are copied, and
+  QuickBooks as Primary, when QuickBooks changed the invoice since the last
+  sync, the QuickBooks lines, tax and total are copied, and
   each taxed line gets its share of the tax. Tax is compared only through the
   lines, so a tax difference does not cause another update. An invoice
   QuickBooks holds with tax included in its amounts keeps the QuickBooks total.
@@ -340,6 +341,19 @@ edits made in QuickBooks are replaced with the Fleetbase values and payments
 recorded in QuickBooks are not copied; when a QuickBooks change is replaced,
 its Activity row says so.
 
+With QuickBooks Primary and Both, QuickBooks wins a difference only when the
+QuickBooks record changed since the last sync. Each sync stores the record's
+QuickBooks SyncToken (its version) on the link, and QuickBooks raises it on
+every change. When the token is unchanged, the Fleetbase change of a customer,
+invoice, payment or wallet is sent to QuickBooks: an added invoice line, a
+second Ledger payment, a new phone number. When both systems changed the
+record, the QuickBooks values are copied and the Activity row says that a
+change made in Fleetbase was replaced. Identifiers still come from QuickBooks:
+customer names, invoice numbers and account numbers. QuickBooks decides tax,
+so a tax difference alone is copied from QuickBooks. A record linked without a
+stored token, such as a customer matched by the customer import or a record
+moved by a QuickBooks merge, counts as changed in QuickBooks on its first sync.
+
 Sync frequency is the schedule. It is separate from each entity switch. There is
 no Enable schedule control, and a stored `enabled` flag does not stop the
 scheduler. Sync now with no connection returns HTTP 422 and does not save an
@@ -546,7 +560,9 @@ QuickBooks webhook copied into Fleetbase get their own QuickBooks change row,
 direction From QuickBooks; a webhook that changed nothing, such as the echo of
 a Fleetbase write, adds no row. Up to three errors are shown per row, failures
 first, each as a sentence naming its customer, invoice or wallet. The note that
-Fleetbase, as Primary, replaced a change made in QuickBooks shows once per row.
+Fleetbase, as Primary, replaced a change made in QuickBooks shows once per row,
+and so does the note that QuickBooks, as Primary, replaced a change made in
+Fleetbase.
 A request QuickBooks refused
 with its own explanation reads "QuickBooks rejected the request" followed by
 that explanation.
