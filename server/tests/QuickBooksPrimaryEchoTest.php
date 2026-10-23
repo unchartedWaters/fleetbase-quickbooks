@@ -215,16 +215,15 @@ test('a first link sends what fleetbase holds and quickbooks lacks on the next s
         ->and($client->customers['qbo-customer']['PrimaryPhone']['FreeFormNumber'])->toBe('555-0000');
 });
 
-test('a customer renamed in fleetbase is sent when quickbooks did not change the customer', function () {
+test('a customer renamed only in fleetbase takes the quickbooks name back', function () {
     [$engine, $client, $ledger]          = Primary::linkedCustomer('3', '3', '555-0000', '555-0000');
     $ledger->customers['cust-1']['name'] = 'Ada Lovelace';
     $ledger->pending[]                   = Primary::pending('customer', 'cust-1');
 
     $engine->runScheduled($ledger, 'company-uuid', Primary::shippedSettings(), time());
 
-    expect($client->calls)->toContain('updateCustomer')
-        ->and($client->customers['qbo-customer']['DisplayName'])->toBe('Ada Lovelace')
-        ->and($ledger->customers['cust-1']['name'])->toBe('Ada Lovelace');
+    expect($client->customers['qbo-customer']['DisplayName'])->not->toBe('Ada Lovelace')
+        ->and($ledger->customers['cust-1']['name'])->toBe($client->customers['qbo-customer']['DisplayName']);
 });
 
 test('a customer renamed in both systems takes the quickbooks name', function () {

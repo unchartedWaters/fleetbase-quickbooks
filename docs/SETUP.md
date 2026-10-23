@@ -365,15 +365,12 @@ Fleetbase customer, and Activity says so; a wallet that still holds money stays
 open when QuickBooks makes its account inactive. A later Fleetbase edit of that
 invoice or wallet is sent, keeps the QuickBooks customer and leaves the account
 inactive.
-Invoice numbers and account numbers still come from QuickBooks. A customer
-renamed in Fleetbase is sent like any other field, unless QuickBooks also
-changed that customer; then the QuickBooks name is kept. When QuickBooks
-refuses the name because another customer, vendor or employee uses it, the
-other changes are sent without the name, and Activity says so. QuickBooks
-decides tax, so a tax difference alone is copied from QuickBooks. A record
-linked without a stored token, such as a customer matched by the customer
-import or a record moved by a QuickBooks merge, counts as changed in QuickBooks
-on its first sync.
+Identifiers still come from QuickBooks: customer names, invoice numbers and
+account numbers, so a customer renamed only in Fleetbase takes the QuickBooks
+name back on the next sync. QuickBooks decides tax, so a tax difference alone
+is copied from QuickBooks. A record linked without a stored token, such as a
+customer matched by the customer import or a record moved by a QuickBooks
+merge, counts as changed in QuickBooks on its first sync.
 That sync copies the values QuickBooks holds and empties nothing in Fleetbase.
 When Fleetbase holds values QuickBooks lacks, the record stays queued, and the
 next run sends them.

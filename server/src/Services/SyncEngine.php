@@ -291,15 +291,6 @@ class SyncEngine
     private array $followUps = [];
 
     /**
-     * A customer update that also renames, by customer uuid: the note to show when QuickBooks
-     * refuses the name (fault 6240) and the update is sent again without it. Only an update that
-     * still changes something without the name is here.
-     *
-     * @var array<string, string>
-     */
-    private array $renameFallbacks = [];
-
-    /**
      * QuickBooks invoice ids whose block read failed. Absence from invoiceById is a miss only when the id is not here.
      * Each is thrown again with the status QuickBooks gave.
      *
@@ -1762,8 +1753,9 @@ class SyncEngine
         }
 
         // QuickBooks did not change the customer since the last sync: Fleetbase leads, clears included.
-        $leads      = $this->fleetbaseLeads($settings, 'customer', $baseline, $remote);
-        $pushClears = $pushClears || $leads;
+        if ($pushClears === false && $this->fleetbaseLeads($settings, 'customer', $baseline, $remote) === true) {
+            $pushClears = true;
+        }
         if ($pushClears === true) {
             $payload = $this->customers->toQuickBooks($this->customers->fromParty($ledger->customers[$uuid]), true);
         }
@@ -1776,8 +1768,7 @@ class SyncEngine
             return $this->syncedIf($ledger, $connection, 'customer', $uuid, $remote, $copied, $inSync, $baseline);
         }
 
-        // A Fleetbase rename is sent like any other field unless QuickBooks also changed the customer.
-        if ($reference === 'quickbooks' && $copy === true && $leads === false) {
+        if ($reference === 'quickbooks' && $copy === true) {
             $this->copyCustomerName($ledger, $uuid, $remote);
             $payload = $this->customers->toQuickBooks($this->customers->fromParty($ledger->customers[$uuid]), $pushClears);
         }
@@ -1809,7 +1800,7 @@ class SyncEngine
             return $this->syncedIf($ledger, $connection, 'customer', $uuid, $remote, $changed, $inSync, $baseline);
         }
 
-        if ($reference === 'quickbooks' && $leads === false) {
+        if ($reference === 'quickbooks') {
             $payload['DisplayName'] = (string) ($remote['DisplayName'] ?? $payload['DisplayName'] ?? '');
         }
 
@@ -1818,7 +1809,6 @@ class SyncEngine
         }
 
         $this->keepBillAddrId($payload, $remote);
-        $this->rememberRenameFallback($ledger, $uuid, $payload, $remote);
         if ($this->writeBuffer !== null) {
             $payload['Id']        = (string) $remote['Id'];
             $payload['SyncToken'] = (string) $remote['SyncToken'];
@@ -1833,111 +1823,10 @@ class SyncEngine
             return 'updated';
         }
 
-        $updated = $this->updateCustomerKeepingName($connection, $uuid, $remote, $payload);
+        $updated = $this->client->updateCustomer($connection, (string) $remote['Id'], (string) $remote['SyncToken'], $payload);
         $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $updated));
 
         return 'updated';
-    }
-
-    /**
-     * A customer update that renames, and that changes something else as well, can be sent again
-     * without the name when QuickBooks refuses the name (see retryWithoutName).
-     *
-     * @param array<string, mixed> $payload
-     * @param array<string, mixed> $remote
-     */
-    private function rememberRenameFallback(SyncLedger $ledger, string $uuid, array $payload, array $remote): void
-    {
-        unset($this->renameFallbacks[$uuid]);
-        $name       = CustomerMapper::displayName((string) ($payload['DisplayName'] ?? ''));
-        $remoteName = (string) ($remote['DisplayName'] ?? '');
-        if ($name === CustomerMapper::displayName($remoteName)) {
-            return;
-        }
-        if ($this->customerMatches(['DisplayName' => $remoteName] + $payload, $remote) === true) {
-            return;
-        }
-        $note = $this->customerNameTakenError($ledger, 'customer', $uuid, self::DUPLICATE_NAME_FAULT);
-        if ($note !== null) {
-            $this->renameFallbacks[$uuid] = $note;
-        }
-    }
-
-    /**
-     * Send a customer update. When QuickBooks refuses a Fleetbase rename (fault 6240), the other
-     * changes are sent once more without the name, and Activity names the customer.
-     *
-     * @param array<string, mixed> $connection
-     * @param array<string, mixed> $remote
-     * @param array<string, mixed> $payload
-     *
-     * @return array<string, mixed>
-     */
-    private function updateCustomerKeepingName(array $connection, string $uuid, array $remote, array $payload): array
-    {
-        $id    = (string) $remote['Id'];
-        $token = (string) $remote['SyncToken'];
-        try {
-            return $this->client->updateCustomer($connection, $id, $token, $payload);
-        } catch (QuickBooksException $exception) {
-            $note = $this->retryWithoutName($uuid, $exception->faultCode);
-            if ($note === null) {
-                throw $exception;
-            }
-            unset($payload['DisplayName']);
-            $updated                             = $this->client->updateCustomer($connection, $id, $token, $payload);
-            $this->rowNotes['customer:' . $uuid] = $note;
-
-            return $updated;
-        }
-    }
-
-    /**
-     * The note for a customer update to send again without its name: QuickBooks refused the name
-     * (fault 6240), and the update changes something else too. Null otherwise. Read once.
-     */
-    private function retryWithoutName(string $uuid, ?string $faultCode): ?string
-    {
-        $note = $this->renameFallbacks[$uuid] ?? null;
-        unset($this->renameFallbacks[$uuid]);
-
-        return $faultCode === self::DUPLICATE_NAME_FAULT ? $note : null;
-    }
-
-    /**
-     * Buffered customer updates QuickBooks refused for a Fleetbase rename are sent again without
-     * the name (see retryWithoutName). A retry that is accepted replaces the refusal.
-     *
-     * @param array<string, mixed>       $connection
-     * @param array<int, BufferedWrite>  $ops
-     * @param array<string, BatchResult> $results
-     *
-     * @return array<string, BatchResult>
-     */
-    private function retryRefusedRenames(array $connection, array $ops, array $results): array
-    {
-        foreach ($ops as $op) {
-            $bId    = $op['bId'];
-            $result = $results[$bId] ?? null;
-            if (str_starts_with($bId, 'customer:') === false || $op['operation'] !== 'update'
-                || is_array($result) === false || empty($result['ok']) === false) {
-                continue;
-            }
-            $uuid = substr($bId, strlen('customer:'));
-            $note = $this->retryWithoutName($uuid, $this->batchFaultCode($result));
-            if ($note === null) {
-                continue;
-            }
-            unset($op['payload']['DisplayName'], $op['key']);
-            $retried = $this->executeOneWrite($connection, $op);
-            if (empty($retried['ok']) === false) {
-                $results[$bId]                       = $retried;
-                $this->rowNotes['customer:' . $uuid] = $note;
-            }
-        }
-        $this->renameFallbacks = [];
-
-        return $results;
     }
 
     /**
@@ -7262,15 +7151,13 @@ class SyncEngine
             return [];
         }
         if (count($ops) === 1) {
-            $results = [$ops[0]['bId'] => $this->executeOneWrite($connection, $ops[0])];
-
-            return $this->retryRefusedRenames($connection, $ops, $results);
+            return [$ops[0]['bId'] => $this->executeOneWrite($connection, $ops[0])];
         }
         foreach ($ops as $index => $op) {
             $ops[$index]['key'] = $this->writeKey($op['bId']);
         }
 
-        return $this->retryRefusedRenames($connection, $ops, $this->client->batch($connection, $ops));
+        return $this->client->batch($connection, $ops);
     }
 
     /**
