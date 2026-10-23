@@ -216,10 +216,32 @@ export default class QuickbooksSettingsComponent extends Component {
             this.draft = {};
             this.errors = {};
         } catch (error) {
-            this.notifications.serverError(error);
+            this.showServerError(error);
         } finally {
             this.saving = false;
         }
+    }
+
+    // Saves and resets reject with the server's JSON body (rawError), or with an Error when the request itself failed.
+    showServerError(error) {
+        if (error instanceof Error) {
+            this.notifications.serverError(error);
+            return;
+        }
+
+        const message = (typeof error?.message === 'string' && error.message) || (Array.isArray(error?.errors) && error.errors[0]);
+        this.notifications.error(message || this.intl.t('quickbooks.messages.settings-invalid'));
+    }
+
+    // A server error for a key no field renders (such as settings) would otherwise be silent.
+    showFieldlessError(error, serverErrors) {
+        const rendered = Object.keys(serverErrors).some((key) => ERROR_FIELD_ORDER.includes(key) || PUBLIC_URL_FIELDS.includes(key) || key.endsWith('_enabled'));
+        if (rendered) {
+            return;
+        }
+
+        const message = typeof error?.message === 'string' && error.message;
+        this.notifications.error(message || this.intl.t('quickbooks.messages.settings-invalid'));
     }
 
     // Saving is for installation administrators, so the server's can_edit is the only answer.
@@ -508,8 +530,9 @@ export default class QuickbooksSettingsComponent extends Component {
             if (serverErrors && typeof serverErrors === 'object' && !Array.isArray(serverErrors)) {
                 this.errors = this.localizeErrors(serverErrors);
                 this.revealFirstError(serverErrors);
+                this.showFieldlessError(error, serverErrors);
             } else {
-                this.notifications.serverError(error);
+                this.showServerError(error);
             }
         } finally {
             this.saving = false;

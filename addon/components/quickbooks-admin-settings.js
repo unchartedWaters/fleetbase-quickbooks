@@ -54,7 +54,8 @@ export default class QuickbooksAdminSettingsComponent extends Component {
                 auth: payload.auth,
                 sync: payload.sync,
             },
-            { namespace: NAMESPACE }
+            // rawError keeps the server's field errors, so a refused value is shown under its field.
+            { namespace: NAMESPACE, rawError: true }
         );
         this.apply(result);
     }

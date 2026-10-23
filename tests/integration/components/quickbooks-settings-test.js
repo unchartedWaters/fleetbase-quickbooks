@@ -1176,10 +1176,9 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             public_oauth_redirect_url: 'https://api.example.test/quickbooks/int/v1/oauth/callback',
         });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+        // The fetch service rejects with the server's JSON body when rawError is set.
         this.set('onSave', () => {
-            const error = new Error('save failed');
-            error.errors = { public_oauth_redirect_url: 'quickbooks.validation.public-oauth-url' };
-            throw error;
+            throw { message: 'save failed', errors: { public_oauth_redirect_url: 'quickbooks.validation.public-oauth-url' } };
         });
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);

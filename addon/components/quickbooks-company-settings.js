@@ -80,7 +80,8 @@ export default class QuickbooksCompanySettingsComponent extends Component {
                 company_uuid: this.currentUser.companyId,
                 sync: payload.sync ?? {},
             },
-            { namespace: NAMESPACE }
+            // rawError keeps the server's field errors, so a refused value is shown under its field.
+            { namespace: NAMESPACE, rawError: true }
         );
         this.apply(result);
     }
@@ -92,7 +93,7 @@ export default class QuickbooksCompanySettingsComponent extends Component {
             return;
         }
 
-        const result = await this.fetch.post('settings', { scope: 'company', company_uuid: this.currentUser.companyId, reset: true }, { namespace: NAMESPACE });
+        const result = await this.fetch.post('settings', { scope: 'company', company_uuid: this.currentUser.companyId, reset: true }, { namespace: NAMESPACE, rawError: true });
         this.apply(result);
     }
 
