@@ -1,7 +1,10 @@
 <?php
 
+use Fleetbase\Quickbooks\Jobs\SyncWebhookBatch;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Tests\Support\CapturedJobs;
+use Fleetbase\Quickbooks\Tests\Support\ReconcileBacklog;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 
@@ -527,6 +530,50 @@ test('a pending load takes a user edit before a reconcile backlog', function () 
 
         expect(dctPendingUuids($loaded['ledger']->pending))->toHaveCount(100)
             ->and(dctPendingUuids($loaded['ledger']->pending))->toContain('zzzz-saved');
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('engine-created edits raise open reconcile rows ahead of the backlog in one update', function () {
+    $restore = dctSqlite();
+    try {
+        ReconcileBacklog::add('customer', ['cust-a', 'cust-b', 'cust-c', 'cust-z']);
+        $write = new ReflectionMethod(FleetbaseDirectory::class, 'writePendingMany');
+        $row   = static fn (string $uuid, string $reason): array => [
+            'company_uuid' => 'company-uuid', 'local_type' => 'customer', 'local_uuid' => $uuid, 'reason' => $reason,
+        ];
+
+        $updates = ReconcileBacklog::updatesDuring(fn () => $write->invoke(new FleetbaseDirectory(), [
+            $row('cust-a', 'customer-linked'),
+            $row('cust-b', 'saved'),
+            $row('cust-c', 'reconcile'),
+            $row('cust-d', 'saved'),
+        ]));
+
+        expect(ReconcileBacklog::priorities())
+            ->toBe(['cust-a' => 0, 'cust-b' => 0, 'cust-c' => 1, 'cust-d' => 0, 'cust-z' => 1])
+            ->and($updates)->toHaveCount(1);
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a webhook for records in the reconcile backlog raises their open rows in one update', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        ReconcileBacklog::add('invoice', ['inv-a', 'inv-b', 'inv-z']);
+        $job = new SyncWebhookBatch('company-uuid', [
+            ['local_type' => 'invoice', 'local_uuid' => 'inv-a'],
+            ['local_type' => 'invoice', 'local_uuid' => 'inv-b'],
+            ['local_type' => 'invoice', 'local_uuid' => 'inv-new'],
+        ]);
+
+        $updates = ReconcileBacklog::updatesDuring(fn () => CapturedJobs::capture(fn () => $job->handle()));
+
+        expect(ReconcileBacklog::priorities())->toBe(['inv-a' => 0, 'inv-b' => 0, 'inv-new' => 0, 'inv-z' => 1])
+            ->and($updates)->toHaveCount(1);
     } finally {
         $restore();
     }

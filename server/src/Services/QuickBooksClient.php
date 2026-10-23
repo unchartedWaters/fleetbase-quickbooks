@@ -25,6 +25,14 @@ class QuickBooksClient
     /** Held per QuickBooks company while invoice numbers are chosen, so two runs never pick the same ones. */
     private const DOC_NUMBER_LOCK = 'quickbooks.docnumber.';
 
+    /**
+     * Longer than the slowest choice, so the lock never lapses while numbers are chosen. The
+     * choice makes at most six requests (the latest-invoice query and five single checks; a
+     * block of up to 100 creates checks in one Batch call), each up to Laravel's default 30 s
+     * timeout. The lock is released at once when the choice ends.
+     */
+    private const DOC_NUMBER_LOCK_SECONDS = 240;
+
     /** The last invoice number handed out per QuickBooks company, for creates that have not landed yet. */
     private const DOC_NUMBER_FLOOR = 'quickbooks.docnumber-last.';
 
@@ -353,7 +361,7 @@ class QuickBooksClient
         // realm lock and the floor keep a second run from picking numbers the first has not written.
         $realmId = (string) ($connection['realm_id'] ?? '');
         try {
-            $lock = Cache::lock(self::DOC_NUMBER_LOCK . $realmId, 30);
+            $lock = Cache::lock(self::DOC_NUMBER_LOCK . $realmId, self::DOC_NUMBER_LOCK_SECONDS);
             $lock->block($this->docNumberLockWait);
         } catch (LockTimeoutException) {
             // The creates fail with invoice-number-unconfirmed and are retried later.
@@ -955,6 +963,7 @@ class QuickBooksClient
      *   bId, operation (create|update|void|delete), entity (Customer|Invoice|Payment|Account|Item), payload
      * or a query:
      *   bId, query
+     * A write may also carry key, which goes into the requestid and is not sent.
      *
      * @param array<string, mixed>                                                                                                $connection
      * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
@@ -1287,8 +1296,16 @@ class QuickBooksClient
      */
     private function postBatch(array $connection, array $items): array
     {
-        $requests  = self::batchRequests($items);
-        $keyed     = ['BatchItemRequest' => $requests];
+        $requests = self::batchRequests($items);
+        $keyed    = ['BatchItemRequest' => $requests];
+        // An item's key (the record and the pending row driving it) is part of the requestid, not sent.
+        $keys = array_filter(
+            array_column($items, 'key', 'bId'),
+            static fn (mixed $key): bool => is_string($key) === true && $key !== ''
+        );
+        if ($keys !== []) {
+            $keyed['keys'] = $keys;
+        }
         $requestId = $this->requestId((string) $connection['realm_id'], 'post', 'batch', $keyed);
         $wireIds   = self::wireBatchIds(array_column($requests, 'bId'), $requestId);
         foreach ($requests as $index => $request) {
@@ -1621,9 +1638,12 @@ class QuickBooksClient
      * Intuit applies a write whose requestid it has already seen only once and answers with
      * the first result, so a create that timed out after QuickBooks saved it is not saved
      * again when the run retries it. The id hashes the realm, the request, the Fleetbase
-     * record (the bIds of a batch, or the key set by withWriteKey) and the UTC day: a retry
-     * of the same write reuses it, while a changed body, another record or a later day (a
-     * record deleted in QuickBooks and created again) gets a new one. Reads, a batch of
+     * record (the bIds and item keys of a batch, or the key set by withWriteKey; the engine
+     * adds the pending row that drives the write) and the body: a retry of the same write
+     * reuses it on any day, while a changed body (an update carries its SyncToken), another
+     * record or a new pending row (a record deleted in QuickBooks and created again) gets a
+     * new one. Intuit matches the id alone and remembers
+     * only successes. Reads, a batch of
      * queries only, and a single write with no record key carry none. The id is a UUID-shaped
      * 36 characters; Intuit counts it together with each batch bId (see wireBatchIds).
      *
@@ -1649,7 +1669,6 @@ class QuickBooksClient
             $path,
             $isBatch === true ? '' : (string) $this->writeKey,
             is_string($body) === true ? $body : '',
-            gmdate('Y-m-d'),
         ]));
 
         return implode('-', [
@@ -1678,7 +1697,8 @@ class QuickBooksClient
 
     private function throwIfFailed(Response $response): void
     {
-        if ($response->successful() === true) {
+        $status = self::failedStatus($response);
+        if ($status === null) {
             return;
         }
 
@@ -1698,24 +1718,42 @@ class QuickBooksClient
 
         // Intuit's detail is its own English text, so it is a param and is shown as given.
         $detail  = implode(': ', array_filter($details, static fn (string $part): bool => $part !== ''));
-        $status  = (string) $response->status();
         $message = $detail === ''
-            ? Translation::encode('quickbooks.messages.request-failed', ['status' => $status])
+            ? Translation::encode('quickbooks.messages.request-failed', ['status' => (string) $status])
             : Translation::encode(
                 'quickbooks.messages.request-failed-detail',
-                ['status' => $status, 'detail' => $detail]
+                ['status' => (string) $status, 'detail' => $detail]
             );
         // A 400 with Intuit's own explanation is a refusal of what was sent, not a failed call.
         $faultDetail = is_array($fault) === true ? trim((string) ($fault['Detail'] ?? $fault['Message'] ?? '')) : '';
-        if ($response->status() === 400 && $faultDetail !== '' && is_string($oauthError) === false) {
+        if ($status === 400 && $faultDetail !== '' && is_string($oauthError) === false) {
             $message = Translation::encode('quickbooks.messages.request-rejected', ['detail' => $faultDetail]);
         }
 
         // A stale SyncToken only means the record changed in QuickBooks meanwhile: temporary,
         // as batchFaultStatus() treats it inside a batch.
-        $thrown = $response->status() === 400 && $faultCode === '5010' ? 409 : $response->status();
+        $thrown = $status === 400 && $faultCode === '5010' ? 409 : $status;
 
         throw new QuickBooksException($thrown, $message, $response->header('Retry-After'), $faultCode);
+    }
+
+    /**
+     * The status to throw, or null for a success. Intuit can answer 200 with a top-level Fault
+     * and change nothing (seen on a Preferences update), so that answer is a refusal (400), or
+     * a refused access token (401) for an authentication fault. A batch keeps its items' faults
+     * inside BatchItemResponse, and postBatch() reads those.
+     */
+    private static function failedStatus(Response $response): ?int
+    {
+        if ($response->successful() === false) {
+            return $response->status();
+        }
+        $fault = $response->json('Fault');
+        if (is_array($fault) === false) {
+            return null;
+        }
+
+        return self::isAuthenticationFault(['Fault' => $fault]) === true ? 401 : 400;
     }
 
     /**

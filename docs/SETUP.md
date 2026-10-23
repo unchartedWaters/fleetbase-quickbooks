@@ -535,10 +535,13 @@ QuickBooks update operations are posted in chunks of 20. Queries, creates, and
 voids are posted in chunks of at most 30. Updates and the other items are
 grouped separately, so new and edited invoices in one run share a few chunks
 instead of each starting a new one. Every write (and every batch with a write)
-carries Intuit's `requestid`, a hash of the company, the request and the UTC
-day. A write that timed out after QuickBooks saved it is then answered with the
-saved record when the same payload is sent again that day, instead of being
-saved twice. Reads carry none.
+carries Intuit's `requestid`, a hash of the company, the request, the
+Fleetbase record, the pending row that drives the write and the payload. A
+write that timed out after QuickBooks saved it is then answered with the saved
+record when the same payload is sent again, on any day, instead of being saved
+twice. A changed payload (an update carries its SyncToken) or a new pending row
+(a record deleted in QuickBooks and created again) gets a new id. Reads carry
+none.
 
 Sync frequency is minutes (`interval_minutes`, default 5). Full sync frequency
 (hours) (`periodic_interval_hours`, default 24) limits only the customer

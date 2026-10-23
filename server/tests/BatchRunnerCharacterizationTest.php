@@ -631,6 +631,53 @@ test('a now run that fills its batch dispatches a drain', function () {
         ->and($run['dispatcher']->heldAtDispatch)->toBe([false]);
 });
 
+test('a full now run starts no second drain chain while one runs, and the chain goes on', function () {
+    $uuids = array_map(static fn (int $index): string => sprintf('cust-%03d', $index), range(1, 150));
+    $built = brcRunner([], $uuids, ['batch_size' => 100]);
+
+    $first  = brcRun($built['runner'], 'now');
+    $second = brcRun($built['runner'], 'now');
+    $drain  = brcRun($built['runner'], 'drain');
+    $third  = brcRun($built['runner'], 'now');
+
+    expect(brcDispatched($first['dispatcher']))->toBe(['batch:drain'])
+        ->and(brcDispatched($second['dispatcher']))->toBe([])
+        ->and(brcDispatched($drain['dispatcher']))->toBe(['batch:drain'])
+        ->and(brcDispatched($third['dispatcher']))->toBe([]);
+});
+
+test('the drain chain marker ends with the chain, and expires when no drain runs', function () {
+    $uuids                 = array_map(static fn (int $index): string => sprintf('cust-%03d', $index), range(1, 150));
+    $built                 = brcRunner([], $uuids, ['batch_size' => 100]);
+    $ended                 = brcRunner();
+    $ended['engine']->work = function (SyncLedger $ledger): array {
+        $ledger->pending[0]['status'] = 'done';
+        $batch                        = ['trigger' => 'now', 'status' => 'finished'];
+        $ledger->batches[]            = $batch;
+
+        return $batch;
+    };
+
+    $started = brcRun($built['runner'], 'now');
+    // The last drain finds nothing due, so the chain ends and the next full now run starts one.
+    $last      = brcRun($ended['runner'], 'drain');
+    $restarted = brcRun($built['runner'], 'now');
+    // A chain whose drain never runs (a worker died) gives way once the marker expires.
+    $orphaned = brcRun($built['runner'], 'now');
+    Carbon\Carbon::setTestNow(Carbon\Carbon::now()->addSeconds(BatchRunner::DRAIN_CHAIN_SECONDS + 1));
+    try {
+        $expired = brcRun($built['runner'], 'now');
+    } finally {
+        Carbon\Carbon::setTestNow();
+    }
+
+    expect(brcDispatched($started['dispatcher']))->toBe(['batch:drain'])
+        ->and(brcDispatched($last['dispatcher']))->toBe([])
+        ->and(brcDispatched($restarted['dispatcher']))->toBe(['batch:drain'])
+        ->and(brcDispatched($orphaned['dispatcher']))->toBe([])
+        ->and(brcDispatched($expired['dispatcher']))->toBe(['batch:drain']);
+});
+
 test('a scheduled run with only the catalog due runs one catalog page and does not queue another catalog', function () {
     $built = brcRunner(['last_batch_at' => time(), 'last_customer_catalog_at' => null], [], ['batch_size' => 5], null, ['c-1', 'c-2']);
 

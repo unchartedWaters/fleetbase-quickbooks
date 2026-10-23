@@ -5566,6 +5566,40 @@ class FleetbaseDirectory
                 }
             }
         }
+        $this->raiseOpenRows(array_filter($payload, static fn (array $row): bool => ($row['priority'] ?? 1) === 0));
+    }
+
+    /**
+     * An insert ignored for a record that already has an open row leaves that row's priority.
+     * An edit (priority 0) that reaches a reconcile row moves it ahead of the backlog, in one
+     * update for the whole call.
+     *
+     * @param array<int, array<string, mixed>> $edits
+     */
+    private function raiseOpenRows(array $edits): void
+    {
+        $groups = [];
+        foreach ($edits as $row) {
+            $groups[$row['company_uuid'] . '|' . $row['local_type']][] = (string) $row['local_uuid'];
+        }
+        if ($groups === []) {
+            return;
+        }
+
+        PendingSync::query()
+            ->where('status', 'pending')
+            ->where('priority', '>', 0)
+            ->where(function ($query) use ($groups): void {
+                foreach ($groups as $key => $uuids) {
+                    [$companyUuid, $localType] = explode('|', $key, 2);
+                    $query->orWhere(function ($group) use ($companyUuid, $localType, $uuids): void {
+                        $group->where('company_uuid', $companyUuid)
+                            ->where('local_type', $localType)
+                            ->whereIn('local_uuid', $uuids);
+                    });
+                }
+            })
+            ->update(['priority' => 0]);
     }
 
     /**

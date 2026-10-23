@@ -262,6 +262,31 @@ test('busy continuations retry three times with bounded delays while other trigg
     }
 });
 
+test('a drain that gives up on a busy lock ends the drain chain so the next full run starts one', function () {
+    $client               = new RefreshingQuickBooks();
+    [$tokens, $directory] = tokensWith($client);
+    refreshLedger($directory, time() + 3600);
+    $runner = batchRunner($directory, $tokens, $client);
+    $held   = Cache::getFacadeRoot()->getStore()->lock('quickbooks.batch.company-uuid', BatchRunner::LOCK_SECONDS);
+    expect($held->get())->toBeTrue();
+    Cache::put('quickbooks.drain-chain.company-uuid', true, BatchRunner::DRAIN_CHAIN_SECONDS);
+
+    try {
+        withBatchDispatcher(function ($dispatcher) use ($runner) {
+            (new SyncCompanyBatch('company-uuid', 'drain'))->handle($runner);
+            $dispatcher->jobs[0]->handle($runner);
+            $dispatcher->jobs[1]->handle($runner);
+            expect(Cache::get('quickbooks.drain-chain.company-uuid'))->toBeTrue();
+
+            $dispatcher->jobs[2]->handle($runner);
+        });
+    } finally {
+        $held->release();
+    }
+
+    expect(Cache::get('quickbooks.drain-chain.company-uuid'))->toBeNull();
+});
+
 test('the company lock is held while the refresh token is sent to intuit', function () {
     $client                = new RefreshingQuickBooks();
     $secondCouldStart      = true;

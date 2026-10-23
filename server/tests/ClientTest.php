@@ -515,6 +515,36 @@ test('invoice numbers are not reserved while another run holds the realm number 
     Http::assertNothingSent();
 });
 
+test('the realm number lock outlives the slowest choice of an invoice number', function () {
+    // Each request takes Laravel's default 30 s timeout, and every candidate is taken: the
+    // latest-invoice query plus five checks. Another run must not take the lock meanwhile.
+    $lockFree = [];
+    Http::fake(function (Request $request) use (&$lockFree) {
+        Illuminate\Support\Carbon::setTestNow(Illuminate\Support\Carbon::now()->addSeconds(30));
+        $probe      = Cache::lock('quickbooks.docnumber.realm-1', 30);
+        $lockFree[] = $probe->get();
+        if (end($lockFree) === true) {
+            $probe->release();
+        }
+        $url = urldecode($request->url());
+        if (str_contains($url, 'orderby MetaData.CreateTime') === true) {
+            return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1000']]]], 200);
+        }
+        preg_match("/DocNumber = '([^']+)'/", $url, $match);
+
+        return Http::response(['QueryResponse' => ['Invoice' => [['Id' => 'taken', 'DocNumber' => $match[1]]]]], 200);
+    });
+
+    try {
+        $numbers = (new QuickBooksClient())->nextInvoiceDocNumbers(clientConnection(), 1);
+    } finally {
+        Illuminate\Support\Carbon::setTestNow();
+    }
+
+    expect($numbers)->toBe([])
+        ->and($lockFree)->toBe([false, false, false, false, false, false]);
+});
+
 test('update writes are chunked at 20 and other batch calls stay at 30', function () {
     $updates = [];
     for ($i = 1; $i <= 21; $i++) {
@@ -720,4 +750,57 @@ test('an item is read by id, inactive or not', function () {
 
     expect((new QuickBooksClient())->item(clientConnection(), '20'))->toBe($item);
     Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/item/20'));
+});
+
+test('an answer of 200 with a fault is a refusal, not an empty success', function () {
+    $validation = ['Fault' => ['Error' => [[
+        'Message' => 'A business validation error has occurred while processing your request',
+        'Detail'  => 'Business Validation Error: Preferences cannot be changed.',
+        'code'    => '6000',
+    ]], 'type' => 'ValidationFault']];
+    $authentication = ['Fault' => [
+        'Error' => [['Message' => 'AuthenticationFailed', 'code' => '3200']],
+        'type'  => 'AUTHENTICATION',
+    ]];
+    $answers        = [$validation, $validation, $authentication];
+    Http::fake(function () use (&$answers) {
+        return Http::response(array_shift($answers), 200);
+    });
+    $client = new QuickBooksClient();
+    $caught = [];
+    foreach ([
+        fn () => $client->createCustomer(clientConnection(), ['DisplayName' => 'Ada']),
+        fn () => $client->findCustomerByEmail(clientConnection(), 'ada@example.test'),
+        fn () => $client->companyInfo(clientConnection()),
+    ] as $call) {
+        try {
+            $call();
+            $caught[] = null;
+        } catch (QuickBooksException $exception) {
+            $caught[] = [$exception->status, $exception->faultCode, $exception->getMessage()];
+        }
+    }
+
+    expect($caught[0][0])->toBe(400)
+        ->and($caught[0][1])->toBe('6000')
+        ->and(qbText($caught[0][2]))->toContain('Preferences cannot be changed.')
+        ->and($caught[1][0])->toBe(400)
+        ->and($caught[2][0])->toBe(401)
+        ->and($caught[2][1])->toBe('3200');
+});
+
+test('item faults inside a batch answered with 200 stay with the batch handling', function () {
+    Http::fake(fn () => Http::response(['BatchItemResponse' => [
+        ['bId' => 'a', 'Customer' => ['Id' => '5', 'SyncToken' => '0']],
+        ['bId' => 'b', 'Fault' => ['Error' => [['Detail' => 'Duplicate Name Exists Error', 'code' => '6240']]]],
+    ]], 200));
+
+    $results = (new QuickBooksClient())->batch(clientConnection(), [
+        ['bId' => 'a', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Ada']],
+        ['bId' => 'b', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Bea']],
+    ]);
+
+    expect($results['a']['ok'])->toBeTrue()
+        ->and($results['b']['ok'])->toBeFalse()
+        ->and($results['b']['code'] ?? null)->toBe('6240');
 });
