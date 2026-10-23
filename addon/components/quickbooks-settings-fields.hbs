@@ -42,7 +42,7 @@
                         {{#if (get @errors field.key)}}
                             <p id={{concat field.key "-error"}} class="text-xs text-red-600 dark:text-red-400 mt-1" data-test-error={{field.key}} tabindex="-1">{{get @errors field.key}}</p>
                         {{/if}}
-                        <p class="text-xs text-gray-400 mt-1" data-test-field-help={{field.key}}>{{field.hint}}</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-field-help={{field.key}}>{{field.hint}}</p>
                     </InputGroup>
                 {{else}}
                     <InputGroup @name={{field.label}} @required={{true}} as |id|>
@@ -62,7 +62,7 @@
                         {{#if (get @errors field.key)}}
                             <p id={{concat field.key "-error"}} class="text-xs text-red-600 dark:text-red-400 mt-1" data-test-error={{field.key}} tabindex="-1">{{get @errors field.key}}</p>
                         {{/if}}
-                        <p class="text-xs text-gray-400 mt-1" data-test-field-help={{field.key}}>{{field.hint}}</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-field-help={{field.key}}>{{field.hint}}</p>
                     </InputGroup>
                 {{/if}}
             </div>
@@ -98,11 +98,11 @@
             {{#if (get @errors "client_secret")}}
                 <p id="client-secret-error" class="text-xs text-red-600 dark:text-red-400 mt-1" data-test-error="client_secret" tabindex="-1">{{get @errors "client_secret"}}</p>
             {{/if}}
-            <p class="text-xs text-gray-400 mt-1" data-test-field-help="client_secret">{{t "quickbooks.settings.client-secret-help"}}</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-field-help="client_secret">{{t "quickbooks.settings.client-secret-help"}}</p>
         </InputGroup>
         {{#if (not (get @errors "client_secret"))}}
             {{#if @secret.set}}
-                <p class="text-xs text-gray-400 mt-1" data-test-secret-set>{{t "quickbooks.settings.client-secret-saved"}}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-secret-set>{{t "quickbooks.settings.client-secret-saved"}}</p>
             {{/if}}
         {{/if}}
         <InputGroup @name={{t "quickbooks.settings.verifier"}} as |id|>
@@ -136,12 +136,12 @@
             {{#if (get @errors "webhook_verifier")}}
                 <p id="webhook-verifier-error" class="text-xs text-red-600 dark:text-red-400 mt-1" data-test-error="webhook_verifier" tabindex="-1">{{get @errors "webhook_verifier"}}</p>
             {{/if}}
-            <p class="text-xs text-gray-400 mt-1" data-test-field-help="webhook_verifier">
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-field-help="webhook_verifier">
                 {{t "quickbooks.settings.verifier-help"}}
             </p>
         </InputGroup>
         {{#if @secret.verifier.set}}
-            <p class="text-xs text-gray-400 mt-1" data-test-verifier-set>{{t "quickbooks.settings.verifier-saved"}}</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-verifier-set>{{t "quickbooks.settings.verifier-saved"}}</p>
         {{/if}}
         {{#each @displayedUrls key="key" as |url|}}
             <div data-test-sync-field={{url.key}}>
@@ -162,7 +162,7 @@
                         {{#if (get @errors url.key)}}
                             <p id={{concat url.key "-error"}} class="text-xs text-red-600 dark:text-red-400 mt-1" data-test-error={{url.key}} tabindex="-1">{{get @errors url.key}}</p>
                         {{/if}}
-                        <p class="text-xs text-gray-400 mt-1" data-test-field-help={{url.key}}>{{url.hint}}</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-field-help={{url.key}}>{{url.hint}}</p>
                         {{#if url.notPublic}}
                             <p class="text-xs text-amber-700 dark:text-amber-400 mt-1" data-test-url-not-public={{url.key}}>{{t "quickbooks.settings.urls.not-public"}}</p>
                         {{/if}}
@@ -171,7 +171,7 @@
                     <div class="mb-4 border-l-2 border-gray-200 pl-3 dark:border-gray-700">
                         <p class="text-xs font-medium text-gray-500 dark:text-gray-400" data-test-url-label>{{url.label}}</p>
                         <div class="mt-1 select-text break-all font-mono text-xs leading-5 text-gray-600 dark:text-gray-300" data-test-field={{url.key}}>{{url.value}}</div>
-                        <p class="mt-1 text-xs text-gray-400" data-test-field-help={{url.key}}>{{url.hint}}</p>
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400" data-test-field-help={{url.key}}>{{url.hint}}</p>
                     </div>
                 {{/if}}
             </div>
@@ -201,7 +201,7 @@
                     {{#if (get @errors field.key)}}
                         <p id={{concat field.key "-sync-error"}} class="text-xs text-red-600 dark:text-red-400 mt-1" data-test-error={{field.key}} tabindex="-1">{{get @errors field.key}}</p>
                     {{/if}}
-                    <p class="text-xs text-gray-400 mt-1" data-test-field-help={{field.key}}>{{field.hint}}</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-field-help={{field.key}}>{{field.hint}}</p>
                 </InputGroup>
             </div>
         {{/each}}
@@ -260,7 +260,7 @@
                             {{#if (get @errors policy.referenceKey)}}
                                 <p id={{concat id "-reference"}} class="text-xs text-red-600 dark:text-red-400 mt-1" data-test-error={{policy.referenceKey}} tabindex="-1">{{get @errors policy.referenceKey}}</p>
                             {{/if}}
-                            <p class="text-xs text-gray-400 mt-1" data-test-field-help="primary">{{t "quickbooks.settings.primary-help"}}</p>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-field-help="primary">{{t "quickbooks.settings.primary-help"}}</p>
                         </InputGroup>
                         <div data-test-sync-field={{policy.directionKey}}>
                             <InputGroup @name={{t "quickbooks.settings.sync-direction"}} @required={{policy.enabled}} as |id|>
@@ -282,7 +282,7 @@
                                 {{#if (get @errors policy.directionKey)}}
                                     <p id={{concat policy.directionKey "-error"}} class="text-xs text-red-600 dark:text-red-400 mt-1" data-test-error={{policy.directionKey}} tabindex="-1">{{get @errors policy.directionKey}}</p>
                                 {{/if}}
-                                <p class="text-xs text-gray-400 mt-1" data-test-field-help="sync_direction">{{t "quickbooks.settings.sync-direction-help"}}</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-field-help="sync_direction">{{t "quickbooks.settings.sync-direction-help"}}</p>
                             </InputGroup>
                         </div>
                     </div>

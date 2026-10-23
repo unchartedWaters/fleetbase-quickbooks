@@ -225,7 +225,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-400');
+        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-500');
         assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
         assert.dom('[data-test-credential-save-step]').hasText('Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.');
         assert.dom("[data-test-field='redirect_uri']").doesNotExist();
@@ -414,7 +414,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-redirect-step]').hasText('Under Redirect URIs, paste the Public OAuth Redirect URL.');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-400');
+        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-500');
         assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
         assert.dom('[data-test-connection-state]').hasAttribute('data-test-connection-state', 'loading');
         assert.dom('[data-test-connect]').doesNotExist();
@@ -882,7 +882,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assertPublicUrl(assert, 'public_oauth_redirect_url', 'http://internal.example/oauth');
         assertSelectableUrl(assert, 'internal_oauth_redirect_url', 'http://internal.example/oauth');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-400');
+        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-500');
         assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
         assert.dom('[data-test-localhost-warning]').doesNotExist();
         assert.dom().doesNotIncludeText('{{fleetbase.url}}');
@@ -1097,6 +1097,29 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-error='customer_direction']").doesNotExist();
         assert.dom("[data-test-error='payment_conflict']").doesNotExist();
         assert.dom("[data-test-error='payment_direction']").doesNotExist();
+    });
+
+    test('field help text uses the readable gray', async function (assert) {
+        this.set('settings', {
+            client_id: 'id',
+            environment: 'sandbox',
+            client_secret_set: true,
+            webhook_verifier_set: true,
+            internal_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
+            internal_oauth_redirect_url: 'http://internal.example/quickbooks/int/v1/oauth/callback',
+        });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
+
+        assert.dom('[data-test-secret-set]').exists();
+        assert.dom('[data-test-verifier-set]').exists();
+        const hints = [...this.element.querySelectorAll('[data-test-field-help], [data-test-secret-set], [data-test-verifier-set]')];
+        assert.ok(hints.length > 10, 'every hint is checked');
+        hints.forEach((hint) => {
+            assert.dom(hint).hasClass('text-gray-500');
+            assert.dom(hint).hasClass('dark:text-gray-400');
+        });
     });
 
     test('a Data Resolution switch toggles with Space and Enter', async function (assert) {
