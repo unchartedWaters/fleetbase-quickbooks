@@ -2342,6 +2342,7 @@ class SyncEngine
         }
 
         $leads         = $this->fleetbaseLeads($settings, 'invoice', $baseline, $remote);
+        $sendsDueClear = $pushClears;
         $pushClears    = $pushClears || $leads;
         $numberChanged = $this->copyInvoiceNumber($ledger, $uuid, $remote, $reference);
         $partyChanged  = false;
@@ -2457,7 +2458,8 @@ class SyncEngine
                 (string) $customerLink['qbo_id'],
                 $itemId,
                 $lineItems,
-                $reference
+                $reference,
+                $sendsDueClear
             );
         }
 
@@ -3389,7 +3391,9 @@ class SyncEngine
 
     /**
      * The update payload that sends Fleetbase clears too. QuickBooks always holds a transaction
-     * date, so an empty Fleetbase date is left out rather than sent as a clear.
+     * date, so an empty Fleetbase date is left out rather than sent as a clear. It always holds a
+     * due date too: an empty Fleetbase due date is sent only when Fleetbase is Primary
+     * ($sendsDueClear). Under QuickBooks as Primary it takes the QuickBooks due date instead.
      *
      * @param array<string, mixed> $invoice
      * @param array<int, string>   $lineItems
@@ -3402,6 +3406,7 @@ class SyncEngine
         string $itemId,
         array $lineItems,
         string $reference,
+        bool $sendsDueClear,
     ): array {
         $payload = $this->invoices->withLineItems(
             $this->invoices->toQuickBooks($invoice, $customerRef, $itemId, true),
@@ -3412,6 +3417,9 @@ class SyncEngine
         }
         if (($payload['TxnDate'] ?? null) === '') {
             unset($payload['TxnDate']);
+        }
+        if ($sendsDueClear === false && ($payload['DueDate'] ?? null) === '') {
+            unset($payload['DueDate']);
         }
 
         return $payload;
@@ -3440,8 +3448,8 @@ class SyncEngine
     /**
      * Whether Fleetbase changed what it sends of an invoice QuickBooks did not change since the
      * last sync: the lines and amounts, dates, notes or customer. The tax and discounts QuickBooks
-     * works out on those lines are not a Fleetbase change; QuickBooks decides them. An emptied due
-     * date or note is a change. An empty date is not: QuickBooks always holds one.
+     * works out on those lines are not a Fleetbase change; QuickBooks decides them. An emptied note
+     * is a change. An empty date or due date is not: QuickBooks always holds both.
      *
      * @param array<string, mixed>                                                             $invoice
      * @param array<string, mixed>                                                             $remote
@@ -3458,8 +3466,10 @@ class SyncEngine
         if ($remoteCustomer !== '' && $remoteCustomer !== trim($customerRef)) {
             return true;
         }
-        if (trim((string) ($invoice['date'] ?? '')) === '') {
-            $invoice['date'] = (string) ($remote['TxnDate'] ?? '');
+        foreach (['date' => 'TxnDate', 'due_date' => 'DueDate'] as $local => $remoteKey) {
+            if (trim((string) ($invoice[$local] ?? '')) === '') {
+                $invoice[$local] = (string) ($remote[$remoteKey] ?? '');
+            }
         }
         $remoteCents = $this->majorUnits($remote['TotalAmt'] ?? 0, (string) ($invoice['currency'] ?? ''));
         $lines       = ['removed' => $stored['removed'], 'mapped' => $stored['mapped']];

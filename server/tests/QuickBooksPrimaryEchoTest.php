@@ -127,14 +127,15 @@ test('customer notes and address cleared in fleetbase are sent, not filled back 
         ->and($client->customers['qbo-customer']['BillAddr']['Line1'])->toBe('');
 });
 
-test('an invoice due date cleared in fleetbase is sent when quickbooks did not change the invoice', function () {
+test('an invoice due date emptied in fleetbase takes the quickbooks due date, which always holds one', function () {
     [$engine, $client, $ledger] = Primary::linkedInvoice('1', ['due_date' => null]);
 
     $engine->runScheduled($ledger, 'company-uuid', Primary::shippedSettings(), time());
 
-    expect($client->calls)->toContain('updateInvoice')
-        ->and($client->invoices['qb-1']['DueDate'])->toBe('')
-        ->and($ledger->invoices['inv-1']['due_date'])->toBeNull();
+    expect($client->calls)->not->toContain('updateInvoice')
+        ->and($client->invoices['qb-1']['DueDate'])->toBe('2026-09-15')
+        ->and($ledger->invoices['inv-1']['due_date'])->toBe('2026-09-15')
+        ->and(Primary::token($ledger, 'invoice', 'inv-1'))->toBe('1');
 });
 
 test('a phone cleared in quickbooks is not sent back from fleetbase', function () {

@@ -350,11 +350,12 @@ QuickBooks SyncToken (its version) on the link, and QuickBooks raises it on
 every change. When the token is unchanged, the Fleetbase change of a customer,
 invoice, payment or wallet is sent to QuickBooks: an added invoice line, a
 second Ledger payment, a new phone number. A field cleared in Fleetbase is
-sent too. QuickBooks reports each change Fleetbase makes; a report whose token
-the link already stores is skipped, so it does not undo a Fleetbase edit made
-since. When both systems changed the
-record, the QuickBooks values are copied and the Activity row says that a
-change made in Fleetbase was replaced. A token is stored only when both
+sent too, except an invoice due date: QuickBooks always holds one, so an empty
+Fleetbase due date takes the QuickBooks due date. QuickBooks reports each
+change Fleetbase makes; a report whose token the link already stores is
+skipped, so it does not undo a Fleetbase edit made since. When both systems
+changed the record, the QuickBooks values are copied and the Activity row says
+that a change made in Fleetbase was replaced. A token is stored only when both
 systems then hold the same values. When a QuickBooks change cannot be copied,
 such as a field emptied in QuickBooks or an invoice moved to a QuickBooks
 customer that has no Fleetbase link, the link keeps its older token:

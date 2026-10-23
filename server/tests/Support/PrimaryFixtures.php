@@ -251,9 +251,13 @@ class PrimaryFixtures
      *
      * @return array{0: SyncEngine, 1: FakeQuickBooks, 2: SyncLedger}
      */
-    public static function linkedInvoice(string $invoiceToken, array $invoice = [], array $remoteInvoice = []): array
-    {
-        [$engine, $client]                 = \qbEngine();
+    public static function linkedInvoice(
+        string $invoiceToken,
+        array $invoice = [],
+        array $remoteInvoice = [],
+        ?FakeQuickBooks $client = null,
+    ): array {
+        [$engine, $client]                 = \qbEngine($client);
         $ledger                            = self::ledger();
         $ledger->customers['cust-1']       = self::customer();
         $client->customers['qbo-customer'] = self::remoteCustomer('0');
@@ -264,6 +268,34 @@ class PrimaryFixtures
         $ledger->pending[]                 = self::pending('invoice', 'inv-1');
 
         return [$engine, $client, $ledger];
+    }
+
+    /**
+     * A Fleetbase invoice inv-1, not yet in QuickBooks, of a linked customer, queued.
+     *
+     * @param array<string, mixed> $invoice
+     *
+     * @return array{0: SyncEngine, 1: SyncLedger}
+     */
+    public static function newInvoice(FakeQuickBooks $client, array $invoice = []): array
+    {
+        [$engine]                          = \qbEngine($client);
+        $ledger                            = self::ledger();
+        $ledger->customers['cust-1']       = self::customer();
+        $client->customers['qbo-customer'] = self::remoteCustomer('0');
+        $ledger->links[]                   = self::link('customer', 'cust-1', 'qbo-customer', '0');
+        $ledger->invoices['inv-1']         = self::invoice($invoice);
+        $ledger->pending[]                 = self::pending('invoice', 'inv-1');
+
+        return [$engine, $ledger];
+    }
+
+    /**
+     * The QuickBooks id a link holds.
+     */
+    public static function qboId(SyncLedger $ledger, string $type, string $uuid): string
+    {
+        return (string) ($ledger->link('company-uuid', 'realm-1', $type, $uuid)['qbo_id'] ?? '');
     }
 
     /**
