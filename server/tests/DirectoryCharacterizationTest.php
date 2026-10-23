@@ -1500,3 +1500,51 @@ test('a customer link whose fleetbase customer is deleted is not used for a move
         $restore();
     }
 })->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a payment moved to another invoice in quickbooks unpays the old invoice and pays the new one', function () {
+    $restore = dctSqlite();
+    try {
+        dctLoadRows();
+        DB::table('ledger_invoices')->where('uuid', 'inv-a')->update(['amount_paid' => 1000, 'status' => 'paid']);
+        dctLinkRow('l-pay-6', 'payment', '6', 'Payment', '6');
+        dctLinkRow('l-map-6', 'payment-invoice', '6', 'PaymentInvoice', 'inv-a');
+        $entities = [
+            ['entity' => 'Payment', 'id' => '6', 'operation' => 'update'],
+            ['entity' => 'Invoice', 'id' => '11', 'operation' => 'update'],
+            ['entity' => 'InvoicePayments', 'id' => '10', 'operation' => 'update'],
+        ];
+        $directory              = new FleetbaseDirectory();
+        $loaded                 = $directory->loadLinked('company-uuid', $entities);
+        [$engine, $client]      = qbEngine();
+        $client->payments['6']  = [
+            'Id'   => '6', 'SyncToken' => '1', 'TotalAmt' => '10.00', 'CustomerRef' => ['value' => '2'],
+            'Line' => [['Amount' => '10.00', 'LinkedTxn' => [['TxnType' => 'Invoice', 'TxnId' => '11']]]],
+        ];
+        $client->invoices['10'] = ['Id' => '10', 'SyncToken' => '2', 'TotalAmt' => '10.00', 'Balance' => '10.00'];
+        $client->invoices['11'] = [
+            'Id'          => '11', 'SyncToken' => '2', 'DocNumber' => 'inv-b', 'CustomerRef' => ['value' => '2'],
+            'TotalAmt'    => '10.00', 'Balance' => '0',
+            'Line'        => [[
+                'Id'                  => '1', 'DetailType' => 'SalesItemLineDetail', 'Amount' => '10.00',
+                'Description'         => 'x', 'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+            ]],
+        ];
+
+        $engine->acceptRemoteChanges(
+            $loaded['ledger'],
+            'company-uuid',
+            $entities,
+            qbSettings(['payment_conflict' => 'quickbooks']),
+            time()
+        );
+        // This schema has no Activity tables.
+        $loaded['ledger']->batches  = [];
+        $loaded['ledger']->attempts = [];
+        $directory->save($loaded['ledger']);
+
+        expect(DB::table('ledger_invoices')->where('uuid', 'inv-a')->value('amount_paid'))->toBe(0)
+            ->and(DB::table('ledger_invoices')->where('uuid', 'inv-b')->value('amount_paid'))->toBe(1000);
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');

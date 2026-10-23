@@ -16,6 +16,7 @@ use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Support\QuickBooksPaymentReader;
 use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Support\WebhookPaymentInvoices;
+use Fleetbase\Quickbooks\Support\WebhookPaymentLinks;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 
@@ -130,6 +131,7 @@ class EnqueueWebhookSync
         $readUnlinked = $this->quickbooksSupplies($settings, 'payment');
         $payments     = $this->paymentInvoices($companyUuid, $payable, false, $readUnlinked);
         $this->rememberDeferredPayments($payable);
+        $this->repointMovedPayments($companyUuid, $settings);
         [$records, $inbound, $deletes, $kept, $merges] = $this->collectFlushEvents(
             $settings,
             $events,
@@ -141,6 +143,20 @@ class EnqueueWebhookSync
         $this->dispatchFlush($companyUuid, $records, array_merge($inbound, $refresh), $deletes);
         $this->noteKeptDeletes($companyUuid, $kept, $notes);
         $this->importCreatedCustomers($companyUuid);
+    }
+
+    /**
+     * A payment QuickBooks moved to another invoice no longer counts on the invoice stored for
+     * it. Only when payments take QuickBooks values: otherwise Fleetbase still holds the old one.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private function repointMovedPayments(string $companyUuid, array $settings): void
+    {
+        $stale = $this->paymentLookup()->staleStored;
+        if ($stale !== [] && $this->quickbooksSupplies($settings, 'payment') === true) {
+            (new WebhookPaymentLinks())->repointStoredPaymentInvoices($companyUuid, $stale);
+        }
     }
 
     /**
@@ -409,10 +425,47 @@ class EnqueueWebhookSync
      */
     private function collectPaymentEvent(array $settings, QuickBooksEntityChanged $event, array $payments, array &$records, array &$inbound): void
     {
-        $target = $payments[$event->realmId . '|' . $event->quickbooksId] ?? null;
-        if (is_array($target) === false) {
-            return;
+        $key    = $event->realmId . '|' . $event->quickbooksId;
+        $target = $payments[$key] ?? null;
+        if (is_array($target) === true) {
+            $this->collectPaymentTarget($settings, $event, $target, $records, $inbound);
         }
+        $this->collectPreviousInvoices($settings, $this->paymentLookup()->previous[$key] ?? [], $records, $inbound);
+    }
+
+    /**
+     * Invoices a payment no longer pays in QuickBooks are synced again, and with payments
+     * from QuickBooks their amount paid is read again from the QuickBooks balance.
+     *
+     * @param array<string, mixed>                                             $settings
+     * @param array<string, string>                                            $previous invoice uuid => QuickBooks id
+     * @param array<string, array{local_type: string, local_uuid: string}>     $records
+     * @param array<int, array{entity: string, id: string, operation: string}> $inbound
+     */
+    private function collectPreviousInvoices(array $settings, array $previous, array &$records, array &$inbound): void
+    {
+        $supplied = $previous !== [] && $this->quickbooksSupplies($settings, 'payment') === true;
+        foreach ($previous as $uuid => $invoiceId) {
+            $records['invoice|' . $uuid] = ['local_type' => 'invoice', 'local_uuid' => (string) $uuid];
+            if ($supplied === true && $invoiceId !== '') {
+                $inbound[] = ['entity' => SyncEngine::INVOICE_PAYMENTS, 'id' => $invoiceId, 'operation' => 'update'];
+            }
+        }
+    }
+
+    /**
+     * @param array<string, mixed>                                                                                                  $settings
+     * @param array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>} $target
+     * @param array<string, array{local_type: string, local_uuid: string}>                                                          $records
+     * @param array<int, array{entity: string, id: string, operation: string}>                                                      $inbound
+     */
+    private function collectPaymentTarget(
+        array $settings,
+        QuickBooksEntityChanged $event,
+        array $target,
+        array &$records,
+        array &$inbound,
+    ): void {
         $this->recordPaymentInvoices($records, $target);
         if ($this->quickbooksSupplies($settings, 'payment') === false) {
             return;

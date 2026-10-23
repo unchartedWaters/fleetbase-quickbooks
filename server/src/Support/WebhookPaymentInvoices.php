@@ -38,6 +38,23 @@ class WebhookPaymentInvoices
     public array $unlinked = [];
 
     /**
+     * realm|payment id => Fleetbase invoices the payment paid before, but no longer pays in the
+     * QuickBooks payment just read, each with its QuickBooks invoice id ('' when unlinked).
+     *
+     * @var array<string, array<string, string>>
+     */
+    public array $previous = [];
+
+    /**
+     * realm|payment id => the invoice its stored payment-invoice row should name now: the first
+     * invoice the payment pays in QuickBooks, or '' when it pays none that Fleetbase links.
+     * Only payments whose stored invoice they no longer pay are listed.
+     *
+     * @var array<string, string>
+     */
+    public array $staleStored = [];
+
+    /**
      * One payment-link query, one invoice-link query, and one local-invoice query
      * for the delivery. A link whose local_uuid is the QuickBooks payment id is not
      * the Fleetbase invoice; the invoice id comes from the payment's lines.
@@ -59,9 +76,11 @@ class WebhookPaymentInvoices
         ?\Closure $readInvoiceIds,
         bool $readUnlinked = false,
     ): array {
-        $this->reads    = [];
-        $this->unlinked = [];
-        $idsByRealm     = $this->paymentIdsByRealm($events, $allowDelete);
+        $this->reads       = [];
+        $this->unlinked    = [];
+        $this->previous    = [];
+        $this->staleStored = [];
+        $idsByRealm        = $this->paymentIdsByRealm($events, $allowDelete);
         if ($idsByRealm === []) {
             return [];
         }
@@ -77,11 +96,80 @@ class WebhookPaymentInvoices
             $this->reads = $remote->reads;
             $this->deferred += $remote->deferred;
         }
-        $storedInvoice = $allowDelete === true ? $links->storedPaymentInvoices($companyUuid, $missingByRealm) : [];
-        $linked        = $links->invoiceLinkIndex($companyUuid, array_keys($idsByRealm), $direct, $storedInvoice, $remoteInvoices);
-        $onFile        = $links->invoicesOnFile($companyUuid, $direct, $storedInvoice, $linked['by_uuid']);
+        [$direct, $moved] = $this->directAfterReads($direct, $remote->deferred);
+        $storedInvoice    = $allowDelete === true ? $links->storedPaymentInvoices($companyUuid, $missingByRealm) : [];
+        // An update can move a payment off an invoice. The invoices it paid before are re-read.
+        $stored     = $allowDelete === false ? $this->storedForReadPayments($links, $companyUuid, $idsByRealm) : [];
+        $previous   = self::mergeLists($stored, $moved);
+        $candidates = self::mergeLists($storedInvoice, $previous);
+        $realms     = array_keys($idsByRealm);
+        $linked     = $links->invoiceLinkIndex($companyUuid, $realms, $direct, $candidates, $remoteInvoices);
+        $onFile     = $links->invoicesOnFile($companyUuid, $direct, $candidates, $linked['by_uuid']);
+        $targets    = new WebhookPaymentTargets();
+        $resolved   = $targets->resolvePaymentTargets($direct, $remoteInvoices, $storedInvoice, $linked, $onFile);
 
-        return (new WebhookPaymentTargets())->resolvePaymentTargets($direct, $remoteInvoices, $storedInvoice, $linked, $onFile);
+        $this->previous    = $targets->previousInvoices($previous, $resolved, $linked, $onFile);
+        $this->staleStored = $targets->staleStoredInvoices($stored, $resolved);
+
+        return $resolved;
+    }
+
+    /**
+     * The stored invoice of each payment QuickBooks just returned. None is read when no
+     * payment was read, as in the webhook request.
+     *
+     * @param array<string, array<int, string>> $idsByRealm
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function storedForReadPayments(WebhookPaymentLinks $links, string $companyUuid, array $idsByRealm): array
+    {
+        $read = array_filter($this->reads, static fn (string $state): bool => $state === 'found');
+        if ($read === []) {
+            return [];
+        }
+
+        return array_intersect_key($links->storedPaymentInvoices($companyUuid, $idsByRealm), $read);
+    }
+
+    /**
+     * A direct payment that is read from QuickBooks takes its invoices from that read; its
+     * linked invoices it no longer pays are the moved ones. A deferred one is left to the job.
+     * One whose read gave nothing keeps its linked invoices.
+     *
+     * @param array<string, array<int, string>> $direct
+     * @param array<string, true>               $deferred
+     *
+     * @return array{0: array<string, array<int, string>>, 1: array<string, array<int, string>>}
+     */
+    private function directAfterReads(array $direct, array $deferred): array
+    {
+        $moved = [];
+        foreach ($direct as $key => $uuids) {
+            if (isset($deferred[$key]) === true) {
+                unset($direct[$key]);
+            } elseif (($this->reads[$key] ?? '') === 'found') {
+                $moved[$key] = $uuids;
+                unset($direct[$key]);
+            }
+        }
+
+        return [$direct, $moved];
+    }
+
+    /**
+     * @param array<string, array<int, string>> $first
+     * @param array<string, array<int, string>> $second
+     *
+     * @return array<string, array<int, string>>
+     */
+    private static function mergeLists(array $first, array $second): array
+    {
+        foreach ($second as $key => $uuids) {
+            $first[$key] = array_values(array_unique(array_merge($first[$key] ?? [], $uuids)));
+        }
+
+        return $first;
     }
 
     /**
@@ -110,6 +198,8 @@ class WebhookPaymentInvoices
      */
     private function directAndKeyedPayments(array $idsByRealm, array $byPayment, bool $readUnlinked): array
     {
+        // When payments take QuickBooks values, a payment linked straight to invoices is read
+        // too: QuickBooks may have moved it to another invoice.
         $direct = [];
         $keyed  = [];
         foreach ($idsByRealm as $realmId => $ids) {
@@ -124,7 +214,8 @@ class WebhookPaymentInvoices
                 }
                 if ($invoices !== []) {
                     $direct[$key] = $invoices;
-                } elseif ($locals !== [] || $readUnlinked === true) {
+                }
+                if (($invoices === [] && $locals !== []) || $readUnlinked === true) {
                     $keyed[$realmId][] = (string) $paymentId;
                 }
                 if ($locals === []) {
