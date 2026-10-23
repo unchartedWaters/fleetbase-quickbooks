@@ -5,6 +5,7 @@ use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 test('voiding an invoice keeps money fields as strings', function () {
@@ -453,6 +454,47 @@ test('a block does not issue invoice numbers after the check budget is exhausted
 
     expect((new QuickBooksClient())->nextInvoiceDocNumbers(clientConnection(), 2))->toBe([]);
     Http::assertSentCount(2);
+});
+
+test('two reservations before any write get different invoice numbers', function () {
+    Http::fake(function (Request $request) {
+        $url = urldecode($request->url());
+        if ($request->method() === 'GET' && str_contains($url, 'orderby MetaData.CreateTime') === true) {
+            return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1041']]]], 200);
+        }
+        $responses = [];
+        foreach ($request->data()['BatchItemRequest'] ?? [] as $item) {
+            $responses[] = ['bId' => $item['bId'], 'QueryResponse' => ['Invoice' => []]];
+        }
+
+        return Http::response(['BatchItemResponse' => $responses, 'QueryResponse' => ['Invoice' => []]], 200);
+    });
+    $client = new QuickBooksClient();
+
+    $first  = $client->nextInvoiceDocNumbers(clientConnection(), 3);
+    $second = $client->nextInvoiceDocNumbers(clientConnection(), 3);
+    $single = (new QuickBooksClient())->nextInvoiceDocNumber(clientConnection());
+
+    expect($first)->toBe(['1042', '1043', '1044'])
+        ->and($second)->toBe(['1045', '1046', '1047'])
+        ->and($single)->toBe('1048');
+});
+
+test('invoice numbers are not reserved while another run holds the realm number lock', function () {
+    Http::fake(fn () => Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1041']]]], 200));
+    $held = Cache::lock('quickbooks.docnumber.realm-1', 30);
+    $held->get();
+    try {
+        $client  = new class extends QuickBooksClient {
+            protected int $docNumberLockWait = 0;
+        };
+        $numbers = $client->nextInvoiceDocNumbers(clientConnection(), 2);
+    } finally {
+        $held->release();
+    }
+
+    expect($numbers)->toBe([]);
+    Http::assertNothingSent();
 });
 
 test('update writes are chunked at 20 and other batch calls stay at 30', function () {

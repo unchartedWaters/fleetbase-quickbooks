@@ -6,8 +6,10 @@ use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\NextDocNumber;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\Translation;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 class QuickBooksClient
@@ -20,8 +22,19 @@ class QuickBooksClient
 
     public const UPDATE_BATCH_SIZE = 20;
 
+    /** Held per QuickBooks company while invoice numbers are chosen, so two runs never pick the same ones. */
+    private const DOC_NUMBER_LOCK = 'quickbooks.docnumber.';
+
+    /** The last invoice number handed out per QuickBooks company, for creates that have not landed yet. */
+    private const DOC_NUMBER_FLOOR = 'quickbooks.docnumber-last.';
+
+    private const DOC_NUMBER_FLOOR_SECONDS = 3600;
+
     /** Intuit's limit for the requestid and a batch item's bId together. */
     private const REQUEST_ID_FIELD_LIMIT = 50;
+
+    /** Seconds a run waits while another run picks invoice numbers in the same QuickBooks company. */
+    protected int $docNumberLockWait = 10;
 
     /** @var array<string, array<string, mixed>> */
     private array $preferencesByRealm = [];
@@ -336,17 +349,56 @@ class QuickBooksClient
             return [];
         }
 
+        // Runs release the company lock during HTTP, so two of them can choose numbers at once. The
+        // realm lock and the floor keep a second run from picking numbers the first has not written.
+        $realmId = (string) ($connection['realm_id'] ?? '');
+        try {
+            $lock = Cache::lock(self::DOC_NUMBER_LOCK . $realmId, 30);
+            $lock->block($this->docNumberLockWait);
+        } catch (LockTimeoutException) {
+            // The creates fail with invoice-number-unconfirmed and are retried later.
+            return [];
+        } catch (\Throwable) {
+            // No cache store: choose without the lock, as a single run always could.
+            return $this->chooseInvoiceDocNumbers($connection, $count, null);
+        }
+
+        try {
+            return $this->chooseInvoiceDocNumbers($connection, $count, $realmId);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<int, string>
+     */
+    private function chooseInvoiceDocNumbers(array $connection, int $count, ?string $realmId): array
+    {
         $latest    = $this->latestInvoiceDocNumber($connection);
         $candidate = $latest === '' ? '1' : NextDocNumber::after($latest);
         if ($candidate === null) {
             return [];
         }
-
-        if ($count === 1) {
-            return $this->firstFreeInvoiceDocNumber($connection, $candidate);
+        $floor = $realmId === null ? null : Cache::get(self::DOC_NUMBER_FLOOR . $realmId);
+        if (is_string($floor) === true) {
+            $afterFloor = NextDocNumber::after($floor);
+            if ($afterFloor !== null && NextDocNumber::isLater($afterFloor, $candidate) === true) {
+                $candidate = $afterFloor;
+            }
         }
 
-        return $this->freeInvoiceDocNumbers($connection, $candidate, $count);
+        $numbers = $count === 1
+            ? $this->firstFreeInvoiceDocNumber($connection, $candidate)
+            : $this->freeInvoiceDocNumbers($connection, $candidate, $count);
+        if ($realmId !== null && $numbers !== []) {
+            $last = $numbers[count($numbers) - 1];
+            Cache::put(self::DOC_NUMBER_FLOOR . $realmId, $last, self::DOC_NUMBER_FLOOR_SECONDS);
+        }
+
+        return $numbers;
     }
 
     /**
