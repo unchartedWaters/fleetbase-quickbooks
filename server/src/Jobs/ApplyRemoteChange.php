@@ -13,6 +13,7 @@ use Fleetbase\Quickbooks\Services\TokenRefresher;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SafeLog;
+use Fleetbase\Quickbooks\Support\WebhookApplyLock;
 use Fleetbase\Quickbooks\Support\WebhookRetry;
 use Illuminate\Bus\Queueable;
 use Illuminate\Container\Container;
@@ -77,6 +78,35 @@ class ApplyRemoteChange implements ShouldQueue
         SettingsService $settings,
         SettingsStore $store,
         ?ConnectionTokens $tokens = null,
+    ): void {
+        $applyLock = WebhookApplyLock::for($this->companyUuid);
+        if ($applyLock !== null && $applyLock->get() === false) {
+            // Another delivery for this company is being applied. Queue this one after it.
+            $this->retryBusyApply($directory);
+
+            return;
+        }
+        try {
+            $this->applyWebhook($engine, $directory, $settings, $store, $tokens);
+        } finally {
+            $applyLock?->release();
+        }
+    }
+
+    private function retryBusyApply(FleetbaseDirectory $directory): void
+    {
+        if ($this->lockAttempt >= self::LOCK_RETRY_LIMIT) {
+            $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', 'quickbooks.messages.sync-running');
+        }
+        $this->retryBusyLock();
+    }
+
+    private function applyWebhook(
+        SyncEngine $engine,
+        FleetbaseDirectory $directory,
+        SettingsService $settings,
+        SettingsStore $store,
+        ?ConnectionTokens $tokens,
     ): void {
         $entities   = $this->knownEntities();
         $connection = $directory->connection($this->companyUuid);

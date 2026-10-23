@@ -1,10 +1,19 @@
 <?php
 
 use Fleetbase\Quickbooks\Jobs\ApplyRemoteChange;
+use Fleetbase\Quickbooks\Services\SettingsService;
+use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\SecretCipher;
+use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WebhookRetry;
+use Fleetbase\Quickbooks\Tests\Support\CapturedJobs;
+use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Fleetbase\Quickbooks\Tests\Support\RemoteChangeDirectory;
 use Fleetbase\Quickbooks\Tests\Support\RemoteChangeEngine;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
+use Illuminate\Support\Facades\Cache;
 
 /*
  * Intuit does not send a webhook again once it got HTTP 200, so a remote change whose
@@ -139,4 +148,44 @@ test('a queued retry wakes a little after the wait,'
         ->and(count(array_unique($draws)))->toBeGreaterThan(1)
         ->and(WebhookRetry::spread(0))->toBe(0)
         ->and(WebhookRetry::spread(5))->toBeLessThanOrEqual(6);
+});
+
+test('a remote change waits while another webhook apply for the company is running', function () {
+    $engine     = RemoteChangeEngine::failingWith(null);
+    $directory  = new RemoteChangeDirectory();
+    $settings   = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
+    $job        = new ApplyRemoteChange('company-uuid', [
+        ['entity' => 'Invoice', 'id' => '10', 'operation' => 'Update'],
+    ]);
+    $previous   = Cache::getFacadeRoot();
+    $repository = new Repository(new ArrayStore());
+    Cache::swap($repository);
+    try {
+        $held = $repository->getStore()->lock('quickbooks.webhook-apply.company-uuid', 600);
+        expect($held->get())->toBeTrue();
+        $jobs = CapturedJobs::capture(
+            fn () => $job->handle($engine, $directory, $settings, new MemorySettingsStore())
+        );
+        $last    = new ApplyRemoteChange('company-uuid', $job->entities, ApplyRemoteChange::LOCK_RETRY_LIMIT);
+        $dropped = CapturedJobs::capture(
+            fn () => $last->handle($engine, $directory, $settings, new MemorySettingsStore())
+        );
+        $held->release();
+        $after = CapturedJobs::capture(
+            fn () => $job->handle($engine, $directory, $settings, new MemorySettingsStore())
+        );
+    } finally {
+        Cache::swap($previous);
+    }
+
+    expect($jobs)->toHaveCount(1)
+        ->and($jobs[0])->toBeInstanceOf(ApplyRemoteChange::class)
+        ->and($jobs[0]->lockAttempt)->toBe(1)
+        ->and($jobs[0]->entities)->toBe($job->entities)
+        ->and($dropped)->toBe([])
+        ->and($directory->batches())->toHaveCount(1)
+        ->and($directory->batches()[0]['status'])->toBe('skipped')
+        ->and($engine->calls)->toHaveCount(1)
+        ->and($after)->toBe([])
+        ->and($repository->getStore()->lock('quickbooks.webhook-apply.company-uuid', 600)->get())->toBeTrue();
 });
