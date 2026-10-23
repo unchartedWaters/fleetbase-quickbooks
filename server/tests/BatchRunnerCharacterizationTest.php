@@ -643,6 +643,36 @@ test('a scheduled run with only the catalog due runs one catalog page and does n
         ->and(brcDispatched($run['dispatcher']))->toBe([]);
 });
 
+test('a catalog page of unchanged customers records no attempts', function () {
+    $built             = brcRunner([], [], ['periodic_interval_hours' => 24], null, ['c-1', 'c-2', 'c-3']);
+    $memory            = $built['directory']->memory;
+    [$engine, $client] = qbEngine();
+    $rows              = [];
+    foreach (['c-1', 'c-2', 'c-3'] as $uuid) {
+        $rows[] = [
+            'company_uuid' => BRC_COMPANY, 'local_type' => 'customer', 'local_uuid' => $uuid, 'status' => 'pending',
+        ];
+    }
+    $first = $engine->syncEntities($memory, BRC_COMPANY, $rows, qbSettings(), time());
+    expect($first['created'])->toBe(3);
+    $memory->attempts = [];
+    $memory->batches  = [];
+
+    $settings = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
+    $store    = new MemorySettingsStore();
+
+    $store->rows[SettingsKeys::adminSync()] = ['batch_size' => 10, 'periodic_interval_hours' => 24];
+
+    $tokens = new ConnectionTokens(new TokenRefresher($client), $settings, $store, $built['directory']);
+
+    $run = brcRun(new BatchRunner($engine, $built['directory'], $settings, $store, $tokens), 'catalog');
+
+    expect($run['error'])->toBeNull()
+        ->and($memory->attempts)->toBe([])
+        ->and($memory->batches)->toHaveCount(1)
+        ->and($memory->batches[0]['aligned'])->toBe(3);
+});
+
 test('the catalog walks pages with a cursor and queues the next page after release', function () {
     $built = brcRunner([], [], ['batch_size' => 2], null, ['c-1', 'c-2', 'c-3']);
 

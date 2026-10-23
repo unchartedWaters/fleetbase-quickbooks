@@ -508,8 +508,10 @@ catalog, and that catalog is skipped when Customers is unchecked. The catalog
 walks the customers one page at a time. A page moves on when each customer on
 it synced, or QuickBooks refused it for its data (for example a duplicate
 name). A refused customer is a failed Activity row and is tried again on the
-next full sync. A page with a failure that can pass on retry (rate limit,
-QuickBooks server error, QuickBooks not reached) is sent again. Customer
+next full sync. A customer the catalog finds unchanged is counted in the
+page's Activity batch but gets no row of its own. A page with a failure that can
+pass on retry (rate limit, QuickBooks server error, QuickBooks not reached) is
+sent again. Customer
 import reads QuickBooks in pages of at most 100 records and stores the next
 start in `quickbooks_connections.customer_import_start`, so a run that stops at
 the 600 second organization lock continues there. The start is stored only
