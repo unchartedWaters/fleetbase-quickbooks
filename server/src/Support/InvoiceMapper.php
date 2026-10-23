@@ -15,6 +15,18 @@ class InvoiceMapper
      */
     public const LINE_DESCRIPTION_MAX = 191;
 
+    /** QuickBooks keeps at most this many characters of an invoice's PrivateNote. */
+    public const PRIVATE_NOTE_MAX = 4000;
+
+    /**
+     * The invoice note as it is sent. Compare the local note through this too, or a longer note
+     * is sent again on every sync.
+     */
+    public static function privateNote(string $note): string
+    {
+        return mb_substr($note, 0, self::PRIVATE_NOTE_MAX);
+    }
+
     public const PAYMENT_REF_MAX_LENGTH = 21;
 
     /**
@@ -162,7 +174,7 @@ class InvoiceMapper
             $payload['DueDate'] = '';
         }
         if (empty($invoice['notes']) === false) {
-            $payload['PrivateNote'] = $invoice['notes'];
+            $payload['PrivateNote'] = self::privateNote((string) $invoice['notes']);
         } elseif ($pushClears === true) {
             $payload['PrivateNote'] = '';
         }

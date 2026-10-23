@@ -3022,7 +3022,7 @@ class SyncEngine
             $other[$localKey] = (string) ($remote[$remoteKey] ?? '');
         }
         if ($pushClears === true || array_key_exists('PrivateNote', $remote) === true) {
-            $local['notes'] = (string) ($invoice['notes'] ?? '');
+            $local['notes'] = InvoiceMapper::privateNote((string) ($invoice['notes'] ?? ''));
             $other['notes'] = (string) ($remote['PrivateNote'] ?? '');
         }
         if ($pushClears === true) {

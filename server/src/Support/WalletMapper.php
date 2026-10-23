@@ -11,6 +11,27 @@ class WalletMapper
 
     public const NAME_MAX_LENGTH = 100;
 
+    public const DESCRIPTION_MAX_LENGTH = 100;
+
+    /**
+     * An account name QuickBooks accepts: no colon (it separates a sub-account), double quote,
+     * tab or line break, and at most NAME_MAX_LENGTH characters.
+     */
+    public static function accountName(string $name): string
+    {
+        $name = trim((string) preg_replace('/\s*[:"\t\r\n]+\s*/u', ' ', $name));
+
+        return rtrim(mb_substr($name, 0, self::NAME_MAX_LENGTH));
+    }
+
+    /**
+     * @param array<string, mixed> $wallet
+     */
+    public static function description(array $wallet): string
+    {
+        return mb_substr(trim((string) ($wallet['description'] ?? '')), 0, self::DESCRIPTION_MAX_LENGTH);
+    }
+
     /**
      * @param array<string, mixed> $wallet
      * @param bool                 $pushClears include an empty description so a Fleetbase clear is sent
@@ -19,9 +40,9 @@ class WalletMapper
      */
     public function toQuickBooks(array $wallet, string $reference = 'fleetbase', bool $pushClears = false): array
     {
-        $name = trim((string) ($wallet['name'] ?? ''));
+        $name = self::accountName((string) ($wallet['name'] ?? ''));
         if ($name === '') {
-            $name = trim((string) ($wallet['public_id'] ?? 'Wallet'));
+            $name = self::accountName((string) ($wallet['public_id'] ?? 'Wallet'));
         }
 
         $payload = [
@@ -30,7 +51,7 @@ class WalletMapper
             'Active'      => $this->isActive($wallet),
         ];
 
-        $description = trim((string) ($wallet['description'] ?? ''));
+        $description = self::description($wallet);
         if ($description !== '') {
             $payload['Description'] = $description;
         } elseif ($pushClears === true) {
@@ -76,7 +97,7 @@ class WalletMapper
             'acct'        => trim((string) ($payload['AcctNum'] ?? '')),
             'active'      => $this->isActive($wallet),
             'currency'    => strtoupper(trim((string) ($wallet['currency'] ?? ''))),
-            'description' => (string) ($wallet['description'] ?? ''),
+            'description' => self::description($wallet),
             'name'        => (string) ($payload['Name'] ?? ''),
         ];
     }
@@ -160,7 +181,10 @@ class WalletMapper
     public function nameFromQuickBooks(array $wallet, string $remoteName): string
     {
         $localName = trim((string) ($wallet['name'] ?? ''));
-        if ($localName !== '' && $remoteName === $this->uniqueName($wallet, $localName)) {
+        $sentName  = self::accountName($localName);
+        $sent      = [$sentName, $this->uniqueName($wallet, $sentName)];
+        if ($localName !== '' && in_array($remoteName, $sent, true) === true) {
+            // The name as Fleetbase sends it: the characters QuickBooks refuses are not copied back.
             return $localName;
         }
         $publicId = trim((string) ($wallet['public_id'] ?? ''));

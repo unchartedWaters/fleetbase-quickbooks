@@ -4734,3 +4734,12 @@ test('a retried create whose first answer was lost links the invoice QuickBooks 
         Cache::swap($previousCache);
     }
 });
+
+test('a linked invoice whose note is longer than QuickBooks keeps is not updated again on every sync', function () {
+    $note                       = str_repeat('n', 4001);
+    [$engine, $client, $ledger] = engineLinkedInvoice(['notes' => $note], ['PrivateNote' => mb_substr($note, 0, 4000)]);
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->calls)->not->toContain('updateInvoice');
+});
