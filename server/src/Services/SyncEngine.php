@@ -11,6 +11,7 @@ use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\ReservedDocNumbers;
 use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 
@@ -1939,6 +1940,9 @@ class SyncEngine
                 }
             }
         }
+        if ($link === null && $voided === false && $reference === 'quickbooks') {
+            $link = $this->claimReservedInvoice($ledger, $connection, $uuid, (string) $customerLink['qbo_id']);
+        }
 
         if ($voided === true) {
             if ($link === null) {
@@ -2010,6 +2014,7 @@ class SyncEngine
                     return 'failed';
                 }
                 $payload['DocNumber'] = $next;
+                ReservedDocNumbers::remember((string) $connection['realm_id'], $uuid, $next);
             }
             if ($this->rejectLongDocNumber($payload) === true) {
                 return 'failed';
@@ -3518,6 +3523,47 @@ class SyncEngine
     }
 
     /**
+     * The invoice an earlier create of this Fleetbase invoice saved under the number reserved for
+     * it, when the answer to that create was lost. It is linked instead of created a second time.
+     * An invoice under that number for another customer, or linked to another Fleetbase invoice,
+     * is not this one's.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    private function claimReservedInvoice(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        string $customerId,
+    ): ?array {
+        $realmId = (string) $connection['realm_id'];
+        $number  = ReservedDocNumbers::recall($realmId, $uuid);
+        if ($number === null) {
+            return null;
+        }
+        $existing = $this->client->findInvoiceByDocNumber($connection, $number);
+        if (is_array($existing) === false) {
+            return null;
+        }
+        $id = trim((string) ($existing['Id'] ?? ''));
+        if (
+            $id === ''
+            || $this->invoiceCustomerMatches($existing, $customerId) === false
+            || $ledger->remoteIdsLinked($realmId, 'Invoice', [$id], $uuid) !== []
+        ) {
+            return null;
+        }
+        $ledger->putLink($this->linkFrom($connection, 'invoice', $uuid, 'Invoice', $existing));
+        if ($this->invoiceById !== null) {
+            $this->invoiceById[$id] = $existing;
+        }
+
+        return $ledger->link((string) $connection['company_uuid'], $realmId, 'invoice', $uuid);
+    }
+
+    /**
      * @param array<string, mixed> $remote
      */
     private function applyInvoiceFromRemote(
@@ -4679,11 +4725,16 @@ class SyncEngine
         $companyUuid = (string) $connection['company_uuid'];
         $retryError  = null;
         try {
-            $outcome = match ($row['local_type']) {
-                'customer' => $this->syncCustomer($ledger, $connection, (string) $row['local_uuid'], $settings),
-                'wallet'   => $this->syncWallet($ledger, $connection, (string) $row['local_uuid'], $settings),
-                default    => $this->syncInvoice($ledger, $connection, (string) $row['local_uuid'], $settings),
-            };
+            // Every write of this row carries a requestid named for the row, so a retried create whose
+            // first answer was lost is applied once by QuickBooks. Nested writes share the key.
+            $outcome = $this->client->withWriteKey(
+                $row['local_type'] . ':' . $row['local_uuid'],
+                fn (): string => match ($row['local_type']) {
+                    'customer' => $this->syncCustomer($ledger, $connection, (string) $row['local_uuid'], $settings),
+                    'wallet'   => $this->syncWallet($ledger, $connection, (string) $row['local_uuid'], $settings),
+                    default    => $this->syncInvoice($ledger, $connection, (string) $row['local_uuid'], $settings),
+                }
+            );
         } catch (\Throwable $exception) {
             $this->lastError = null;
             if ($exception instanceof QuickBooksException && $exception->isUnauthorized() === true) {
@@ -4822,7 +4873,10 @@ class SyncEngine
         } elseif (count($needed) === 1) {
             $only = array_key_first($needed);
             try {
-                $customerOutcome = $this->syncCustomer($ledger, $connection, (string) $only, $settings);
+                $customerOutcome = $this->client->withWriteKey(
+                    'customer:' . $only,
+                    fn (): string => $this->syncCustomer($ledger, $connection, (string) $only, $settings)
+                );
             } catch (QuickBooksException $exception) {
                 if ($exception->isUnauthorized() === true) {
                     $this->tokenRejected($ledger, $companyUuid);
@@ -6800,6 +6854,20 @@ class QuickBooksHttpGate extends QuickBooksClient
 {
     public function __construct(private QuickBooksClient $inner, private SyncEngine $engine)
     {
+    }
+
+    /**
+     * The key must be held by the client that sends the request, or the write carries no requestid.
+     *
+     * @template T
+     *
+     * @param callable(): T $write
+     *
+     * @return T
+     */
+    public function withWriteKey(string $key, callable $write): mixed
+    {
+        return $this->inner->withWriteKey($key, $write);
     }
 
     public function homeCurrency(array $connection): ?string

@@ -8,6 +8,10 @@ use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Fleetbase\Quickbooks\Tests\Support\InvoiceLines;
+use Fleetbase\Quickbooks\Tests\Support\LostCreateQuickBooks;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
+use Illuminate\Support\Facades\Cache;
 
 test('a stored report customer conflict does not write the fleetbase customer', function () {
     [$engine, $client]                 = qbEngine();
@@ -4700,4 +4704,33 @@ test('forgetting an inactive service item forgets its income account too', funct
 
     expect($ledger->connections['company-uuid']['default_item_id'])->toBeNull()
         ->and($ledger->connections['company-uuid']['default_item_account'])->toBeNull();
+});
+
+test('a retried create whose first answer was lost links the invoice QuickBooks saved'
+. ' under its reserved number instead of creating a second one', function () {
+    $previousCache = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+    try {
+        $client                            = new LostCreateQuickBooks();
+        $client->customTxnNumbers          = true;
+        $client->loseInvoiceCreates        = 1;
+        $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada'];
+        [$engine]                          = qbEngine($client);
+        $ledger                            = engineLedger();
+        $ledger->customers['cust-1']       = engineCustomer('cust-1');
+        $ledger->links[]                   = engineLink('customer', 'cust-1', 'qbo-customer');
+        $ledger->invoices['inv-1']         = engineInvoice('inv-1');
+        $ledger->pending[]                 = enginePending('invoice', 'inv-1');
+        $settings                          = qbSettings(['invoice_reference' => 'quickbooks']);
+
+        $first = $engine->runScheduled($ledger, 'company-uuid', $settings, 1_000);
+        engineRunAgain($engine, $ledger, $settings, 1_000_000);
+
+        expect($first['failed'])->toBe(1)
+            ->and($client->invoiceCreates)->toBe(1)
+            ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-1')['qbo_id'] ?? null)->toBe('inv-1')
+            ->and($ledger->invoices['inv-1']['number'])->toBe('1');
+    } finally {
+        Cache::swap($previousCache);
+    }
 });

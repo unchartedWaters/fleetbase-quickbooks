@@ -1,6 +1,13 @@
 <?php
 
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
+use Fleetbase\Quickbooks\Services\QuickBooksHttpGate;
+use Fleetbase\Quickbooks\Services\SyncEngine;
+use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\BackoffPolicy;
+use Fleetbase\Quickbooks\Support\CustomerMapper;
+use Fleetbase\Quickbooks\Support\InvoiceMapper;
+use Fleetbase\Quickbooks\Support\WalletMapper;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
@@ -279,4 +286,73 @@ test('a batch refused with an authentication fault that names no item'
         ['bId' => 'a', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Ada']],
         ['bId' => 'b', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Bea']],
     ]))->toThrow(Fleetbase\Quickbooks\Support\QuickBooksException::class);
+});
+
+test('the engine http gate passes the write key'
+. ' to the client that sends the request', function () use ($requestIdConnection) {
+    $sent = [];
+    Http::fake(function (Request $request) use (&$sent) {
+        parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+        $sent[] = $query;
+
+        return Http::response(['Invoice' => ['Id' => '9', 'SyncToken' => '0']], 200);
+    });
+    $engine = new SyncEngine(
+        new QuickBooksClient(),
+        new CustomerMapper(),
+        new InvoiceMapper(),
+        new WalletMapper(),
+        new BackoffPolicy(fn (int $wait): int => $wait)
+    );
+    $gate = new QuickBooksHttpGate(new QuickBooksClient(), $engine);
+
+    $gate->withWriteKey('invoice:a', fn () => $gate->createInvoice($requestIdConnection, ['Line' => []]));
+
+    expect($sent)->toHaveCount(1)
+        ->and($sent[0]['requestid'] ?? '')->not->toBe('');
+});
+
+test('a single pending customer create carries a requestid', function () use ($requestIdConnection) {
+    $posts = [];
+    Http::fake(function (Request $request) use (&$posts) {
+        if ($request->method() === 'GET') {
+            return Http::response(['QueryResponse' => []], 200);
+        }
+        parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+        $posts[] = ['path' => (string) parse_url($request->url(), PHP_URL_PATH), 'query' => $query];
+
+        return Http::response(['Customer' => ['Id' => '77', 'SyncToken' => '0']], 200);
+    });
+    $engine = new SyncEngine(
+        new QuickBooksClient(),
+        new CustomerMapper(),
+        new InvoiceMapper(),
+        new WalletMapper(),
+        new BackoffPolicy(fn (int $wait): int => $wait)
+    );
+    $ledger                              = new SyncLedger();
+    $ledger->connections['company-uuid'] = array_merge($requestIdConnection, [
+        'needs_reauth'    => false,
+        'home_currency'   => 'USD',
+        'default_item_id' => 'item-1',
+    ]);
+    $ledger->customers['cust-1'] = [
+        'uuid'         => 'cust-1',
+        'company_uuid' => 'company-uuid',
+        'name'         => 'Ada',
+        'email'        => 'ada@example.test',
+    ];
+    $ledger->pending[] = [
+        'company_uuid' => 'company-uuid',
+        'local_type'   => 'customer',
+        'local_uuid'   => 'cust-1',
+        'status'       => 'pending',
+        'attempts'     => 0,
+    ];
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(), 1_800_000_000);
+
+    $creates = array_values(array_filter($posts, fn (array $post): bool => str_ends_with($post['path'], '/customer')));
+    expect($creates)->toHaveCount(1)
+        ->and($creates[0]['query']['requestid'] ?? '')->not->toBe('');
 });

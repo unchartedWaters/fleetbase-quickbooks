@@ -12,6 +12,12 @@ use Symfony\Component\Yaml\Yaml;
 
 uses()->beforeEach(function () {
     Illuminate\Support\Facades\Http::swap(new Factory());
+    // The bootstrap cache is one array store for the whole process; a test starts with it empty.
+    try {
+        Illuminate\Support\Facades\Cache::flush();
+    } catch (Throwable) {
+        // No cache bound: nothing to clear.
+    }
 })->in(__DIR__);
 
 function qbSettings(array $overrides = []): array
