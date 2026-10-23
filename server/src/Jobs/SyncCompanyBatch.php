@@ -88,6 +88,10 @@ class SyncCompanyBatch implements ShouldQueue
             return;
         }
         if ($this->continuationRetry >= self::CONTINUATION_RETRY_LIMIT) {
+            if ($this->trigger === 'drain') {
+                BatchRunner::endDrainChain($this->companyUuid);
+            }
+
             return;
         }
 

@@ -54,6 +54,14 @@ class BatchRunner
      */
     public const TOKEN_KEEPALIVE_RETRY_SECONDS = 3600;
 
+    /**
+     * One drain chain per organization. Whoever adds this marker queues the drain. A drain
+     * drops it before it checks for due rows and adds it again to queue the next one, so a
+     * full Sync now run does not start a second chain. Two job timeouts, so a slow queue
+     * keeps it; a chain whose worker died gives way once it expires.
+     */
+    public const DRAIN_CHAIN_SECONDS = 2 * self::LOCK_SECONDS;
+
     /** @var array<string, int> */
     private static array $heldLocks = [];
 
@@ -204,6 +212,7 @@ class BatchRunner
         // A run stopped by a token refresh that failed for now is not followed up at once:
         // each follow-up would try the refresh again for one row. The schedule retries it.
         // Sync now that filled its batch chains drains too, so a backlog does not wait for the schedule.
+        // It starts a chain only when none is running (dispatchFollowUps).
         $chains             = in_array($trigger, ['manual', 'drain'], true) === true
             || ($trigger === 'now' && $fullBatch === true);
         $state['follow_up'] = $chains === true
@@ -235,6 +244,10 @@ class BatchRunner
             if ($state['follow_up'] === true && Cache::get($this->reconcileOpenKey($companyUuid)) === true) {
                 $this->ensureLock($lock, $companyUuid);
                 $this->claimReconcilePage($companyUuid, (int) ($resolved['batch_size'] ?? 100));
+            }
+            // A drain hands its chain back before it looks for due rows (DRAIN_CHAIN_SECONDS).
+            if ($trigger === 'drain') {
+                self::endDrainChain($companyUuid);
             }
             // Decide while the claim is visible, then release before dispatch.
             // The follow-up has to take quickbooks.batch.{company} as soon as it starts.
@@ -269,12 +282,26 @@ class BatchRunner
 
     private function dispatchFollowUps(string $companyUuid, bool $dispatchDrain, bool $dispatchCatalog): void
     {
-        if ($dispatchDrain === true) {
+        $chainKey = self::drainChainKey($companyUuid);
+        if ($dispatchDrain === true && Cache::add($chainKey, true, self::DRAIN_CHAIN_SECONDS) === true) {
             SyncCompanyBatch::dispatch($companyUuid, 'drain');
         }
         if ($dispatchCatalog === true) {
             SyncCompanyBatch::dispatch($companyUuid, 'catalog');
         }
+    }
+
+    /**
+     * Lets the next full run start a drain chain, after a drain ended or gave up.
+     */
+    public static function endDrainChain(string $companyUuid): void
+    {
+        Cache::forget(self::drainChainKey($companyUuid));
+    }
+
+    private static function drainChainKey(string $companyUuid): string
+    {
+        return 'quickbooks.drain-chain.' . $companyUuid;
     }
 
     /**
