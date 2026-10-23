@@ -268,6 +268,14 @@ class SyncEngine
     private array $primaryCopies = [];
 
     /**
+     * Records a first link left with Fleetbase values QuickBooks lacks (followUpFirstLink), by
+     * "type:uuid". Their rows stay pending, so the next run sends those values.
+     *
+     * @var array<string, true>
+     */
+    private array $followUps = [];
+
+    /**
      * QuickBooks invoice ids whose block read failed. Absence from invoiceById is a miss only when the id is not here.
      * Each is thrown again with the status QuickBooks gave.
      *
@@ -1083,6 +1091,7 @@ class SyncEngine
         $this->itemRows          = [];
         $this->managedItems      = [];
         $this->liveProductKeys   = [];
+        $this->followUps         = [];
         $batch                   = $this->newOutboundBatch($connection, $trigger, $now);
         $companyUuid             = (string) $connection['company_uuid'];
         // A worker can reuse this engine, so a refresh that failed in an earlier run is tried again.
@@ -1690,6 +1699,8 @@ class SyncEngine
                 if ($reference === 'quickbooks' && $copy === true) {
                     $before = $ledger->customers[$uuid];
                     $this->applyCustomerFromRemote($ledger, $uuid, $remote);
+                    $inSync = $this->customerInSync($ledger, $uuid, $remote);
+                    $this->followUpFirstLink($ledger, $connection, 'customer', $uuid, null, $remote, $inSync);
 
                     return $ledger->customers[$uuid] !== $before ? 'updated' : 'aligned';
                 }
@@ -3969,9 +3980,52 @@ class SyncEngine
             $link               = $this->linkFrom($connection, $type, $uuid, $entity, $remote);
             $link['sync_token'] = $this->tokenAfterSync($baseline, $remote, $inSync);
             $ledger->putLink($link);
+            $this->followUpFirstLink($ledger, $connection, $type, $uuid, $baseline, $remote, $inSync);
         }
 
         return $outcome;
+    }
+
+    /**
+     * A first link (no baseline) stores the QuickBooks token although Fleetbase may still hold
+     * values QuickBooks lacks. Under QuickBooks as Primary in two-way sync the record is synced
+     * again on the next run, which sends them, so a later QuickBooks change is not taken for a
+     * clear of values QuickBooks never had. Its row stays pending, or a row is queued.
+     *
+     * @param array<string, mixed>      $connection
+     * @param array<string, mixed>|null $baseline
+     * @param array<string, mixed>      $remote
+     */
+    private function followUpFirstLink(
+        SyncLedger $ledger,
+        array $connection,
+        string $type,
+        string $uuid,
+        ?array $baseline,
+        array $remote,
+        bool $inSync,
+    ): void {
+        if ($inSync === true || QuickBooksChanges::known($baseline, $remote) === true
+            || trim((string) ($remote['SyncToken'] ?? '')) === ''
+            || $this->tokenDecides($this->runSettings, $type) === false) {
+            return;
+        }
+        $this->followUps[$type . ':' . $uuid] = true;
+        $ledger->upsertPending((string) $connection['company_uuid'], $type, $uuid, 'saved');
+    }
+
+    /**
+     * Whether this row's record waits for the follow-up of a first link. Read once.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function takeFollowUp(array $row): bool
+    {
+        $key      = (string) ($row['local_type'] ?? '') . ':' . (string) ($row['local_uuid'] ?? '');
+        $followUp = isset($this->followUps[$key]);
+        unset($this->followUps[$key]);
+
+        return $followUp;
     }
 
     /**
@@ -7880,7 +7934,8 @@ class SyncEngine
             ]);
         }
         $this->lastError = null;
-        if ($outcome !== 'failed' && $outcome !== 'skipped' && $tracksPending === true) {
+        $followUp        = $this->takeFollowUp($row);
+        if ($outcome !== 'failed' && $outcome !== 'skipped' && $tracksPending === true && $followUp === false) {
             $ledger->updatePending((string) $connection['company_uuid'], (string) $row['local_type'], (string) $row['local_uuid'], ['status' => 'done']);
         }
         if ($outcome === 'skipped' && $this->closeSkipped === true && $tracksPending === true) {

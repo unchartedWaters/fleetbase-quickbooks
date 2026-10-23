@@ -371,8 +371,9 @@ changed that customer; then the QuickBooks name is kept. QuickBooks decides tax,
 so a tax difference alone is copied from QuickBooks. A record linked without a
 stored token, such as a customer matched by the customer import or a record
 moved by a QuickBooks merge, counts as changed in QuickBooks on its first sync.
-That sync copies the values QuickBooks holds and empties nothing in Fleetbase;
-the next one sends the values Fleetbase holds and QuickBooks lacks.
+That sync copies the values QuickBooks holds and empties nothing in Fleetbase.
+When Fleetbase holds values QuickBooks lacks, the record stays queued, and the
+next run sends them.
 
 Sync frequency is the schedule. It is separate from each entity switch. There is
 no Enable schedule control, and a stored `enabled` flag does not stop the

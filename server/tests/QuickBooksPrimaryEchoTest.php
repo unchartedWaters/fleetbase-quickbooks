@@ -1,5 +1,6 @@
 <?php
 
+use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Fleetbase\Quickbooks\Tests\Support\PrimaryFixtures as Primary;
 
 /*
@@ -245,4 +246,57 @@ test('an invoice number still comes from quickbooks when quickbooks did not chan
 
     expect($ledger->invoices['inv-1']['number'])->toBe('INV-1')
         ->and($client->invoices['qb-1']['DocNumber'])->toBe('INV-1');
+});
+
+test('a first link keeps its row queued until what fleetbase holds and quickbooks lacks is sent', function () {
+    [$engine, $client, $ledger]           = Primary::linkedCustomer('', '3', '555-0000', '555-0000');
+    $ledger->customers['cust-1']['notes'] = 'Back door';
+    $ledger->pending[]                    = Primary::pending('customer', 'cust-1', 'reconcile');
+    $settings                             = Primary::shippedSettings();
+    $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect($client->calls)->not->toContain('updateCustomer')
+        ->and(array_column($ledger->pending, 'status'))->toBe(['pending']);
+
+    $ledger->connections['company-uuid']['last_batch_at'] = null;
+    $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 120);
+
+    expect($client->calls)->toContain('updateCustomer')
+        ->and($client->customers['qbo-customer']['Notes'])->toBe('Back door')
+        ->and(array_column($ledger->pending, 'status'))->toBe(['done']);
+});
+
+test('a customer first matched by email keeps its row queued until its fleetbase notes are sent', function () {
+    [$engine, $client]                 = qbEngine();
+    $ledger                            = Primary::ledger();
+    $ledger->customers['cust-1']       = Primary::customer(['notes' => 'Back door']);
+    $client->customers['qbo-customer'] = Primary::remoteCustomer('3');
+    $ledger->pending[]                 = Primary::pending('customer', 'cust-1');
+    $settings                          = Primary::shippedSettings();
+    $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+
+    expect(Primary::qboId($ledger, 'customer', 'cust-1'))->toBe('qbo-customer')
+        ->and($client->calls)->not->toContain('updateCustomer')
+        ->and(array_column($ledger->pending, 'status'))->toBe(['pending']);
+
+    $ledger->connections['company-uuid']['last_batch_at'] = null;
+    $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 120);
+
+    expect($client->customers['qbo-customer']['Notes'])->toBe('Back door')
+        ->and(array_column($ledger->pending, 'status'))->toBe(['done']);
+});
+
+test('a customer first matched for its invoice is queued to send what quickbooks lacks', function () {
+    $client                            = new FakeQuickBooks();
+    [$engine, $ledger]                 = Primary::newInvoice($client);
+    $ledger->links                     = [];
+    $ledger->customers['cust-1']       = Primary::customer(['notes' => 'Back door']);
+    $client->customers['qbo-customer'] = Primary::remoteCustomer('3');
+
+    $engine->runScheduled($ledger, 'company-uuid', Primary::shippedSettings(), time());
+
+    $statuses = array_column($ledger->pending, 'status', 'local_type');
+
+    expect(Primary::qboId($ledger, 'customer', 'cust-1'))->toBe('qbo-customer')
+        ->and($statuses)->toBe(['invoice' => 'done', 'customer' => 'pending']);
 });
