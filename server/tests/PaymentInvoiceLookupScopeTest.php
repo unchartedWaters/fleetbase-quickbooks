@@ -26,6 +26,7 @@ test('payment invoice rows are looked up per company and results are unchanged',
             $table->string('sync_token')->default('0');
             $table->string('name')->nullable();
             $table->string('state')->nullable();
+            $table->text('invoice_tokens')->nullable();
             $table->timestamps();
         });
         $now = now();

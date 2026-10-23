@@ -267,6 +267,50 @@ class PrimaryFixtures
     }
 
     /**
+     * One QuickBooks payment pay-1 (token 1, link token 0) pays 4.00 of qb-1 and 3.00 of qb-2.
+     * Fleetbase holds 4.00 paid on inv-1 and 5.00 on inv-2: QuickBooks changed the qb-2 share.
+     * Nothing is queued.
+     *
+     * @return array{0: SyncEngine, 1: FakeQuickBooks, 2: SyncLedger}
+     */
+    public static function sharedPayment(): array
+    {
+        $linked                     = ['LinkedTxn' => [['TxnId' => 'pay-1', 'TxnType' => 'Payment']]];
+        [$engine, $client, $ledger] = self::linkedInvoice(
+            '1',
+            ['status' => 'partial', 'amount_paid' => 400],
+            ['Balance' => '6.00'] + $linked
+        );
+        $ledger->pending           = [];
+        $ledger->invoices['inv-2'] = self::invoice([
+            'uuid'        => 'inv-2',
+            'number'      => 'INV-2',
+            'status'      => 'partial',
+            'amount_paid' => 500,
+        ]);
+        $client->invoices['qb-2'] = self::remoteInvoice('1', [
+            'Id'        => 'qb-2',
+            'DocNumber' => 'INV-2',
+            'Balance'   => '7.00',
+        ] + $linked);
+        $ledger->links[]           = self::link('invoice', 'inv-2', 'qb-2', '1');
+        $client->payments['pay-1'] = [
+            'Id'          => 'pay-1',
+            'SyncToken'   => '1',
+            'CustomerRef' => ['value' => 'qbo-customer'],
+            'TotalAmt'    => '7.00',
+            'TxnDate'     => '2026-09-05',
+            'Line'        => [
+                ['Amount' => '4.00', 'LinkedTxn' => [['TxnId' => 'qb-1', 'TxnType' => 'Invoice']]],
+                ['Amount' => '3.00', 'LinkedTxn' => [['TxnId' => 'qb-2', 'TxnType' => 'Invoice']]],
+            ],
+        ];
+        $ledger->links[] = self::paymentLink('pay-1', '0');
+
+        return [$engine, $client, $ledger];
+    }
+
+    /**
      * A linked wallet whose description Fleetbase changed to "Fuel float"; the QuickBooks account
      * still says "Float". The link stores $storedToken and the account has $remoteToken.
      *

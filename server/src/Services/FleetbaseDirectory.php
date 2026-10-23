@@ -458,7 +458,7 @@ class FleetbaseDirectory
         $loadedByUuid          = $this->loadedLinksByUuid();
         $linkFields            = [
             'company_uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_entity', 'qbo_id', 'sync_token',
-            'name', 'state',
+            'name', 'state', 'invoice_tokens',
         ];
         $freshLinks            = [];
         $changedLinks          = [];
@@ -5509,18 +5509,19 @@ class FleetbaseDirectory
         $rows = [];
         foreach ($links as $link) {
             $rows[] = [
-                'uuid'         => (string) (($link['uuid'] ?? '') !== '' ? $link['uuid'] : Str::uuid()),
-                'company_uuid' => $link['company_uuid'] ?? null,
-                'realm_id'     => (string) ($link['realm_id'] ?? ''),
-                'local_type'   => (string) ($link['local_type'] ?? ''),
-                'local_uuid'   => (string) ($link['local_uuid'] ?? ''),
-                'qbo_entity'   => (string) ($link['qbo_entity'] ?? ''),
-                'qbo_id'       => (string) ($link['qbo_id'] ?? ''),
-                'sync_token'   => (string) ($link['sync_token'] ?? '0'),
-                'name'         => $link['name'] ?? null,
-                'state'        => $link['state'] ?? null,
-                'created_at'   => $now,
-                'updated_at'   => $now,
+                'uuid'           => (string) (($link['uuid'] ?? '') !== '' ? $link['uuid'] : Str::uuid()),
+                'company_uuid'   => $link['company_uuid'] ?? null,
+                'realm_id'       => (string) ($link['realm_id'] ?? ''),
+                'local_type'     => (string) ($link['local_type'] ?? ''),
+                'local_uuid'     => (string) ($link['local_uuid'] ?? ''),
+                'qbo_entity'     => (string) ($link['qbo_entity'] ?? ''),
+                'qbo_id'         => (string) ($link['qbo_id'] ?? ''),
+                'sync_token'     => (string) ($link['sync_token'] ?? '0'),
+                'name'           => $link['name'] ?? null,
+                'state'          => $link['state'] ?? null,
+                'invoice_tokens' => $link['invoice_tokens'] ?? null,
+                'created_at'     => $now,
+                'updated_at'     => $now,
             ];
         }
 
@@ -5564,15 +5565,16 @@ class FleetbaseDirectory
             $updates[]  = [
                 'uuid'    => (string) $row['uuid'],
                 'columns' => [
-                    'company_uuid' => $row['company_uuid'],
-                    'realm_id'     => $row['realm_id'],
-                    'local_type'   => $row['local_type'],
-                    'local_uuid'   => $row['local_uuid'],
-                    'qbo_entity'   => $row['qbo_entity'],
-                    'qbo_id'       => $row['qbo_id'],
-                    'sync_token'   => $row['sync_token'],
-                    'name'         => $row['name'],
-                    'state'        => $row['state'],
+                    'company_uuid'   => $row['company_uuid'],
+                    'realm_id'       => $row['realm_id'],
+                    'local_type'     => $row['local_type'],
+                    'local_uuid'     => $row['local_uuid'],
+                    'qbo_entity'     => $row['qbo_entity'],
+                    'qbo_id'         => $row['qbo_id'],
+                    'sync_token'     => $row['sync_token'],
+                    'name'           => $row['name'],
+                    'state'          => $row['state'],
+                    'invoice_tokens' => $row['invoice_tokens'],
                 ],
             ];
         }

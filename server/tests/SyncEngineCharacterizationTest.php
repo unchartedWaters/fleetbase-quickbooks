@@ -465,7 +465,7 @@ test('sec a remote payment on a legacy invoice keyed link copies amount date and
         ->and($ledger->links)->toBe([
             $linksBefore[0],
             $linksBefore[1],
-            array_merge($linksBefore[2], ['sync_token' => '1']),
+            array_merge($linksBefore[2], ['invoice_tokens' => '{"inv-1":"1"}', 'sync_token' => '1']),
         ])
         ->and($ledger->pending)->toBe([]);
 });
@@ -857,6 +857,8 @@ test('sec a new payment is stored under its quickbooks id with the invoice kept 
             'qbo_id'       => 'pay-1',
             'sync_token'   => '0',
             'invoice_uuid' => 'inv-1',
+            // The payment token inv-1 synced, see PaymentTokens.
+            'invoice_tokens' => '{"inv-1":"0"}',
         ]])
         ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'inv-1'))->toBeNull();
 });
@@ -877,13 +879,14 @@ test('sec a new payment that does not list the invoice stays keyed by the invoic
     $engine->runScheduled($ledger, 'company-uuid', qbSettings(), 1_000);
 
     expect(secLinksOfType($ledger, 'payment'))->toBe([[
-        'company_uuid' => 'company-uuid',
-        'realm_id'     => 'realm-1',
-        'local_type'   => 'payment',
-        'local_uuid'   => 'inv-1',
-        'qbo_entity'   => 'Payment',
-        'qbo_id'       => 'pay-1',
-        'sync_token'   => '0',
+        'company_uuid'   => 'company-uuid',
+        'realm_id'       => 'realm-1',
+        'local_type'     => 'payment',
+        'local_uuid'     => 'inv-1',
+        'qbo_entity'     => 'Payment',
+        'qbo_id'         => 'pay-1',
+        'sync_token'     => '0',
+        'invoice_tokens' => '{"inv-1":"0"}',
     ]]);
 });
 
@@ -900,15 +903,16 @@ test('sec a legacy invoice keyed payment link is rekeyed in place to the payment
         ->and($client->calls)->not->toContain('updatePayment')
         ->and(secLinksOfType($ledger, 'payment'))->toHaveCount(1)
         ->and($ledger->links[$index])->toBe([
-            'company_uuid' => 'company-uuid',
-            'realm_id'     => 'realm-1',
-            'local_type'   => 'payment',
-            'local_uuid'   => 'pay-9',
-            'qbo_entity'   => 'Payment',
-            'qbo_id'       => 'pay-9',
-            'sync_token'   => '1',
-            'extra'        => 'kept',
-            'invoice_uuid' => 'inv-1',
+            'company_uuid'   => 'company-uuid',
+            'realm_id'       => 'realm-1',
+            'local_type'     => 'payment',
+            'local_uuid'     => 'pay-9',
+            'qbo_entity'     => 'Payment',
+            'qbo_id'         => 'pay-9',
+            'sync_token'     => '1',
+            'extra'          => 'kept',
+            'invoice_uuid'   => 'inv-1',
+            'invoice_tokens' => '{"inv-1":"1"}',
         ])
         ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'inv-1'))->toBeNull()
         ->and($ledger->linkForRemote('realm-1', 'Payment', 'pay-9')['local_uuid'])->toBe('pay-9');

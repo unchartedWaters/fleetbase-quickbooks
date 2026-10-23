@@ -191,6 +191,7 @@ function wplWithTables(array $links, array $invoiceUuids, callable $callback): m
             $table->string('sync_token')->default('0');
             $table->string('name')->nullable();
             $table->string('state')->nullable();
+            $table->text('invoice_tokens')->nullable();
             $table->timestamps();
         });
         $schema->create('ledger_invoices', function (Blueprint $table) {

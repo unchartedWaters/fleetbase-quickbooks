@@ -68,6 +68,7 @@ function dctSchema(Illuminate\Database\Schema\Builder $schema): void
         $table->string('sync_token')->default('0');
         $table->string('name')->nullable();
         $table->string('state')->nullable();
+        $table->text('invoice_tokens')->nullable();
         $table->timestamps();
     });
     $schema->create('quickbooks_sync_attempts', function (Blueprint $table) {

@@ -146,6 +146,7 @@ class ImportDatabase
             $table->string('sync_token')->default('0');
             $table->string('name')->nullable();
             $table->string('state')->nullable();
+            $table->text('invoice_tokens')->nullable();
             $table->timestamps();
             $table->unique(['company_uuid', 'local_type', 'local_uuid']);
         });

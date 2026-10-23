@@ -60,6 +60,7 @@ function rdgDeliver(
             $table->string('sync_token')->default('0');
             $table->string('name')->nullable();
             $table->string('state')->nullable();
+            $table->text('invoice_tokens')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {

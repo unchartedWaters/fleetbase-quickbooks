@@ -9,6 +9,7 @@ use Fleetbase\Quickbooks\Support\ContentHash;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\InvoiceTax;
+use Fleetbase\Quickbooks\Support\PaymentTokens;
 use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksChanges;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
@@ -848,7 +849,7 @@ class SyncEngine
             return true;
         }
         if ($name === 'Payment') {
-            return $this->applyPaymentRemote($ledger, $connection, $companyUuid, $localUuid, $remote, $remotes);
+            return $this->applyPaymentRemote($ledger, $connection, $companyUuid, $link, $remote, $remotes);
         }
         if ($name === 'Account' && isset($ledger->wallets[$localUuid]) === true) {
             $reference = (string) ($settings['wallet_reference'] ?? 'fleetbase');
@@ -890,7 +891,14 @@ class SyncEngine
             'Account'  => $this->walletInSync($ledger, $uuid, $remote, $settings),
             default    => true,
         };
-        $ledger->putLink(array_merge($link, ['sync_token' => $this->tokenAfterSync($link, $remote, $inSync)]));
+        // The apply may have stored more on the link (a payment's invoice tokens): keep it.
+        $current = $ledger->link(
+            (string) ($link['company_uuid'] ?? ''),
+            (string) ($link['realm_id'] ?? ''),
+            (string) ($link['local_type'] ?? ''),
+            $uuid
+        ) ?? $link;
+        $ledger->putLink(array_merge($current, ['sync_token' => $this->tokenAfterSync($link, $remote, $inSync)]));
     }
 
     /**
@@ -924,6 +932,7 @@ class SyncEngine
 
     /**
      * @param array<string, mixed>                $connection
+     * @param array<string, mixed>                $link
      * @param array<string, mixed>                $remote
      * @param array<string, array<string, mixed>> $remotes
      */
@@ -931,10 +940,11 @@ class SyncEngine
         SyncLedger $ledger,
         array $connection,
         string $companyUuid,
-        string $localUuid,
+        array $link,
         array $remote,
         array $remotes,
     ): bool {
+        $localUuid   = (string) ($link['local_uuid'] ?? '');
         $invoiceUuid = isset($ledger->invoices[$localUuid]) === true
             ? $localUuid
             : $this->invoiceUuidForPayment($ledger, $connection, $remote);
@@ -946,6 +956,12 @@ class SyncEngine
         $payments    = $this->paymentsTouchingInvoice($ledger, $connection, $invoiceUuid, $invoiceId, $remote, $remotes);
         $this->applyPaymentsFromRemote($ledger, $invoiceUuid, $payments, $invoiceId);
         $this->applyPaymentStatus($ledger, $invoiceUuid);
+        // Only this invoice took the payment: another invoice it pays still sees the change.
+        if ((string) ($link['qbo_id'] ?? '') === (string) ($remote['Id'] ?? '')) {
+            $token  = (string) ($remote['SyncToken'] ?? '');
+            $tokens = PaymentTokens::with($link, $invoiceUuid, $token);
+            $ledger->putLink(array_merge($link, [PaymentTokens::COLUMN => $tokens]));
+        }
 
         return true;
     }
@@ -4677,6 +4693,7 @@ class SyncEngine
         $rediscoverable = $this->paymentRediscoverable($remote, $invoiceId, $remoteInvoice);
         $byPayment      = $this->storeByPaymentId($rediscoverable, $legacyId, $paymentId);
         $attributes     = $this->paymentLinkAttributes($ledger, $connection, $invoiceUuid, $paymentId, $remote, $byPayment, $rediscoverable, $legacyId);
+        $attributes     = $this->withInvoiceToken($ledger, $attributes, $invoiceUuid, $legacy);
         $action         = $this->paymentLinkAction($ledger, $company, $realm, $paymentId, $byPayment, $legacy, $legacyId);
         if ($action === 'rekey') {
             $this->rekeyPaymentLink($ledger, $company, $realm, $invoiceUuid, $attributes);
@@ -4691,8 +4708,31 @@ class SyncEngine
     }
 
     /**
-     * Whether QuickBooks changed one of these payments since the last sync. Each payment is
-     * compared with its own link, or with the older link stored under the invoice.
+     * The payment link attributes, with the token this invoice synced kept beside the tokens
+     * of the other invoices the payment pays (see PaymentTokens).
+     *
+     * @param array<string, mixed>      $attributes
+     * @param array<string, mixed>|null $legacy
+     *
+     * @return array<string, mixed>
+     */
+    private function withInvoiceToken(SyncLedger $ledger, array $attributes, string $invoiceUuid, ?array $legacy): array
+    {
+        $current = $ledger->link(
+            (string) $attributes['company_uuid'],
+            (string) $attributes['realm_id'],
+            'payment',
+            (string) $attributes['local_uuid']
+        ) ?? $legacy;
+        $token = (string) $attributes['sync_token'];
+
+        return array_merge($attributes, [PaymentTokens::COLUMN => PaymentTokens::with($current, $invoiceUuid, $token)]);
+    }
+
+    /**
+     * Whether QuickBooks changed one of these payments since this invoice last synced it. Each
+     * payment is compared with its own link, or with the older link stored under the invoice,
+     * using the token kept for this invoice (see PaymentTokens).
      *
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $payments
@@ -4712,7 +4752,7 @@ class SyncEngine
             if ($link === null && is_array($legacy) === true && trim((string) ($legacy['qbo_id'] ?? '')) === $id) {
                 $link = $legacy;
             }
-            if (QuickBooksChanges::since($link, $remote) === true) {
+            if (QuickBooksChanges::since(PaymentTokens::forInvoice($link, $invoiceUuid), $remote) === true) {
                 return true;
             }
         }

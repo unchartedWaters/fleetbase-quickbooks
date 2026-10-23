@@ -556,6 +556,7 @@ function trcWithPaymentTables(callable $callback): mixed
             $table->string('sync_token')->default('0');
             $table->string('name')->nullable();
             $table->string('state')->nullable();
+            $table->text('invoice_tokens')->nullable();
             $table->timestamps();
         });
         $schema->create('ledger_invoices', function (Blueprint $table) {
