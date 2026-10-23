@@ -211,6 +211,7 @@ quickbooks:
     not-connected-reconnect: QuickBooks is not connected. Connect again from QuickBooks Setup.
     connection-works: QuickBooks connection works.
     console-host: Set CONSOLE_HOST so QuickBooks can return to the console.
+    console-host-connect: "QuickBooks cannot be connected yet: Fleetbase does not know the console address to return to after sign-in. Ask an installation administrator to set CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API."
     reauth: QuickBooks needs to be connected again. Choose Connect to QuickBooks on QuickBooks Setup.
     import-reauth: QuickBooks needs to be connected again before import can continue. Choose Connect to QuickBooks on QuickBooks Setup.
     oauth-other-user: This QuickBooks authorization was started by a different user or organization. Connect again from QuickBooks Setup.

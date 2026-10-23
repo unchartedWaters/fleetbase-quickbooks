@@ -211,10 +211,14 @@ test('starting a connection sends the browser to Intuit sign-in with the request
         $store,
         new ConnectionProbe(new QuickBooksClient())
     );
+    // Connect needs a console address to return to after the Intuit sign-in.
+    $consoleHost = config('quickbooks.console_host');
+    config()->set('quickbooks.console_host', 'https://console.example.com');
 
     try {
         $started = $controller->start(Request::create('/oauth/start', 'POST', ['company_uuid' => 'sandbox-company']));
     } finally {
+        config()->set('quickbooks.console_host', $consoleHost);
         session(['company' => null, 'user' => null]);
     }
 

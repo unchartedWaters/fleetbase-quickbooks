@@ -597,6 +597,8 @@ test('a path-only computed callback uses a full public oauth url and otherwise s
 
     try {
         expect(SettingController::internalOAuthRedirectUrl())->toBe('/quickbooks/int/v1/oauth/callback');
+        // Connect also needs the console address the callback returns to.
+        config()->set('quickbooks.console_host', 'https://console.example.com');
 
         $kept = qbOAuthRedirect($controller->start(Request::create('/oauth/start', 'POST', [
             'company_uuid' => 'company-uuid',
@@ -618,6 +620,52 @@ test('a path-only computed callback uses a full public oauth url and otherwise s
             'company_uuid' => 'company-uuid',
         ]));
         expect($invalid->getStatusCode())->toBe(422);
+    } finally {
+        qbRestoreConfig($previous);
+        session(['company' => null]);
+    }
+});
+
+test('oauth start refuses before Intuit when no console host is configured', function () {
+    session(['company' => 'company-uuid']);
+    $previous = qbRememberConfig(['app.url', 'fleetbase.url', 'fleetbase.console.host', 'quickbooks.console_host']);
+    config()->set('app.url', null);
+    config()->set('fleetbase.url', null);
+    config()->set('fleetbase.console.host', 'fleetbase.io');
+    config()->set('quickbooks.console_host', null);
+    $public                                 = 'https://example.com/quickbooks/int/v1/oauth/callback';
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'                 => 'client-id',
+        'client_secret'             => (new SecretCipher())->encrypt('secret'),
+        'public_oauth_redirect_url' => $public,
+        'environment'               => 'sandbox',
+    ];
+    $controller = new ConnectionController(
+        new Authorizer(static fn () => true),
+        new OAuthFlow(new QuickBooksClient()),
+        new SettingsService(
+            new CredentialResolver(),
+            new Fleetbase\Quickbooks\Support\SyncSettingsResolver(),
+            new SecretCipher()
+        ),
+        $store,
+        new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
+    );
+    $start = static fn (): JsonResponse => $controller->start(Request::create('/oauth/start', 'POST'));
+
+    try {
+        $refused = $start();
+        config()->set('fleetbase.console.host', 'console.example.com');
+        $fleetbaseHost = $start();
+
+        expect($refused->getStatusCode())->toBe(422)
+            ->and($refused->getData(true))->not->toHaveKey('url')
+            ->and($refused->getData(true)['message'])->toBe('QuickBooks cannot be connected yet: Fleetbase does not'
+                . ' know the console address to return to after sign-in. Ask an installation administrator to set'
+                . ' CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API.')
+            ->and($fleetbaseHost->getStatusCode())->toBe(200)
+            ->and(qbOAuthRedirect($fleetbaseHost))->toBe($public);
     } finally {
         qbRestoreConfig($previous);
         session(['company' => null]);

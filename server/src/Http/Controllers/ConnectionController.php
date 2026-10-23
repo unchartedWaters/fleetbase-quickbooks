@@ -235,6 +235,10 @@ class ConnectionController extends QuickbooksController
                 'message' => Translation::get('quickbooks.messages.redirect-not-public'),
             ], 422);
         }
+        // Without it the callback could not hand the code back to the console after the Intuit sign-in.
+        if ($this->consoleHost() === '') {
+            return response()->json(['message' => Translation::get('quickbooks.messages.console-host-connect')], 422);
+        }
         $begun       = $this->oauth->begin(
             $companyUuid,
             (string) session('user', ''),
@@ -567,12 +571,7 @@ class ConnectionController extends QuickbooksController
      */
     protected function redirectToConsole(array $query): RedirectResponse|JsonResponse
     {
-        // fleetbase.console.host falls back to 'fleetbase.io' when CONSOLE_HOST is unset.
-        $host = trim((string) config('quickbooks.console_host', ''));
-        if ($host === '') {
-            $fleetbaseHost = trim((string) config('fleetbase.console.host', ''));
-            $host          = $fleetbaseHost === 'fleetbase.io' ? '' : $fleetbaseHost;
-        }
+        $host = $this->consoleHost();
         if ($host === '') {
             return response()->json(['message' => Translation::get('quickbooks.messages.console-host')], 500);
         }
@@ -581,6 +580,21 @@ class ConnectionController extends QuickbooksController
         }
 
         return new RedirectResponse(rtrim($host, '/') . '/quickbooks?' . http_build_query($query));
+    }
+
+    /**
+     * The console origin the OAuth callback returns to, or '' when it is not known.
+     */
+    protected function consoleHost(): string
+    {
+        $host = trim((string) config('quickbooks.console_host', ''));
+        if ($host === '') {
+            // fleetbase.console.host falls back to 'fleetbase.io' when CONSOLE_HOST is unset.
+            $fleetbaseHost = trim((string) config('fleetbase.console.host', ''));
+            $host          = $fleetbaseHost === 'fleetbase.io' ? '' : $fleetbaseHost;
+        }
+
+        return $host;
     }
 
     /**

@@ -422,7 +422,8 @@ something other than its default `fleetbase.io`, so set `CONSOLE_HOST` (or
 `QUICKBOOKS_CONSOLE_HOST`) explicitly. One of those must be the console origin
 so the callback can return to the console. An `http://` or `https://` prefix is
 kept. If the host has no prefix, the API adds `https://`. Without a console
-host, the callback returns HTTP 500.
+host, Connect answers HTTP 422 and does not open Intuit; a callback that still
+arrives returns HTTP 500.
 
 **Disconnect** revokes the refresh token at Intuit (`developer.api.intuit.com/v2/oauth2/tokens/revoke`) on a best-effort basis, then deletes the local connection row and this organization's still-pending sync rows. A failed revoke does not block the disconnect. `quickbooks_links` rows are kept so a later reconnect restores the mappings. Disconnect does not change the Intuit app or its webhook subscription.
 
@@ -824,7 +825,7 @@ On this machine the repository is checked out at `/opt/fleetbase-quickbooks` on 
 
 Starting OAuth needs a public https redirect URL. The redirect that Intuit receives is the `public_oauth_redirect_url` setting (Public OAuth Redirect URL on Admin → QuickBooks → Settings) when it is set, otherwise the computed callback on the API host. Either one must pass `Support/PublicHttps`: it has to be `https://`, and localhost, loopback, private, link-local, and other internal addresses are rejected, as is a hostname that does not resolve to a public address. A dev server on a private IP such as `10.30.0.34` therefore cannot connect as it is. Put a public https tunnel or reverse proxy in front of the API, save its callback URL (`https://<public host>/quickbooks/int/v1/oauth/callback`) as Public OAuth Redirect URL, and list the same URL under Redirect URIs in the Intuit app. Without a usable redirect, connect returns HTTP 422 and does not open Intuit.
 
-Set `CONSOLE_HOST` (or `QUICKBOOKS_CONSOLE_HOST`) on the API to the console origin. The OAuth callback redirects the browser there, and returns HTTP 500 without it. Sync now and the schedule do not need the public redirect once a connection exists.
+Set `CONSOLE_HOST` (or `QUICKBOOKS_CONSOLE_HOST`) on the API to the console origin. The OAuth callback redirects the browser there. Without a console host, Connect answers HTTP 422 and does not open Intuit. Sync now and the schedule do not need the public redirect once a connection exists.
 
 `api/composer.json` requires `unchartedwaters/quickbooks-api` and has a path repository at `../../fleetbase-quickbooks`. The running `application`, `queue`, and `scheduler` containers get the package from the ensure script and the read-only mount. The console UI is the copy baked into the console image.
 
