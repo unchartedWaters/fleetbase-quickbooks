@@ -1041,9 +1041,11 @@ test('reconcile pending inserts use one bulk insert', function () {
         $connection->enableQueryLog();
 
         $cursor = (new FleetbaseDirectory())->claimInScopeInvoices('company-uuid', 10);
+        // The one-off schema check for the priority column is not a write.
         $writes = array_values(array_filter(
             array_column($connection->getQueryLog(), 'query'),
             static fn (string $sql): bool => str_contains($sql, 'quickbooks_pending_syncs')
+                && str_contains($sql, 'pragma_table_info') === false
         ));
         $inserts = array_values(array_filter(
             $writes,

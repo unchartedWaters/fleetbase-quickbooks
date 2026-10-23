@@ -86,6 +86,7 @@ function dctSchema(Illuminate\Database\Schema\Builder $schema): void
         $table->string('status')->default('pending');
         $table->string('reason')->nullable();
         $table->unsignedInteger('attempts')->default(0);
+        $table->unsignedTinyInteger('priority')->default(0);
         $table->timestamp('next_attempt_at')->nullable();
         $table->timestamps();
     });
@@ -485,6 +486,60 @@ test('a pending load takes rows without a next attempt first, then by uuid, up t
         $restore();
     }
 })->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a pending load takes a user edit before a reconcile backlog', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        $rows = [];
+        for ($index = 1; $index <= 150; $index++) {
+            $rows[] = [
+                'uuid'         => sprintf('rec-%03d', $index),
+                'company_uuid' => 'company-uuid',
+                'local_type'   => 'customer',
+                'local_uuid'   => sprintf('cust-%03d', $index),
+                'reason'       => 'reconcile',
+                'status'       => 'pending',
+                'priority'     => 1,
+                'created_at'   => now(),
+                'updated_at'   => now(),
+            ];
+        }
+        DB::table('quickbooks_pending_syncs')->insert($rows);
+        DB::table('quickbooks_pending_syncs')->insert([
+            'uuid'         => 'zzzz-saved',
+            'company_uuid' => 'company-uuid',
+            'local_type'   => 'customer',
+            'local_uuid'   => 'cust-saved',
+            'reason'       => 'saved',
+            'status'       => 'pending',
+            'priority'     => 0,
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ]);
+
+        $loaded = (new FleetbaseDirectory())->loadPending('company-uuid', 100, time());
+
+        expect(dctPendingUuids($loaded['ledger']->pending))->toHaveCount(100)
+            ->and(dctPendingUuids($loaded['ledger']->pending))->toContain('zzzz-saved');
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('an in-memory ledger hands out edits before the reconcile backlog, then by due time', function () {
+    $ledger = new SyncLedger();
+    foreach (['rec-1', 'rec-2', 'rec-3'] as $uuid) {
+        $ledger->upsertPending('company-uuid', 'customer', $uuid, 'reconcile');
+    }
+    $ledger->upsertPending('company-uuid', 'customer', 'retried', 'saved');
+    $ledger->updatePending('company-uuid', 'customer', 'retried', ['next_attempt_at' => time() - 60]);
+    $ledger->upsertPending('company-uuid', 'customer', 'edited', 'saved');
+
+    $due = array_column($ledger->duePending('company-uuid', 3, time()), 'local_uuid');
+
+    expect($due)->toBe(['edited', 'retried', 'rec-1']);
+});
 
 test('customers save only the fields the engine changed and new customers insert in one statement', function () {
     $restore = dctSqlite();

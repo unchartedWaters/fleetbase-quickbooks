@@ -188,6 +188,7 @@ class BatchRunner
         $ledger                            = $loaded['ledger'];
         $ledger->connections[$companyUuid] = $connection;
         $batchesBefore                     = count($ledger->batches);
+        $fullBatch                         = count($ledger->pending) >= (int) $resolved['batch_size'];
         $state['ledger']                   = $ledger;
         $state['save']                     = true;
         // The size trigger already decided this scheduled run may start early.
@@ -202,7 +203,10 @@ class BatchRunner
         $state['save']     = (($batch['status'] ?? null) === 'skipped' && $nothingRecorded === true) === false;
         // A run stopped by a token refresh that failed for now is not followed up at once:
         // each follow-up would try the refresh again for one row. The schedule retries it.
-        $state['follow_up'] = in_array($trigger, ['manual', 'drain'], true) === true
+        // Sync now that filled its batch chains drains too, so a backlog does not wait for the schedule.
+        $chains             = in_array($trigger, ['manual', 'drain'], true) === true
+            || ($trigger === 'now' && $fullBatch === true);
+        $state['follow_up'] = $chains === true
             && ($batch['status'] ?? '') === 'finished'
             && $this->engine->refreshFailed($companyUuid) === false;
 
@@ -278,14 +282,66 @@ class BatchRunner
      */
     public function isScheduledDue(string $companyUuid, int $now): bool
     {
-        if ($this->hasConnection($companyUuid) === false) {
+        $connection = $this->directory->connection($companyUuid);
+        if (ConnectionGate::usable($connection) === false) {
             return false;
         }
-        $settings = $this->settingsFor($companyUuid);
 
-        return $this->scheduledIsDue($companyUuid, $settings, $now) === true
+        return $this->isScheduledDueFor($companyUuid, $connection, $this->settingsFor($companyUuid), $now);
+    }
+
+    /**
+     * isScheduledDue() with the connection and settings the every-minute command already read,
+     * so each organization's connection and settings are read once per tick.
+     *
+     * @param array<string, mixed>|null $connection
+     * @param array<string, mixed>      $settings
+     */
+    public function isScheduledDueFor(string $companyUuid, ?array $connection, array $settings, int $now): bool
+    {
+        if ($connection === null || ConnectionGate::usable($connection) === false) {
+            return false;
+        }
+
+        return $this->scheduledIsDueWith($connection, $companyUuid, $settings, $now) === true
             || $this->catalogDue($companyUuid, $settings, $now) === true
-            || $this->tokenKeepaliveDue($companyUuid, $now) === true;
+            || $this->tokenKeepaliveDueWith($connection, $companyUuid, $now) === true;
+    }
+
+    /**
+     * The stored connection the schedule checks, read once per tick when the command has none.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function connectionOf(string $companyUuid): ?array
+    {
+        return $this->directory->connection($companyUuid);
+    }
+
+    /**
+     * The installation's sync defaults, read once per schedule tick.
+     *
+     * @return array<string, mixed>
+     */
+    public function adminSync(): array
+    {
+        return $this->store->adminSync();
+    }
+
+    /**
+     * One organization's resolved sync settings, with the installation defaults already read.
+     *
+     * @param array<string, mixed> $adminSync
+     *
+     * @return array<string, mixed>
+     */
+    public function scheduleSettings(string $companyUuid, array $adminSync): array
+    {
+        return $this->settings->resolveSync(
+            $this->store->companySync($companyUuid),
+            $adminSync,
+            $this->store->defaultSync()
+        );
     }
 
     /**
@@ -295,7 +351,14 @@ class BatchRunner
      */
     private function tokenKeepaliveDue(string $companyUuid, int $now): bool
     {
-        $connection = $this->directory->connection($companyUuid);
+        return $this->tokenKeepaliveDueWith($this->directory->connection($companyUuid), $companyUuid, $now);
+    }
+
+    /**
+     * @param array<string, mixed>|null $connection
+     */
+    private function tokenKeepaliveDueWith(?array $connection, string $companyUuid, int $now): bool
+    {
         if ($connection === null || empty($connection['needs_reauth']) === false) {
             return false;
         }
@@ -537,11 +600,7 @@ class BatchRunner
      */
     private function settingsFor(string $companyUuid): array
     {
-        return $this->settings->resolveSync(
-            $this->store->companySync($companyUuid),
-            $this->store->adminSync(),
-            $this->store->defaultSync()
-        );
+        return $this->scheduleSettings($companyUuid, $this->store->adminSync());
     }
 
     /**
@@ -550,8 +609,14 @@ class BatchRunner
      */
     public function deferSeconds(string $companyUuid): int
     {
-        $settings = $this->settingsFor($companyUuid);
+        return self::intervalSeconds($this->settingsFor($companyUuid));
+    }
 
+    /**
+     * @param array<string, mixed> $settings
+     */
+    public static function intervalSeconds(array $settings): int
+    {
         return max(60, (int) ($settings['interval_minutes'] ?? 0) * 60);
     }
 
@@ -565,7 +630,15 @@ class BatchRunner
      */
     private function scheduledIsDue(string $companyUuid, array $settings, int $now): bool
     {
-        $connection = $this->directory->connection($companyUuid);
+        return $this->scheduledIsDueWith($this->directory->connection($companyUuid), $companyUuid, $settings, $now);
+    }
+
+    /**
+     * @param array<string, mixed>|null $connection
+     * @param array<string, mixed>      $settings
+     */
+    private function scheduledIsDueWith(?array $connection, string $companyUuid, array $settings, int $now): bool
+    {
         if ($connection === null || empty($connection['needs_reauth']) === false) {
             return false;
         }

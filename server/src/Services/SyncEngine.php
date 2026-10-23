@@ -6701,17 +6701,22 @@ class SyncEngine
      */
     private function recordRow(SyncLedger $ledger, array $connection, array $row, string $outcome, array &$batch, string $trigger, ?string $retryError): void
     {
-        $batch[$outcome]    = ($batch[$outcome] ?? 0) + 1;
-        $ledger->attempts[] = [
-            'company_uuid' => $connection['company_uuid'],
-            'local_type'   => $row['local_type'],
-            'local_uuid'   => $row['local_uuid'],
-            'outcome'      => $outcome,
-            'error'        => $this->lastError
-                ?? $retryError
-                ?? $this->rowNote($row, $outcome)
-                ?? $this->primaryReplacedNote($row, $outcome),
-        ];
+        $batch[$outcome] = ($batch[$outcome] ?? 0) + 1;
+        // rowNote() is read once, so the error is worked out once.
+        $error = $this->lastError
+            ?? $retryError
+            ?? $this->rowNote($row, $outcome)
+            ?? $this->primaryReplacedNote($row, $outcome);
+        // The daily catalog finds most customers unchanged; the batch counts them, Activity skips them.
+        if ($trigger !== 'catalog' || $outcome !== 'aligned' || $error !== null) {
+            $ledger->attempts[] = [
+                'company_uuid' => $connection['company_uuid'],
+                'local_type'   => $row['local_type'],
+                'local_uuid'   => $row['local_uuid'],
+                'outcome'      => $outcome,
+                'error'        => $error,
+            ];
+        }
         // A failure Fleetbase decided itself (lastError) is final for this data. A failure
         // from QuickBooks was classified by failure(). A row that did not fail is not counted.
         if ($outcome !== 'failed' || $this->lastError !== null) {

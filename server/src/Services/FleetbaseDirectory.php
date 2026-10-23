@@ -86,6 +86,9 @@ class FleetbaseDirectory
     /** @var \WeakMap<object, bool>|null */
     private static ?\WeakMap $claimSupport = null;
 
+    /** @var \WeakMap<object, bool>|null */
+    private static ?\WeakMap $prioritySupport = null;
+
     /**
      * Companies flag() found without a connection, mapped to the time the answer expires.
      *
@@ -1082,6 +1085,11 @@ class FleetbaseDirectory
      */
     protected function writePending(array $row): void
     {
+        $values = self::toDates($row, self::PENDING_TIMES);
+        unset($values['priority']);
+        if ($this->prioritySupported() === true) {
+            $values['priority'] = SyncLedger::pendingPriority($row);
+        }
         try {
             $pending = PendingSync::query()->firstOrCreate(
                 [
@@ -1090,7 +1098,7 @@ class FleetbaseDirectory
                     'local_uuid'   => $row['local_uuid'],
                     'status'       => 'pending',
                 ],
-                self::toDates($row, self::PENDING_TIMES)
+                $values
             );
         } catch (\Illuminate\Database\QueryException $exception) {
             if (self::isDuplicatePendingWrite($exception) === false) {
@@ -1101,7 +1109,20 @@ class FleetbaseDirectory
         }
         if ($pending instanceof PendingSync === true && $pending->wasRecentlyCreated === false) {
             $this->markReflagged($pending);
+            $this->raisePriority($pending, $values['priority'] ?? null);
         }
+    }
+
+    /**
+     * An edit to a record already waiting in the reconcile backlog moves it ahead of that backlog.
+     */
+    private function raisePriority(PendingSync $pending, ?int $priority): void
+    {
+        if ($priority === null || (int) ($pending->priority ?? 0) <= $priority) {
+            return;
+        }
+
+        PendingSync::query()->where('uuid', (string) $pending->uuid)->update(['priority' => $priority]);
     }
 
     /**
@@ -1167,6 +1188,31 @@ class FleetbaseDirectory
         try {
             $schema = $connection->getSchemaBuilder();
             $has    = $schema->hasColumn($model->getTable(), 'claimed_until') === true && $schema->hasColumn($model->getTable(), 'claimed_by') === true;
+        } catch (\Throwable) {
+            return false;
+        }
+        if ($has === true) {
+            $supported[$connection] = true;
+        }
+
+        return $has;
+    }
+
+    /**
+     * Whether the priority column exists (migration 2026_10_24_130000). Remembered per connection once true.
+     */
+    private function prioritySupported(): bool
+    {
+        $model                 = new PendingSync();
+        $connection            = $model->getConnection();
+        $supported             = self::$prioritySupport ?? new \WeakMap();
+        self::$prioritySupport = $supported;
+        if (($supported[$connection] ?? false) === true) {
+            return true;
+        }
+
+        try {
+            $has = $connection->getSchemaBuilder()->hasColumn($model->getTable(), 'priority') === true;
         } catch (\Throwable) {
             return false;
         }
@@ -1688,7 +1734,12 @@ class FleetbaseDirectory
         $moment = Carbon::createFromTimestamp($now ?? time());
         $pendingQuery->where(function ($query) use ($moment): void {
             $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', $moment);
-        })->orderBy('next_attempt_at')->orderBy('uuid')->limit($pendingLimit);
+        });
+        // Edits first, then the reconcile and catalog backlog; each by due time, then uuid.
+        if ($this->prioritySupported() === true) {
+            $pendingQuery->orderBy('priority');
+        }
+        $pendingQuery->orderBy('next_attempt_at')->orderBy('uuid')->limit($pendingLimit);
         if ($this->claimsSupported() === false) {
             return $pendingQuery->get();
         }
@@ -5340,8 +5391,9 @@ class FleetbaseDirectory
             return;
         }
 
-        $now     = Carbon::now()->toDateTimeString();
-        $payload = [];
+        $now      = Carbon::now()->toDateTimeString();
+        $priority = $this->prioritySupported();
+        $payload  = [];
         foreach ($rows as $row) {
             $companyUuid = (string) ($row['company_uuid'] ?? '');
             $localType   = (string) ($row['local_type'] ?? '');
@@ -5349,7 +5401,7 @@ class FleetbaseDirectory
             if ($companyUuid === '' || $localType === '' || $localUuid === '') {
                 continue;
             }
-            $payload[] = [
+            $insert = [
                 'uuid'            => (string) (($row['uuid'] ?? '') !== '' ? $row['uuid'] : Str::uuid()),
                 'company_uuid'    => $companyUuid,
                 'local_type'      => $localType,
@@ -5361,6 +5413,10 @@ class FleetbaseDirectory
                 'created_at'      => $now,
                 'updated_at'      => $now,
             ];
+            if ($priority === true) {
+                $insert['priority'] = SyncLedger::pendingPriority($row);
+            }
+            $payload[] = $insert;
         }
         foreach (array_chunk($payload, 200) as $chunk) {
             try {

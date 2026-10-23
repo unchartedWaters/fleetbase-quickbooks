@@ -5,14 +5,28 @@ namespace Fleetbase\Quickbooks\Console\Commands;
 use Fleetbase\Quickbooks\Jobs\SyncCompanyBatch;
 use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Services\BatchRunner;
+use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Illuminate\Console\Command;
 
 class SyncQuickbooks extends Command
 {
+    /** The connection columns the schedule checks. */
+    private const SCHEDULE_COLUMNS = [
+        'company_uuid', 'realm_id', 'needs_reauth', 'token_expires_at', 'rate_limited_until', 'last_batch_at',
+    ];
+
     protected $signature = 'quickbooks:sync';
 
     protected $description = 'Queue a QuickBooks batch for each organization that is due for a sync.';
+
+    /**
+     * The connections connectedCompanies() read this tick, by organization. Only the columns
+     * the schedule checks are read; tokens stay in the database.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    private array $connections = [];
 
     public function handle(BatchRunner $runner): int
     {
@@ -25,11 +39,14 @@ class SyncQuickbooks extends Command
             return self::SUCCESS;
         }
 
+        // Each organization's connection and settings, and the installation defaults, are read once.
+        $adminSync = $runner->adminSync();
+        $intervals = [];
         foreach ($companies as $companyUuid) {
-            if ($runner->hasConnection($companyUuid) === false) {
-                continue;
-            }
-            if ($runner->isScheduledDue($companyUuid, $now) === false) {
+            $settings                = $runner->scheduleSettings($companyUuid, $adminSync);
+            $intervals[$companyUuid] = BatchRunner::intervalSeconds($settings);
+            $connection              = $this->connections[$companyUuid] ?? $runner->connectionOf($companyUuid);
+            if ($runner->isScheduledDueFor($companyUuid, $connection, $settings, $now) === false) {
                 continue;
             }
             SyncCompanyBatch::dispatch($companyUuid);
@@ -40,7 +57,7 @@ class SyncQuickbooks extends Command
             // Keep the next minute open so due work, including a 20-due early start, can drain.
             SyncSchedule::defer($now, 60);
         } else {
-            SyncSchedule::defer($now, $this->idleSeconds($runner, $companies));
+            SyncSchedule::defer($now, $this->idleSeconds($intervals));
         }
 
         $this->info('Queued QuickBooks sync for ' . $queued . ' organizations.');
@@ -56,19 +73,21 @@ class SyncQuickbooks extends Command
      */
     protected function connectedCompanies(): array
     {
-        $connected = [];
-        $rows      = Connection::query()
+        $connected         = [];
+        $this->connections = [];
+        $rows              = Connection::query()
             ->where('needs_reauth', false)
             ->whereNotNull('realm_id')
             ->where('realm_id', '!=', '')
-            ->get(['company_uuid', 'realm_id']);
+            ->get(self::SCHEDULE_COLUMNS);
         foreach ($rows as $row) {
             $companyUuid = trim((string) $row->company_uuid);
             $realm       = trim((string) $row->realm_id);
             if ($companyUuid === '' || $realm === '') {
                 continue;
             }
-            $connected[] = $companyUuid;
+            $connected[]                     = $companyUuid;
+            $this->connections[$companyUuid] = FleetbaseDirectory::connectionToArray($row);
         }
 
         return self::companiesToSchedule($connected);
@@ -107,13 +126,12 @@ class SyncQuickbooks extends Command
      * Soonest enabled sync interval among the connections already considered.
      * No QuickBooks write is used to find it. 300 matches the config default.
      *
-     * @param iterable<mixed> $companies
+     * @param array<string, int> $intervals
      */
-    private function idleSeconds(BatchRunner $runner, iterable $companies): int
+    private function idleSeconds(array $intervals): int
     {
         $wait = null;
-        foreach ($companies as $companyUuid) {
-            $seconds = $runner->deferSeconds((string) $companyUuid);
+        foreach ($intervals as $seconds) {
             if ($seconds < 1) {
                 continue;
             }
