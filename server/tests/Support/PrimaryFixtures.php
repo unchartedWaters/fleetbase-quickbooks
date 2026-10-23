@@ -82,8 +82,9 @@ class PrimaryFixtures
         string $remoteToken,
         string $localPhone = '555-1111',
         string $remotePhone = '555-0000',
+        ?FakeQuickBooks $client = null,
     ): array {
-        [$engine, $client]                 = \qbEngine();
+        [$engine, $client]                 = \qbEngine($client);
         $ledger                            = self::ledger();
         $ledger->customers['cust-1']       = self::customer(['phone' => $localPhone]);
         $client->customers['qbo-customer'] = self::remoteCustomer($remoteToken, [
