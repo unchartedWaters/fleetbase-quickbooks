@@ -415,12 +415,19 @@ class ProductItems
     }
 
     /**
+     * The top-level QuickBooks product with the name, whatever the case. A Name query also
+     * returns sub-products by their own name, and those do not hold the name (checked in the
+     * sandbox).
+     *
      * @return array<string, mixed>|null
      */
     private function named(string $name): ?array
     {
         $key = mb_strtolower(trim($name));
         foreach ($this->byName['rows'] as $row) {
+            if (($row['SubItem'] ?? false) === true || isset($row['ParentRef']) === true) {
+                continue;
+            }
             if (mb_strtolower(trim((string) ($row['Name'] ?? ''))) === $key) {
                 return $row;
             }

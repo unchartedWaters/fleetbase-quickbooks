@@ -81,6 +81,16 @@ class FakeQuickBooks extends QuickBooksClient
      */
     public array $salesTax = ['mode' => 'off', 'automated' => false, 'rate' => null];
 
+    /** With automated sales tax, the rate code QuickBooks chooses for an invoice sent with none. */
+    public ?string $automatedRate = null;
+
+    /**
+     * Invoice create payloads as sent, before QuickBooks adds ids and tax.
+     *
+     * @var array<int, array<string, mixed>>
+     */
+    public array $sentInvoices = [];
+
     public ?\Throwable $failSalesTax = null;
 
     public int $salesTaxReads = 0;
@@ -173,6 +183,7 @@ class FakeQuickBooks extends QuickBooksClient
         $this->calls[] = 'createInvoice';
         $this->refuseInvoiceLines($payload, true);
         $this->invoiceCreates++;
+        $this->sentInvoices[] = $payload;
         if ($this->customTxnNumbers === false && empty($payload['DocNumber']) === true) {
             $payload['DocNumber'] = $this->autoDocNumber();
         }
@@ -334,10 +345,37 @@ class FakeQuickBooks extends QuickBooksClient
         $this->calls[]            = 'createPayment';
         $this->paymentPayloads[]  = $payload;
         $id                       = 'pay-' . (count($this->payments) + 1);
-        $record                   = array_merge($payload, ['Id' => $id, 'SyncToken' => '0']);
+        $record                   = array_merge($this->appliedPayment($payload), ['Id' => $id, 'SyncToken' => '0']);
         $this->payments[$id]      = $record;
 
         return $record;
+    }
+
+    /**
+     * As QuickBooks does, a payment line applies at most the invoice total; the rest of the
+     * payment stays unapplied.
+     *
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    private function appliedPayment(array $payload): array
+    {
+        $unapplied = 0;
+        foreach (is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [] as $index => $line) {
+            $invoiceId = (string) ($line['LinkedTxn'][0]['TxnId'] ?? '');
+            $total     = $this->invoices[$invoiceId]['TotalAmt'] ?? null;
+            $amount    = Amounts::toMinorUnits((string) ($line['Amount'] ?? '0'));
+            if ($total !== null && $amount > Amounts::toMinorUnits((string) $total)) {
+                $unapplied += $amount - Amounts::toMinorUnits((string) $total);
+                $payload['Line'][$index]['Amount']    = (string) $total;
+            }
+        }
+        if ($unapplied > 0) {
+            $payload['UnappliedAmt'] = Amounts::centsToDecimal($unapplied, '');
+        }
+
+        return $payload;
     }
 
     /**
@@ -349,7 +387,7 @@ class FakeQuickBooks extends QuickBooksClient
     public function updatePayment(array $connection, string $id, string $syncToken, array $payload): array
     {
         $this->calls[] = 'updatePayment';
-        $record        = array_merge($this->payments[$id] ?? [], $payload, [
+        $record        = array_merge($this->payments[$id] ?? [], $this->appliedPayment($payload), [
             'Id'        => $id,
             'SyncToken' => (string) ((int) $syncToken + 1),
         ]);
@@ -499,7 +537,7 @@ class FakeQuickBooks extends QuickBooksClient
             'Payment' => $this->payments,
             'Account' => $this->accounts,
             'Item'    => $this->queriedItems($query),
-            default   => $this->customers,
+            default   => $this->queriedCustomers($query),
         };
         if ($entity === 'Item' && preg_match('/\\bName\\s+IN\\s*\\(([^)]*)\\)/i', $query, $match) === 1) {
             $wanted = array_map('mb_strtolower', $this->quotedValues($match[1]));
@@ -556,6 +594,24 @@ class FakeQuickBooks extends QuickBooksClient
         }
 
         return [];
+    }
+
+    /**
+     * QuickBooks answers a Customer query with active customers only (checked in the sandbox),
+     * unless the query asks for both with Active IN (true, false). A read by id returns either.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function queriedCustomers(string $query): array
+    {
+        if (preg_match('/Active\s+IN\s*\(\s*true\s*,\s*false\s*\)/i', $query) === 1) {
+            return $this->customers;
+        }
+
+        return array_filter(
+            $this->customers,
+            static fn (array $customer): bool => ($customer['Active'] ?? true) !== false
+        );
     }
 
     /**
@@ -636,9 +692,16 @@ class FakeQuickBooks extends QuickBooksClient
         return $record;
     }
 
+    /**
+     * Product names are unique among top-level products, whatever the case. A sub-product may
+     * share the name of a top-level one (checked in the sandbox).
+     */
     private function refuseTakenItemName(string $name, string $exceptId): void
     {
         foreach ($this->items as $id => $item) {
+            if (($item['SubItem'] ?? false) === true || isset($item['ParentRef']) === true) {
+                continue;
+            }
             $same = mb_strtolower(trim((string) ($item['Name'] ?? ''))) === mb_strtolower(trim($name));
             if ($id !== $exceptId && $same === true) {
                 throw new QuickBooksException(400, 'Duplicate Name Exists Error', null, '6240');
@@ -982,7 +1045,7 @@ class FakeQuickBooks extends QuickBooksClient
      */
     private function withTax(array $record): array
     {
-        $rate    = (string) ($record['TxnTaxDetail']['TxnTaxCodeRef']['value'] ?? '');
+        $rate    = (string) ($record['TxnTaxDetail']['TxnTaxCodeRef']['value'] ?? $this->automatedRate ?? '');
         $percent = $this->taxRates[$rate] ?? null;
         if ($percent === null) {
             return $record;

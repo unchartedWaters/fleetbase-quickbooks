@@ -49,60 +49,65 @@ screens without the surrounding Fleetbase console menus.
 - **Tax** — QuickBooks works out invoice tax, and Fleetbase never sends a tax
   amount. When sales tax is on in QuickBooks, a line Fleetbase sends is taxable
   when both the line's QuickBooks product and the QuickBooks customer are
-  taxable. The invoice gets the customer's sales tax rate, else
-  the company's default rate. A customer Fleetbase creates in QuickBooks is
-  taxable at the company rate until it is changed in QuickBooks. The
-  "Fleetbase service" product Fleetbase creates is not taxable (QuickBooks
-  creates it that way; checked in the sandbox), so make that product taxable
-  in QuickBooks to have its lines taxed. An invoice
-  QuickBooks already has keeps its rate, and a line Fleetbase matches keeps its
-  tax code. When neither the customer nor the company has a rate, the invoice
-  is sent without tax and Activity says so. When invoices sync both ways, the
-  tax QuickBooks worked out is copied onto the Fleetbase invoice: the tax, each
-  line's tax rate and amount, and a total of the lines plus that tax. Tax on a
-  line only QuickBooks has is left out. When this changes a tax rate on a
-  Fleetbase line, Activity says so. When an amount paid is recorded, the
-  status follows the new total, so a paid invoice can become part-paid when
-  tax is added. An invoice marked paid with no amount recorded stays paid, and
-  its QuickBooks payment is the new total. A payment larger than the
-  QuickBooks balance is kept by QuickBooks as unapplied credit. With invoices
-  From Fleetbase only, Fleetbase keeps its own tax and the two can differ. With
+  taxable. The invoice gets the customer's sales tax rate, else the company's
+  default rate. A customer Fleetbase creates in QuickBooks is taxable at the
+  company rate until it is changed in QuickBooks. The "Fleetbase service"
+  product Fleetbase creates is not taxable (QuickBooks creates it that way;
+  checked in the sandbox), so make that product taxable in QuickBooks to have
+  its lines taxed. An invoice QuickBooks already has keeps its rate, and a line
+  Fleetbase matches keeps its tax code. When neither the customer nor the
+  company has a rate, the invoice is sent without tax and Activity says so. When
+  invoices sync both ways, the tax QuickBooks worked out is copied onto the
+  Fleetbase invoice: the tax, each line's tax rate and amount, and a total of
+  the lines plus that tax. Tax on a line only QuickBooks has is left out. A line
+  tax rate is kept to 2 decimals (8.875% becomes 8.88%), so a total Ledger works
+  out again can be a cent or so off until the next sync copies the tax back.
+  When this changes a tax rate on a Fleetbase line, Activity says so, and when
+  QuickBooks works out less tax than Fleetbase had, Activity says the total went
+  down. A tax edited in Ledger is overwritten by the QuickBooks tax on the next
+  sync, and Ledger's revenue journal entry for the invoice is not changed. When
+  an amount paid is recorded, the status follows the new total, so a paid
+  invoice can become part-paid when tax is added. When the total goes down below
+  the amount paid, the balance goes below zero, as Ledger allows. An invoice
+  marked paid with no amount recorded stays paid, and its QuickBooks payment is
+  the new total. A payment is sent for at most the QuickBooks invoice total: the
+  rest stays in Fleetbase only and Activity says so. With invoices From
+  Fleetbase only, Fleetbase keeps its own tax and the two can differ. With
   QuickBooks as Primary, the QuickBooks lines, tax and total are copied, and
   each taxed line gets its share of the tax. Tax is compared only through the
   lines, so a tax difference does not cause another update. An invoice
-  QuickBooks holds with tax included in its amounts keeps the QuickBooks
-  total. A tax amount typed over in QuickBooks is worked out again when
-  Fleetbase next sends the lines.
+  QuickBooks holds with tax included in its amounts keeps the QuickBooks total.
+  A tax amount typed over in QuickBooks is worked out again when Fleetbase next
+  sends the lines.
 - **Products** — Storefront products and Fleet-Ops fees become QuickBooks
-  products, one per name, kept up to date from Fleetbase only; nothing is
-  copied back. They sync only while invoices are sent to QuickBooks (invoices
-  on, and Both or From Fleetbase), when a product is saved, deleted or
-  restored, when invoices are turned on, and when an invoice line uses one.
-  Names match whatever their case or spacing, so products of one name share
-  one QuickBooks product. A colon, tab or line break becomes a space, and a
-  name is cut to 100 characters. A Storefront service becomes a Service,
-  anything else a Non-inventory product (no stock). A new product posts to
-  the income account of "Fleetbase service" and is taxed like it. Its
-  description, SKU and price are sent when every product of the name agrees,
-  and the price only in the QuickBooks home currency. The fee lines Fleet-Ops
-  and Ledger write use one product each: Base Fee, Service Fee, Delivery fee,
-  Cash on delivery fee, Peak hours fee, Parcel fee (every parcel size) and
-  Distance charge (every zone). An active service or non-inventory product
-  QuickBooks already has under the name is used as it is and never changed.
-  When the name belongs to another kind of product, a sub-product, an
-  inactive product or one another record uses, Fleetbase makes its own with
-  " (Fleetbase)" added to the name. When no live product has the name any
-  more (deleted, renamed or a draft), Fleetbase makes its QuickBooks product
-  inactive (QuickBooks adds " (deleted)" to its name), and active again when
-  the name comes back. Fee products are never made inactive. A product made
-  inactive in QuickBooks stays inactive, and its lines use "Fleetbase
-  service". A matched invoice line moves from "Fleetbase service", or from
-  another Fleetbase product, to the product of its name. A line keeps the
-  Fleetbase product its text names, active or inactive, once that Storefront
-  product is gone, so earlier invoices keep their products; a renamed product
-  gets a new QuickBooks product. A product with no name is not sent. While
-  Storefront cannot be read, its products and the invoices that may use them
-  wait and are tried again.
+  products, one per name, kept up to date from Fleetbase only; nothing is copied
+  back. They sync only while invoices are sent to QuickBooks (invoices on, and
+  Both or From Fleetbase), when a product is saved, deleted or restored, when
+  invoices are turned on, and when an invoice line uses one. Names match
+  whatever their case or spacing, so products of one name share one QuickBooks
+  product. A colon, tab or line break becomes a space, and a name is cut to 100
+  characters. A Storefront service becomes a Service, anything else a
+  Non-inventory product (no stock). A new product posts to the income account of
+  "Fleetbase service" and is taxed like it. Its description, SKU and price are
+  sent when every product of the name agrees, and the price only in the
+  QuickBooks home currency. The fee lines Fleet-Ops and Ledger write use one
+  product each: Base Fee, Service Fee, Delivery fee, Cash on delivery fee, Peak
+  hours fee, Parcel fee (every parcel size) and Distance charge (every zone). An
+  active service or non-inventory product QuickBooks already has under the name
+  is used as it is and never changed. A sub-product does not hold its name. When
+  the name belongs to another kind of product, an inactive product or one
+  another record uses, Fleetbase makes its own with " (Fleetbase)" added to the
+  name. When no live product has the name any more (deleted, renamed or a
+  draft), Fleetbase makes its QuickBooks product inactive (QuickBooks adds "
+  (deleted)" to its name), and active again when the name comes back. Fee
+  products are never made inactive. A product made inactive in QuickBooks stays
+  inactive, and its lines use "Fleetbase service". A matched invoice line moves
+  from "Fleetbase service", or from another Fleetbase product, to the product of
+  its name. A line keeps the Fleetbase product its text names, active or
+  inactive, once that Storefront product is gone, so earlier invoices keep their
+  products; a renamed product gets a new QuickBooks product. A product with no
+  name is not sent. While Storefront cannot be read, its products and the
+  invoices that may use them wait and are tried again.
 - **Payments** — a payment for a paid Fleetbase invoice. Amount and date are
   compared when a payment already exists. The payload includes `TxnDate`: the
   day the invoice was paid in the organization's timezone (the app timezone when
@@ -682,20 +687,24 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
 - **Quantities.** Fleetbase invoice line quantities are whole numbers. A fractional QuickBooks quantity imports as 1 unit at the line amount.
 - **Tax.** Checked live in a US QuickBooks company with manual sales tax.
   Automated sales tax and companies outside the US (VAT and GST) are not
-  tested live. With automated sales tax, Fleetbase sends the same tax codes and
-  rate, and QuickBooks is expected to choose the rate itself. Outside the US,
-  each line is sent with the product's sales tax code, else the customer's
-  default code, and a new invoice says its amounts are before tax. The tax is
-  copied back to the invoice there, but not shared over its lines
+  tested live. With automated sales tax, Fleetbase sends each line as taxable
+  or not and no invoice rate, so QuickBooks chooses the rate from the address.
+  An update sends back the rate QuickBooks chose, as manual sales tax needs,
+  so a later address change does not change the rate. Outside the US, each
+  line is sent with the product's sales tax code, else the customer's
+  default code, and a new invoice says its amounts are before tax. Which of
+  the two codes QuickBooks expects first is not checked. The tax is copied
+  back to the invoice there, but not shared over its lines
   (`Support/InvoiceTax.php`, `InvoiceMapper::fromQuickBooks`).
 - **Partial payments.** An invoice has at most one QuickBooks Payment from this
   package. Partial and later payments are not created as separate Payments. The
   one Payment is created with the amount recorded as paid on the Fleetbase
-  invoice (its total when the invoice is paid and no amount is recorded) and is
-  updated when that amount changes (`SyncEngine::syncPayment`). If an invoice
-  has more than one QuickBooks payment, or the payment also applies credits (a
-  credit memo or an unapplied amount) or other invoices, Fleetbase leaves them
-  unchanged and the row is skipped.
+  invoice (its total when the invoice is paid and no amount is recorded), at
+  most the QuickBooks invoice total, and is updated when that amount changes
+  (`SyncEngine::syncPayment`). If an invoice has more than one QuickBooks
+  payment, or the payment also applies credits (a credit memo or an unapplied
+  amount) or other invoices, Fleetbase leaves them unchanged and the row is
+  skipped.
 - **Wallets.** Each Fleetbase wallet becomes one QuickBooks chart-of-accounts entry (`Other Current Asset`).
 - **Products.** QuickBooks does not change a product's type, so a Storefront
   product that becomes a service later stays Non-inventory in QuickBooks.

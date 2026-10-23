@@ -2023,7 +2023,7 @@ class SyncEngine
                 $lineItems
             );
             $payload = $this->invoices->withTax($payload, $plan);
-            $this->noteMissingTaxRate($uuid, $payload);
+            $this->noteMissingTaxRate($uuid, $payload, $connection);
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
                     'bId'       => 'invoice:' . $uuid,
@@ -2036,6 +2036,7 @@ class SyncEngine
                 return 'created';
             }
             $created = $this->client->createInvoice($connection, $payload);
+            $this->rememberWrittenInvoice($created);
             $ledger->putLink($this->linkFrom($connection, 'invoice', $uuid, 'Invoice', $created));
             $this->copyInvoiceNumber($ledger, $uuid, $created, $reference);
             $createdId = (string) ($created['Id'] ?? '');
@@ -2174,7 +2175,7 @@ class SyncEngine
         $payload = $this->invoiceMapper($ledger->invoices[$uuid])
             ->withExistingLineIds($payload, $remote, $removed, $mapped, $managed);
         $this->rememberPushedLineIds($ledger, $uuid, $payload);
-        $this->noteMissingTaxRate($uuid, $payload);
+        $this->noteMissingTaxRate($uuid, $payload, $connection);
 
         if ($this->writeBuffer !== null) {
             $payload['Id']        = (string) $remote['Id'];
@@ -2196,6 +2197,7 @@ class SyncEngine
         }
 
         $updated = $this->client->updateInvoice($connection, (string) $remote['Id'], (string) $remote['SyncToken'], $payload);
+        $this->rememberWrittenInvoice($updated);
         $ledger->putLink($this->linkFrom($connection, 'invoice', $uuid, 'Invoice', $updated));
         $remoteId = (string) $remote['Id'];
         $this->recordPushedLines($ledger, $uuid, $connection, $remoteId, $payload, $updated, $stored['uuids']);
@@ -2251,10 +2253,11 @@ class SyncEngine
                 return null;
             }
 
-            $amountCents = $this->paymentAmountCents($invoice);
+            $amountCents = $this->paymentAmountCents($invoice, $remoteInvoice);
             if ($amountCents <= 0) {
                 return null;
             }
+            $this->noteCappedPayment($invoice, $amountCents);
             $payload = $this->invoiceMapper($invoice)->payment(
                 $customerRef,
                 $invoiceId,
@@ -2291,7 +2294,7 @@ class SyncEngine
             return $this->paymentRecordChanged($before, $ledger->invoices[$uuid]) === true ? 'updated' : null;
         }
 
-        if ($this->paymentsMatch($invoice, $payments, $invoiceId) === true) {
+        if ($this->paymentsMatch($invoice, $payments, $invoiceId, $remoteInvoice) === true) {
             $copies = $quickbooksPrimary === true || ($pushPay === false && $copyPay === true);
 
             return $copies === true ? $this->markSettledPaid($ledger, $uuid, $remoteInvoice) : null;
@@ -2330,10 +2333,11 @@ class SyncEngine
             return 'skipped';
         }
 
-        $amountCents = $this->paymentAmountCents($invoice);
+        $amountCents = $this->paymentAmountCents($invoice, $remoteInvoice);
         if ($amountCents <= 0) {
             return null;
         }
+        $this->noteCappedPayment($invoice, $amountCents);
         $payload = $this->invoiceMapper($invoice)
             ->payment($customerRef, $invoiceId, $amountCents, $this->paymentDate($invoice));
         if ($this->writeBuffer !== null) {
@@ -2574,13 +2578,15 @@ class SyncEngine
 
     /**
      * Lines coded taxable on an invoice with no sales tax rate get no tax from QuickBooks, which
-     * Activity says.
+     * Activity says. Automated sales tax chooses the rate itself.
      *
      * @param array<string, mixed> $payload
+     * @param array<string, mixed> $connection
      */
-    private function noteMissingTaxRate(string $uuid, array $payload): void
+    private function noteMissingTaxRate(string $uuid, array $payload, array $connection): void
     {
-        if (isset($payload['TxnTaxDetail']['TxnTaxCodeRef']['value']) === true) {
+        $rated = isset($payload['TxnTaxDetail']['TxnTaxCodeRef']['value']) === true;
+        if ($rated === true || $this->salesTaxSettings($connection)['automated'] === true) {
             return;
         }
         foreach (is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [] as $line) {
@@ -2698,7 +2704,8 @@ class SyncEngine
 
     /**
      * When QuickBooks taxes invoices, read the QuickBooks customers of the block's invoices in one
-     * query. A failed tax settings read is left for each invoice to fail with.
+     * query. A failed tax settings read is left for each invoice to fail with, and a customer the
+     * query does not return for each invoice to read.
      *
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
@@ -2738,9 +2745,7 @@ class SyncEngine
             array_values($ids),
             fn (string $id): ?array => $this->client->getCustomer($connection, $id)
         );
-        foreach ($ids as $id) {
-            $this->taxCustomers[$id] = null;
-        }
+        // The query leaves out inactive customers, so a customer it omits is read by id later.
         foreach ($loaded['rows'] as $remote) {
             $id = trim((string) ($remote['Id'] ?? ''));
             if (isset($ids[$id]) === true) {
@@ -2798,12 +2803,28 @@ class SyncEngine
         if ((int) ($invoice['amount_paid'] ?? 0) !== 0) {
             $this->applyPaymentStatus($ledger, $uuid);
         }
-        if ($replaced === true) {
+        $this->noteCopiedTax($uuid, $total < (int) ($invoice['total'] ?? 0), $replaced);
+
+        return true;
+    }
+
+    /**
+     * A lower total, maybe below what was paid, is noted before any other note but a missing
+     * sales tax rate, which is why there was no tax. Otherwise a Fleetbase line rate QuickBooks
+     * replaced is noted.
+     */
+    private function noteCopiedTax(string $uuid, bool $lowered, bool $replaced): void
+    {
+        $noRate = Translation::encode('quickbooks.messages.invoice-no-tax-rate');
+        if (($this->rowNotes['invoice:' . $uuid] ?? null) === $noRate) {
+            return;
+        }
+        if ($lowered === true) {
+            $this->rowNotes['invoice:' . $uuid] = Translation::encode('quickbooks.messages.invoice-tax-lowered');
+        } elseif ($replaced === true) {
             $note                                 = 'quickbooks.messages.invoice-tax-from-quickbooks';
             $this->rowNotes['invoice:' . $uuid] ??= Translation::encode($note);
         }
-
-        return true;
     }
 
     /**
@@ -4234,13 +4255,14 @@ class SyncEngine
     }
 
     /**
-     * @param array<string, mixed> $invoice
-     * @param array<string, mixed> $remote
+     * @param array<string, mixed>      $invoice
+     * @param array<string, mixed>      $remote
+     * @param array<string, mixed>|null $remoteInvoice
      */
-    private function paymentMatches(array $invoice, array $remote, string $invoiceId): bool
+    private function paymentMatches(array $invoice, array $remote, string $invoiceId, ?array $remoteInvoice): bool
     {
         $remoteCents = $this->amountOnInvoice($remote, $invoiceId, (string) ($invoice['currency'] ?? ''));
-        if ($remoteCents === null || $remoteCents !== $this->paymentAmountCents($invoice)) {
+        if ($remoteCents === null || $remoteCents !== $this->paymentAmountCents($invoice, $remoteInvoice)) {
             return false;
         }
 
@@ -4256,29 +4278,64 @@ class SyncEngine
     /**
      * @param array<string, mixed>             $invoice
      * @param array<int, array<string, mixed>> $payments
+     * @param array<string, mixed>|null        $remoteInvoice
      */
-    private function paymentsMatch(array $invoice, array $payments, string $invoiceId): bool
+    private function paymentsMatch(array $invoice, array $payments, string $invoiceId, ?array $remoteInvoice): bool
     {
         if (count($payments) === 1) {
-            return $this->paymentMatches($invoice, $payments[0], $invoiceId);
+            return $this->paymentMatches($invoice, $payments[0], $invoiceId, $remoteInvoice);
         }
         $remoteCents = $this->summedOnInvoice($payments, $invoiceId, (string) ($invoice['currency'] ?? ''));
 
-        return $remoteCents !== null && $remoteCents === $this->paymentAmountCents($invoice);
+        return $remoteCents !== null && $remoteCents === $this->paymentAmountCents($invoice, $remoteInvoice);
     }
 
     /**
      * Compare the amount written onto the invoice. Invoice total is the stand-in
      * before a payment amount has been recorded. A paid invoice stored with
-     * amount paid 0 uses that total, so the payment is not sent as zero.
+     * amount paid 0 uses that total, so the payment is not sent as zero. The
+     * amount is capped at the QuickBooks invoice total ($remoteInvoice).
      *
-     * @param array<string, mixed> $invoice
+     * @param array<string, mixed>      $invoice
+     * @param array<string, mixed>|null $remoteInvoice
      */
-    private function paymentAmountCents(array $invoice): int
+    private function paymentAmountCents(array $invoice, ?array $remoteInvoice = null): int
     {
         if (empty($invoice['payment_from_quickbooks']) === false) {
             return (int) ($invoice['amount_paid'] ?? 0);
         }
+        $amount = $this->recordedPaymentCents($invoice);
+        $total  = is_array($remoteInvoice) === true && array_key_exists('TotalAmt', $remoteInvoice) === true
+            ? $this->majorUnits($remoteInvoice['TotalAmt'], (string) ($invoice['currency'] ?? ''))
+            : null;
+
+        // QuickBooks applies at most the invoice total and keeps the rest of a payment unapplied.
+        return $total !== null && $total > 0 && $amount > $total ? $total : $amount;
+    }
+
+    /**
+     * Says on the invoice's Activity row when its payment goes to QuickBooks capped at the
+     * QuickBooks invoice total.
+     *
+     * @param array<string, mixed> $invoice
+     */
+    private function noteCappedPayment(array $invoice, int $amountCents): void
+    {
+        $fromQuickBooks = empty($invoice['payment_from_quickbooks']) === false;
+        if ($fromQuickBooks === false && $amountCents < $this->recordedPaymentCents($invoice)) {
+            $this->rowNotes['invoice:' . (string) $invoice['uuid']] ??= Translation::encode(
+                'quickbooks.messages.payment-capped'
+            );
+        }
+    }
+
+    /**
+     * The amount Fleetbase holds as paid on an invoice, before any cap.
+     *
+     * @param array<string, mixed> $invoice
+     */
+    private function recordedPaymentCents(array $invoice): int
+    {
         $recorded = array_key_exists('amount_paid', $invoice) === true;
         $paid     = (int) ($invoice['amount_paid'] ?? 0);
         if ($recorded === true && $paid === 0 && (string) ($invoice['status'] ?? '') === 'paid') {
@@ -5077,6 +5134,7 @@ class SyncEngine
             }
 
             $ledger->putLink($this->linkFrom($connection, 'invoice', (string) $uuid, 'Invoice', $result['body']));
+            $this->rememberWrittenInvoice($result['body']);
             $lines = $buffered[(string) $uuid] ?? null;
             if ($lines !== null) {
                 $invoiceId = $lines['invoice'] !== '' ? $lines['invoice'] : (string) $result['body']['Id'];
@@ -5685,6 +5743,18 @@ class SyncEngine
             }
             $this->invoiceDocReadFailed = $loaded['failed'];
         }
+    }
+
+    /**
+     * @param array<string, mixed> $remote
+     */
+    private function rememberWrittenInvoice(array $remote): void
+    {
+        // A block reads its payments' invoices from this cache, so it holds what was just written.
+        if ($this->blockPayments !== null) {
+            $this->invoiceById ??= [];
+        }
+        $this->rememberPrefetchedInvoice($remote);
     }
 
     /**

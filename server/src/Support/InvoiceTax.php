@@ -38,8 +38,8 @@ class InvoiceTax
 
         return [
             'mode'      => $mode,
-            // Intuit: PartnerTaxEnabled is present only for a company on automated sales tax.
-            'automated' => array_key_exists('PartnerTaxEnabled', $prefs),
+            // Intuit: PartnerTaxEnabled is true on automated sales tax, false while it is not set up.
+            'automated' => ($prefs['PartnerTaxEnabled'] ?? false) === true,
             'rate'      => self::rateCode($prefs['TaxGroupCodeRef'] ?? null),
         ];
     }
@@ -69,14 +69,15 @@ class InvoiceTax
 
     /**
      * The US invoice rate: the customer's, then the company's. TAX and NON are line codes, and an
-     * invoice sent either as its rate is not taxed, so they are skipped.
+     * invoice sent either as its rate is not taxed, so they are skipped. Automated sales tax
+     * chooses the rate from the address, and a rate sent would override it, so none is sent.
      *
      * @param Settings                  $settings
      * @param array<string, mixed>|null $customer
      */
     public static function invoiceRate(array $settings, ?array $customer): ?string
     {
-        if ($settings['mode'] !== self::US) {
+        if ($settings['mode'] !== self::US || $settings['automated'] === true) {
             return null;
         }
 
