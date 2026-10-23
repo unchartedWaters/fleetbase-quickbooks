@@ -117,6 +117,8 @@ quickbooks:
     reset-confirm-title: Reset to global defaults?
     reset-confirm: This replaces this organization's sync settings with a one-time copy of the current global defaults. Later changes to the global defaults will not affect them.
     reset-done: Sync settings reset to the global defaults.
+    turn-on-confirm-title: Start syncing these records?
+    turn-on-confirm: "Saving sends every existing record of these types to QuickBooks in the background: {entities}. Accounts / Wallets create one QuickBooks account per wallet."
     authentication: Authentication
     credentials-title: Getting your QuickBooks credentials
     credentials-create-app-before: "No QuickBooks app yet? Start with "

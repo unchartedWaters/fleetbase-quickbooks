@@ -1099,6 +1099,62 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-error='payment_direction']").doesNotExist();
     });
 
+    test('turning wallets on asks before saving', async function (assert) {
+        const modals = this.owner.lookup('service:modals-manager');
+        modals.decline = true;
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: false });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @syncOnly={{true}} @sync={{this.sync}} @settingsLoaded={{true}} @onSave={{this.onSave}} />`);
+        await click("[data-test-sync='wallet_enabled']");
+        await click(saveButton());
+
+        assert.strictEqual(modals.last.title, 'Start syncing these records?');
+        assert.strictEqual(
+            modals.last.body,
+            'Saving sends every existing record of these types to QuickBooks in the background: Accounts / Wallets. Accounts / Wallets create one QuickBooks account per wallet.'
+        );
+        assert.strictEqual(modals.last.acceptButtonText, 'Save Changes');
+        assert.strictEqual(this.saved, null, 'nothing is saved until the confirmation is accepted');
+
+        await modals.last.confirm();
+        await settled();
+
+        assert.true(this.saved.sync.wallet_enabled);
+        assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
+    });
+
+    test('an organization save that turns nothing on does not ask', async function (assert) {
+        const modals = this.owner.lookup('service:modals-manager');
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: true, payment_enabled: false });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @syncOnly={{true}} @sync={{this.sync}} @settingsLoaded={{true}} @onSave={{this.onSave}} />`);
+        await click("[data-test-sync='wallet_enabled']");
+        await click(saveButton());
+
+        assert.strictEqual(modals.last, null);
+        assert.false(this.saved.sync.wallet_enabled);
+        assert.false(this.saved.sync.payment_enabled);
+    });
+
+    test('admin save with wallets turned on does not ask', async function (assert) {
+        const modals = this.owner.lookup('service:modals-manager');
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: false });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
+        await click("[data-test-sync='wallet_enabled']");
+        await click(saveButton());
+
+        assert.strictEqual(modals.last, null);
+        assert.true(this.saved.sync.wallet_enabled);
+    });
+
     test('field help text uses the readable gray', async function (assert) {
         this.set('settings', {
             client_id: 'id',
