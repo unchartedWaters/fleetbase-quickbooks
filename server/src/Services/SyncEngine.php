@@ -1702,10 +1702,10 @@ class SyncEngine
             return 'aligned';
         }
         $remoteId = (string) $link['qbo_id'];
-        if ($kind === 'customer' && $this->remoteTakenOver($ledger, $connection, $uuid, $remoteId) === true) {
-            return 'aligned';
-        }
         if ($kind === 'customer') {
+            if ($this->remoteTakenOver($ledger, $connection, $uuid, $remoteId) === true) {
+                return 'aligned';
+            }
             if (isset($this->customerLookupFailed[$uuid]) === true) {
                 throw $this->customerLookupFailed[$uuid];
             }
