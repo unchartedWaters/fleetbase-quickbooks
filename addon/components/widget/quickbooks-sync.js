@@ -34,7 +34,7 @@ export default class WidgetQuickbooksSyncComponent extends Component {
             return finished;
         }
 
-        return when.toLocaleString();
+        return this.intl.formatDate(when, { dateStyle: 'medium', timeStyle: 'short' });
     }
 
     get queueCount() {

@@ -26,7 +26,15 @@ function openOrganizationSetting(app, slug, view) {
     }
 }
 
-function registerHeaderItem(menuService, app) {
+// Titles are read once at boot, in the locale active then; the host has no per-render translation for menu titles.
+// Without an intl service (or before the key is known), the English text is used.
+function translator(app) {
+    const intl = app.lookup('service:intl');
+
+    return (key, fallback) => (intl?.exists?.(key) ? intl.t(key) : fallback);
+}
+
+function registerHeaderItem(menuService, app, t) {
     menuService.registerHeaderMenuItem(
         new MenuItem({
             id: 'quickbooks',
@@ -36,19 +44,19 @@ function registerHeaderItem(menuService, app) {
             view: 'index',
             icon: 'file-invoice-dollar',
             priority: 5,
-            description: 'Sync customers, invoices, payments, and wallets with QuickBooks Online.',
+            description: t('quickbooks.menu.header-description', 'Sync customers, invoices, payments, and wallets with QuickBooks Online.'),
             onClick: () => openOrganizationSetting(app, 'quickbooks-setup', 'index'),
         })
     );
 }
 
 // Global settings (Client ID, secret, URLs, the sync template) are edited here by installation administrators only.
-function registerAdminSettings(menuService) {
+function registerAdminSettings(menuService, t) {
     menuService.registerAdminMenuPanel(
         'QuickBooks',
         [
             new MenuItem({
-                title: 'Settings',
+                title: t('quickbooks.menu.admin-settings', 'Settings'),
                 icon: 'gear',
                 component: new ExtensionComponent(ENGINE, 'quickbooks-admin-settings'),
             }),
@@ -59,13 +67,13 @@ function registerAdminSettings(menuService) {
 
 // Same list as Organization, Two Factor, and Notifications. Not an admin panel and not a Ledger menu.
 // The ids keep the values the earlier "Quickbooks" titles produced.
-function registerOrganizationSettings(menuService, app) {
+function registerOrganizationSettings(menuService, app, t) {
     const onClick = (menuItem) => openOrganizationSetting(app, menuItem.slug, menuItem.view);
 
     menuService.registerSettingsMenuItem(
         new MenuItem({
             id: 'quickbooks-setup',
-            title: 'QuickBooks Setup',
+            title: t('quickbooks.menu.setup', 'QuickBooks Setup'),
             icon: 'plug',
             slug: 'quickbooks-setup',
             index: 0,
@@ -79,7 +87,7 @@ function registerOrganizationSettings(menuService, app) {
     menuService.registerSettingsMenuItem(
         new MenuItem({
             id: 'quickbooks-activity',
-            title: 'QuickBooks Activity',
+            title: t('quickbooks.menu.activity', 'QuickBooks Activity'),
             icon: 'clock-rotate-left',
             slug: 'quickbooks-activity',
             index: 1,
@@ -91,7 +99,7 @@ function registerOrganizationSettings(menuService, app) {
     );
 }
 
-function registerWidgets(widgetService) {
+function registerWidgets(widgetService, t) {
     if (!widgetService) {
         return;
     }
@@ -99,8 +107,8 @@ function registerWidgets(widgetService) {
     const quickbooksWidget = (isDefault) =>
         new Widget({
             id: 'quickbooks-sync',
-            name: 'QuickBooks Sync',
-            description: 'Shows the last sync, how many customers, invoices, payments, and wallets are waiting, and Sync now.',
+            name: t('quickbooks.widget.title', 'QuickBooks Sync'),
+            description: t('quickbooks.widget.description', 'Shows the last sync, how many customers, invoices, payments, and wallets are waiting, and Sync now.'),
             icon: 'file-invoice-dollar',
             component: `#extension-component:${ENGINE}:widget/quickbooks-sync`,
             grid_options: { w: 4, h: 8, minW: 3, minH: 6 },
@@ -125,11 +133,12 @@ function registerHostComponents(engine, app) {
 export default {
     setupExtension(app, universe) {
         const menuService = universe.getService('menu');
+        const t = translator(app);
 
-        registerHeaderItem(menuService, app);
-        registerAdminSettings(menuService);
-        registerOrganizationSettings(menuService, app);
-        registerWidgets(universe.getService('universe/widget-service'));
+        registerHeaderItem(menuService, app, t);
+        registerAdminSettings(menuService, t);
+        registerOrganizationSettings(menuService, app, t);
+        registerWidgets(universe.getService('universe/widget-service'), t);
     },
 
     onEngineLoaded(engine, universe, app) {

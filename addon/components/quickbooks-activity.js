@@ -63,6 +63,7 @@ export default class QuickbooksActivityComponent extends Component {
 
         return activityRows(batches).map((row) => ({
             ...row,
+            when: row.when instanceof Date ? this.intl.formatDate(row.when, { dateStyle: 'medium', timeStyle: 'short' }) : row.when,
             trigger: this.translated('quickbooks.activity.trigger', row.trigger),
             directionLabel: this.translated('quickbooks.activity.direction', row.direction),
             status: this.statusLabel(row.status),

@@ -84,7 +84,13 @@ quickbooks:
       wallet: Wallet "{name}"
       product: Product "{name}"
       item: Product "{name}"
+  menu:
+    setup: QuickBooks Setup
+    activity: QuickBooks Activity
+    admin-settings: Settings
+    header-description: Sync customers, invoices, payments, and wallets with QuickBooks Online.
   widget:
+    description: Shows the last sync, how many customers, invoices, payments, and wallets are waiting, and Sync now.
     title: QuickBooks Sync
     refresh: Refresh QuickBooks status
     loading: Loading QuickBooks status.
