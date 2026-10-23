@@ -39,7 +39,11 @@ class ApplyRemoteChange implements ShouldQueue
      */
     public int $tries = 1;
 
-    public int $timeout = BatchRunner::LOCK_SECONDS;
+    /**
+     * Shorter than the apply lock (LOCK_SECONDS), so the worker is killed while the lock remains
+     * and two applies never overlap.
+     */
+    public int $timeout = BatchRunner::LOCK_SECONDS - BatchRunner::LOCK_MARGIN_SECONDS;
 
     /**
      * Retries after a busy company lock, waiting WebhookRetry::busyDelay() each time, so a
@@ -52,6 +56,19 @@ class ApplyRemoteChange implements ShouldQueue
      * queued before this counter existed still loads, and starts at 0.
      */
     public int $quickbooksAttempt = 0;
+
+    /**
+     * Retries made while another delivery for the company held the apply lock. They do not
+     * count against LOCK_RETRY_LIMIT and have no limit: each apply ends within the job timeout,
+     * and an orphaned apply lock expires after LOCK_SECONDS, so the wait always ends and a burst
+     * of deliveries is applied in turn instead of dropped.
+     */
+    public int $applyWait = 0;
+
+    /**
+     * When the company lock wait must give up, so the save still runs inside the job timeout.
+     */
+    private int $saveDeadline = 0;
 
     /**
      * @param array<int, array{entity: string, id: string, operation: string}> $entities
@@ -81,10 +98,11 @@ class ApplyRemoteChange implements ShouldQueue
         SettingsStore $store,
         ?ConnectionTokens $tokens = null,
     ): void {
-        $applyLock = WebhookApplyLock::for($this->companyUuid);
+        $this->saveDeadline = time() + $this->timeout - BatchRunner::LOCK_MARGIN_SECONDS;
+        $applyLock          = WebhookApplyLock::for($this->companyUuid);
         if ($applyLock !== null && $applyLock->get() === false) {
             // Another delivery for this company is being applied. Queue this one after it.
-            $this->retryBusyApply($directory);
+            $this->retryBusyApply();
 
             return;
         }
@@ -95,12 +113,16 @@ class ApplyRemoteChange implements ShouldQueue
         }
     }
 
-    private function retryBusyApply(FleetbaseDirectory $directory): void
+    private function retryBusyApply(): void
     {
-        if ($this->lockAttempt >= self::LOCK_RETRY_LIMIT) {
-            $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', 'quickbooks.messages.sync-running');
+        $retry                    = new self($this->companyUuid, $this->entities, $this->lockAttempt);
+        $retry->quickbooksAttempt = $this->quickbooksAttempt;
+        $retry->applyWait         = $this->applyWait + 1;
+        $retry->delay(WebhookRetry::busyDelay($this->applyWait));
+        $dispatcher = Container::getInstance()->make(Dispatcher::class);
+        if ($dispatcher instanceof Dispatcher === true) {
+            $dispatcher->dispatch($retry);
         }
-        $this->retryBusyLock();
     }
 
     private function applyWebhook(
@@ -365,7 +387,8 @@ class ApplyRemoteChange implements ShouldQueue
     /**
      * Take the company lock again after QuickBooks HTTP released it.
      * A local save still runs when the lock cannot be taken, so rows already
-     * applied in memory are not dropped.
+     * applied in memory are not dropped. The wait ends before the job timeout,
+     * so the worker is not killed holding changes it has not saved.
      */
     private function reacquireCompanyLock(Lock $lock): void
     {
@@ -377,7 +400,7 @@ class ApplyRemoteChange implements ShouldQueue
         }
 
         try {
-            $lock->block(BatchRunner::LOCK_SECONDS);
+            $lock->block(max(1, $this->saveDeadline - time()));
         } catch (\Throwable) {
             // Save anyway. The local rows are already decided.
         }

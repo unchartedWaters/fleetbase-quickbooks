@@ -1,7 +1,9 @@
 <?php
 
 use Fleetbase\Quickbooks\Jobs\ApplyRemoteChange;
+use Fleetbase\Quickbooks\Services\BatchRunner;
 use Fleetbase\Quickbooks\Services\SettingsService;
+use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SecretCipher;
@@ -13,7 +15,9 @@ use Fleetbase\Quickbooks\Tests\Support\RemoteChangeDirectory;
 use Fleetbase\Quickbooks\Tests\Support\RemoteChangeEngine;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Sleep;
 
 /*
  * Intuit does not send a webhook again once it got HTTP 200, so a remote change whose
@@ -160,7 +164,8 @@ test('a busy lock retry waits 5 seconds, doubled per retry up to 2 minutes, with
     }
 });
 
-test('a remote change waits while another webhook apply for the company is running', function () {
+test('a remote change waits for another webhook apply of the company as long as it runs,'
+. ' and is never dropped', function () {
     $engine     = RemoteChangeEngine::failingWith(null);
     $directory  = new RemoteChangeDirectory();
     $settings   = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
@@ -176,10 +181,16 @@ test('a remote change waits while another webhook apply for the company is runni
         $jobs = CapturedJobs::capture(
             fn () => $job->handle($engine, $directory, $settings, new MemorySettingsStore())
         );
-        $last    = new ApplyRemoteChange('company-uuid', $job->entities, ApplyRemoteChange::LOCK_RETRY_LIMIT);
-        $dropped = CapturedJobs::capture(
-            fn () => $last->handle($engine, $directory, $settings, new MemorySettingsStore())
-        );
+        // A delivery that used up its company-lock retries, and one that has waited through a
+        // long burst, are both queued again: a held apply lock always ends (LOCK_SECONDS).
+        $limit              = ApplyRemoteChange::LOCK_RETRY_LIMIT;
+        $spent              = new ApplyRemoteChange('company-uuid', $job->entities, $limit);
+        $patient            = new ApplyRemoteChange('company-uuid', $job->entities);
+        $patient->applyWait = 40;
+        $requeued           = CapturedJobs::capture(function () use ($spent, $patient, $engine, $directory, $settings) {
+            $spent->handle($engine, $directory, $settings, new MemorySettingsStore());
+            $patient->handle($engine, $directory, $settings, new MemorySettingsStore());
+        });
         $held->release();
         $after = CapturedJobs::capture(
             fn () => $job->handle($engine, $directory, $settings, new MemorySettingsStore())
@@ -190,12 +201,50 @@ test('a remote change waits while another webhook apply for the company is runni
 
     expect($jobs)->toHaveCount(1)
         ->and($jobs[0])->toBeInstanceOf(ApplyRemoteChange::class)
-        ->and($jobs[0]->lockAttempt)->toBe(1)
+        ->and($jobs[0]->lockAttempt)->toBe(0)
+        ->and($jobs[0]->applyWait)->toBe(1)
+        ->and($jobs[0]->delay)->toBeLessThanOrEqual(6)
         ->and($jobs[0]->entities)->toBe($job->entities)
-        ->and($dropped)->toBe([])
-        ->and($directory->batches())->toHaveCount(1)
-        ->and($directory->batches()[0]['status'])->toBe('skipped')
+        ->and($requeued)->toHaveCount(2)
+        ->and($requeued[0]->lockAttempt)->toBe(ApplyRemoteChange::LOCK_RETRY_LIMIT)
+        ->and($requeued[1]->applyWait)->toBe(41)
+        ->and($requeued[1]->delay)->toBeLessThanOrEqual(132)
+        ->and($directory->batches())->toBe([])
         ->and($engine->calls)->toHaveCount(1)
         ->and($after)->toBe([])
         ->and($repository->getStore()->lock('quickbooks.webhook-apply.company-uuid', 600)->get())->toBeTrue();
+});
+
+test('a remote change saves before its job timeout and inside its apply lock'
+. ' when the company lock stays taken', function () {
+    $engine    = RemoteChangeEngine::failingWith(null);
+    $directory = new class extends RemoteChangeDirectory {
+        /** @var array<int, array{0: int, 1: bool}> */
+        public array $saves = [];
+
+        public function save(SyncLedger $ledger): void
+        {
+            $probe         = Cache::getFacadeRoot()->getStore()->lock('quickbooks.webhook-apply.company-uuid', 600);
+            $this->saves[] = [Carbon::now()->getTimestamp(), $probe->get()];
+            parent::save($ledger);
+        }
+    };
+    $job = new ApplyRemoteChange('company-uuid', [['entity' => 'Invoice', 'id' => '10', 'operation' => 'Update']]);
+    // Another worker takes the company lock while the read runs and dies holding it.
+    $engine->duringRead = static function (): void {
+        Cache::getFacadeRoot()->getStore()->lock('quickbooks.batch.company-uuid', BatchRunner::LOCK_SECONDS)->get();
+    };
+    Sleep::fake(true, true);
+    $started = Carbon::now()->getTimestamp();
+    try {
+        $engine->run($job, $directory);
+    } finally {
+        Sleep::fake(false);
+        Carbon::setTestNow();
+    }
+
+    expect($directory->saves)->toHaveCount(1)
+        ->and($directory->saves[0][0] - $started)->toBeLessThan($job->timeout)
+        ->and($directory->saves[0][1])->toBeFalse()
+        ->and($job->timeout)->toBeLessThan(BatchRunner::LOCK_SECONDS);
 });
