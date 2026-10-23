@@ -393,6 +393,7 @@ class ConnectionController extends QuickbooksController
             'connection'             => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
             'credentials_configured' => $savedKeys,
             'queue'                  => PendingSync::query()->where('company_uuid', $companyUuid)->where('status', 'pending')->count(),
+            'failed'                 => PendingSync::failedRecordCount($companyUuid),
             'last_sync'              => $last instanceof SyncBatch === true ? [
                 'finished_at'   => $last->finished_at?->toIso8601String(),
                 'status'        => $last->status,

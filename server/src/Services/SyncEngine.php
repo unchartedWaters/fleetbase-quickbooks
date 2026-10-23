@@ -2382,8 +2382,15 @@ class SyncEngine
         }
 
         $attempts = (int) ($row['attempts'] ?? 0) + 1;
-        $wait     = $this->backoff->defaultWait((int) $settings['default_backoff_seconds'], $attempts);
-        $status   = $attempts > (int) $settings['retry_limit'] ? 'failed' : 'pending';
+        $base     = (int) $settings['default_backoff_seconds'];
+        $outage   = $exception instanceof QuickBooksException && $exception->isTransient() === true;
+        $wait     = $outage === true
+            ? $this->backoff->outageWait($base, $attempts, self::outageCapSeconds())
+            : $this->backoff->defaultWait($base, $attempts);
+        $status = $attempts > (int) $settings['retry_limit'] ? 'failed' : 'pending';
+        if ($outage === true) {
+            $status = $this->outageStatus($row, $now);
+        }
         $ledger->updatePending($companyUuid, (string) $row['local_type'], (string) $row['local_uuid'], [
             'attempts'        => $attempts,
             'status'          => $status,
@@ -2391,6 +2398,26 @@ class SyncEngine
         ]);
 
         return 'failed';
+    }
+
+    /**
+     * QuickBooks could not be reached, so the row keeps retrying whatever its attempts,
+     * until it has waited longer than the outage window. A row without a readable
+     * created_at (memory mode) has no window yet.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function outageStatus(array $row, int $now): string
+    {
+        $created = strtotime((string) ($row['created_at'] ?? ''));
+        $hours   = max(1, (int) config('quickbooks.sync.outage_retry_hours', 72));
+
+        return $created !== false && $now - $created > $hours * 3600 ? 'failed' : 'pending';
+    }
+
+    private static function outageCapSeconds(): int
+    {
+        return (int) config('quickbooks.sync.outage_backoff_cap_seconds', 3600);
     }
 
     /**

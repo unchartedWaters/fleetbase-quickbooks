@@ -32,6 +32,9 @@
             <div>
                 <div class="text-xs text-gray-500 dark:text-gray-400">{{t "quickbooks.widget.records-waiting"}}</div>
                 <div class="text-sm font-medium" data-test-sync-queue>{{t "quickbooks.widget.waiting" count=this.queueCount}}</div>
+                {{#if this.failedCount}}
+                    <p class="text-sm text-red-600 dark:text-red-400" data-test-sync-failed>{{t "quickbooks.widget.records-failed" count=this.failedCount}}</p>
+                {{/if}}
             </div>
             <div class="flex flex-wrap items-center gap-3">
                 <Button @type="primary" @size="sm" @icon="play" @text={{t "quickbooks.actions.sync-now"}} @disabled={{this.syncDisabled}} @onClick={{this.sync}} data-test-widget-sync />

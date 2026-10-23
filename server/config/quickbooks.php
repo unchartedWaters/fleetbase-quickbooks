@@ -53,6 +53,11 @@ return [
         // How long a running sync leases the pending rows it loaded. A lease left by a
         // killed worker expires after this many seconds. Keep it above the job timeout.
         'claim_seconds'           => 900,
+        // QuickBooks could not be reached (timeout, network error, HTTP 408, 409 or 5xx):
+        // such rows do not use up retry_limit. They wait up to this many seconds between
+        // tries, and keep trying for this many hours before they are marked failed.
+        'outage_backoff_cap_seconds' => 3600,
+        'outage_retry_hours'         => 72,
     ],
     // Days to keep sync history. quickbooks:prune runs daily; 0 keeps that history forever.
     'retention' => [

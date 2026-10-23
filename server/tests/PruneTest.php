@@ -1,6 +1,7 @@
 <?php
 
 use Fleetbase\Quickbooks\Console\Commands\PruneQuickbooks;
+use Fleetbase\Quickbooks\Models\PendingSync;
 use Illuminate\Console\OutputStyle;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
@@ -196,3 +197,35 @@ test('prune works through more rows than one chunk', function () {
         $restore();
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('the failed count names each record once and leaves out records flagged again after they failed', function () {
+    [$restore] = pruneSetup();
+    try {
+        $rows = [
+            // Failed twice: one record.
+            ['f-1a', 'inv-1', 'failed', 10, 9], ['f-1b', 'inv-1', 'failed', 8, 7],
+            // Failed, then edited and sent: no longer failed.
+            ['f-2', 'inv-2', 'failed', 10, 9], ['d-2', 'inv-2', 'done', 5, 4],
+            // Failed, then edited and waiting: counted as waiting instead.
+            ['f-3', 'inv-3', 'failed', 10, 9], ['p-3', 'inv-3', 'pending', 2, 2],
+            // Sent long ago, failed since: still failed.
+            ['d-4', 'inv-4', 'done', 30, 29], ['f-4', 'inv-4', 'failed', 10, 9],
+        ];
+        foreach ($rows as [$uuid, $record, $status, $created, $updated]) {
+            DB::table('quickbooks_pending_syncs')->insert([
+                'uuid'       => $uuid, 'company_uuid' => 'company-uuid', 'local_type' => 'invoice',
+                'local_uuid' => $record, 'status' => $status,
+                'created_at' => pruneDaysAgo($created), 'updated_at' => pruneDaysAgo($updated),
+            ]);
+        }
+        DB::table('quickbooks_pending_syncs')->insert([
+            'uuid'       => 'f-other', 'company_uuid' => 'other-company', 'local_type' => 'invoice',
+            'local_uuid' => 'inv-9', 'status' => 'failed',
+            'created_at' => pruneDaysAgo(1), 'updated_at' => pruneDaysAgo(1),
+        ]);
+
+        expect(PendingSync::failedRecordCount('company-uuid'))->toBe(2);
+    } finally {
+        $restore();
+    }
+});

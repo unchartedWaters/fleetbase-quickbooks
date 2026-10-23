@@ -1497,7 +1497,10 @@ test('summary last sync is the latest finished batch and stays empty when every 
         public function select($query, $bindings = [], $useReadPdo = true)
         {
             if (str_contains(strtolower($query), 'count(') === true) {
-                return [['aggregate' => 0]];
+                // Three rows of this company could not be sent; none are waiting.
+                $failed = in_array('failed', $bindings, true) === true && ($bindings[0] ?? null) === 'company-uuid';
+
+                return [['aggregate' => $failed === true ? 3 : 0]];
             }
 
             if (str_contains($query, 'quickbooks_sync_batches') === false) {
@@ -1558,6 +1561,8 @@ test('summary last sync is the latest finished batch and stays empty when every 
         $ran = $controller->summary($request)->getData(true);
 
         expect($ran['credentials_configured'])->toBeFalse()
+            ->and($ran['queue'])->toBe(0)
+            ->and($ran['failed'])->toBe(3)
             ->and($ran['last_sync']['status'])->toBe('finished')
             ->and($ran['last_sync']['trigger'])->toBe('now')
             ->and($ran['last_sync']['created_count'])->toBe(4)

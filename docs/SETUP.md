@@ -369,6 +369,14 @@ HTTP 429 does not use Retry delay. It uses the `Retry-After` header when that
 header is present, otherwise 60 seconds. A repeated 429 doubles the previous
 wait, still capped at 900 seconds.
 
+Errors that mean QuickBooks could not be reached (timeouts, network errors,
+HTTP 408, 409 and 5xx) do not use up the retry attempts. Those rows keep
+retrying, waiting longer each time up to one hour between tries, for up to 72
+hours (config keys `quickbooks.sync.outage_backoff_cap_seconds` and
+`quickbooks.sync.outage_retry_hours`). After that they are marked failed. The
+QuickBooks Sync widget counts the records that could not be sent; Activity
+shows why.
+
 ## Connect and disconnect
 
 Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved by an installation administrator in Admin → QuickBooks → Settings for the install and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.

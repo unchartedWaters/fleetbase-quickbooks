@@ -15,6 +15,7 @@ class FetchStubService extends Service {
     credentialsConfigured = false;
     legacyKeys = false;
     redirectUri = 'http://localhost:8000/quickbooks/int/v1/oauth/callback';
+    failed = 0;
     posts = [];
     gets = [];
 
@@ -26,6 +27,7 @@ class FetchStubService extends Service {
             redirect_uri: this.redirectUri,
             credentials_configured: this.credentialsConfigured,
             queue: 0,
+            failed: this.failed,
             last_sync: null,
         };
     }
@@ -134,6 +136,21 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         await render(hbs`<Widget::QuickbooksSync />`);
         assert.dom('[data-test-widget-sync]').isDisabled('only credentials_configured === true enables Sync now');
         assert.dom('[data-test-widget-credentials-missing]').exists();
+    });
+
+    test('records that could not be sent are counted apart from the waiting ones', async function (assert) {
+        this.owner.register('service:abilities', OperatorAbilitiesStubService);
+        await render(hbs`<Widget::QuickbooksSync />`);
+        assert.dom('[data-test-sync-failed]').doesNotExist();
+
+        this.fetch.failed = 1;
+        await render(hbs`<Widget::QuickbooksSync />`);
+        assert.dom('[data-test-sync-failed]').hasText('1 record could not be sent to QuickBooks. See Activity.');
+
+        this.fetch.failed = 3;
+        await render(hbs`<Widget::QuickbooksSync />`);
+        assert.dom('[data-test-sync-queue]').hasText('0 waiting');
+        assert.dom('[data-test-sync-failed]').hasText('3 records could not be sent to QuickBooks. See Activity.');
     });
 
     test('the widget uses quickbooks classes and no ledger classes', async function (assert) {
