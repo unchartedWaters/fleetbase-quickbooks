@@ -928,6 +928,54 @@ test('a customer whose email match is taken links to the free quickbooks custome
         ->and($client->calls)->not->toContain('createCustomer');
 })->with(['one row' => ['single'], 'block' => ['block']]);
 
+test('a quickbooks customer linked only to a deleted fleetbase customer can be linked again', function (
+    string $variant,
+) {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['deleted_at' => '2026-10-01 00:00:00']);
+    $ledger->customers['cust-2'] = engineCustomer('cust-2');
+    $ledger->links[]             = engineLink('customer', 'cust-1', '58');
+    $client->customers['58']     = [
+        'Id'               => '58',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Ada',
+        'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+    ];
+    $ledger->pending[] = enginePending('customer', 'cust-2');
+    if ($variant === 'block') {
+        $ledger->customers['cust-3'] = engineCustomer('cust-3', ['name' => 'Bea', 'email' => 'bea@example.test']);
+        $ledger->pending[]           = enginePending('customer', 'cust-3');
+    }
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-2')['qbo_id'] ?? null)->toBe('58')
+        ->and(array_count_values($client->calls)['createCustomer'] ?? 0)->toBe($variant === 'block' ? 1 : 0);
+})->with(['one row' => ['single'], 'block' => ['block']]);
+
+test('a deleted customer does not make inactive a quickbooks customer another customer now syncs with', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['deleted_at' => '2026-10-01 00:00:00']);
+    $ledger->customers['cust-2'] = engineCustomer('cust-2');
+    $ledger->links[]             = engineLink('customer', 'cust-1', '58');
+    $ledger->links[]             = engineLink('customer', 'cust-2', '58');
+    $client->customers['58']     = [
+        'Id'               => '58',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Ada',
+        'Active'           => true,
+        'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+    ];
+    $ledger->pending[] = enginePending('customer', 'cust-1');
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->customers['58']['Active'])->toBeTrue()
+        ->and($ledger->pending[0]['status'])->toBe('done');
+});
+
 test('a customer whose email and name matches are both taken gets its own customer', function (string $variant) {
     [$engine, $client]           = qbEngine();
     $ledger                      = engineLedger();

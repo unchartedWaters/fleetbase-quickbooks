@@ -791,8 +791,12 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   when only the phone matches, a new customer is created. Names are compared
   the way QuickBooks stores them (a colon becomes `-`). A QuickBooks customer
   that another Fleetbase customer already syncs with, in this organization or
-  another one on the same QuickBooks company, is not matched again; a new
-  customer is created instead.
+  another one on the same QuickBooks company, is not matched again: the name
+  match is tried next, and when that is taken too a new customer is created.
+  A link kept by an organization that is no longer connected to that QuickBooks
+  company, or by a deleted Fleetbase customer, does not count. A deleted
+  customer does not make inactive a QuickBooks customer that another Fleetbase
+  customer now syncs with.
 - **Customer names.** QuickBooks does not accept a colon, tab or line break in
   a customer's display name. Fleetbase sends a colon as `-` and a tab or line
   break as a space, and compares names the same way. The Fleetbase name is not

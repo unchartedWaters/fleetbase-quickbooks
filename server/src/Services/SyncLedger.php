@@ -151,7 +151,10 @@ class SyncLedger
         $linked = [];
         foreach ($ids as $id) {
             $link = $this->linkForRemote($realmId, $entity, $id);
-            if ($link !== null && (string) ($link['local_uuid'] ?? '') !== $localUuid) {
+            if ($link === null || (string) ($link['local_uuid'] ?? '') === $localUuid) {
+                continue;
+            }
+            if ($this->linkHolds($link) === true) {
                 $linked[] = $id;
             }
         }
@@ -161,6 +164,26 @@ class SyncLedger
         }
 
         return array_values(array_unique(array_map('strval', $linked)));
+    }
+
+    /**
+     * Whether a loaded link still holds its QuickBooks record. A link of a deleted Fleetbase
+     * customer does not. A customer link whose customer this run did not load is left to the
+     * reader, which checks the stored customer; with no reader it holds.
+     *
+     * @param Link $link
+     */
+    private function linkHolds(array $link): bool
+    {
+        if (($link['local_type'] ?? null) !== 'customer') {
+            return true;
+        }
+        $customer = $this->customerRow((string) ($link['local_uuid'] ?? ''));
+        if ($customer === null) {
+            return $this->remoteLinkReader === null;
+        }
+
+        return empty($customer['deleted_at']) === true;
     }
 
     /**

@@ -1702,6 +1702,9 @@ class SyncEngine
             return 'aligned';
         }
         $remoteId = (string) $link['qbo_id'];
+        if ($kind === 'customer' && $this->remoteTakenOver($ledger, $connection, $uuid, $remoteId) === true) {
+            return 'aligned';
+        }
         if ($kind === 'customer') {
             if (isset($this->customerLookupFailed[$uuid]) === true) {
                 throw $this->customerLookupFailed[$uuid];
@@ -1728,6 +1731,17 @@ class SyncEngine
         }
 
         return $this->writeInactive($ledger, $connection, $kind, $uuid, $remote);
+    }
+
+    /**
+     * A live Fleetbase customer, of this organization or of another one on the same QuickBooks
+     * company, may link the QuickBooks customer a deleted customer kept. It is not made inactive.
+     *
+     * @param array<string, mixed> $connection
+     */
+    private function remoteTakenOver(SyncLedger $ledger, array $connection, string $uuid, string $remoteId): bool
+    {
+        return $ledger->remoteIdsLinked((string) $connection['realm_id'], 'Customer', [$remoteId], $uuid) !== [];
     }
 
     /**
