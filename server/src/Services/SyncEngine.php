@@ -255,29 +255,33 @@ class SyncEngine
 
     /**
      * QuickBooks invoice ids whose block read failed. Absence from invoiceById is a miss only when the id is not here.
+     * Each is thrown again with the status QuickBooks gave.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $invoiceReadFailed = [];
 
     /**
      * Invoice numbers whose block read failed. A failed read is not "no invoice with this number".
+     * Each is thrown again with the status QuickBooks gave.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $invoiceDocReadFailed = [];
 
     /**
      * QuickBooks account ids whose block read failed.
+     * Each is thrown again with the status QuickBooks gave.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $accountReadFailed = [];
 
     /**
      * Account field lookups that failed, keyed by "AcctNum:value" or "Name:value".
+     * Each is thrown again with the status QuickBooks gave.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $accountFieldFailed = [];
 
@@ -1715,9 +1719,7 @@ class SyncEngine
                 : $this->client->getCustomer($connection, $remoteId);
         } else {
             if (isset($this->accountReadFailed[$remoteId]) === true) {
-                $this->lastError = $this->accountReadFailed[$remoteId];
-
-                return 'failed';
+                throw $this->accountReadFailed[$remoteId];
             }
             $remote = $this->accountById !== null
                 ? ($this->accountById[$remoteId] ?? null)
@@ -1861,9 +1863,7 @@ class SyncEngine
         if ($link === null && empty($payload['AcctNum']) === false) {
             $acctNum = (string) $payload['AcctNum'];
             if (isset($this->accountFieldFailed['AcctNum:' . $acctNum]) === true) {
-                $this->lastError = $this->accountFieldFailed['AcctNum:' . $acctNum];
-
-                return 'failed';
+                throw $this->accountFieldFailed['AcctNum:' . $acctNum];
             }
             $existing = $this->accountByAcctNum !== null
                 ? ($this->accountByAcctNum[$acctNum] ?? null)
@@ -1879,9 +1879,7 @@ class SyncEngine
         if ($link !== null) {
             $accountId = (string) $link['qbo_id'];
             if (isset($this->accountReadFailed[$accountId]) === true) {
-                $this->lastError = $this->accountReadFailed[$accountId];
-
-                return 'failed';
+                throw $this->accountReadFailed[$accountId];
             }
             $remote = $this->accountById !== null
                 ? ($this->accountById[$accountId] ?? null)
@@ -1891,14 +1889,10 @@ class SyncEngine
             $acctNum = trim((string) ($payload['AcctNum'] ?? ''));
             $name    = trim((string) ($payload['Name'] ?? ''));
             if ($link === null && $acctNum !== '' && isset($this->accountFieldFailed['AcctNum:' . $acctNum]) === true) {
-                $this->lastError = $this->accountFieldFailed['AcctNum:' . $acctNum];
-
-                return 'failed';
+                throw $this->accountFieldFailed['AcctNum:' . $acctNum];
             }
             if ($name !== '' && isset($this->accountFieldFailed['Name:' . $name]) === true) {
-                $this->lastError = $this->accountFieldFailed['Name:' . $name];
-
-                return 'failed';
+                throw $this->accountFieldFailed['Name:' . $name];
             }
             $remote = $this->reattachWallet($ledger, $connection, $uuid, $wallet, $payload, $nameTaken);
             $link   = $remote === null ? null : $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'wallet', $uuid);
@@ -2106,9 +2100,7 @@ class SyncEngine
         if ($link === null && $voided === false && empty($invoice['number']) === false) {
             $number = (string) $invoice['number'];
             if (isset($this->invoiceDocReadFailed[$number]) === true) {
-                $this->lastError = $this->invoiceDocReadFailed[$number];
-
-                return 'failed';
+                throw $this->invoiceDocReadFailed[$number];
             }
             $existing = $this->invoiceByDoc !== null
                 ? ($this->invoiceByDoc[$number] ?? null)
@@ -2132,9 +2124,7 @@ class SyncEngine
             }
             $remoteId = (string) $link['qbo_id'];
             if (isset($this->invoiceReadFailed[$remoteId]) === true) {
-                $this->lastError = $this->invoiceReadFailed[$remoteId];
-
-                return 'failed';
+                throw $this->invoiceReadFailed[$remoteId];
             }
             $remote = $this->invoiceById !== null
                 ? ($this->invoiceById[$remoteId] ?? null)
@@ -2164,9 +2154,7 @@ class SyncEngine
         if ($link !== null) {
             $remoteId = (string) $link['qbo_id'];
             if (isset($this->invoiceReadFailed[$remoteId]) === true) {
-                $this->lastError = $this->invoiceReadFailed[$remoteId];
-
-                return 'failed';
+                throw $this->invoiceReadFailed[$remoteId];
             }
             $remote = $this->invoiceById !== null
                 ? ($this->invoiceById[$remoteId] ?? null)
@@ -6299,7 +6287,7 @@ class SyncEngine
             foreach ($loaded['rows'] as $remote) {
                 $this->rememberPrefetchedInvoice($remote);
             }
-            $this->invoiceReadFailed = $this->failedMessages($loaded['failed']);
+            $this->invoiceReadFailed = $loaded['failed'];
         }
         if ($docs !== []) {
             $loaded = $this->queryWhereIn(
@@ -6312,7 +6300,7 @@ class SyncEngine
             foreach ($loaded['rows'] as $remote) {
                 $this->rememberPrefetchedInvoice($remote);
             }
-            $this->invoiceDocReadFailed = $this->failedMessages($loaded['failed']);
+            $this->invoiceDocReadFailed = $loaded['failed'];
         }
     }
 
@@ -6668,16 +6656,6 @@ class SyncEngine
     }
 
     /**
-     * @param array<string, QuickBooksException> $failed
-     *
-     * @return array<string, string>
-     */
-    private function failedMessages(array $failed): array
-    {
-        return array_map(static fn (QuickBooksException $failure): string => $failure->getMessage(), $failed);
-    }
-
-    /**
      * @param array<string, mixed> $connection
      * @param array<int, string>   $ids
      *
@@ -6779,7 +6757,7 @@ class SyncEngine
             foreach ($loaded['rows'] as $account) {
                 $this->rememberAccount($account);
             }
-            $this->accountReadFailed = $this->failedMessages($loaded['failed']);
+            $this->accountReadFailed = $loaded['failed'];
         }
 
         $acctNums = [];
@@ -6881,7 +6859,7 @@ class SyncEngine
             $values,
             static fn (string $value): ?array => null
         );
-        foreach ($this->failedMessages($loaded['failed']) as $value => $error) {
+        foreach ($loaded['failed'] as $value => $error) {
             $this->accountFieldFailed[$field . ':' . $value] = $error;
         }
 

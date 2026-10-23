@@ -2447,6 +2447,72 @@ test('a block customer lookup QuickBooks refuses stops at the retry limit', func
         ->and($client->calls)->not->toContain('createCustomer');
 })->with(['a refusal' => [400, 'failed'], 'an outage' => [503, 'pending']]);
 
+test('a failed invoice or account block read keeps the status QuickBooks gave', function (
+    string $read,
+    int $status,
+    string $expected,
+) {
+    $client = new class extends FakeQuickBooks {
+        public string $failRead = '';
+
+        public int $failStatus = 500;
+
+        public function batch(array $connection, array $items): array
+        {
+            if (str_contains((string) ($items[0]['query'] ?? ''), $this->failRead) === true) {
+                return [(string) $items[0]['bId'] => [
+                    'ok'     => false, 'body' => [], 'rows' => [],
+                    'error'  => qbRequestFailed($this->failStatus, 'Refused'),
+                    'status' => $this->failStatus, 'halt' => false,
+                ]];
+            }
+
+            return parent::batch($connection, $items);
+        }
+    };
+    $client->failRead                  = $read;
+    $client->failStatus                = $status;
+    [$engine, $client]                 = qbEngine($client);
+    $ledger                            = engineLedger();
+    $ledger->customers['cust-1']       = engineCustomer('cust-1');
+    $ledger->links[]                   = engineLink('customer', 'cust-1', 'qbo-customer');
+    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada'];
+    $type                              = str_contains($read, 'Invoice') === true ? 'invoice' : 'wallet';
+    foreach (['1', '2'] as $key) {
+        if ($type === 'invoice') {
+            $ledger->invoices['inv-' . $key] = engineInvoice('inv-' . $key, ['number' => 'INV-' . $key]);
+        } else {
+            $ledger->wallets['wal-' . $key] = engineWallet('wal-' . $key, ['name' => 'Wallet ' . $key]);
+        }
+        if (str_contains($read, 'Id IN') === true) {
+            $ledger->links[] = engineLink($type, $type === 'invoice' ? 'inv-' . $key : 'wal-' . $key, 'qb-' . $key);
+        }
+        $ledger->pending[] = enginePending($type, $type === 'invoice' ? 'inv-' . $key : 'wal-' . $key);
+    }
+    $settings = qbSettings(['interval_minutes' => 1, 'retry_limit' => 1]);
+
+    for ($run = 0; $run < 3; $run++) {
+        foreach (array_keys($ledger->pending) as $index) {
+            $ledger->pending[$index]['next_attempt_at'] = null;
+        }
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $engine->runScheduled($ledger, 'company-uuid', $settings, time() + $run * 60);
+    }
+
+    expect(array_column($ledger->pending, 'status'))->toBe([$expected, $expected])
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and($client->calls)->not->toContain('createAccount');
+})->with([
+    'a refused invoice read'            => ['from Invoice where Id IN', 400, 'failed'],
+    'an outage on an invoice read'      => ['from Invoice where Id IN', 503, 'pending'],
+    'a refused number read'             => ['from Invoice where DocNumber IN', 400, 'failed'],
+    'an outage on a number read'        => ['from Invoice where DocNumber IN', 503, 'pending'],
+    'a refused account read'            => ['from Account where Id IN', 400, 'failed'],
+    'an outage on an account read'      => ['from Account where Id IN', 503, 'pending'],
+    'a refused account name read'       => ['from Account where Name IN', 400, 'failed'],
+    'an outage on an account name read' => ['from Account where Name IN', 503, 'pending'],
+]);
+
 test('an invoice link and quickbooks number survive a 401 during payment prefetch', function () {
     $client = new class extends FakeQuickBooks {
         public function getPayment(array $connection, string $id): ?array
