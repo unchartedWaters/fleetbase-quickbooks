@@ -114,13 +114,34 @@ class SyncWebhookBatch implements ShouldQueue
             ->where('company_uuid', $this->companyUuid)
             ->where('status', 'pending')
             ->whereIn('local_uuid', array_values(array_unique(array_column($wanted, 'local_uuid'))))
-            ->get(['local_type', 'local_uuid']);
+            ->get(['uuid', 'local_type', 'local_uuid']);
 
+        $open = [];
         foreach ($existing as $row) {
-            unset($wanted[(string) $row->local_type . '|' . (string) $row->local_uuid]);
+            $key = (string) $row->local_type . '|' . (string) $row->local_uuid;
+            if (isset($wanted[$key]) === true) {
+                $open[] = (string) $row->uuid;
+            }
+            unset($wanted[$key]);
         }
+        $this->raiseOpenRows($open);
 
         return $wanted;
+    }
+
+    /**
+     * A QuickBooks change to a record already in the reconcile backlog is an edit:
+     * its open row moves ahead of that backlog, in one update for the batch.
+     *
+     * @param array<int, string> $uuids
+     */
+    private function raiseOpenRows(array $uuids): void
+    {
+        if ($uuids === []) {
+            return;
+        }
+
+        PendingSync::query()->whereIn('uuid', $uuids)->where('priority', '>', 0)->update(['priority' => 0]);
     }
 
     /**
