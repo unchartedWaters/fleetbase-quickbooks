@@ -210,3 +210,36 @@ test('a first link sends what fleetbase holds and quickbooks lacks on the next s
         ->and($client->customers['qbo-customer']['Notes'])->toBe('Back door')
         ->and($client->customers['qbo-customer']['PrimaryPhone']['FreeFormNumber'])->toBe('555-0000');
 });
+
+test('a customer renamed in fleetbase is sent when quickbooks did not change the customer', function () {
+    [$engine, $client, $ledger]          = Primary::linkedCustomer('3', '3', '555-0000', '555-0000');
+    $ledger->customers['cust-1']['name'] = 'Ada Lovelace';
+    $ledger->pending[]                   = Primary::pending('customer', 'cust-1');
+
+    $engine->runScheduled($ledger, 'company-uuid', Primary::shippedSettings(), time());
+
+    expect($client->calls)->toContain('updateCustomer')
+        ->and($client->customers['qbo-customer']['DisplayName'])->toBe('Ada Lovelace')
+        ->and($ledger->customers['cust-1']['name'])->toBe('Ada Lovelace');
+});
+
+test('a customer renamed in both systems takes the quickbooks name', function () {
+    [$engine, $client, $ledger]                           = Primary::linkedCustomer('3', '4', '555-0000', '555-0000');
+    $client->customers['qbo-customer']['DisplayName']     = 'Ada King';
+    $ledger->customers['cust-1']['name']                  = 'Ada Lovelace';
+    $ledger->pending[]                                    = Primary::pending('customer', 'cust-1');
+
+    $engine->runScheduled($ledger, 'company-uuid', Primary::shippedSettings(), time());
+
+    expect($client->calls)->not->toContain('updateCustomer')
+        ->and($ledger->customers['cust-1']['name'])->toBe('Ada King');
+});
+
+test('an invoice number still comes from quickbooks when quickbooks did not change the invoice', function () {
+    [$engine, $client, $ledger] = Primary::linkedInvoice('1', ['number' => 'INV-9']);
+
+    $engine->runScheduled($ledger, 'company-uuid', Primary::shippedSettings(), time());
+
+    expect($ledger->invoices['inv-1']['number'])->toBe('INV-1')
+        ->and($client->invoices['qb-1']['DocNumber'])->toBe('INV-1');
+});

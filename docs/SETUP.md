@@ -359,8 +359,9 @@ systems then hold the same values. When a QuickBooks change cannot be copied,
 such as a field emptied in QuickBooks or an invoice moved to a QuickBooks
 customer that has no Fleetbase link, the link keeps its older token:
 QuickBooks keeps winning that record, and the difference is not sent back.
-Identifiers still come from QuickBooks:
-customer names, invoice numbers and account numbers. QuickBooks decides tax,
+Invoice numbers and account numbers still come from QuickBooks. A customer
+renamed in Fleetbase is sent like any other field, unless QuickBooks also
+changed that customer; then the QuickBooks name is kept. QuickBooks decides tax,
 so a tax difference alone is copied from QuickBooks. A record linked without a
 stored token, such as a customer matched by the customer import or a record
 moved by a QuickBooks merge, counts as changed in QuickBooks on its first sync.

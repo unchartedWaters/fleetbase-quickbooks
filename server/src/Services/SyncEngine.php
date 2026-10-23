@@ -1722,9 +1722,8 @@ class SyncEngine
         }
 
         // QuickBooks did not change the customer since the last sync: Fleetbase leads, clears included.
-        if ($pushClears === false && $this->fleetbaseLeads($settings, 'customer', $baseline, $remote) === true) {
-            $pushClears = true;
-        }
+        $leads      = $this->fleetbaseLeads($settings, 'customer', $baseline, $remote);
+        $pushClears = $pushClears || $leads;
         if ($pushClears === true) {
             $payload = $this->customers->toQuickBooks($this->customers->fromParty($ledger->customers[$uuid]), true);
         }
@@ -1737,7 +1736,8 @@ class SyncEngine
             return $this->syncedIf($ledger, $connection, 'customer', $uuid, $remote, $copied, $inSync, $baseline);
         }
 
-        if ($reference === 'quickbooks' && $copy === true) {
+        // A Fleetbase rename is sent like any other field unless QuickBooks also changed the customer.
+        if ($reference === 'quickbooks' && $copy === true && $leads === false) {
             $this->copyCustomerName($ledger, $uuid, $remote);
             $payload = $this->customers->toQuickBooks($this->customers->fromParty($ledger->customers[$uuid]), $pushClears);
         }
@@ -1766,7 +1766,7 @@ class SyncEngine
             return $this->synced($ledger, $connection, 'customer', $uuid, $remote, 'updated', $inSync, $baseline);
         }
 
-        if ($reference === 'quickbooks') {
+        if ($reference === 'quickbooks' && $leads === false) {
             $payload['DisplayName'] = (string) ($remote['DisplayName'] ?? $payload['DisplayName'] ?? '');
         }
 
