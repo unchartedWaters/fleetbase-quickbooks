@@ -247,6 +247,13 @@ if (class_exists('Fleetbase\Models\Customer') === false && class_exists('Illumin
     require_once __DIR__ . '/test-support/Customer.php';
 }
 
+if (
+    class_exists('Fleetbase\Storefront\Models\Product') === false
+    && class_exists('Illuminate\Database\Eloquent\Model') === true
+) {
+    require_once __DIR__ . '/test-support/StorefrontProduct.php';
+}
+
 if (class_exists('Illuminate\Pagination\Paginator') === false) {
     require_once __DIR__ . '/test-support/Paginator.php';
 }

@@ -147,6 +147,8 @@ function claimSchema(bool $withClaims = true): void
         $table->string('qbo_entity');
         $table->string('qbo_id');
         $table->string('sync_token')->default('0');
+        $table->string('name')->nullable();
+        $table->string('state')->nullable();
         $table->timestamps();
         $table->unique(['company_uuid', 'local_type', 'local_uuid'], 'quickbooks_links_local_unique');
     });

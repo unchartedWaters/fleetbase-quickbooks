@@ -2,6 +2,7 @@
 
 namespace Fleetbase\Quickbooks\Support;
 
+use Fleetbase\Quickbooks\Models\Link;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
@@ -17,11 +18,12 @@ class ActivityErrors
     /** Notes about a run's settings rather than the record they are stored on. */
     private const GENERAL_NOTES = ['quickbooks.messages.fleetbase-primary-replaced'];
 
-    /** @var array<string, array{0: class-string, 1: string}> */
+    /** @var array<string, array{0: string, 1: string}> */
     private const RECORDS = [
         'customer' => ['Fleetbase\\FleetOps\\Models\\Customer', 'name'],
         'invoice'  => ['Fleetbase\\Ledger\\Models\\Invoice', 'number'],
         'wallet'   => ['Fleetbase\\Ledger\\Models\\Wallet', 'name'],
+        'product'  => ['Fleetbase\\Storefront\\Models\\Product', 'name'],
     ];
 
     /**
@@ -69,11 +71,16 @@ class ActivityErrors
         foreach ($uuidsByType as $type => $uuids) {
             $record = self::RECORDS[$type] ?? null;
             $uuids  = array_values(array_unique(array_filter($uuids)));
-            if ($record === null || $uuids === [] || class_exists($record[0]) === false) {
+            if ($type === 'item' && $uuids !== []) {
+                $names += self::productNames($companyUuid, $uuids);
+                continue;
+            }
+            $class = $record[0] ?? '';
+            if ($record === null || $uuids === [] || class_exists($class) === false) {
                 continue;
             }
             try {
-                $rows = self::rows($record[0], $record[1], $companyUuid, $uuids);
+                $rows = self::rows($class, $record[1], $companyUuid, $uuids);
             } catch (\Throwable) {
                 // A name is a convenience: Activity still shows the error without it.
                 continue;
@@ -84,6 +91,33 @@ class ActivityErrors
                 if ($name !== '') {
                     $names[$type . '|' . (string) ($row->uuid ?? '')] = $name;
                 }
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * The product name a QuickBooks product link stands for, as its link keeps it.
+     *
+     * @param array<int, string> $uuids
+     *
+     * @return array<string, string> name by "item|uuid"
+     */
+    private static function productNames(string $companyUuid, array $uuids): array
+    {
+        $names = [];
+        try {
+            $links = Link::query()->where('company_uuid', $companyUuid)->where('local_type', 'item')->toBase()
+                ->whereIn('local_uuid', $uuids)->get(['local_uuid', 'name']);
+        } catch (\Throwable) {
+            return [];
+        }
+        foreach ($links as $link) {
+            $link = (array) $link;
+            $name = trim((string) ($link['name'] ?? ''));
+            if ($name !== '') {
+                $names['item|' . (string) ($link['local_uuid'] ?? '')] = $name;
             }
         }
 
@@ -111,7 +145,7 @@ class ActivityErrors
      */
     public static function labeled(string $type, ?string $name, string $message, ?string $locale = null): string
     {
-        $named = $name !== null && $name !== '' && isset(self::RECORDS[$type]) === true;
+        $named = $name !== null && $name !== '' && (isset(self::RECORDS[$type]) === true || $type === 'item');
         if ($named === false || str_contains($message, (string) $name) === true) {
             return $message;
         }

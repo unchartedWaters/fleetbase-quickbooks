@@ -84,6 +84,31 @@ class InvoiceMapper
     }
 
     /**
+     * Put the QuickBooks product of each sales line on a payload, by position. A line without one
+     * keeps the item it has.
+     *
+     * @param array<string, mixed> $payload
+     * @param array<int, string>   $itemIds
+     *
+     * @return array<string, mixed>
+     */
+    public function withLineItems(array $payload, array $itemIds): array
+    {
+        $position = 0;
+        foreach (is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [] as $index => $line) {
+            if (is_array($line) === false || (string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
+                continue;
+            }
+            $id = $itemIds[$position++] ?? '';
+            if ($id !== '') {
+                $payload['Line'][$index]['SalesItemLineDetail']['ItemRef'] = ['value' => $id];
+            }
+        }
+
+        return $payload;
+    }
+
+    /**
      * Put the tax plan (InvoiceTax::plan) on a payload: each sales line its tax code, in order, and
      * the invoice its rate and tax-exclusive flag. Nothing is added for a missing or empty value.
      *
@@ -160,14 +185,23 @@ class InvoiceMapper
      * ($removed) are left out, so QuickBooks removes them. Once the invoice has stored
      * line ids ($mapped), a line without one pairs only with a line of the same content.
      *
+     * $managed holds the QuickBooks products Fleetbase puts on lines, each with the name key it is
+     * for (true for the service item), see withRemoteLineCodes().
+     *
      * @param array<string, mixed>                                            $payload
      * @param array<string, mixed>                                            $remote
      * @param array<int, array{id: string, description: string, amount: int}> $removed
+     * @param array<string, string|true>                                      $managed
      *
      * @return array<string, mixed>
      */
-    public function withExistingLineIds(array $payload, array $remote, array $removed = [], bool $mapped = false): array
-    {
+    public function withExistingLineIds(
+        array $payload,
+        array $remote,
+        array $removed = [],
+        bool $mapped = false,
+        array $managed = [],
+    ): array {
         $lines       = is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [];
         $remote      = $this->withoutRemovedLines($remote, $removed);
         $remoteSales = $this->remoteSalesLines($remote);
@@ -192,12 +226,47 @@ class InvoiceMapper
             $remoteSales,
             $salesAt,
             $paired,
-            $byPosition
+            $byPosition,
+            $managed
         );
         // A new invoice says whether its amounts include tax; an update keeps what QuickBooks has.
         unset($payload['GlobalTaxCalculation']);
 
         return self::withRemoteTaxRate($payload, $remote);
+    }
+
+    /**
+     * Whether an update would put a QuickBooks line on another product (withRemoteLineCodes), which
+     * is a change to send even when the amounts and text are the same.
+     *
+     * @param array<string, mixed>                                            $payload
+     * @param array<string, mixed>                                            $remote
+     * @param array<int, array{id: string, description: string, amount: int}> $removed
+     * @param array<string, string|true>                                      $managed
+     */
+    public function movesLineItems(array $payload, array $remote, array $removed, bool $mapped, array $managed): bool
+    {
+        $held = [];
+        foreach ($this->remoteSalesLines($remote) as $line) {
+            $id = trim((string) ($line['Id'] ?? ''));
+            if ($id !== '') {
+                $held[$id] = trim((string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? ''));
+            }
+        }
+        $merged = $this->withExistingLineIds($payload, $remote, $removed, $mapped, $managed);
+        foreach (is_array($merged['Line'] ?? null) === true ? $merged['Line'] : [] as $line) {
+            $id    = is_array($line) === true ? trim((string) ($line['Id'] ?? '')) : '';
+            $sales = is_array($line) === true && (string) ($line['DetailType'] ?? '') === 'SalesItemLineDetail';
+            if ($id === '' || isset($held[$id]) === false || $sales === false) {
+                continue;
+            }
+            $item = trim((string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? ''));
+            if ($held[$id] !== '' && $item !== $held[$id]) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -230,6 +299,7 @@ class InvoiceMapper
      * @param array<int, int>                  $salesAt
      * @param array<int, int|null>             $paired      remote sales index by Fleetbase line
      * @param array<int, true>                 $byPosition  Fleetbase lines paired only by their position
+     * @param array<string, string|true>       $managed
      *
      * @return array<int, mixed>
      */
@@ -240,6 +310,7 @@ class InvoiceMapper
         array $salesAt,
         array $paired,
         array $byPosition,
+        array $managed = [],
     ): array {
         $pairedRemote = [];
         foreach ($paired as $localIndex => $remoteIndex) {
@@ -259,7 +330,7 @@ class InvoiceMapper
             if (is_array($line) === true) {
                 $line['Id'] = $remoteLineId;
                 $keepCodes  = isset($byPosition[$localIndex]) === false;
-                $lines[$at] = self::withRemoteLineCodes($line, $remoteSales[$remoteIndex], $keepCodes);
+                $lines[$at] = self::withRemoteLineCodes($line, $remoteSales[$remoteIndex], $keepCodes, $managed);
             }
         }
         foreach ($this->extraRemoteLines($remote, $pairedRemote) as $line) {
@@ -270,23 +341,40 @@ class InvoiceMapper
     }
 
     /**
-     * A line Fleetbase is updating keeps the product/service and tax code QuickBooks holds on it,
-     * since Fleetbase only knows its own service item. Not for a line paired only by position,
+     * A line Fleetbase is updating keeps the product/service and tax code QuickBooks holds on it
+     * when someone chose that product in QuickBooks. Not for a line paired only by position,
      * which may be a different line, and not for a product made inactive (renamed "... (deleted)").
+     * A line on a product Fleetbase manages ($managed) takes the line's own product instead, so
+     * a line moves from the service item to its product, or to the product of its new name. A
+     * line that would fall back to the service item keeps a product of Fleetbase's its text still
+     * names, active or not, so an old invoice keeps its product once the Storefront product is
+     * gone (QuickBooks accepts an inactive product on a line that already has it).
      * A description Fleetbase holds as fleetbaseDescription() gives it is sent as the QuickBooks
      * text, so a cut description or a product name shown for an empty one is not written back.
      *
-     * @param array<string, mixed> $line
-     * @param array<string, mixed> $remote
+     * @param array<string, mixed>       $line
+     * @param array<string, mixed>       $remote
+     * @param array<string, string|true> $managed
      *
      * @return array<string, mixed>
      */
-    private static function withRemoteLineCodes(array $line, array $remote, bool $keepCodes): array
+    private static function withRemoteLineCodes(array $line, array $remote, bool $keepCodes, array $managed = []): array
     {
-        $detail = is_array($remote['SalesItemLineDetail'] ?? null) === true ? $remote['SalesItemLineDetail'] : [];
+        $detail   = is_array($remote['SalesItemLineDetail'] ?? null) === true ? $remote['SalesItemLineDetail'] : [];
+        $held     = trim((string) ($detail['ItemRef']['value'] ?? ''));
+        $wanted   = trim((string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? ''));
+        $ours     = $held !== '' && array_key_exists($held, $managed) === true;
+        $text     = (string) ($line['Description'] ?? '');
+        $named    = $ours === true
+            && is_string($managed[$held]) === true
+            && $managed[$held] === ProductMapper::key(ProductMapper::feeName($text) ?? $text);
+        $fallback = ($managed[$wanted] ?? false) === true;
+        if ($ours === true && $held !== $wanted && ($fallback === false || $named === false)) {
+            $keepCodes = false;
+        }
         foreach ($keepCodes === true ? ['ItemRef', 'TaxCodeRef'] : [] as $key) {
             $ref     = is_array($detail[$key] ?? null) === true ? $detail[$key] : [];
-            $deleted = str_ends_with((string) ($ref['name'] ?? ''), ' (deleted)');
+            $deleted = $ours === false && str_ends_with((string) ($ref['name'] ?? ''), ' (deleted)');
             if (trim((string) ($ref['value'] ?? '')) !== '' && $deleted === false) {
                 $line['SalesItemLineDetail'][$key] = $ref;
             }

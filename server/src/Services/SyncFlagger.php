@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Support\ConnectionGate;
+use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 
@@ -57,6 +58,25 @@ class SyncFlagger
         }
 
         $this->flag($ledger, $companyUuid, 'wallet', $uuid, 'saved');
+    }
+
+    /**
+     * A Storefront product: the product itself and, for a rename or a delete, the QuickBooks
+     * product of the name ($name) it had.
+     */
+    public function fromProductEvent(SyncLedger $ledger, object $product, ?string $name, bool $withProduct = true): void
+    {
+        $companyUuid = (string) ($product->company_uuid ?? '');
+        $uuid        = (string) ($product->uuid ?? '');
+        if ($companyUuid === '' || $uuid === '') {
+            return;
+        }
+        if ($withProduct === true) {
+            $this->flag($ledger, $companyUuid, 'product', $uuid, 'saved');
+        }
+        if ($name !== null && trim($name) !== '') {
+            $this->flag($ledger, $companyUuid, 'item', ProductMapper::itemUuid($companyUuid, $name), 'saved');
+        }
     }
 
     /**

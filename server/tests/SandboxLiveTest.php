@@ -32,6 +32,7 @@ use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\InvoiceTax;
+use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
@@ -637,4 +638,133 @@ test('QuickBooks works out the tax of the lines Fleetbase sends and Fleetbase co
 
     expect($third['aligned'] ?? 0)->toBe(1)
         ->and($third['updated'] ?? 0)->toBe(0);
+})->group('sandbox');
+
+test('products are created, adopted, updated, made inactive and brought back, and invoice lines use them', function () {
+    $client     = new QuickBooksClient();
+    $connection = sandboxConnection();
+    $engine     = new SyncEngine(
+        $client,
+        new CustomerMapper(),
+        new InvoiceMapper(),
+        new WalletMapper(),
+        new BackoffPolicy(static fn (int $wait): int => $wait)
+    );
+    $ledger     = new SyncLedger();
+    $tag        = sandboxTag();
+    $company    = 'sandbox-company';
+    $serviceId  = sandboxServiceItem($client, $connection);
+    $currency   = $client->homeCurrency($connection);
+    $settings   = qbSettings(['interval_minutes' => 1]);
+    $pending    = static fn (string $type, string $uuid): array => [
+        'company_uuid' => $company, 'local_type' => $type, 'local_uuid' => $uuid,
+        'status'       => 'pending', 'attempts' => 0,
+    ];
+    $run        = static function (int $at) use ($engine, $ledger, $company, $settings): void {
+        $engine->runScheduled($ledger, $company, $settings, $at, true);
+        $failed = array_filter($ledger->attempts, static fn (array $row): bool => $row['outcome'] === 'failed');
+
+        expect(array_values(array_column($failed, 'error')))->toBe([]);
+    };
+    $itemOf     = static function (string $name) use ($ledger, $company): string {
+        $realm = (string) $ledger->connections[$company]['realm_id'];
+        $link  = $ledger->link($company, $realm, 'item', ProductMapper::itemUuid($company, $name));
+
+        return (string) ($link['qbo_id'] ?? '');
+    };
+
+    // A QuickBooks product of the same name in another case is taken over, never written.
+    $account  = (string) ($client->item($connection, $serviceId)['IncomeAccountRef']['value'] ?? '');
+    $existing = $client->createItem($connection, [
+        'Name'             => 'FB Adopt ' . $tag,
+        'Type'             => 'Service',
+        'IncomeAccountRef' => ['value' => $account],
+    ]);
+    $product  = static fn (string $uuid, string $name, array $more = []): array => array_merge([
+        'uuid'        => $uuid, 'company_uuid' => $company, 'public_id' => $uuid, 'name' => $name,
+        'description' => 'Sandbox', 'sku' => 'S' . $tag, 'price' => 1200, 'currency' => $currency,
+        'is_service'  => false, 'status' => 'published',
+        'deleted_at'  => null,
+    ], $more);
+
+    $ledger->connections[$company]  = $connection;
+    $ledger->products['prd-mug']    = $product('prd-mug', 'FB Mug ' . $tag);
+    $ledger->products['prd-adopt']  = $product('prd-adopt', 'fb adopt ' . $tag, ['sku' => '']);
+    $ledger->customers['cust-prd']  = [
+        'uuid'  => 'cust-prd', 'company_uuid' => $company, 'name' => 'Fleetbase Test Products ' . $tag,
+        'email' => 'fbqb-products-' . $tag . '@example.com',
+    ];
+    $ledger->invoices['inv-prd']    = [
+        'uuid'          => 'inv-prd',
+        'company_uuid'  => $company,
+        'customer_uuid' => 'cust-prd',
+        'number'        => 'FP' . $tag,
+        'date'          => gmdate('Y-m-d'),
+        'due_date'      => gmdate('Y-m-d', time() + 14 * 86400),
+        'currency'      => $currency,
+        'tax'           => 0,
+        'total'         => 2300,
+        'status'        => 'sent',
+        'items'         => [
+            ['description' => 'FB Mug ' . $tag, 'quantity' => 1, 'unit_price' => 1200, 'amount' => 1200],
+            ['description' => 'fb adopt ' . $tag, 'quantity' => 1, 'unit_price' => 500, 'amount' => 500],
+            ['description' => 'Base Fee', 'quantity' => 1, 'unit_price' => 400, 'amount' => 400],
+            ['description' => 'Delivery', 'quantity' => 1, 'unit_price' => 200, 'amount' => 200],
+        ],
+    ];
+    foreach (['product' => 'prd-mug', 'customer' => 'cust-prd', 'invoice' => 'inv-prd'] as $type => $uuid) {
+        $ledger->pending[] = $pending($type, $uuid);
+    }
+    $ledger->pending[] = $pending('product', 'prd-adopt');
+    $run(time());
+
+    $mugId   = $itemOf('FB Mug ' . $tag);
+    $mug     = $client->item($connection, $mugId);
+    $invoice = $client->getInvoice($connection, (string) $ledger->link(
+        $company,
+        (string) $connection['realm_id'],
+        'invoice',
+        'inv-prd'
+    )['qbo_id']);
+    $lineItems = [];
+    foreach ($invoice['Line'] ?? [] as $line) {
+        if (($line['DetailType'] ?? '') === 'SalesItemLineDetail') {
+            $lineItems[] = (string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? '');
+        }
+    }
+
+    expect($mug['Name'] ?? null)->toBe('FB Mug ' . $tag)
+        ->and($mug['Type'] ?? null)->toBe('NonInventory')
+        ->and(sandboxCents($mug['UnitPrice'] ?? null))->toBe(1200)
+        ->and($mug['Sku'] ?? null)->toBe('S' . $tag)
+        ->and($itemOf('fb adopt ' . $tag))->toBe((string) $existing['Id'])
+        ->and($client->item($connection, (string) $existing['Id'])['SyncToken'] ?? null)->toBe($existing['SyncToken'])
+        ->and($itemOf('Base Fee'))->not->toBe('')
+        ->and($lineItems)->toBe([$mugId, (string) $existing['Id'], $itemOf('Base Fee'), $serviceId]);
+
+    // A change of price and of case is sent; the product keeps its QuickBooks id.
+    $ledger->products['prd-mug'] = $product('prd-mug', 'FB MUG ' . $tag, ['price' => 1500]);
+    $ledger->pending[]           = $pending('product', 'prd-mug');
+    $run(time() + 120);
+    $mug = $client->item($connection, $mugId);
+
+    expect($mug['Name'] ?? null)->toBe('FB MUG ' . $tag)
+        ->and(sandboxCents($mug['UnitPrice'] ?? null))->toBe(1500);
+
+    // The last product of the name gone makes it inactive; brought back, it has its name again.
+    $ledger->products['prd-mug']['deleted_at'] = gmdate('Y-m-d H:i:s');
+    $ledger->pending[]                         = $pending('product', 'prd-mug');
+    $run(time() + 240);
+    $gone = $client->item($connection, $mugId);
+
+    expect($gone['Active'] ?? null)->toBeFalse();
+
+    $ledger->products['prd-mug']['deleted_at'] = null;
+    $ledger->pending[]                         = $pending('product', 'prd-mug');
+    $run(time() + 360);
+    $back = $client->item($connection, $mugId);
+
+    expect($back['Active'] ?? null)->toBeTrue()
+        ->and($back['Name'] ?? null)->toBe('FB MUG ' . $tag)
+        ->and($itemOf('FB Mug ' . $tag))->toBe($mugId);
 })->group('sandbox');

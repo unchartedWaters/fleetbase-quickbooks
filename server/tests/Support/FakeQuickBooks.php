@@ -85,10 +85,26 @@ class FakeQuickBooks extends QuickBooksClient
 
     public int $salesTaxReads = 0;
 
-    /** @var array<string, array<string, mixed>> */
+    /**
+     * QuickBooks products by id. Names are unique whatever their case, a product made inactive
+     * is renamed "... (deleted)", and a query leaves inactive ones out unless it asks for them.
+     *
+     * @var array<string, array<string, mixed>>
+     */
     public array $items = [];
 
     public int $itemReads = 0;
+
+    public int $itemCreates = 0;
+
+    /** @var array<int, array<string, mixed>> */
+    public array $itemWrites = [];
+
+    /** Refuses product creates with this error. */
+    public ?QuickBooksException $failItemCreate = null;
+
+    /** Item queries answer an older SyncToken, as when QuickBooks changes a product meanwhile. */
+    public bool $staleItemReads = false;
 
     /**
      * Sales tax percent by invoice rate code. An invoice with one of these rates is taxed on its
@@ -449,6 +465,13 @@ class FakeQuickBooks extends QuickBooksClient
             'Payment:update'  => $this->updatePayment($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
             'Account:create'  => $this->createAccount($connection, $payload),
             'Account:update'  => $this->updateAccount($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
+            'Item:create'     => $this->createItem($connection, $payload),
+            'Item:update'     => $this->updateItem(
+                $connection,
+                (string) ($payload['Id'] ?? ''),
+                (string) ($payload['SyncToken'] ?? '0'),
+                $payload
+            ),
             default           => throw new QuickBooksException(400, 'quickbooks.messages.batch-item-unsupported'),
         };
 
@@ -475,8 +498,20 @@ class FakeQuickBooks extends QuickBooksClient
             'Invoice' => $this->invoices,
             'Payment' => $this->payments,
             'Account' => $this->accounts,
+            'Item'    => $this->queriedItems($query),
             default   => $this->customers,
         };
+        if ($entity === 'Item' && preg_match('/\\bName\\s+IN\\s*\\(([^)]*)\\)/i', $query, $match) === 1) {
+            $wanted = array_map('mb_strtolower', $this->quotedValues($match[1]));
+            $rows   = [];
+            foreach ($store as $row) {
+                if (in_array(mb_strtolower((string) ($row['Name'] ?? '')), $wanted, true) === true) {
+                    $rows[] = $row;
+                }
+            }
+
+            return $rows;
+        }
         if (preg_match('/\\bId\\s+IN\\s*\\(([^)]*)\\)/i', $query, $match) === 1) {
             return $this->entitiesByQuotedIds($store, $match[1]);
         }
@@ -521,6 +556,94 @@ class FakeQuickBooks extends QuickBooksClient
         }
 
         return [];
+    }
+
+    /**
+     * QuickBooks answers an Item query with active products only, unless the query asks for
+     * both with Active IN (true, false).
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function queriedItems(string $query): array
+    {
+        $items = $this->staleItemReads === false ? $this->items : array_map(
+            static fn (array $item): array => ['SyncToken' => '0'] + $item,
+            array_map(static function (array $item): array {
+                unset($item['SyncToken']);
+
+                return $item;
+            }, $this->items)
+        );
+        if (preg_match('/Active\s+IN\s*\(\s*true\s*,\s*false\s*\)/i', $query) === 1) {
+            return $items;
+        }
+
+        return array_filter($items, static fn (array $item): bool => ($item['Active'] ?? true) !== false);
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    public function createItem(array $connection, array $payload): array
+    {
+        $this->calls[] = 'createItem';
+        $this->itemCreates++;
+        $this->itemWrites[] = ['create' => $payload];
+        if ($this->failItemCreate !== null) {
+            throw $this->failItemCreate;
+        }
+        $this->refuseTakenItemName((string) ($payload['Name'] ?? ''), '');
+        $id               = 'qb-item-' . $this->itemCreates;
+        $record           = array_merge(['Active' => true], $payload, ['Id' => $id, 'SyncToken' => '0']);
+        $this->items[$id] = $record;
+
+        return $record;
+    }
+
+    /**
+     * A sparse update. A stale SyncToken is refused (fault 5010), and an item made inactive is
+     * renamed "... (deleted)", which frees its name.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    public function updateItem(array $connection, string $id, string $syncToken, array $payload): array
+    {
+        $this->calls[]      = 'updateItem';
+        $this->itemWrites[] = ['update' => $payload];
+        $stored             = $this->items[$id] ?? null;
+        if ($stored === null) {
+            throw new QuickBooksException(400, 'Object Not Found', null, '610');
+        }
+        if ((string) ($stored['SyncToken'] ?? '0') !== $syncToken) {
+            throw new QuickBooksException(400, 'Stale Object Error', null, '5010');
+        }
+        unset($payload['Id'], $payload['SyncToken'], $payload['sparse']);
+        $record = array_merge($stored, $payload, ['Id' => $id, 'SyncToken' => (string) ((int) $syncToken + 1)]);
+        if (($record['Active'] ?? true) === false && ($stored['Active'] ?? true) !== false) {
+            $record['Name'] = (string) ($record['Name'] ?? '') . ' (deleted)';
+        }
+        if (array_key_exists('Name', $payload) === true) {
+            $this->refuseTakenItemName((string) $record['Name'], $id);
+        }
+        $this->items[$id] = $record;
+
+        return $record;
+    }
+
+    private function refuseTakenItemName(string $name, string $exceptId): void
+    {
+        foreach ($this->items as $id => $item) {
+            $same = mb_strtolower(trim((string) ($item['Name'] ?? ''))) === mb_strtolower(trim($name));
+            if ($id !== $exceptId && $same === true) {
+                throw new QuickBooksException(400, 'Duplicate Name Exists Error', null, '6240');
+            }
+        }
     }
 
     /**
@@ -812,9 +935,16 @@ class FakeQuickBooks extends QuickBooksClient
             throw $this->rejectInvoicesWith;
         }
         foreach (is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [] as $line) {
-            $item = is_array($line) === true ? (string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? '') : '';
-            $new  = $create === true || trim((string) ($line['Id'] ?? '')) === '';
-            if ($new === true && in_array($item, $this->inactiveItems, true) === true) {
+            $item     = is_array($line) === true
+                ? (string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? '')
+                : '';
+            $new      = $create === true || trim((string) ($line['Id'] ?? '')) === '';
+            $inactive = in_array(
+                $item,
+                $this->inactiveItems,
+                true
+            ) === true || ($this->items[$item]['Active'] ?? true) === false;
+            if ($new === true && $inactive === true) {
                 $message = 'Invalid Reference Id : you must restore Fleetbase service (deleted).';
 
                 throw new QuickBooksException(400, $message, null, '2500');

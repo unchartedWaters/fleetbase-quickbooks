@@ -8,12 +8,14 @@ use Fleetbase\Quickbooks\Console\Commands\SyncQuickbooks;
 use Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync;
 use Fleetbase\Quickbooks\Listeners\FlagCustomerListener;
 use Fleetbase\Quickbooks\Listeners\FlagInvoiceListener;
+use Fleetbase\Quickbooks\Listeners\FlagProductListener;
 use Fleetbase\Quickbooks\Listeners\FlagWalletListener;
 use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
 use Fleetbase\Quickbooks\Observers\FlagCustomerObserver;
 use Fleetbase\Quickbooks\Observers\FlagInvoiceItemObserver;
 use Fleetbase\Quickbooks\Observers\FlagInvoiceObserver;
 use Fleetbase\Quickbooks\Observers\FlagPlaceObserver;
+use Fleetbase\Quickbooks\Observers\FlagProductObserver;
 use Fleetbase\Quickbooks\Observers\FlagWalletObserver;
 use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
@@ -67,6 +69,7 @@ class QuickbooksServiceProvider extends CoreServiceProvider
         $this->app->singleton(FlagCustomerListener::class);
         $this->app->singleton(FlagInvoiceListener::class);
         $this->app->singleton(FlagWalletListener::class);
+        $this->app->singleton(FlagProductListener::class);
     }
 
     public static function scheduleTasks(Schedule $schedule): void
@@ -148,6 +151,11 @@ class QuickbooksServiceProvider extends CoreServiceProvider
         $wallet = 'Fleetbase\\Ledger\\Models\\Wallet';
         if (class_exists($wallet) === true) {
             $wallet::observe(FlagWalletObserver::class);
+        }
+
+        $product = 'Fleetbase\\Storefront\\Models\\Product';
+        if (class_exists($product) === true) {
+            $product::observe(FlagProductObserver::class);
         }
     }
 }

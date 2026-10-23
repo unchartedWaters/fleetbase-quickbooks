@@ -63,6 +63,8 @@ function dctSchema(Illuminate\Database\Schema\Builder $schema): void
         $table->string('qbo_entity');
         $table->string('qbo_id');
         $table->string('sync_token')->default('0');
+        $table->string('name')->nullable();
+        $table->string('state')->nullable();
         $table->timestamps();
     });
     $schema->create('quickbooks_sync_attempts', function (Blueprint $table) {
@@ -1229,6 +1231,155 @@ test('linking a customer queues again its invoices that failed while it had no Q
             ->and($rows['pend-cust-a'])->toBe('done')
             ->and(array_filter($invoices, static fn (string $sql): bool => str_contains($sql, '"customer_uuid" in')))
             ->toBe([]);
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+/**
+ * A Storefront products table on the test connection, with these rows.
+ *
+ * @param array<int, array<string, mixed>> $rows
+ */
+function dctProducts(array $rows): void
+{
+    DB::connection('sqlite')->getSchemaBuilder()->create('products', function (Blueprint $table) {
+        $table->char('uuid', 36)->primary();
+        $table->char('company_uuid', 36)->nullable();
+        $table->string('public_id')->nullable();
+        $table->string('name')->nullable();
+        $table->text('description')->nullable();
+        $table->string('sku')->nullable();
+        $table->integer('price')->nullable();
+        $table->string('currency')->nullable();
+        $table->boolean('is_service')->nullable();
+        $table->string('status')->nullable();
+        $table->timestamps();
+        $table->softDeletes();
+    });
+    foreach ($rows as $row) {
+        DB::table('products')->insert(array_merge([
+            'company_uuid' => 'company-uuid',
+            'public_id'    => 'product_' . $row['uuid'],
+            'price'        => 1200,
+            'currency'     => 'USD',
+            'is_service'   => 0,
+            'status'       => 'published',
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ], $row));
+    }
+}
+
+test('a pending load reads the products of its rows and every live product sharing their names', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        dctContact('cust-a', 'Ada');
+        dctInvoice('inv-a', 'cust-a');
+        DB::table('ledger_invoice_items')->insert([
+            'uuid'     => 'line-a', 'invoice_uuid' => 'inv-a', 'description' => 'Iced  Coffee',
+            'quantity' => 1, 'unit_price' => 450, 'amount' => 450,
+        ]);
+        dctProducts([
+            ['uuid' => 'p-gone', 'name' => 'Mug', 'deleted_at' => now()],
+            ['uuid' => 'p-mug', 'name' => 'MUG'],
+            ['uuid' => 'p-coffee', 'name' => 'iced coffee'],
+            ['uuid' => 'p-draft', 'name' => 'Iced coffee', 'status' => 'draft'],
+            ['uuid' => 'p-other', 'name' => 'Mug', 'company_uuid' => 'company-2'],
+            ['uuid' => 'p-tea', 'name' => 'Tea'],
+            ['uuid' => 'p-old', 'name' => 'Old name'],
+        ]);
+        DB::table('quickbooks_links')->insert([
+            'uuid'       => 'link-old', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1',
+            'local_type' => 'item',
+            'local_uuid' => Fleetbase\Quickbooks\Support\ProductMapper::itemUuid('company-uuid', 'Old name'),
+            'qbo_entity' => 'Item', 'qbo_id' => '40', 'sync_token' => '0', 'name' => 'Old name', 'state' => null,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        dctPendingRow('pend-gone', 'product', 'p-gone');
+        dctPendingRow(
+            'pend-old',
+            'item',
+            Fleetbase\Quickbooks\Support\ProductMapper::itemUuid('company-uuid', 'Old name')
+        );
+        dctPendingRow('pend-inv', 'invoice', 'inv-a');
+
+        $ledger = (new FleetbaseDirectory())->loadPending('company-uuid', 50, time())['ledger'];
+
+        expect(dctSortedKeys($ledger->products))->toBe(['p-coffee', 'p-gone', 'p-mug', 'p-old'])
+            ->and($ledger->products['p-gone']['deleted_at'])->not->toBeNull()
+            ->and($ledger->products['p-mug']['price'])->toBe(1200)
+            ->and($ledger->products['p-mug']['is_service'])->toBeFalse()
+            ->and($ledger->productsUnavailable)->toBeFalse()
+            ->and(dctLinkIdentities($ledger->links))
+            ->toContain('item:' . Fleetbase\Quickbooks\Support\ProductMapper::itemUuid('company-uuid', 'Old name'));
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('without a Storefront products table there are no products, and nothing is unavailable', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        dctPendingRow('pend-p', 'product', 'p-1');
+
+        $ledger = (new FleetbaseDirectory())->loadPending('company-uuid', 50, time())['ledger'];
+
+        expect($ledger->products)->toBe([])
+            ->and($ledger->productsUnavailable)->toBeFalse()
+            ->and($ledger->productsMissing)->toBeTrue();
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a Storefront database that is not configured leaves products unavailable', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        dctPendingRow('pend-p', 'product', 'p-1');
+        Fleetbase\Storefront\Models\Product::$testConnection = 'storefront-missing';
+
+        $ledger = (new FleetbaseDirectory())->loadPending('company-uuid', 50, time())['ledger'];
+
+        expect($ledger->productsUnavailable)->toBeTrue()
+            ->and($ledger->productsMissing)->toBeFalse();
+    } finally {
+        Fleetbase\Storefront\Models\Product::$testConnection = null;
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a product link keeps its name and state, and a cleared state is written', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->loadPending('company-uuid', 50, time())['ledger'];
+        $link      = [
+            'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'item',
+            'local_uuid'   => 'item-uuid',
+            'qbo_entity'   => 'Item', 'qbo_id' => '40', 'sync_token' => '0', 'name' => 'Mug', 'state' => 'deactivated',
+        ];
+        $ledger->putLink($link);
+        $directory->save($ledger);
+        $stored = DB::table('quickbooks_links')->where('local_uuid', 'item-uuid')->first();
+
+        dctPendingRow('pend-item', 'item', 'item-uuid');
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->loadPending('company-uuid', 50, time())['ledger'];
+        $loaded    = $ledger->link('company-uuid', 'realm-1', 'item', 'item-uuid');
+        $ledger->putLink(['state' => null, 'sync_token' => '1'] + $link);
+        $directory->save($ledger);
+        $cleared = DB::table('quickbooks_links')->where('local_uuid', 'item-uuid')->first();
+
+        expect($stored->name)->toBe('Mug')
+            ->and($stored->state)->toBe('deactivated')
+            ->and($loaded['state'])->toBe('deactivated')
+            ->and($cleared->state)->toBeNull()
+            ->and($cleared->sync_token)->toBe('1');
     } finally {
         $restore();
     }
