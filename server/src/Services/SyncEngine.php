@@ -3916,8 +3916,9 @@ class SyncEngine
                 $changed                         = true;
             }
         }
+        // QuickBooks holds a longer Fleetbase note cut to its limit. That copy is not a change.
         $note = (string) ($remote['PrivateNote'] ?? '');
-        if ($note !== '' && $note !== (string) ($ledger->invoices[$uuid]['notes'] ?? '')) {
+        if ($note !== '' && $note !== InvoiceMapper::privateNote((string) ($ledger->invoices[$uuid]['notes'] ?? ''))) {
             $ledger->invoices[$uuid]['notes'] = $note;
             $changed                          = true;
         }
@@ -3985,6 +3986,7 @@ class SyncEngine
      * has none and QuickBooks is the source, so a match on name, email, and phone
      * still has to copy them. An empty QuickBooks note or address is not copied,
      * the same as email and phone. A Fleetbase-primary push sends the clear instead.
+     * A longer Fleetbase note that QuickBooks holds cut to its limit is kept in full.
      *
      * @param array<string, mixed> $remote
      */
@@ -3992,7 +3994,8 @@ class SyncEngine
     {
         $before = $ledger->customers[$uuid];
         $notes  = (string) ($remote['Notes'] ?? '');
-        if ($notes !== '') {
+        $sent   = mb_substr((string) ($before['notes'] ?? ''), 0, CustomerMapper::NOTES_MAX_LENGTH);
+        if ($notes !== '' && $notes !== $sent) {
             $ledger->customers[$uuid]['notes'] = $notes;
         }
         $bill = $remote['BillAddr'] ?? null;
@@ -4021,8 +4024,10 @@ class SyncEngine
             $ledger->wallets[$uuid]['name'] = $this->wallets->nameFromQuickBooks($ledger->wallets[$uuid], $name);
         }
 
-        if (array_key_exists('Description', $remote) === true) {
-            $ledger->wallets[$uuid]['description'] = (string) $remote['Description'];
+        // QuickBooks holds a longer Fleetbase description cut to its limit. That copy is not a change.
+        $description = array_key_exists('Description', $remote) === true ? (string) $remote['Description'] : null;
+        if ($description !== null && $description !== WalletMapper::description($ledger->wallets[$uuid])) {
+            $ledger->wallets[$uuid]['description'] = $description;
         }
 
         $currency = strtoupper(trim((string) ($remote['CurrencyRef']['value'] ?? '')));

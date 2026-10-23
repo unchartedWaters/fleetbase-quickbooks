@@ -283,6 +283,62 @@ test('quickbooks primary copies a note the fleetbase invoice does not have', fun
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
+test('quickbooks primary keeps a fleetbase invoice note quickbooks holds cut to its limit', function () {
+    $note                       = str_repeat('n', 4500);
+    [$engine, $client, $ledger] = engineLinkedInvoice(['notes' => $note], [
+        'PrivateNote' => mb_substr($note, 0, 4000),
+        'DueDate'     => '2026-09-20',
+    ]);
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+        'interval_minutes' => 1,
+        'invoice_conflict' => 'quickbooks',
+    ]), time());
+
+    expect($ledger->invoices['inv-1']['due_date'])->toBe('2026-09-20')
+        ->and($ledger->invoices['inv-1']['notes'])->toBe($note);
+});
+
+test('a long fleetbase customer note survives two syncs under quickbooks primary', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $note                        = str_repeat('n', 4500);
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['notes' => $note]);
+    $settings                    = qbSettings([
+        'interval_minutes'   => 1,
+        'customer_conflict'  => 'quickbooks',
+        'customer_reference' => 'quickbooks',
+    ]);
+
+    for ($run = 0; $run < 2; $run++) {
+        $ledger->pending                                      = [enginePending('customer', 'cust-1')];
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $engine->runScheduled($ledger, 'company-uuid', $settings, time() + $run * 120);
+    }
+
+    expect($client->calls)->toContain('getCustomer:1')
+        ->and(mb_strlen((string) $client->customers['1']['Notes']))->toBe(4000)
+        ->and($ledger->customers['cust-1']['notes'])->toBe($note);
+});
+
+test('a long fleetbase wallet description survives the create and the next sync', function () {
+    [$engine, $client]        = qbEngine();
+    $ledger                   = engineLedger();
+    $description              = str_repeat('d', 150);
+    $ledger->wallets['wal-1'] = engineWallet('wal-1', ['description' => $description]);
+    $settings                 = qbSettings(['interval_minutes' => 1, 'wallet_conflict' => 'quickbooks']);
+
+    for ($run = 0; $run < 2; $run++) {
+        $ledger->pending                                      = [enginePending('wallet', 'wal-1')];
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $engine->runScheduled($ledger, 'company-uuid', $settings, time() + $run * 120);
+    }
+    $account = $client->accounts[$ledger->link('company-uuid', 'realm-1', 'wallet', 'wal-1')['qbo_id']];
+
+    expect(mb_strlen((string) $account['Description']))->toBe(100)
+        ->and($ledger->wallets['wal-1']['description'])->toBe($description);
+});
+
 test('changing the invoice customer updates the quickbooks customer once', function () {
     [$engine, $client, $ledger] = engineLinkedInvoice(['customer_uuid' => 'cust-2'], [
         'CustomerRef' => ['value' => 'qbo-customer'],
