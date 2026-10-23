@@ -360,6 +360,7 @@ class ImportCustomers implements ShouldQueue
         if ($ids === []) {
             return false;
         }
+        $before = $this->customerLinks($ledger);
         try {
             $importer->importIds($ledger, $connection, $ids);
         } catch (QuickBooksException $exception) {
@@ -367,10 +368,68 @@ class ImportCustomers implements ShouldQueue
             $this->namedImportFailed($directory, $ledger, $connection, $exception);
         } finally {
             $this->ensureCompanyLock($lock);
+            $this->dropCustomersLinkedMeanwhile($importer, $directory, $ledger, $realm, $before);
             $directory->saveImport($ledger);
         }
 
         return false;
+    }
+
+    /**
+     * The QuickBooks customer each Fleetbase customer is linked to in the ledger now.
+     *
+     * @return array<string, string>
+     */
+    private function customerLinks(SyncLedger $ledger): array
+    {
+        $links = [];
+        foreach ($ledger->links as $link) {
+            if (($link['local_type'] ?? '') === 'customer') {
+                $links[(string) ($link['local_uuid'] ?? '')] = (string) ($link['qbo_id'] ?? '');
+            }
+        }
+
+        return $links;
+    }
+
+    /**
+     * Another job for the same QuickBooks customer can save while this one reads QuickBooks or
+     * waits for the lock. Under the lock, drop the links this run made to a QuickBooks customer
+     * that is linked now, and the Fleetbase customers this run created for them.
+     *
+     * @param array<string, string> $before
+     */
+    private function dropCustomersLinkedMeanwhile(
+        CustomerImporter $importer,
+        FleetbaseDirectory $directory,
+        SyncLedger $ledger,
+        string $realm,
+        array $before,
+    ): void {
+        $dropped = 0;
+        foreach ($ledger->links as $index => $link) {
+            $qboId = (string) ($link['qbo_id'] ?? '');
+            $local = (string) ($link['local_uuid'] ?? '');
+            if (($link['local_type'] ?? '') !== 'customer' || $qboId === '' || ($before[$local] ?? null) === $qboId) {
+                continue;
+            }
+            if ($directory->linkedRemoteIds($this->companyUuid, $realm, 'Customer', [$qboId], $local) === []) {
+                continue;
+            }
+            unset($ledger->links[$index]);
+            if ($importer->createdCustomer($local) === true) {
+                unset($ledger->customers[$local]);
+                $dropped++;
+            }
+        }
+        $ledger->links = array_values($ledger->links);
+        $ledger->rebuildIndex();
+        $last = array_key_last($ledger->batches);
+        if ($dropped > 0 && $last !== null && ($ledger->batches[$last]['trigger'] ?? '') === 'import') {
+            // Those QuickBooks customers are linked now, by the other job.
+            $ledger->batches[$last]['created'] = max(0, (int) ($ledger->batches[$last]['created'] ?? 0) - $dropped);
+            $ledger->batches[$last]['linked']  = (int) ($ledger->batches[$last]['linked'] ?? 0) + $dropped;
+        }
     }
 
     /**

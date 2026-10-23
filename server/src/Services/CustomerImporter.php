@@ -33,6 +33,13 @@ class CustomerImporter
     private array $givenCustomers = [];
 
     /**
+     * Fleetbase customers the last import() or importIds() created, by uuid.
+     *
+     * @var array<string, true>
+     */
+    private array $created = [];
+
+    /**
      * Customer identity rows for one import(), keyed by company. Reset when import() starts.
      *
      * @var array{company: string, rows: array<int, object>}|null
@@ -90,10 +97,8 @@ class CustomerImporter
             return $batch;
         }
 
-        $pageSize                = max(1, min(self::MAX_PAGE_SIZE, $pageSize));
-        $this->companyCandidates = null;
-        $this->unsavedCursor     = null;
-        $this->givenCustomers    = $fleetbaseCustomers;
+        $pageSize = max(1, min(self::MAX_PAGE_SIZE, $pageSize));
+        $this->startRun($fleetbaseCustomers);
         $ledger->ensureIndex();
         $this->rememberFleetbaseCustomers($ledger, $fleetbaseCustomers);
 
@@ -153,10 +158,8 @@ class CustomerImporter
             return $batch;
         }
 
-        $this->companyCandidates = null;
-        $this->unsavedCursor     = null;
-        $this->givenCustomers    = [];
-        $page                    = [];
+        $this->startRun([]);
+        $page = [];
         foreach ($wanted as $id) {
             $remote = $this->client->getCustomer($connection, $id);
             if (is_array($remote) === true) {
@@ -176,6 +179,25 @@ class CustomerImporter
         $ledger->batches[]    = $batch;
 
         return $batch;
+    }
+
+    /**
+     * @param array<int, mixed> $fleetbaseCustomers
+     */
+    private function startRun(array $fleetbaseCustomers): void
+    {
+        $this->companyCandidates = null;
+        $this->unsavedCursor     = null;
+        $this->givenCustomers    = $fleetbaseCustomers;
+        $this->created           = [];
+    }
+
+    /**
+     * Whether the last import() or importIds() created this Fleetbase customer.
+     */
+    public function createdCustomer(string $uuid): bool
+    {
+        return isset($this->created[$uuid]);
     }
 
     /**
@@ -576,6 +598,7 @@ class CustomerImporter
                 'qbo_id'       => (string) ($remote['Id'] ?? ''),
                 'sync_token'   => (string) ($remote['SyncToken'] ?? '0'),
             ]);
+            $this->created[(string) $created['uuid']] = true;
             SyncSuppressor::resume();
         } catch (\Throwable) {
             SyncSuppressor::resume();

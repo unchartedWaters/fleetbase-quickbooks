@@ -924,6 +924,85 @@ test('an import does not drop a quickbooks customer whose email matches a custom
     }
 })->with(['the catalog' => [[]], 'a named import' => [['95']]]);
 
+test('a named import skips a customer linked while it read quickbooks', function () {
+    $directory         = new FleetbaseDirectory();
+    $directory->memory = importLedger();
+    $client            = new class extends FakeQuickBooks {
+        public ?Closure $onRead = null;
+
+        public function getCustomer(array $connection, string $id): ?array
+        {
+            if ($this->onRead !== null) {
+                ($this->onRead)();
+            }
+
+            return parent::getCustomer($connection, $id);
+        }
+    };
+    $client->customers['95'] = remoteCustomer('95', 'Seaside Haulers', 'dispatch@seaside.test', null);
+    $client->onRead          = static function () use ($directory): void {
+        $directory->memory->links[] = [
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'local_type'   => 'customer',
+            'local_uuid'   => 'contact-x',
+            'qbo_entity'   => 'Customer',
+            'qbo_id'       => '95',
+            'sync_token'   => '0',
+        ];
+        $directory->memory->rebuildIndex();
+    };
+    $previous = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+
+    try {
+        (new ImportCustomers('company-uuid', null, true, 0, ['95'], 'realm-1'))
+            ->handle(new CustomerImporter($client), $directory);
+    } finally {
+        Cache::swap($previous);
+    }
+
+    $linked = array_filter($directory->memory->links, static fn (array $link): bool => $link['qbo_id'] === '95');
+    expect(array_column($linked, 'local_uuid'))->toBe(['contact-x']);
+});
+
+test('a named import does not save a customer another import linked before it saved', function () {
+    $restore  = ImportDatabase::open();
+    $previous = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+    try {
+        ImportDatabase::connection();
+        $client                  = new FakeQuickBooks();
+        $client->customers['95'] = remoteCustomer('95', 'Seaside Haulers', 'dispatch@seaside.test', null);
+        $directory               = new class extends FleetbaseDirectory {
+            public function rememberCustomerLinks(
+                SyncLedger $ledger,
+                string $companyUuid,
+                string $realm,
+                array $qboIds,
+                array $localUuids,
+            ): void {
+                parent::rememberCustomerLinks($ledger, $companyUuid, $realm, $qboIds, $localUuids);
+                // Another job for the same webhook saves its customer while this one still runs.
+                ImportDatabase::contact('contact-x', 'Seaside Haulers', ['email' => 'dispatch@seaside.test']);
+                ImportDatabase::link('l-x', 'contact-x', '95');
+            }
+        };
+
+        (new ImportCustomers('company-uuid', null, true, 0, ['95'], 'realm-1'))
+            ->handle(new CustomerImporter($client), $directory);
+
+        $batch = DB::table('quickbooks_sync_batches')->first();
+        expect(ImportDatabase::linkedTo('95'))->toBe(['contact-x'])
+            ->and(DB::table('contacts')->count())->toBe(1)
+            ->and((int) $batch->created_count)->toBe(0)
+            ->and((int) $batch->linked_count)->toBe(1);
+    } finally {
+        Cache::swap($previous);
+        $restore();
+    }
+});
+
 function importWith(array $remote, array $local): array
 {
     $client                = new FakeQuickBooks();
