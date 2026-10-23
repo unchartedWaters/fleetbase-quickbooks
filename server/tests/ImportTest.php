@@ -924,6 +924,33 @@ test('an import does not drop a quickbooks customer whose email matches a custom
     }
 })->with(['the catalog' => [[]], 'a named import' => [['95']]]);
 
+test('an import links the free customer with the name when the email match is linked elsewhere', function (
+    array $ids,
+) {
+    $restore  = ImportDatabase::open();
+    $previous = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+    try {
+        ImportDatabase::connection();
+        ImportDatabase::contact('acme-east', 'Acme East', ['email' => 'ap@acme.test']);
+        ImportDatabase::contact('acme-west', 'Acme West');
+        ImportDatabase::link('l-east', 'acme-east', '58');
+        $client                  = new FakeQuickBooks();
+        $client->customerPages   = [1 => [remoteCustomer('77', 'Acme West', 'ap@acme.test', null)]];
+        $client->customers['77'] = remoteCustomer('77', 'Acme West', 'ap@acme.test', null);
+
+        (new ImportCustomers('company-uuid', null, true, 0, $ids, $ids === [] ? '' : 'realm-1'))
+            ->handle(new CustomerImporter($client), new FleetbaseDirectory());
+
+        expect(DB::table('contacts')->count())->toBe(2)
+            ->and(ImportDatabase::linkedTo('77'))->toBe(['acme-west'])
+            ->and(ImportDatabase::linkedTo('58'))->toBe(['acme-east']);
+    } finally {
+        Cache::swap($previous);
+        $restore();
+    }
+})->with(['the catalog' => [[]], 'a named import' => [['77']]]);
+
 test('a named import skips a customer linked while it read quickbooks', function () {
     $directory         = new FleetbaseDirectory();
     $directory->memory = importLedger();

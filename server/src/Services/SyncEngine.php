@@ -1574,8 +1574,8 @@ class SyncEngine
             $remote = $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $cached, $link);
             $link   = $this->adoptRemoteCustomer($ledger, $connection, $uuid, $remote, $link);
         } elseif ($cacheHit === false && $link === null) {
-            $remote = $this->findRemoteCustomer($connection, $email, (string) ($payload['DisplayName'] ?? ''));
-            $remote = $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $remote, null);
+            $name   = (string) ($payload['DisplayName'] ?? '');
+            $remote = $this->findRemoteCustomer($ledger, $connection, $uuid, $email, $name);
             if ($remote !== null) {
                 $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote));
                 if ($reference === 'quickbooks' && $copy === true) {
@@ -4128,17 +4128,24 @@ class SyncEngine
 
     /**
      * The QuickBooks customer with this email, or else with this display name whatever its
-     * email. A phone number alone never matches.
+     * email. A phone number alone never matches. A match another Fleetbase customer already
+     * syncs with is passed over, so a taken email match does not hide a free name match.
      *
      * @param array<string, mixed> $connection
      *
      * @return array<string, mixed>|null
      */
-    private function findRemoteCustomer(array $connection, string $email, string $displayName): ?array
-    {
+    private function findRemoteCustomer(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        string $email,
+        string $displayName,
+    ): ?array {
         $email = trim($email);
         if ($email !== '') {
             $found = $this->client->findCustomerByEmail($connection, $email);
+            $found = $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $found, null);
             if ($found !== null) {
                 return $found;
             }
@@ -4148,8 +4155,9 @@ class SyncEngine
         if ($name === '') {
             return null;
         }
+        $found = $this->client->findCustomerByDisplayName($connection, $name);
 
-        return $this->client->findCustomerByDisplayName($connection, $name);
+        return $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $found, null);
     }
 
     /**
@@ -5978,11 +5986,36 @@ class SyncEngine
             }
         }
 
-        /** @var array<int, array{bId: string, query: string, uuid: string, email: string, name: string}> $nameQueries */
+        $nameQueries = $this->nameQueriesAfterEmail($connection, $ledger, $queries);
+        foreach ($nameOnly as $query) {
+            if (isset($this->customerLookupFailed[$query['uuid']]) === false) {
+                $nameQueries[] = $query;
+            }
+        }
+        $this->prefetchCustomerNames($connection, $nameQueries);
+    }
+
+    /**
+     * A display-name lookup for each customer whose email found no QuickBooks customer, or found
+     * one another Fleetbase customer already syncs with: a free name match is the same customer.
+     *
+     * @param array<string, mixed>                                                                   $connection
+     * @param array<int, array{bId: string, query: string, uuid: string, by: string, value: string}> $queries
+     *
+     * @return array<int, array{bId: string, query: string, uuid: string, email: string, name: string}>
+     */
+    private function nameQueriesAfterEmail(array $connection, SyncLedger $ledger, array $queries): array
+    {
+        $taken       = $this->takenEmailMatches($connection, $ledger, $queries);
         $nameQueries = [];
         foreach ($queries as $query) {
             $uuid = $query['uuid'];
-            if ($query['by'] !== 'email' || isset($this->customerLookupFailed[$uuid]) === true || array_key_exists($uuid, $this->customerRemoteCache) === false || $this->customerRemoteCache[$uuid] !== null) {
+            if ($query['by'] !== 'email' || isset($this->customerLookupFailed[$uuid]) === true
+                || array_key_exists($uuid, $this->customerRemoteCache) === false) {
+                continue;
+            }
+            $remote = $this->customerRemoteCache[$uuid];
+            if ($remote !== null && isset($taken[(string) ($remote['Id'] ?? '')]) === false) {
                 continue;
             }
             $customer = $ledger->customers[$uuid] ?? null;
@@ -6001,12 +6034,36 @@ class SyncEngine
                 ];
             }
         }
-        foreach ($nameOnly as $query) {
-            if (isset($this->customerLookupFailed[$query['uuid']]) === false) {
-                $nameQueries[] = $query;
+
+        return $nameQueries;
+    }
+
+    /**
+     * The QuickBooks ids, as keys, that the email lookups found and that some Fleetbase customer
+     * already syncs with. One read covers the whole block. These customers have no link on this
+     * realm, so no link of their own needs excluding.
+     *
+     * @param array<string, mixed>                                                                   $connection
+     * @param array<int, array{bId: string, query: string, uuid: string, by: string, value: string}> $queries
+     *
+     * @return array<string, true>
+     */
+    private function takenEmailMatches(array $connection, SyncLedger $ledger, array $queries): array
+    {
+        $ids = [];
+        foreach ($queries as $query) {
+            $remote = $query['by'] === 'email' ? ($this->customerRemoteCache[$query['uuid']] ?? null) : null;
+            $id     = is_array($remote) === true ? (string) ($remote['Id'] ?? '') : '';
+            if ($id !== '') {
+                $ids[$id] = $id;
             }
         }
-        $this->prefetchCustomerNames($connection, $nameQueries);
+        if ($ids === []) {
+            return [];
+        }
+        $taken = $ledger->remoteIdsLinked((string) $connection['realm_id'], 'Customer', array_values($ids), '');
+
+        return array_fill_keys($taken, true);
     }
 
     /**

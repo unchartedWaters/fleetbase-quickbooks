@@ -263,24 +263,34 @@ class SyncLedger
     }
 
     /**
-     * Email, then display name. Empty keys are skipped. A phone number alone never matches.
-     * Names are compared the way QuickBooks stores them (a colon becomes a dash).
+     * The customer with this email, then the one with this display name, each at most once.
+     * The caller takes the first one free to link. Empty keys are skipped. A phone number
+     * alone never matches. Names are compared the way QuickBooks stores them (a colon becomes
+     * a dash).
      *
-     * @return array<string, mixed>|null
+     * @return array<int, array<string, mixed>>
      */
-    public function matchCustomer(string $email, string $name): ?array
+    public function matchCustomers(string $email, string $name): array
     {
         $this->ensureIndex();
         $email = strtolower(trim($email));
         $name  = CustomerMapper::displayName($name);
+        $uuids = [];
         if ($email !== '' && isset($this->customersByEmail[$email]) === true) {
-            return $this->customerRow($this->customersByEmail[$email]);
+            $uuids[] = $this->customersByEmail[$email];
         }
         if ($name !== '' && isset($this->customersByName[$name]) === true) {
-            return $this->customerRow($this->customersByName[$name]);
+            $uuids[] = $this->customersByName[$name];
+        }
+        $matches = [];
+        foreach (array_unique($uuids) as $uuid) {
+            $row = $this->customerRow($uuid);
+            if ($row !== null) {
+                $matches[] = $row;
+            }
         }
 
-        return null;
+        return $matches;
     }
 
     /**
