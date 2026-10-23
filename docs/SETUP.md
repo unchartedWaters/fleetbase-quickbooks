@@ -596,6 +596,12 @@ is dropped, a warning is logged, and Activity shows a failed webhook sync: save
 the record in QuickBooks again to send it again. Laravel's own retries stay off
 (`$tries = 1`). Other QuickBooks errors are not retried.
 
+When another sync holds the company lock, or the access token cannot be
+refreshed for now, these jobs also queue themselves again: after 5 seconds,
+doubled on each retry up to 2 minutes, 8 times (about 9 minutes, close to the
+10-minute lock lifetime). Activity shows the skipped webhook sync only when the
+last retry gives up, so a busy lock does not fill Activity.
+
 Intuit sends a JSON array of CloudEvents. Each event's `type` names the entity
 and event (for example `qbo.invoice.updated.v1`), `intuitentityid` is the
 QuickBooks id, and `intuitaccountid` is the realm. Events `created`, `updated`,

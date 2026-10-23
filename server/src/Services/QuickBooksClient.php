@@ -1155,7 +1155,10 @@ class QuickBooksClient
     private function tokenRequest(#[\SensitiveParameter] array $credentials, #[\SensitiveParameter] array $form): array
     {
         try {
+            // The company lock is held for this call, so it must not hang on Intuit.
             $response = Http::asForm()
+                ->timeout(15)
+                ->connectTimeout(5)
                 ->withBasicAuth($credentials['client_id'], $credentials['client_secret'])
                 ->post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', $form);
         } catch (ConnectionException) {
