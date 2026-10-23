@@ -9,6 +9,7 @@ use Fleetbase\Quickbooks\Support\ContentHash;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\InvoiceTax;
+use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Support\WalletMapper;
@@ -268,6 +269,38 @@ class SyncEngine
     private bool $closeSkipped = false;
 
     private bool $customersPrepared = false;
+
+    /**
+     * The QuickBooks product of each product name handled in this run (ProductItems::prepare),
+     * by name key, so a name is read and written once per run.
+     *
+     * @var array<string, array{
+     *     id: string|null, item: array<string, mixed>|null, outcome: string, error: string|null,
+     *     transient: bool, note: string|null
+     * }>
+     */
+    private array $productResults = [];
+
+    /**
+     * QuickBooks products read or written in this run, by id, for the line tax codes.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    private array $itemRows = [];
+
+    /**
+     * Product links of a run by company and realm (managedItems), cleared when products are made.
+     *
+     * @var array<string, array<string, string>>
+     */
+    private array $managedItems = [];
+
+    /**
+     * Live Storefront product names of a run by company: name key => true (lineKey).
+     *
+     * @var array<string, array<string, true>>
+     */
+    private array $liveProductKeys = [];
 
     private QuickBooksClient $client;
 
@@ -849,6 +882,10 @@ class SyncEngine
     {
         $this->customTxnNumbers  = [];
         $this->runSettings       = $settings;
+        $this->productResults    = [];
+        $this->itemRows          = [];
+        $this->managedItems      = [];
+        $this->liveProductKeys   = [];
         $batch                   = $this->newOutboundBatch($connection, $trigger, $now);
         $companyUuid             = (string) $connection['company_uuid'];
         // A worker can reuse this engine, so a refresh that failed in an earlier run is tried again.
@@ -909,6 +946,7 @@ class SyncEngine
         $counts                    = $this->rowTypeCounts($rows);
         $handled                   = [];
         $this->accountNamesCreated = [];
+        $this->prepareLineProducts($ledger, $connection, $rows, $settings);
         foreach ($rows as $row) {
             if ($this->isRateLimited($connection, $now) === true) {
                 break;
@@ -916,6 +954,18 @@ class SyncEngine
             $type = (string) ($row['local_type'] ?? 'invoice');
             $key  = $type . '|' . (string) ($row['local_uuid'] ?? '');
             if (isset($handled[$key]) === true) {
+                continue;
+            }
+            if ($type === 'product' || $type === 'item') {
+                $block      = array_merge(
+                    $this->blockOfType($rows, 'product', $handled),
+                    $this->blockOfType($rows, 'item', $handled)
+                );
+                $halt       = $this->syncProductRows($ledger, $connection, $block, $settings, $batch, $now, $trigger);
+                $connection = $ledger->connection($companyUuid) ?? $connection;
+                if ($halt === true || isset($this->refreshFailed[$companyUuid]) === true) {
+                    break;
+                }
                 continue;
             }
             if (($counts[$type] ?? 0) > 1) {
@@ -1001,6 +1051,363 @@ class SyncEngine
 
             return true;
         }
+    }
+
+    /**
+     * Storefront product rows and product name rows, as one block: each name is read and written
+     * once, its first row gets the outcome and the others are aligned. Products follow invoices,
+     * so while invoices are not sent to QuickBooks the rows are closed without a QuickBooks call
+     * or an Activity row. True when the run must stop.
+     *
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $rows
+     * @param array<string, mixed>             $settings
+     * @param array<string, mixed>             $batch
+     */
+    private function syncProductRows(
+        SyncLedger $ledger,
+        array &$connection,
+        array $rows,
+        array $settings,
+        array &$batch,
+        int $now,
+        string $trigger,
+    ): bool {
+        $companyUuid = (string) $connection['company_uuid'];
+        $keys        = [];
+        $sends       = $this->sendsProducts($settings);
+        foreach ($rows as $index => $row) {
+            $keys[$index] = $sends === true ? $this->productRowKey($ledger, $connection, $row) : '';
+        }
+        try {
+            $results = $this->productItemsFor($ledger, $connection, array_values(array_filter($keys, 'is_string')));
+        } catch (QuickBooksException $exception) {
+            if ($exception->isUnauthorized() === true) {
+                $this->tokenRejected($ledger, $companyUuid);
+                $batch['failed']++;
+
+                return true;
+            }
+            if ($exception->isRateLimit() === true) {
+                $this->failure($ledger, $connection, $rows[0], $exception, $settings, $now);
+                $this->recordRow(
+                    $ledger,
+                    $connection,
+                    $rows[0],
+                    'failed',
+                    $batch,
+                    $trigger,
+                    $this->exceptionError($exception)
+                );
+
+                return true;
+            }
+
+            throw $exception;
+        }
+        $connection = $ledger->connection($companyUuid) ?? $connection;
+        $seen       = [];
+        foreach ($rows as $index => $row) {
+            $key    = $keys[$index];
+            $result = $key === null
+                ? [
+                    'id'        => null,
+                    'item'      => null,
+                    'outcome'   => 'failed',
+                    'error'     => Translation::encode('quickbooks.messages.products-unavailable'),
+                    'transient' => true,
+                    'note'      => null,
+                ]
+                : ($results[$key] ?? null);
+            if ($key === '' || $result === null) {
+                $ledger->updatePending(
+                    $companyUuid,
+                    (string) $row['local_type'],
+                    (string) $row['local_uuid'],
+                    ['status' => 'done']
+                );
+                continue;
+            }
+            if ($result['outcome'] === 'failed') {
+                $error = (string) $result['error'];
+                $this->failure(
+                    $ledger,
+                    $connection,
+                    $row,
+                    new QuickBooksException($result['transient'] === true ? 503 : 400, $error),
+                    $settings,
+                    $now
+                );
+                $this->recordRow($ledger, $connection, $row, 'failed', $batch, $trigger, $error);
+                continue;
+            }
+            $outcome = isset($seen[$key]) === true ? 'aligned' : $result['outcome'];
+            if (isset($seen[$key]) === false && ($result['note'] ?? null) !== null) {
+                $this->rowNotes[(string) $row['local_type'] . ':' . (string) $row['local_uuid']] = $result['note'];
+            }
+            $seen[$key] = true;
+            $this->recordRow($ledger, $connection, $row, $outcome, $batch, $trigger, null);
+        }
+
+        return false;
+    }
+
+    /**
+     * QuickBooks products are written only while invoices are sent to QuickBooks.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private function sendsProducts(array $settings): bool
+    {
+        return $this->entityPaused(
+            $settings,
+            'invoice'
+        ) === false && $this->pushesRemote($this->direction($settings, 'invoice')) === true;
+    }
+
+    /**
+     * The name a product row or a product name row is about: '' when there is nothing to do, null
+     * when Storefront could not be read.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $row
+     */
+    private function productRowKey(SyncLedger $ledger, array $connection, array $row): ?string
+    {
+        $uuid = (string) ($row['local_uuid'] ?? '');
+        if ((string) ($row['local_type'] ?? '') === 'product') {
+            $product = $ledger->products[$uuid] ?? null;
+            if (is_array($product) === false) {
+                return $ledger->productsUnavailable === true ? null : '';
+            }
+
+            return ProductMapper::key((string) ($product['name'] ?? ''));
+        }
+        $link = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'item', $uuid);
+        $name = is_array($link) === true ? trim((string) ($link['name'] ?? '')) : '';
+
+        return $name === '' ? '' : ProductMapper::key($name);
+    }
+
+    /**
+     * The QuickBooks product of each name, read and written once per run. A failed read of the
+     * service item fails every name; a 401 or a rate limit is thrown.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<int, string>   $keys
+     *
+     * @return array<string, array{
+     *     id: string|null, item: array<string, mixed>|null, outcome: string, error: string|null,
+     *     transient: bool, note: string|null
+     * }>
+     */
+    private function productItemsFor(SyncLedger $ledger, array $connection, array $keys): array
+    {
+        $keys    = array_values(array_unique(array_filter($keys, static fn (string $key): bool => $key !== '')));
+        $missing = array_values(array_filter(
+            $keys,
+            fn (string $key): bool => isset($this->productResults[$key]) === false
+        ));
+        if ($missing !== []) {
+            try {
+                $serviceId   = $this->serviceItemId($ledger, $connection);
+                $serviceItem = $serviceId === '' ? null : $this->taxItem($ledger, $connection, $serviceId, true);
+                // A price is sent only in the home currency, which an older connection may not hold yet.
+                $connection['home_currency'] = $this->homeCurrency($ledger, $connection);
+                $prepared                    = (new ProductItems($this->client))->prepare(
+                    $ledger,
+                    $connection,
+                    $missing,
+                    $serviceId,
+                    $serviceItem ?? []
+                );
+            } catch (QuickBooksException $exception) {
+                if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
+                    throw $exception;
+                }
+                $failed   = [
+                    'id'        => null,
+                    'item'      => null,
+                    'outcome'   => 'failed',
+                    'error'     => $this->exceptionError($exception),
+                    'transient' => $exception->isTransient(),
+                    'note'      => null,
+                ];
+                $prepared = array_fill_keys($missing, $failed);
+            }
+            $this->managedItems = [];
+            foreach ($prepared as $key => $result) {
+                $this->productResults[$key] = $result;
+                $id                         = trim((string) ($result['item']['Id'] ?? ''));
+                if ($id !== '' && is_array($result['item']) === true) {
+                    $this->itemRows[$id] = $result['item'];
+                }
+            }
+        }
+
+        return array_intersect_key($this->productResults, array_flip($keys));
+    }
+
+    /**
+     * The products of the lines of every invoice row, read and made together before the invoices
+     * run, so each invoice does not make its own QuickBooks calls. A failure is left to the
+     * invoices, which meet it again and handle it.
+     *
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $rows
+     * @param array<string, mixed>             $settings
+     */
+    private function prepareLineProducts(SyncLedger $ledger, array $connection, array $rows, array $settings): void
+    {
+        if ($this->sendsProducts($settings) === false || empty($connection['needs_reauth']) === false) {
+            return;
+        }
+        $companyUuid = (string) $connection['company_uuid'];
+        $keys        = [];
+        try {
+            foreach ($rows as $row) {
+                $invoice = ($row['local_type'] ?? '') === 'invoice'
+                    ? ($ledger->invoices[(string) ($row['local_uuid'] ?? '')] ?? null)
+                    : null;
+                if (is_array($invoice) === false || self::voidedInvoice($invoice) === true) {
+                    continue;
+                }
+                foreach (is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [] as $item) {
+                    $description = trim((string) (is_array($item) === true ? ($item['description'] ?? '') : ''));
+                    $key         = $description === '' ? null : $this->lineKey($ledger, $companyUuid, $description);
+                    if ($key !== null) {
+                        $keys[] = $key;
+                    }
+                }
+            }
+            if ($keys !== []) {
+                $this->productItemsFor($ledger, $connection, $keys);
+            }
+        } catch (QuickBooksException) {
+            // Products that cannot be read, a 401 or a rate limit: the invoices handle it.
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $invoice
+     */
+    private static function voidedInvoice(array $invoice): bool
+    {
+        $status = (string) ($invoice['status'] ?? '');
+
+        return in_array($status, ['void', 'voided', 'cancelled', 'canceled', 'deleted'], true) === true
+            || empty($invoice['deleted_at']) === false;
+    }
+
+    /**
+     * The QuickBooks product of each line of an invoice, by position: the product of a live
+     * Storefront product of the line's name, else the product of its fee, else the service item.
+     * A product QuickBooks has made inactive, or one that could not be made, leaves the line on
+     * the service item with a note; a temporary failure fails the invoice so it is tried again.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<int, string>
+     */
+    private function lineItemIds(SyncLedger $ledger, array $connection, string $uuid, string $serviceItemId): array
+    {
+        $companyUuid = (string) $connection['company_uuid'];
+        $items       = $ledger->invoices[$uuid]['items'] ?? null;
+        $items       = is_array($items) === true ? array_values($items) : [];
+        $keys        = [];
+        $names       = [];
+        foreach ($items as $index => $item) {
+            $description   = trim((string) (is_array($item) === true ? ($item['description'] ?? '') : ''));
+            $keys[$index]  = $description === '' ? null : $this->lineKey($ledger, $companyUuid, $description);
+            $names[$index] = ProductMapper::name($description);
+        }
+        $results = $this->productItemsFor($ledger, $connection, array_values(array_filter($keys, 'is_string')));
+        $ids     = [];
+        foreach ($keys as $index => $key) {
+            $result = $key === null ? null : ($results[$key] ?? null);
+            if ($result === null) {
+                $ids[$index] = $serviceItemId;
+                continue;
+            }
+            if ($result['outcome'] === 'failed' && $result['transient'] === true) {
+                throw new QuickBooksException(503, (string) $result['error']);
+            }
+            $note = $result['outcome'] === 'failed'
+                ? Translation::encode('quickbooks.messages.invoice-product-failed', ['name' => $names[$index]])
+                : $result['note'];
+            if ($result['id'] === null && $note !== null) {
+                $this->rowNotes['invoice:' . $uuid] ??= $note;
+            }
+            $ids[$index] = $result['id'] ?? $serviceItemId;
+        }
+
+        return $ids;
+    }
+
+    /**
+     * The product name a line goes by: a live Storefront product's, else a fee's, else none (the
+     * service item). Without Storefront products to read, a line that is not a fee fails, since
+     * it may be a product.
+     */
+    private function lineKey(SyncLedger $ledger, string $companyUuid, string $description): ?string
+    {
+        $key = ProductMapper::key($description);
+        if ($key === ProductMapper::key(ProductMapper::SERVICE_ITEM_NAME)) {
+            return null;
+        }
+        if (isset($this->liveProductKeys[$companyUuid]) === false) {
+            $this->liveProductKeys[$companyUuid] = [];
+            foreach ($ledger->products as $product) {
+                if (ProductItems::isLive($product, $companyUuid) === true) {
+                    $this->liveProductKeys[$companyUuid][ProductMapper::key((string) $product['name'])] = true;
+                }
+            }
+        }
+        if (isset($this->liveProductKeys[$companyUuid][$key]) === true) {
+            return $key;
+        }
+        $fee = ProductMapper::feeName($description);
+        if ($fee !== null) {
+            return ProductMapper::key($fee);
+        }
+        if ($ledger->productsUnavailable === true) {
+            throw new QuickBooksException(503, Translation::encode('quickbooks.messages.products-unavailable'));
+        }
+
+        return null;
+    }
+
+    /**
+     * The QuickBooks products Fleetbase puts on lines: its product links in this realm, each with
+     * the name key it is for, and the service item (true). Read once per run, and again after
+     * products are made.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, string|true>
+     */
+    private function managedItems(SyncLedger $ledger, array $connection, string $serviceItemId): array
+    {
+        $scope = (string) $connection['company_uuid'] . '|' . (string) $connection['realm_id'];
+        if (isset($this->managedItems[$scope]) === false) {
+            $this->managedItems[$scope] = [];
+            foreach ($ledger->links as $link) {
+                $ours = is_array($link) === true
+                    && ($link['local_type'] ?? '') === 'item'
+                    && (string) ($link['company_uuid'] ?? '') === (string) $connection['company_uuid']
+                    && (string) ($link['realm_id'] ?? '') === (string) $connection['realm_id'];
+                $id   = $ours === true ? trim((string) ($link['qbo_id'] ?? '')) : '';
+                if ($id !== '') {
+                    $this->managedItems[$scope][$id] = ProductMapper::key((string) ($link['name'] ?? ''));
+                }
+            }
+        }
+        $managed = $this->managedItems[$scope];
+        if ($serviceItemId !== '') {
+            $managed[$serviceItemId] = true;
+        }
+
+        return $managed;
     }
 
     /**
@@ -1487,8 +1894,7 @@ class SyncEngine
             return 'failed';
         }
 
-        $status = (string) ($invoice['status'] ?? '');
-        $voided = in_array($status, ['void', 'voided', 'cancelled', 'canceled', 'deleted'], true) === true || empty($invoice['deleted_at']) === false;
+        $voided = self::voidedInvoice($invoice);
         $itemId = $voided === true ? '' : $this->serviceItemId($ledger, $connection);
         if ($voided === false && $itemId === '') {
             $this->lastError = 'quickbooks.messages.invoice-item-missing';
@@ -1497,8 +1903,15 @@ class SyncEngine
         }
 
         $stored     = $this->storedLineIds($ledger, $connection, $uuid, $voided);
+        $lineItems  = $voided === true || $push === false
+            ? []
+            : $this->lineItemIds($ledger, $connection, $uuid, $itemId);
+        $managed    = $this->managedItems($ledger, $connection, $itemId);
         $invoice    = $ledger->invoices[$uuid];
-        $payload    = $this->invoices->toQuickBooks($invoice, (string) $customerLink['qbo_id'], $itemId);
+        $payload    = $this->invoices->withLineItems(
+            $this->invoices->toQuickBooks($invoice, (string) $customerLink['qbo_id'], $itemId),
+            $lineItems
+        );
         $reference  = (string) ($settings['invoice_reference'] ?? 'fleetbase');
         $conflict   = (string) ($settings['invoice_conflict'] ?? 'fleetbase');
         $pushClears = $this->sendsClears($conflict, $push, $copy);
@@ -1601,7 +2014,14 @@ class SyncEngine
             if ($this->rejectLongDocNumber($payload) === true) {
                 return 'failed';
             }
-            $plan    = $this->invoiceTaxPlan($ledger, $connection, $uuid, (string) $customerLink['qbo_id'], $itemId);
+            $plan    = $this->invoiceTaxPlan(
+                $ledger,
+                $connection,
+                $uuid,
+                (string) $customerLink['qbo_id'],
+                $itemId,
+                $lineItems
+            );
             $payload = $this->invoices->withTax($payload, $plan);
             $this->noteMissingTaxRate($uuid, $payload);
             if ($this->writeBuffer !== null) {
@@ -1655,6 +2075,17 @@ class SyncEngine
             $remoteSuppliesLines === false,
             ['removed' => $removed, 'mapped' => $mapped]
         );
+        // A line moving to its own QuickBooks product (from the service item, or after a rename)
+        // is a change to send even when the amounts and text match.
+        if ($matched === true && $push === true && $remoteSuppliesLines === false) {
+            $matched = $this->invoiceMapper($invoice)->movesLineItems(
+                $payload,
+                $remote,
+                $removed,
+                $mapped,
+                $managed
+            ) === false;
+        }
         if ($matched === true) {
             $outcome = ($numberChanged === true || $partyChanged === true) ? 'updated' : 'aligned';
             $items   = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
@@ -1697,7 +2128,10 @@ class SyncEngine
                 );
             }
 
-            $payload = $this->invoices->toQuickBooks($ledger->invoices[$uuid], (string) $customerLink['qbo_id'], $itemId);
+            $payload = $this->invoices->withLineItems(
+                $this->invoices->toQuickBooks($ledger->invoices[$uuid], (string) $customerLink['qbo_id'], $itemId),
+                $lineItems
+            );
         }
 
         if ($push === false) {
@@ -1705,7 +2139,15 @@ class SyncEngine
         }
 
         if ($pushClears === true) {
-            $payload = $this->invoices->toQuickBooks($ledger->invoices[$uuid], (string) $customerLink['qbo_id'], $itemId, true);
+            $payload = $this->invoices->withLineItems(
+                $this->invoices->toQuickBooks(
+                    $ledger->invoices[$uuid],
+                    (string) $customerLink['qbo_id'],
+                    $itemId,
+                    true
+                ),
+                $lineItems
+            );
             if ($reference === 'quickbooks') {
                 unset($payload['DocNumber']);
             }
@@ -1720,10 +2162,17 @@ class SyncEngine
         }
         // The tax plan goes on before the QuickBooks lines are paired, so a matched line and the
         // invoice keep the tax code and rate QuickBooks holds.
-        $plan    = $this->invoiceTaxPlan($ledger, $connection, $uuid, (string) $customerLink['qbo_id'], $itemId);
+        $plan    = $this->invoiceTaxPlan(
+            $ledger,
+            $connection,
+            $uuid,
+            (string) $customerLink['qbo_id'],
+            $itemId,
+            $lineItems
+        );
         $payload = $this->invoices->withTax($payload, $plan);
         $payload = $this->invoiceMapper($ledger->invoices[$uuid])
-            ->withExistingLineIds($payload, $remote, $removed, $mapped);
+            ->withExistingLineIds($payload, $remote, $removed, $mapped, $managed);
         $this->rememberPushedLineIds($ledger, $uuid, $payload);
         $this->noteMissingTaxRate($uuid, $payload);
 
@@ -2078,10 +2527,11 @@ class SyncEngine
 
     /**
      * The tax code of each line and the invoice rate (InvoiceTax::plan), from the QuickBooks sales
-     * tax settings, customer and service item. A read that fails fails the invoice, so its lines
-     * are not sent untaxed by mistake.
+     * tax settings, customer and the product of each line. A read that fails fails the invoice, so
+     * its lines are not sent untaxed by mistake.
      *
      * @param array<string, mixed> $connection
+     * @param array<int, string>   $lineItems  the product of each line, by position (else $itemId)
      *
      * @return array{lines?: array<int, string|null>, rate?: string|null, global?: string|null}
      */
@@ -2091,6 +2541,7 @@ class SyncEngine
         string $uuid,
         string $customerRef,
         string $itemId,
+        array $lineItems = [],
     ): array {
         $settings = $this->salesTaxSettings($connection);
         $taxed    = $settings['mode'] !== InvoiceTax::OFF;
@@ -2099,12 +2550,25 @@ class SyncEngine
             return [];
         }
         $items = is_array($ledger->invoices[$uuid]['items'] ?? null) === true ? $ledger->invoices[$uuid]['items'] : [];
+        $ids   = [];
+        foreach (array_keys(array_values($items)) as $index) {
+            $ids[$index] = $lineItems[$index] ?? $itemId;
+        }
+        $known = $item === null ? [] : [$itemId => $item];
+        foreach (array_unique($ids) as $id) {
+            if (isset($known[$id]) === false) {
+                $read = $this->taxItem($ledger, $connection, $id, true, false);
+                if ($read !== null) {
+                    $known[$id] = $read;
+                }
+            }
+        }
 
         return InvoiceTax::plan(
             $settings,
             $this->taxCustomer($connection, $customerRef),
-            $item === null ? [] : [$itemId => $item],
-            array_fill(0, count($items), $itemId)
+            $known,
+            $ids
         );
     }
 
@@ -2161,32 +2625,44 @@ class SyncEngine
     }
 
     /**
-     * The QuickBooks item the invoice lines use, read once per block. Its income account is kept on
-     * the connection for the connection card. Without sales tax ($required false) a failed read
-     * only leaves the card as it was.
+     * A QuickBooks item invoice lines use, read once per block, or taken from the products this run
+     * read or wrote. The service item's income account is kept on the connection for the
+     * connection card. Without sales tax ($required false) a failed read only leaves the card as
+     * it was.
      *
      * @param array<string, mixed> $connection
      *
      * @return array<string, mixed>|null
      */
-    private function taxItem(SyncLedger $ledger, array $connection, string $itemId, bool $required): ?array
-    {
+    private function taxItem(
+        SyncLedger $ledger,
+        array $connection,
+        string $itemId,
+        bool $required,
+        bool $service = true,
+    ): ?array {
         $companyUuid = (string) $connection['company_uuid'];
         if ($this->taxItems !== null && array_key_exists($itemId, $this->taxItems[$companyUuid] ?? []) === true) {
             return $this->taxItems[$companyUuid][$itemId];
         }
+        $item = $this->itemRows[$itemId] ?? null;
         try {
-            $item = $this->client->item($connection, $itemId);
+            $item ??= $this->client->item($connection, $itemId);
         } catch (QuickBooksException $exception) {
             if ($required === true || $exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
                 throw $exception;
             }
             $item = null;
         }
+        if (is_array($item) === true) {
+            $this->itemRows[$itemId] = $item;
+        }
         if ($this->taxItems !== null) {
             $this->taxItems[$companyUuid][$itemId] = $item;
         }
-        $account = is_array($item) === true ? trim((string) ($item['IncomeAccountRef']['name'] ?? '')) : '';
+        $account = is_array($item) === true && $service === true
+            ? trim((string) ($item['IncomeAccountRef']['name'] ?? ''))
+            : '';
         if ($account !== '' && isset($ledger->connections[$companyUuid]) === true) {
             $ledger->connections[$companyUuid]['default_item_account'] = $account;
         }
@@ -6403,6 +6879,28 @@ class QuickBooksHttpGate extends QuickBooksClient
         $item = $this->engine->runAuthorized(
             $connection,
             fn (array $connection): ?array => $this->inner->item($connection, $id)
+        );
+
+        return $item;
+    }
+
+    public function createItem(array $connection, array $payload): array
+    {
+        /** @var array<string, mixed> $item */
+        $item = $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->createItem($connection, $payload)
+        );
+
+        return $item;
+    }
+
+    public function updateItem(array $connection, string $id, string $syncToken, array $payload): array
+    {
+        /** @var array<string, mixed> $item */
+        $item = $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->updateItem($connection, $id, $syncToken, $payload)
         );
 
         return $item;

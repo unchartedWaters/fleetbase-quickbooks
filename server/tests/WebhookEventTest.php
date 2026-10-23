@@ -710,6 +710,8 @@ test('a quickbooks delete voids the invoice and retires customers and wallets wi
             $table->string('qbo_entity');
             $table->string('qbo_id');
             $table->string('sync_token')->default('0');
+            $table->string('name')->nullable();
+            $table->string('state')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -888,6 +890,8 @@ test('a deleted payment stored under its quickbooks id unmarks the invoice and d
             $table->string('qbo_entity');
             $table->string('qbo_id');
             $table->string('sync_token')->default('0');
+            $table->string('name')->nullable();
+            $table->string('state')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -997,6 +1001,8 @@ test('a deleted or voided payment quickbooks no longer returns unmarks only the 
             $table->string('qbo_entity');
             $table->string('qbo_id');
             $table->string('sync_token')->default('0');
+            $table->string('name')->nullable();
+            $table->string('state')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -1109,6 +1115,8 @@ test('a payment read does not unmark an invoice that payment did not pay', funct
             $table->string('qbo_entity');
             $table->string('qbo_id');
             $table->string('sync_token')->default('0');
+            $table->string('name')->nullable();
+            $table->string('state')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -1217,6 +1225,8 @@ test('a deleted payment unmarks every invoice it paid and leaves the others', fu
             $table->string('qbo_entity');
             $table->string('qbo_id');
             $table->string('sync_token')->default('0');
+            $table->string('name')->nullable();
+            $table->string('state')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -1331,6 +1341,8 @@ test('a missing payment read unmarks every stored invoice on that payment', func
             $table->string('qbo_entity');
             $table->string('qbo_id');
             $table->string('sync_token')->default('0');
+            $table->string('name')->nullable();
+            $table->string('state')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -1498,6 +1510,8 @@ function qboChangedUnreadPaymentDelete(string $failure): void
             $table->string('qbo_entity');
             $table->string('qbo_id');
             $table->string('sync_token')->default('0');
+            $table->string('name')->nullable();
+            $table->string('state')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -1769,6 +1783,8 @@ test('a payment webhook queues the linked invoice and skips an unlinked payment'
             $table->string('qbo_entity');
             $table->string('qbo_id');
             $table->string('sync_token')->default('0');
+            $table->string('name')->nullable();
+            $table->string('state')->nullable();
             $table->timestamps();
         });
         $now = now();
@@ -1879,6 +1895,8 @@ test('a payment stored under its quickbooks id queues the fleetbase invoice', fu
             $table->string('qbo_entity');
             $table->string('qbo_id');
             $table->string('sync_token')->default('0');
+            $table->string('name')->nullable();
+            $table->string('state')->nullable();
             $table->timestamps();
         });
         $now = now();
@@ -2008,6 +2026,8 @@ test('a connection is not shared with another organization on the same realm', f
             $table->string('qbo_entity');
             $table->string('qbo_id');
             $table->string('sync_token')->default('0');
+            $table->string('name')->nullable();
+            $table->string('state')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {

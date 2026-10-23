@@ -32,6 +32,25 @@ class SyncLedger
     /** @var array<string, Wallet> */
     public array $wallets = [];
 
+    /**
+     * Storefront products by uuid: those of the pending product rows, deleted or draft included,
+     * and every live product sharing a name with a product, a QuickBooks product link or an
+     * invoice line this run handles.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    public array $products = [];
+
+    /**
+     * Storefront products could not be read, so no product counts as gone.
+     */
+    public bool $productsUnavailable = false;
+
+    /**
+     * Storefront is installed without its tables: there are no products, and none counts as gone.
+     */
+    public bool $productsMissing = false;
+
     /** @var array<int, array<string, mixed>> */
     public array $batches = [];
 

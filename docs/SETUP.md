@@ -29,15 +29,17 @@ screens without the surrounding Fleetbase console menus.
   is left out when the totals are compared and does not cause another update.
   When QuickBooks shows such an invoice as fully paid (no balance left), its
   Fleetbase status is paid, although the amount paid is less than the
-  Fleetbase total. QuickBooks works out the tax (see Tax below). A new line
-  from Fleetbase uses the QuickBooks product "Fleetbase service". Fleetbase
+  Fleetbase total. QuickBooks works out the tax (see Tax below). Each line
+  uses the QuickBooks product of its name (see Products below); any other
+  line uses the QuickBooks product "Fleetbase service". Fleetbase
   creates it posting to an active income account: a service or fee income
   account first, then sales of product income, then other income, and never a
   discount, refund or unapplied cash account. The connection card names that
   account. To post invoice lines to another account, change the income account
   on "Fleetbase service" in QuickBooks. When Fleetbase updates an invoice, a
-  line it matches by its stored line id or its content keeps its QuickBooks
-  product and tax code, and description-only and bundle lines stay. A
+  line it matches by its stored line id or its content keeps a QuickBooks
+  product chosen in QuickBooks and its tax code, and description-only and
+  bundle lines stay. A
   QuickBooks line with no description arrives in Fleetbase with its product
   name, and a description longer than 191 characters is cut to fit a Ledger
   line. An update from Fleetbase leaves the QuickBooks text of such a line as
@@ -46,8 +48,8 @@ screens without the surrounding Fleetbase console menus.
   finds or creates an active one.
 - **Tax** — QuickBooks works out invoice tax, and Fleetbase never sends a tax
   amount. When sales tax is on in QuickBooks, a line Fleetbase sends is taxable
-  when both the QuickBooks product ("Fleetbase service") and the QuickBooks
-  customer are taxable. The invoice gets the customer's sales tax rate, else
+  when both the line's QuickBooks product and the QuickBooks customer are
+  taxable. The invoice gets the customer's sales tax rate, else
   the company's default rate. A customer Fleetbase creates in QuickBooks is
   taxable at the company rate until it is changed in QuickBooks. The
   "Fleetbase service" product Fleetbase creates is not taxable (QuickBooks
@@ -71,6 +73,36 @@ screens without the surrounding Fleetbase console menus.
   QuickBooks holds with tax included in its amounts keeps the QuickBooks
   total. A tax amount typed over in QuickBooks is worked out again when
   Fleetbase next sends the lines.
+- **Products** — Storefront products and Fleet-Ops fees become QuickBooks
+  products, one per name, kept up to date from Fleetbase only; nothing is
+  copied back. They sync only while invoices are sent to QuickBooks (invoices
+  on, and Both or From Fleetbase), when a product is saved, deleted or
+  restored, when invoices are turned on, and when an invoice line uses one.
+  Names match whatever their case or spacing, so products of one name share
+  one QuickBooks product. A colon, tab or line break becomes a space, and a
+  name is cut to 100 characters. A Storefront service becomes a Service,
+  anything else a Non-inventory product (no stock). A new product posts to
+  the income account of "Fleetbase service" and is taxed like it. Its
+  description, SKU and price are sent when every product of the name agrees,
+  and the price only in the QuickBooks home currency. The fee lines Fleet-Ops
+  and Ledger write use one product each: Base Fee, Service Fee, Delivery fee,
+  Cash on delivery fee, Peak hours fee, Parcel fee (every parcel size) and
+  Distance charge (every zone). An active service or non-inventory product
+  QuickBooks already has under the name is used as it is and never changed.
+  When the name belongs to another kind of product, a sub-product, an
+  inactive product or one another record uses, Fleetbase makes its own with
+  " (Fleetbase)" added to the name. When no live product has the name any
+  more (deleted, renamed or a draft), Fleetbase makes its QuickBooks product
+  inactive (QuickBooks adds " (deleted)" to its name), and active again when
+  the name comes back. Fee products are never made inactive. A product made
+  inactive in QuickBooks stays inactive, and its lines use "Fleetbase
+  service". A matched invoice line moves from "Fleetbase service", or from
+  another Fleetbase product, to the product of its name. A line keeps the
+  Fleetbase product its text names, active or inactive, once that Storefront
+  product is gone, so earlier invoices keep their products; a renamed product
+  gets a new QuickBooks product. A product with no name is not sent. While
+  Storefront cannot be read, its products and the invoices that may use them
+  wait and are tried again.
 - **Payments** — a payment for a paid Fleetbase invoice. Amount and date are
   compared when a payment already exists. The payload includes `TxnDate`: the
   day the invoice was paid in the organization's timezone (the app timezone when
@@ -665,6 +697,11 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   credit memo or an unapplied amount) or other invoices, Fleetbase leaves them
   unchanged and the row is skipped.
 - **Wallets.** Each Fleetbase wallet becomes one QuickBooks chart-of-accounts entry (`Other Current Asset`).
+- **Products.** QuickBooks does not change a product's type, so a Storefront
+  product that becomes a service later stays Non-inventory in QuickBooks.
+  Stock is not tracked. To match names whatever their case or spacing, a sync
+  that sends invoices or products reads the names of all the organization's
+  live Storefront products.
 - **Shared QuickBooks company.** Several Fleetbase organizations can connect to the same QuickBooks company (realm). `quickbooks_connections` is unique per organization, not per realm, and a webhook for a realm is applied to every organization connected to it (`WebhookController`). Intuit app credentials, the redirect, and the webhook verifier are install-wide, so every organization on the install uses the same Intuit app.
 - **Links.** `quickbooks_links` holds links for customers, invoices, and wallets, and also for payments. A payment link is keyed by the Fleetbase invoice uuid, or by the QuickBooks payment id when the payment was found in QuickBooks.
 - **Customer matching.** A Fleetbase customer is matched to an existing QuickBooks customer by email first, then by display name. When Primary is Fleetbase, a name match is rejected if both sides have an email and the emails differ, so that customer is not matched. Names are the only key when there is no email, so two different customers with the same name are treated as one.

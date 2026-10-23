@@ -206,6 +206,32 @@ class QuickBooksClient
     }
 
     /**
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    public function createItem(array $connection, array $payload): array
+    {
+        return $this->entity($connection, 'post', 'item', $payload, 'Item');
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    public function updateItem(array $connection, string $id, string $syncToken, array $payload): array
+    {
+        $payload['Id']        = $id;
+        $payload['SyncToken'] = $syncToken;
+        $payload['sparse']    = true;
+
+        return $this->entity($connection, 'post', 'item', $payload, 'Item');
+    }
+
+    /**
      * When this is off, QuickBooks assigns the invoice DocNumber itself on create.
      *
      * @param array<string, mixed> $connection

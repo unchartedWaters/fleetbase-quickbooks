@@ -15,6 +15,7 @@ use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\LedgerPaymentDates;
+use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Fleetbase\Quickbooks\Support\Translation;
@@ -57,6 +58,24 @@ class FleetbaseDirectory
 
     /** Marks a lease whose row was flagged again while the holding run was sending it. */
     private const REFLAG_PREFIX = 'reflag:';
+
+    /** The Storefront product model. Products are read only, and only when Storefront is installed. */
+    public const PRODUCT_CLASS = 'Fleetbase\\Storefront\\Models\\Product';
+
+    /** The Storefront product columns the product sync reads. */
+    private const PRODUCT_COLUMNS = [
+        'uuid',
+        'company_uuid',
+        'public_id',
+        'name',
+        'description',
+        'sku',
+        'price',
+        'currency',
+        'is_service',
+        'status',
+        'deleted_at',
+    ];
 
     /** Invoice item meta key holding the QuickBooks line the item was synced to. */
     private const LINE_META = 'quickbooks_line';
@@ -341,6 +360,11 @@ class FleetbaseDirectory
         if (empty($enabled['invoice']) === false) {
             $this->queueCatalog('Fleetbase\\Ledger\\Models\\Invoice', $companyUuid, false, 'invoice');
             $this->queueInvoiceLinks($companyUuid);
+            $product = self::productClass();
+            if ($product !== null) {
+                $this->queueCatalog($product, $companyUuid, false, 'product');
+            }
+            $this->queueLinksOfType($companyUuid, 'item');
         }
         if (empty($enabled['wallet']) === false) {
             $this->queueCatalog('Fleetbase\\Ledger\\Models\\Wallet', $companyUuid, false, 'wallet');
@@ -431,6 +455,7 @@ class FleetbaseDirectory
         $loadedByUuid          = $this->loadedLinksByUuid();
         $linkFields            = [
             'company_uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_entity', 'qbo_id', 'sync_token',
+            'name', 'state',
         ];
         $freshLinks            = [];
         $changedLinks          = [];
@@ -1385,7 +1410,11 @@ class FleetbaseDirectory
             $this->loadFullLedger($ledger, $companyUuid, $flaggedInvoices, $customerIds, $walletIds);
         } else {
             $this->loadLimitedLedger($ledger, $companyUuid, $customerIds, $invoiceIds, $walletIds, $flaggedInvoices);
+            if ($this->needsProducts($ledger) === true) {
+                $this->readItemLinks($ledger, $companyUuid);
+            }
         }
+        $this->readProducts($ledger, $companyUuid);
         $ledger->rebuildIndex();
         $this->loaded['customers'] = $ledger->customers;
         $this->loaded['invoices']  = $ledger->invoices;
@@ -1427,6 +1456,175 @@ class FleetbaseDirectory
         }
 
         return [$customerIds, $invoiceIds, $walletIds, $flaggedInvoices];
+    }
+
+    /**
+     * Products matter to invoice, product and product name rows only.
+     */
+    private function needsProducts(SyncLedger $ledger): bool
+    {
+        foreach ($ledger->pending as $row) {
+            if (in_array($row['local_type'] ?? '', ['invoice', 'product', 'item'], true) === true) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The company's QuickBooks product links: one per product name, so few rows. Every one is
+     * loaded, so an invoice line knows which QuickBooks products Fleetbase manages.
+     */
+    private function readItemLinks(SyncLedger $ledger, string $companyUuid): void
+    {
+        $query = (new Link())->newQuery()->where('company_uuid', $companyUuid)->where('local_type', 'item');
+        foreach ($query->get() as $link) {
+            if ($link instanceof Link) {
+                $this->rememberLoadedLink($ledger, $link->toArray());
+            }
+        }
+    }
+
+    /**
+     * The Storefront products this run needs: those of the pending product rows (deleted or a
+     * draft too), and every live product sharing a name with them, with a pending product name
+     * row or with an invoice line. Names are compared as QuickBooks compares them
+     * (ProductMapper::key), so the company's live product names are read first. Without
+     * Storefront there are no products; a failed read marks them unavailable, so no product
+     * counts as gone.
+     */
+    private function readProducts(SyncLedger $ledger, string $companyUuid): void
+    {
+        $productIds = [];
+        $keys       = [];
+        foreach ($ledger->pending as $row) {
+            $uuid = (string) ($row['local_uuid'] ?? '');
+            if (($row['local_type'] ?? '') === 'product') {
+                $productIds[] = $uuid;
+            } elseif (($row['local_type'] ?? '') === 'item') {
+                $link = $ledger->link(
+                    $companyUuid,
+                    (string) ($ledger->connections[$companyUuid]['realm_id'] ?? ''),
+                    'item',
+                    $uuid
+                );
+                $name = is_array($link) === true ? trim((string) ($link['name'] ?? '')) : '';
+                if ($name !== '') {
+                    $keys[ProductMapper::key($name)] = true;
+                }
+            }
+        }
+        foreach ($ledger->invoices as $invoice) {
+            foreach (is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [] as $item) {
+                $description = is_array($item) === true ? trim((string) ($item['description'] ?? '')) : '';
+                if ($description !== '') {
+                    $keys[ProductMapper::key($description)] = true;
+                }
+            }
+        }
+        $class = self::productClass();
+        if (($productIds === [] && $keys === []) || $class === null) {
+            return;
+        }
+
+        try {
+            $pendingIds = array_values(array_unique($productIds));
+            foreach ($this->productRows($class, $companyUuid, $pendingIds, true) as $product) {
+                $ledger->products[$product['uuid']]                          = $product;
+                $keys[ProductMapper::key((string) ($product['name'] ?? ''))] = true;
+            }
+            $live = [];
+            foreach ($this->productQuery($class, $companyUuid, false)->get(['uuid', 'name', 'status']) as $row) {
+                $row = (array) $row;
+                $key = ProductMapper::key((string) ($row['name'] ?? ''));
+                if (isset($keys[$key]) === true && strtolower(trim((string) ($row['status'] ?? ''))) !== 'draft') {
+                    $live[] = (string) ($row['uuid'] ?? '');
+                }
+            }
+            foreach ($this->productRows($class, $companyUuid, array_values(array_unique($live)), false) as $product) {
+                $ledger->products[$product['uuid']] = $product;
+            }
+        } catch (\Throwable $exception) {
+            if ($this->isAbsentTable($exception) === true) {
+                // Storefront is installed but its tables are not there: no products.
+                $ledger->products        = [];
+                $ledger->productsMissing = true;
+
+                return;
+            }
+            $ledger->productsUnavailable = true;
+            SafeLog::warning('QuickBooks could not read Storefront products; product rows are tried again later.', [
+                'exception' => $exception::class,
+            ]);
+        }
+    }
+
+    /**
+     * The Storefront product model, or null without Storefront.
+     *
+     * @return class-string<Model>|null
+     */
+    private static function productClass(): ?string
+    {
+        $class = self::PRODUCT_CLASS;
+        if (class_exists($class) === false || is_subclass_of($class, Model::class) === false) {
+            return null;
+        }
+
+        return $class;
+    }
+
+    /**
+     * The company's products, on Storefront's own database connection.
+     *
+     * @param class-string<Model> $class
+     */
+    private function productQuery(
+        string $class,
+        string $companyUuid,
+        bool $withTrashed,
+    ): \Illuminate\Database\Query\Builder {
+        $query       = (new $class())->newQuery();
+        $softDeletes = in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($class), true);
+        if ($withTrashed === true && $softDeletes === true) {
+            $query->withoutGlobalScope(\Illuminate\Database\Eloquent\SoftDeletingScope::class);
+        }
+
+        return $query->toBase()->where('company_uuid', $companyUuid);
+    }
+
+    /**
+     * @param class-string<Model> $class
+     * @param array<int, string>  $uuids
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function productRows(string $class, string $companyUuid, array $uuids, bool $withTrashed): array
+    {
+        $rows  = [];
+        $uuids = array_values(array_filter($uuids, static fn (string $uuid): bool => $uuid !== ''));
+        foreach (array_chunk($uuids, 500) as $chunk) {
+            $query = $this->productQuery($class, $companyUuid, $withTrashed)->whereIn('uuid', $chunk);
+            foreach ($query->get(self::PRODUCT_COLUMNS) as $row) {
+                $row    = (array) $row;
+                $rows[] = [
+                    'uuid'         => (string) ($row['uuid'] ?? ''),
+                    'company_uuid' => (string) ($row['company_uuid'] ?? ''),
+                    'public_id'    => (string) ($row['public_id'] ?? ''),
+                    'name'         => (string) ($row['name'] ?? ''),
+                    'description'  => (string) ($row['description'] ?? ''),
+                    'sku'          => (string) ($row['sku'] ?? ''),
+                    'price'        => (int) ($row['price'] ?? 0),
+                    'currency'     => (string) ($row['currency'] ?? ''),
+                    'is_service'   => (bool) ($row['is_service'] ?? false),
+                    'status'       => (string) ($row['status'] ?? ''),
+                    'deleted_at'   => $row['deleted_at'] ?? null,
+                ];
+            }
+        }
+
+        return $rows;
     }
 
     /**
@@ -2930,6 +3128,10 @@ class FleetbaseDirectory
             $query->where('type', 'customer');
         } elseif ($class === 'Fleetbase\\Ledger\\Models\\Invoice') {
             $query->where('status', '!=', 'draft');
+        } elseif ($class === self::productClass()) {
+            $query->where(static function ($live): void {
+                $live->whereNull('status')->orWhere('status', '!=', 'draft');
+            });
         }
         $query->orderBy('uuid');
         if ($afterUuid !== '') {
@@ -2974,13 +3176,21 @@ class FleetbaseDirectory
 
     private function queueInvoiceLinks(string $companyUuid): void
     {
+        $this->queueLinksOfType($companyUuid, 'invoice');
+    }
+
+    /**
+     * Queue the local record of every link of one type, a page at a time.
+     */
+    private function queueLinksOfType(string $companyUuid, string $localType): void
+    {
         $after    = '';
         $pageSize = $this->catalogPageSize();
         while (true) {
             try {
                 $query = (new Link())->newQuery()
                     ->where('company_uuid', $companyUuid)
-                    ->where('local_type', 'invoice')
+                    ->where('local_type', $localType)
                     ->orderBy('local_uuid');
                 if ($after !== '') {
                     $query->where('local_uuid', '>', $after);
@@ -2997,7 +3207,7 @@ class FleetbaseDirectory
             }
             $rows = [];
             foreach ($ids as $uuid) {
-                $rows[] = $this->catalogPending($companyUuid, 'invoice', $uuid);
+                $rows[] = $this->catalogPending($companyUuid, $localType, $uuid);
             }
             $this->writePendingMany($rows);
             $after = (string) $ids[array_key_last($ids)];
@@ -3145,6 +3355,8 @@ class FleetbaseDirectory
             $row = $ledger->wallets[$localUuid] ?? null;
         } elseif ($localType === 'invoice' || $localType === 'payment') {
             $row = $ledger->invoices[$localUuid] ?? null;
+        } elseif ($localType === 'product') {
+            $row = $ledger->products[$localUuid] ?? null;
         }
         if (is_array($row) === false) {
             return $fallback;
@@ -4764,14 +4976,22 @@ class FleetbaseDirectory
         return $this->isUnavailableStorage($exception);
     }
 
-    private function isUnavailableStorage(\Throwable $exception): bool
+    /**
+     * A table that is not there. A database connection that is not configured is not one of these.
+     */
+    private function isAbsentTable(\Throwable $exception): bool
     {
         $message = strtolower($exception->getMessage());
 
         return str_contains($message, 'no such table') === true
             || str_contains($message, "doesn't exist") === true
-            || str_contains($message, 'base table or view not found') === true
-            || str_contains($message, 'not configured') === true;
+            || str_contains($message, 'base table or view not found') === true;
+    }
+
+    private function isUnavailableStorage(\Throwable $exception): bool
+    {
+        return $this->isAbsentTable($exception) === true
+            || str_contains(strtolower($exception->getMessage()), 'not configured') === true;
     }
 
     /**
@@ -5045,6 +5265,8 @@ class FleetbaseDirectory
                 'qbo_entity'   => (string) ($link['qbo_entity'] ?? ''),
                 'qbo_id'       => (string) ($link['qbo_id'] ?? ''),
                 'sync_token'   => (string) ($link['sync_token'] ?? '0'),
+                'name'         => $link['name'] ?? null,
+                'state'        => $link['state'] ?? null,
                 'created_at'   => $now,
                 'updated_at'   => $now,
             ];
@@ -5097,6 +5319,8 @@ class FleetbaseDirectory
                     'qbo_entity'   => $row['qbo_entity'],
                     'qbo_id'       => $row['qbo_id'],
                     'sync_token'   => $row['sync_token'],
+                    'name'         => $row['name'],
+                    'state'        => $row['state'],
                 ],
             ];
         }
