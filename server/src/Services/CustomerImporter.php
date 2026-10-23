@@ -409,9 +409,9 @@ class CustomerImporter
             return false;
         }
 
-        foreach ($matching as $row) {
-            $ledger->customers[$row['uuid']] = $row;
-            $ledger->rememberCustomer($row['uuid'], $row);
+        foreach ($matching as $uuid => $row) {
+            $ledger->customers[$uuid] = $row;
+            $ledger->rememberCustomer($uuid, $row);
         }
 
         return true;

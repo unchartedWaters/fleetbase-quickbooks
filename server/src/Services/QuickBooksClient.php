@@ -12,6 +12,16 @@ use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
+/**
+ * @phpstan-type BatchItem array{
+ *     bId: string,
+ *     operation?: string,
+ *     entity?: string,
+ *     payload?: array<string, mixed>,
+ *     query?: string,
+ *     key?: string
+ * }
+ */
 class QuickBooksClient
 {
     public const TRANSPORT_MESSAGE = 'quickbooks.messages.transport';
@@ -774,8 +784,8 @@ class QuickBooksClient
     }
 
     /**
-     * @param array<string, mixed>                                                                                                $connection
-     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     * @param array<string, mixed>  $connection
+     * @param array<int, BatchItem> $items
      *
      * @return array<int, array<string, mixed>>
      */
@@ -965,8 +975,8 @@ class QuickBooksClient
      *   bId, query
      * A write may also carry key, which goes into the requestid and is not sent.
      *
-     * @param array<string, mixed>                                                                                                $connection
-     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     * @param array<string, mixed>  $connection
+     * @param array<int, BatchItem> $items
      *
      * @return array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}>
      */
@@ -1289,8 +1299,8 @@ class QuickBooksClient
     }
 
     /**
-     * @param array<string, mixed>                                                                                                $connection
-     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     * @param array<string, mixed>  $connection
+     * @param array<int, BatchItem> $items
      *
      * @return array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}>
      */
@@ -1379,7 +1389,7 @@ class QuickBooksClient
     /**
      * BatchItemRequest entries: a query, or an entity write with its operation and payload.
      *
-     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     * @param array<int, BatchItem> $items
      *
      * @return array<int, array<string, mixed>>
      */

@@ -118,6 +118,9 @@ class SyncWebhookBatch implements ShouldQueue
 
         $open = [];
         foreach ($existing as $row) {
+            if ($row instanceof PendingSync === false) {
+                continue;
+            }
             $key = (string) $row->local_type . '|' . (string) $row->local_uuid;
             if (isset($wanted[$key]) === true) {
                 $open[] = (string) $row->uuid;

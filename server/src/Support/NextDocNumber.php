@@ -42,6 +42,10 @@ class NextDocNumber
         $a = ltrim($first[2], '0');
         $b = ltrim($second[2], '0');
 
-        return strlen($a) !== strlen($b) ? strlen($a) > strlen($b) : strcmp($a, $b) > 0;
+        if (strlen($a) !== strlen($b)) {
+            return strlen($a) > strlen($b);
+        }
+
+        return strcmp($a, $b) > 0;
     }
 }

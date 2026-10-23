@@ -442,7 +442,10 @@ class ConnectionController extends QuickbooksController
             }
 
             foreach (Connection::query()->where('company_uuid', $companyUuid)->get() as $row) {
-                $token = $row instanceof Connection === true ? trim((string) $row->refresh_token) : '';
+                if ($row instanceof Connection === false) {
+                    continue;
+                }
+                $token = trim((string) $row->refresh_token);
                 if ($token === '' || $this->realmSharedWithOthers($row, $companyUuid) === true) {
                     continue;
                 }

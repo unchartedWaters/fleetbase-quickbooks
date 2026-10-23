@@ -81,6 +81,9 @@ class SyncQuickbooks extends Command
             ->where('realm_id', '!=', '')
             ->get(self::SCHEDULE_COLUMNS);
         foreach ($rows as $row) {
+            if ($row instanceof Connection === false) {
+                continue;
+            }
             $companyUuid = trim((string) $row->company_uuid);
             $realm       = trim((string) $row->realm_id);
             if ($companyUuid === '' || $realm === '') {

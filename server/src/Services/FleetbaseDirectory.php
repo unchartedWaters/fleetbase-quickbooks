@@ -1143,8 +1143,10 @@ class FleetbaseDirectory
     {
         $values = self::toDates($row, self::PENDING_TIMES);
         unset($values['priority']);
+        $priority = null;
         if ($this->prioritySupported() === true) {
-            $values['priority'] = SyncLedger::pendingPriority($row);
+            $priority           = SyncLedger::pendingPriority($row);
+            $values['priority'] = $priority;
         }
         try {
             $pending = PendingSync::query()->firstOrCreate(
@@ -1165,7 +1167,7 @@ class FleetbaseDirectory
         }
         if ($pending instanceof PendingSync === true && $pending->wasRecentlyCreated === false) {
             $this->markReflagged($pending);
-            $this->raisePriority($pending, $values['priority'] ?? null);
+            $this->raisePriority($pending, $priority);
         }
     }
 
@@ -1553,7 +1555,7 @@ class FleetbaseDirectory
                 ->where('qbo_id', $qboId)
                 ->first();
             $class = 'Fleetbase\\FleetOps\\Models\\Customer';
-            if ($link === null || class_exists($class) === false) {
+            if ($link instanceof Link === false || class_exists($class) === false) {
                 return null;
             }
             // The default scope leaves out a deleted customer.
@@ -1991,6 +1993,9 @@ class FleetbaseDirectory
         $deleted = $this->deletedCustomerUuids($links->where('local_type', 'customer')->pluck('local_uuid')->all());
         $claimed = [];
         foreach ($links as $link) {
+            if ($link instanceof Link === false) {
+                continue;
+            }
             if ($link->local_type !== 'customer' || isset($deleted[(string) $link->local_uuid]) === false) {
                 $claimed[(string) $link->qbo_id] = (string) $link->qbo_id;
             }
@@ -2009,13 +2014,18 @@ class FleetbaseDirectory
     private function deletedCustomerUuids(array $uuids): array
     {
         $class = 'Fleetbase\\FleetOps\\Models\\Customer';
-        $uuids = array_values(array_unique(array_map('strval', $uuids)));
+        $uuids = array_values(array_unique(array_map(self::uuidString(...), $uuids)));
         if ($uuids === [] || class_exists($class) === false) {
             return [];
         }
         $deleted = $class::onlyTrashed()->whereIn('uuid', $uuids)->pluck('uuid')->all();
 
-        return array_fill_keys(array_map('strval', $deleted), true);
+        return array_fill_keys(array_map(self::uuidString(...), $deleted), true);
+    }
+
+    private static function uuidString(mixed $uuid): string
+    {
+        return is_scalar($uuid) === true ? (string) $uuid : '';
     }
 
     /**

@@ -20,6 +20,21 @@ use Fleetbase\Quickbooks\Support\WalletMapper;
 /**
  * @phpstan-type RemovedLine array{id: string, description: string, amount: int}
  * @phpstan-type StoredLines array{removed?: array<int, RemovedLine>, mapped?: bool}
+ * @phpstan-type BufferedWrite array{
+ *     bId: string,
+ *     operation: string,
+ *     entity: string,
+ *     payload: array<string, mixed>,
+ *     key?: string
+ * }
+ * @phpstan-type BatchResult array{
+ *     ok: bool,
+ *     body: array<string, mixed>,
+ *     rows: array<int, array<string, mixed>>,
+ *     error: string|null,
+ *     status: int,
+ *     halt: bool
+ * }
  */
 class SyncEngine
 {
@@ -175,7 +190,7 @@ class SyncEngine
     /**
      * When set, creates and updates are queued for one Batch API call instead of sent alone.
      *
-     * @var array<int, array{bId: string, operation: string, entity: string, payload: array<string, mixed>}>|null
+     * @var array<int, BufferedWrite>|null
      */
     private ?array $writeBuffer = null;
 
@@ -1893,18 +1908,18 @@ class SyncEngine
      * Buffered customer updates QuickBooks refused for a Fleetbase rename are sent again without
      * the name (see retryWithoutName). A retry that is accepted replaces the refusal.
      *
-     * @param array<string, mixed>                $connection
-     * @param array<int, array<string, mixed>>    $ops
-     * @param array<string, array<string, mixed>> $results
+     * @param array<string, mixed>       $connection
+     * @param array<int, BufferedWrite>  $ops
+     * @param array<string, BatchResult> $results
      *
-     * @return array<string, array<string, mixed>>
+     * @return array<string, BatchResult>
      */
     private function retryRefusedRenames(array $connection, array $ops, array $results): array
     {
         foreach ($ops as $op) {
-            $bId    = (string) ($op['bId'] ?? '');
+            $bId    = $op['bId'];
             $result = $results[$bId] ?? null;
-            if (str_starts_with($bId, 'customer:') === false || ($op['operation'] ?? '') !== 'update'
+            if (str_starts_with($bId, 'customer:') === false || $op['operation'] !== 'update'
                 || is_array($result) === false || empty($result['ok']) === false) {
                 continue;
             }
@@ -6414,7 +6429,7 @@ class SyncEngine
     {
         $uuids = [];
         foreach ($this->writeBuffer ?? [] as $op) {
-            $bId = (string) ($op['bId'] ?? '');
+            $bId = $op['bId'];
             if (str_starts_with($bId, 'payment:') === true) {
                 $uuids[substr($bId, strlen('payment:'))] = true;
             }
