@@ -198,7 +198,14 @@ class WebhookController extends Controller
      */
     private function changesToApply(string $rawBody, bool $stale): array
     {
-        return $this->entitiesByRealm($rawBody, $stale === true || $this->replay->hasUndatedChange($rawBody) === true);
+        if ($stale === true) {
+            return $this->entitiesByRealm($rawBody, true, 'is older than the maximum age');
+        }
+        if ($this->replay->hasUndatedChange($rawBody) === true) {
+            return $this->entitiesByRealm($rawBody, true, 'has a change with no time, so it cannot be aged');
+        }
+
+        return $this->entitiesByRealm($rawBody, false);
     }
 
     /**
@@ -207,10 +214,11 @@ class WebhookController extends Controller
      * back cannot stand in for them (a deleted record and a merged-away one both read as
      * gone, and a voided invoice reads as an invoice with no lines). Intuit reports the
      * surviving record of a merge as an update, so that record is still read. See staleDelete().
+     * $why says in the log why the body is handled as stale.
      *
      * @return array<int, WebhookGroup>
      */
-    private function entitiesByRealm(string $rawBody, bool $stale): array
+    private function entitiesByRealm(string $rawBody, bool $stale, string $why = ''): array
     {
         $groups  = [];
         $skipped = 0;
@@ -233,7 +241,7 @@ class WebhookController extends Controller
             $this->addEntity($groups, $realmId, $mapped);
         }
         if ($stale === true) {
-            SafeLog::warning('QuickBooks webhook delivery is older than the maximum age: its records are read again'
+            SafeLog::warning('QuickBooks webhook delivery ' . $why . ': its records are read again'
                 . ' from QuickBooks and its deletes and merges were not applied.', ['skipped' => $skipped]);
         }
 

@@ -14,6 +14,7 @@ use Fleetbase\Quickbooks\Tests\Support\CacheTtlRecorder;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 function whrSettings(): SettingsService
 {
@@ -569,6 +570,37 @@ test('a signed delete with no timestamp is not applied from the payload', functi
             ->and(array_map(static fn (QuickBooksEntityChanged $event): string => $event->operation, $seen))
             ->not->toContain('delete');
     });
+});
+
+test('an undated delivery is logged as undated, not as older than the maximum age', function () {
+    $body       = whrBody('', 'Delete');
+    $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+    $logged     = new class {
+        /** @var array<int, string> */
+        public array $messages = [];
+
+        /**
+         * @param array<int, mixed> $arguments
+         */
+        public function __call(string $method, array $arguments): void
+        {
+            $this->messages[] = (string) ($arguments[0] ?? '');
+        }
+    };
+    $previousLog = Log::getFacadeRoot();
+    Log::swap($logged);
+
+    try {
+        whrWithEvents(function (array &$seen) use ($controller, $body) {
+            $response = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+            expect($response->getStatusCode())->toBe(200);
+        });
+    } finally {
+        Log::swap($previousLog);
+    }
+
+    expect(implode("\n", $logged->messages))->toContain('has a change with no time')
+        ->not->toContain('older than the maximum age');
 });
 
 test('an undated create is still read back from QuickBooks', function () {

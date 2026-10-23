@@ -264,7 +264,11 @@ class ConnectionController extends QuickbooksController
 
         // Only fixed codes go back to the console; the console maps them to its own messages.
         if ($request->filled('error') === true) {
-            $this->oauth->forget($state);
+            $companyUuid = $this->oauth->forget($state);
+            // Nothing was connected, so Connect can be tried again at once.
+            if ($companyUuid !== null) {
+                $this->releaseCooldown($companyUuid, 'start');
+            }
 
             return $this->redirectToConsole(['error' => $request->input('error') === 'access_denied' ? 'cancelled' : 'failed']);
         }
@@ -296,12 +300,14 @@ class ConnectionController extends QuickbooksController
                 fn (string $realmId): bool => $this->mayConnectRealm($request, $companyUuid, $realmId)
             );
         } catch (QuickBooksException $exception) {
+            $this->releaseCooldown($companyUuid, 'start');
             $status = $exception->getMessage() === OAuthFlow::CHANGE_COMPANY_MESSAGE ? 403 : 422;
 
             return response()->json(['message' => Translation::render($exception->getMessage())], $status);
         }
         if ($connection === null) {
             if ($this->connectionIsStored($companyUuid) === false) {
+                $this->releaseCooldown($companyUuid, 'start');
                 $message = Translation::get('quickbooks.messages.not-connected-reconnect');
 
                 return response()->json(['message' => $message], 422);
@@ -349,9 +355,10 @@ class ConnectionController extends QuickbooksController
         if ($blocked !== null) {
             return $blocked;
         }
-        ImportCustomers::dispatch($companyUuid);
 
-        return response()->json(['queued' => true]);
+        return $this->queueManual($companyUuid, 'import', static function () use ($companyUuid): void {
+            ImportCustomers::dispatch($companyUuid);
+        });
     }
 
     public function reconcile(Request $request): JsonResponse
@@ -362,9 +369,10 @@ class ConnectionController extends QuickbooksController
         if ($blocked !== null) {
             return $blocked;
         }
-        SyncCompanyBatch::dispatch($companyUuid, 'manual');
 
-        return response()->json(['queued' => true]);
+        return $this->queueManual($companyUuid, 'manual', static function () use ($companyUuid): void {
+            SyncCompanyBatch::dispatch($companyUuid, 'manual');
+        });
     }
 
     public function sync(Request $request): JsonResponse
@@ -375,9 +383,10 @@ class ConnectionController extends QuickbooksController
         if ($blocked !== null) {
             return $blocked;
         }
-        SyncCompanyBatch::dispatch($companyUuid, 'now');
 
-        return response()->json(['queued' => true]);
+        return $this->queueManual($companyUuid, 'now', static function () use ($companyUuid): void {
+            SyncCompanyBatch::dispatch($companyUuid, 'now');
+        });
     }
 
     public function test(Request $request): JsonResponse
@@ -790,6 +799,31 @@ class ConnectionController extends QuickbooksController
         }
 
         return response()->json(['message' => Translation::get('quickbooks.messages.action-cooldown')], 429);
+    }
+
+    /**
+     * Queue a manual action. When queueing fails nothing runs, so its cooldown is released.
+     */
+    private function queueManual(string $companyUuid, string $action, \Closure $dispatch): JsonResponse
+    {
+        try {
+            $dispatch();
+        } catch (\Throwable $exception) {
+            $this->releaseCooldown($companyUuid, $action);
+
+            throw $exception;
+        }
+
+        return response()->json(['queued' => true]);
+    }
+
+    private function releaseCooldown(string $companyUuid, string $action): void
+    {
+        try {
+            Cache::forget('quickbooks.action.' . $companyUuid . '.' . $action);
+        } catch (\Throwable) {
+            // The cooldown then ends on its own.
+        }
     }
 
     /**

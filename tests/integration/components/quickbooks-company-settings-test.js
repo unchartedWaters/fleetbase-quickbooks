@@ -549,7 +549,7 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.strictEqual(modals.last.title, 'Reset to global defaults?');
         assert.strictEqual(
             modals.last.body,
-            "This replaces this organization's sync settings with a one-time copy of the current global defaults. Later changes to the global defaults will not affect them."
+            "This replaces this organization's sync settings with a one-time copy of the current global defaults. Later changes to the global defaults will not affect them. A record type the defaults turn on sends every existing record of that type to QuickBooks in the background."
         );
         assert.deepEqual(fetch.posts.at(-1), {
             path: 'settings',

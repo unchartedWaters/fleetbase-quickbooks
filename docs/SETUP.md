@@ -347,7 +347,7 @@ Sync frequency is the schedule. It is separate from each entity switch. There is
 no Enable schedule control, and a stored `enabled` flag does not stop the
 scheduler. Sync now with no connection returns HTTP 422 and does not save an
 activity row. The console shows that error. A stored realm that needs reconnect
-returns HTTP 422 and saves a skipped activity row.
+returns HTTP 422 and saves a skipped activity row, at most once per cooldown.
 
 ### Environments
 
@@ -419,9 +419,11 @@ Sync now, reconcile, the customer import and Connect each run at most once
 per organization in `QUICKBOOKS_MANUAL_COOLDOWN_SECONDS` seconds (config key
 `quickbooks.manual_cooldown_seconds`, default 30; 0 turns it off). A repeat
 inside that time answers HTTP 429 and queues nothing, and the console shows
-"This was started a moment ago. Try again in a minute." While QuickBooks must
-be connected again, the skipped sync is written to Activity at most once per
-cooldown. If the cache cannot be reached, the actions are not limited.
+"This was started a moment ago. Try again shortly." A Connect that is
+cancelled at Intuit or fails to finish, and an action that could not be
+queued, can be tried again at once. While QuickBooks must be connected again,
+the skipped sync is written to Activity at most once per cooldown. If the cache
+cannot be reached, the actions are not limited.
 
 Connect uses PKCE (`S256`). The API stores a code verifier with the OAuth state and sends the code challenge on `https://appcenter.intuit.com/connect/oauth2` with scope `com.intuit.quickbooks.accounting`.
 
@@ -541,7 +543,9 @@ after the imported customers are saved, and the customers and their links are
 saved together, so a worker that stops before the save imports those pages
 again.
 
-Sync now with no connection returns HTTP 422 and does not save an activity row. The console shows that error. A stored realm that needs reconnect returns HTTP 422 and saves a skipped activity row.
+Sync now with no connection returns HTTP 422 and does not save an activity
+row. The console shows that error. A stored realm that needs reconnect returns
+HTTP 422 and saves a skipped activity row, at most once per cooldown.
 
 Activity rows list, under Results, only the counts above zero: created,
 updated, unchanged (aligned), linked, voided, not matched, skipped, and failed.

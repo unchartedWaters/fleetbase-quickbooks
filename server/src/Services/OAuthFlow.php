@@ -73,9 +73,16 @@ class OAuthFlow
         return $handle;
     }
 
-    public function forget(string $state): void
+    /**
+     * @return string|null the organization that started this state, if it is still known
+     */
+    public function forget(string $state): ?string
     {
-        Cache::forget($this->key($state));
+        $stored = Cache::pull($this->key($state));
+
+        $company = is_array($stored) === true ? ($stored['company_uuid'] ?? null) : null;
+
+        return is_string($company) === true ? $company : null;
     }
 
     /**

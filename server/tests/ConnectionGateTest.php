@@ -307,7 +307,7 @@ test('sync now twice in a row queues one batch and answers 429 the second time',
                 expect($first->getStatusCode())->toBe(200)
                     ->and($second->getStatusCode())->toBe(429)
                     ->and($second->getData(true)['message'])
-                    ->toBe('This was started a moment ago. Try again in a minute.');
+                    ->toBe('This was started a moment ago. Try again shortly.');
             }
 
             expect(array_map(static fn (object $job): string => $job::class, $dispatcher->jobs))->toBe([
@@ -318,6 +318,31 @@ test('sync now twice in a row queues one batch and answers 429 the second time',
     } finally {
         Cache::swap($previous[0]);
         config()->set('quickbooks.manual_cooldown_seconds', $previous[1]);
+        session(['company' => null]);
+    }
+});
+
+test('sync now can be clicked again at once when the job could not be queued', function () {
+    $database = new ControllerDatabase(ControllerDatabase::connected());
+    $previous = config('quickbooks.manual_cooldown_seconds');
+    config()->set('quickbooks.manual_cooldown_seconds', 30);
+    session(['company' => 'company-uuid']);
+
+    try {
+        $database->serve(fn () => gateDispatch(function ($dispatcher) {
+            $controller        = ControllerDatabase::controller();
+            $dispatcher->throw = new RuntimeException('queue down');
+            foreach (['sync', 'reconcile', 'import'] as $action) {
+                expect(fn () => $controller->{$action}(Request::create('/' . $action, 'POST')))
+                    ->toThrow(RuntimeException::class, 'queue down');
+            }
+            $dispatcher->throw = null;
+            foreach (['sync', 'reconcile', 'import'] as $action) {
+                expect($controller->{$action}(Request::create('/' . $action, 'POST'))->getStatusCode())->toBe(200);
+            }
+        }));
+    } finally {
+        config()->set('quickbooks.manual_cooldown_seconds', $previous);
         session(['company' => null]);
     }
 });
@@ -610,8 +635,13 @@ function gateDispatch(callable $callback): void
         /** @var array<int, object> */
         public array $jobs = [];
 
+        public ?Throwable $throw = null;
+
         public function dispatch($command)
         {
+            if ($this->throw !== null) {
+                throw $this->throw;
+            }
             $this->jobs[] = $command;
 
             return $command;

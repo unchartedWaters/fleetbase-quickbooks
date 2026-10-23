@@ -1113,7 +1113,58 @@ test('oauth start twice in a row answers 429 the second time', function () {
 
     expect($first->getStatusCode())->toBe(200)
         ->and($second->getStatusCode())->toBe(429)
-        ->and($second->getData(true)['message'])->toBe('This was started a moment ago. Try again in a minute.');
+        ->and($second->getData(true)['message'])->toBe('This was started a moment ago. Try again shortly.');
+});
+
+test('a cancelled or failed connection does not hold back the next Connect', function () {
+    session(['company' => 'company-uuid', 'user' => 'user-uuid']);
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'                 => 'client-id',
+        'client_secret'             => (new SecretCipher())->encrypt('secret'),
+        'public_oauth_redirect_url' => 'https://example.com/quickbooks/int/v1/oauth/callback',
+        'environment'               => 'sandbox',
+    ];
+    $controller = new ConnectionController(
+        new Authorizer(static fn () => true),
+        new OAuthFlow(new QuickBooksClient()),
+        new SettingsService(
+            new CredentialResolver(),
+            new Fleetbase\Quickbooks\Support\SyncSettingsResolver(),
+            new SecretCipher()
+        ),
+        $store,
+        new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
+    );
+    $previous = [
+        Cache::getFacadeRoot(), config('quickbooks.manual_cooldown_seconds'), config('quickbooks.console_host'),
+    ];
+    Cache::swap(new Repository(new ArrayStore()));
+    config()->set('quickbooks.manual_cooldown_seconds', 30);
+    config()->set('quickbooks.console_host', 'https://console.example.com');
+
+    try {
+        $started = $controller->start(Request::create('/oauth/start', 'POST'));
+        $controller->callback(Request::create('/oauth/callback', 'GET', [
+            'state' => $started->getData(true)['state'],
+            'error' => 'access_denied',
+        ]));
+        $afterCancel = $controller->start(Request::create('/oauth/start', 'POST'));
+        $failed      = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => 'unknown']));
+        $afterFail   = $controller->start(Request::create('/oauth/start', 'POST'));
+        $third       = $controller->start(Request::create('/oauth/start', 'POST'));
+    } finally {
+        Cache::swap($previous[0]);
+        config()->set('quickbooks.manual_cooldown_seconds', $previous[1]);
+        config()->set('quickbooks.console_host', $previous[2]);
+        session(['company' => null, 'user' => null]);
+    }
+
+    expect($started->getStatusCode())->toBe(200)
+        ->and($afterCancel->getStatusCode())->toBe(200)
+        ->and($failed->getStatusCode())->toBe(422)
+        ->and($afterFail->getStatusCode())->toBe(200)
+        ->and($third->getStatusCode())->toBe(429);
 });
 
 test('oauth start rejects missing client id or redirect uri', function () {
