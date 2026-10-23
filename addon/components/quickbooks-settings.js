@@ -453,6 +453,17 @@ export default class QuickbooksSettingsComponent extends Component {
         }
     }
 
+    // The host Toggle is a focusable span that only reacts to clicks, so Space and Enter click it.
+    @action
+    toggleKey(event) {
+        if (this.readOnly || (event.key !== ' ' && event.key !== 'Enter')) {
+            return;
+        }
+
+        event.preventDefault();
+        event.currentTarget.click();
+    }
+
     revealFirstError(errors) {
         const key = firstErrorKey(errors);
         // ember-lifeline rejects the afterRender queue. The render queue is

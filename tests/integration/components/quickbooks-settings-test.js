@@ -1,6 +1,6 @@
 import { module, test } from 'qunit';
 import { setupRenderingTest } from 'dummy/tests/helpers';
-import { click, fillIn, render, settled, waitUntil } from '@ember/test-helpers';
+import { click, fillIn, render, settled, triggerKeyEvent, waitUntil } from '@ember/test-helpers';
 import { hbs } from 'ember-cli-htmlbars';
 import Service from '@ember/service';
 import ModalsManagerStub from '../../helpers/modals-manager-stub';
@@ -1097,6 +1097,49 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-error='customer_direction']").doesNotExist();
         assert.dom("[data-test-error='payment_conflict']").doesNotExist();
         assert.dom("[data-test-error='payment_direction']").doesNotExist();
+    });
+
+    test('a Data Resolution switch toggles with Space and Enter', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: false });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @canEdit={{true}} @onSave={{this.onSave}} />`);
+
+        const wallet = "[data-test-sync='wallet_enabled']";
+        assert.dom(wallet).hasAttribute('aria-checked', 'false');
+        assert.dom(wallet).hasAttribute('tabindex', '0');
+        assert.dom(wallet).doesNotHaveAttribute('aria-disabled');
+
+        await triggerKeyEvent(wallet, 'keydown', ' ');
+        assert.dom(wallet).hasAttribute('aria-checked', 'true');
+
+        await triggerKeyEvent(wallet, 'keydown', 'Enter');
+        assert.dom(wallet).hasAttribute('aria-checked', 'false');
+
+        await triggerKeyEvent(wallet, 'keydown', 'a');
+        assert.dom(wallet).hasAttribute('aria-checked', 'false', 'other keys do nothing');
+
+        await triggerKeyEvent(wallet, 'keydown', 'Enter');
+        await click(saveButton());
+        assert.true(this.saved.sync.wallet_enabled);
+    });
+
+    test('a read-only switch is announced as disabled and ignores keys', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: false });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @canEdit={{false}} @settingsLoaded={{true}} />`);
+
+        const wallet = "[data-test-sync='wallet_enabled']";
+        assert.dom(wallet).hasAttribute('aria-disabled', 'true');
+        assert.dom(wallet).hasAttribute('tabindex', '-1');
+        assert.dom(wallet).hasAttribute('aria-checked', 'false');
+
+        await triggerKeyEvent(wallet, 'keydown', ' ');
+        await triggerKeyEvent(wallet, 'keydown', 'Enter');
+        assert.dom(wallet).hasAttribute('aria-checked', 'false');
     });
 
     test('connect does not send an import flag and customers stay on the Customers switch', async function (assert) {

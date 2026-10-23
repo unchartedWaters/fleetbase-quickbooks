@@ -225,7 +225,11 @@
                                 @disabled={{@readOnly}}
                                 @label={{policy.label}}
                                 aria-label={{policy.label}}
+                                aria-checked={{if policy.enabled "true" "false"}}
+                                aria-disabled={{if @readOnly "true"}}
+                                tabindex={{if @readOnly "-1" "0"}}
                                 data-test-sync={{policy.enabledKey}}
+                                {{on "keydown" @onToggleKey}}
                             />
                         </div>
                         <InputGroup @name={{t "quickbooks.settings.primary"}} @required={{policy.enabled}} as |id|>
