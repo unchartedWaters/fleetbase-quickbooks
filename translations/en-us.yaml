@@ -3,6 +3,7 @@ quickbooks:
     title: QuickBooks Setup
     card-title: Connection
     loading: Loading QuickBooks connection.
+    finishing: Finishing the QuickBooks connection…
     unavailable: QuickBooks status could not be loaded.
     settings-unavailable: QuickBooks settings could not be loaded.
     reauth-status: QuickBooks needs to be connected again before sync can continue. Choose Connect to QuickBooks.
