@@ -8,7 +8,7 @@ namespace Fleetbase\Quickbooks\Support;
 class CustomerMapper
 {
     /** QuickBooks keeps at most this many characters of a customer's Notes. */
-    public const NOTES_MAX_LENGTH = 2000;
+    public const NOTES_MAX_LENGTH = 4000;
 
     /**
      * The customer name in a form QuickBooks accepts as a DisplayName. QuickBooks rejects a
