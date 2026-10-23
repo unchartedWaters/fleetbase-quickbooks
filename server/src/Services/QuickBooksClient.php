@@ -1686,7 +1686,8 @@ class QuickBooksClient
 
     private function throwIfFailed(Response $response): void
     {
-        if ($response->successful() === true) {
+        $status = self::failedStatus($response);
+        if ($status === null) {
             return;
         }
 
@@ -1706,24 +1707,42 @@ class QuickBooksClient
 
         // Intuit's detail is its own English text, so it is a param and is shown as given.
         $detail  = implode(': ', array_filter($details, static fn (string $part): bool => $part !== ''));
-        $status  = (string) $response->status();
         $message = $detail === ''
-            ? Translation::encode('quickbooks.messages.request-failed', ['status' => $status])
+            ? Translation::encode('quickbooks.messages.request-failed', ['status' => (string) $status])
             : Translation::encode(
                 'quickbooks.messages.request-failed-detail',
-                ['status' => $status, 'detail' => $detail]
+                ['status' => (string) $status, 'detail' => $detail]
             );
         // A 400 with Intuit's own explanation is a refusal of what was sent, not a failed call.
         $faultDetail = is_array($fault) === true ? trim((string) ($fault['Detail'] ?? $fault['Message'] ?? '')) : '';
-        if ($response->status() === 400 && $faultDetail !== '' && is_string($oauthError) === false) {
+        if ($status === 400 && $faultDetail !== '' && is_string($oauthError) === false) {
             $message = Translation::encode('quickbooks.messages.request-rejected', ['detail' => $faultDetail]);
         }
 
         // A stale SyncToken only means the record changed in QuickBooks meanwhile: temporary,
         // as batchFaultStatus() treats it inside a batch.
-        $thrown = $response->status() === 400 && $faultCode === '5010' ? 409 : $response->status();
+        $thrown = $status === 400 && $faultCode === '5010' ? 409 : $status;
 
         throw new QuickBooksException($thrown, $message, $response->header('Retry-After'), $faultCode);
+    }
+
+    /**
+     * The status to throw, or null for a success. Intuit can answer 200 with a top-level Fault
+     * and change nothing (seen on a Preferences update), so that answer is a refusal (400), or
+     * a refused access token (401) for an authentication fault. A batch keeps its items' faults
+     * inside BatchItemResponse, and postBatch() reads those.
+     */
+    private static function failedStatus(Response $response): ?int
+    {
+        if ($response->successful() === false) {
+            return $response->status();
+        }
+        $fault = $response->json('Fault');
+        if (is_array($fault) === false) {
+            return null;
+        }
+
+        return self::isAuthenticationFault(['Fault' => $fault]) === true ? 401 : 400;
     }
 
     /**
