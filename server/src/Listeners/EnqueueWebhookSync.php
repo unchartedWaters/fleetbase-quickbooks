@@ -20,6 +20,14 @@ use Fleetbase\Quickbooks\Support\WebhookPaymentLinks;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 
+/**
+ * @phpstan-type PaymentTarget array{
+ *     invoice: string,
+ *     invoices: array<int, string>,
+ *     keyed_by_payment: bool,
+ *     quickbooks_invoices: array<int, string>
+ * }
+ */
 class EnqueueWebhookSync
 {
     /** Activity notes for a QuickBooks delete that Fleetbase kept, by record type. */
@@ -561,10 +569,10 @@ class EnqueueWebhookSync
     }
 
     /**
-     * @param array<string, mixed>                                                                                                  $settings
-     * @param array{invoice: string, invoices: array<int, string>, keyed_by_payment: bool, quickbooks_invoices: array<int, string>} $target
-     * @param array<string, array{local_type: string, local_uuid: string}>                                                          $records
-     * @param array<int, array{entity: string, id: string, operation: string}>                                                      $inbound
+     * @param array<string, mixed>                                             $settings
+     * @param PaymentTarget                                                    $target
+     * @param array<string, array{local_type: string, local_uuid: string}>     $records
+     * @param array<int, array{entity: string, id: string, operation: string}> $inbound
      */
     private function collectPaymentTarget(
         array $settings,

@@ -761,8 +761,10 @@ class ConnectionController extends QuickbooksController
         }
 
         // A blocked connection is recorded in Activity at most once per cooldown.
-        if (ConnectionGate::hasRealm($row) === false
-            || $this->firstInCooldown('quickbooks.blocked.' . $companyUuid . '.' . $trigger) === false) {
+        if (
+            ConnectionGate::hasRealm($row) === false
+            || $this->firstInCooldown('quickbooks.blocked.' . $companyUuid . '.' . $trigger) === false
+        ) {
             return response()->json(['message' => Translation::render($message)], 422);
         }
 

@@ -84,8 +84,10 @@ class FlagInvoiceItemObserver
             // Untracked organizations stop here, before the full invoice and its relations are read.
             // The listener is a singleton, so its directory remembers untracked organizations.
             $listener = Container::getInstance()->make(FlagInvoiceListener::class);
-            if ($listener instanceof FlagInvoiceListener === false
-                || $this->tracked($item, $invoiceUuid, $listener) === false) {
+            if (
+                $listener instanceof FlagInvoiceListener === false
+                || $this->tracked($item, $invoiceUuid, $listener) === false
+            ) {
                 return;
             }
 

@@ -1525,9 +1525,12 @@ class FleetbaseDirectory
         $this->loaded['wallets']   = $ledger->wallets;
         // Only rows this run needs are loaded. Whether a QuickBooks record already belongs to
         // another Fleetbase record, of any organization on that company, is read when it is asked.
-        $ledger->remoteLinkReader = function (string $realm, string $entity, array $ids, string $localUuid) use (
-            $companyUuid
-        ): array {
+        $ledger->remoteLinkReader = function (
+            string $realm,
+            string $entity,
+            array $ids,
+            string $localUuid,
+        ) use ($companyUuid): array {
             return $this->claimedRemoteIds($companyUuid, $realm, $entity, $ids, $localUuid);
         };
         $ledger->customerLinkReader = $this->customerLinkReader($companyUuid);
