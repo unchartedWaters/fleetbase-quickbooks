@@ -4897,7 +4897,7 @@ class SyncEngine
         $rediscoverable = $this->paymentRediscoverable($remote, $invoiceId, $remoteInvoice);
         $byPayment      = $this->storeByPaymentId($rediscoverable, $legacyId, $paymentId);
         $attributes     = $this->paymentLinkAttributes($ledger, $connection, $invoiceUuid, $paymentId, $remote, $byPayment, $rediscoverable, $legacyId);
-        $attributes     = $this->withInvoiceToken($ledger, $attributes, $invoiceUuid, $legacy);
+        $attributes     = $this->withInvoiceToken($ledger, $attributes, $invoiceUuid, $legacy, $remote);
         $action         = $this->paymentLinkAction($ledger, $company, $realm, $paymentId, $byPayment, $legacy, $legacyId);
         if ($action === 'rekey') {
             $this->rekeyPaymentLink($ledger, $company, $realm, $invoiceUuid, $attributes);
@@ -4913,15 +4913,21 @@ class SyncEngine
 
     /**
      * The payment link attributes, with the token this invoice synced kept beside the tokens
-     * of the other invoices the payment pays (see PaymentTokens).
+     * of the other invoices the payment still pays (see PaymentTokens).
      *
      * @param array<string, mixed>      $attributes
      * @param array<string, mixed>|null $legacy
+     * @param array<string, mixed>      $remote     the QuickBooks payment
      *
      * @return array<string, mixed>
      */
-    private function withInvoiceToken(SyncLedger $ledger, array $attributes, string $invoiceUuid, ?array $legacy): array
-    {
+    private function withInvoiceToken(
+        SyncLedger $ledger,
+        array $attributes,
+        string $invoiceUuid,
+        ?array $legacy,
+        array $remote,
+    ): array {
         $current = $ledger->link(
             (string) $attributes['company_uuid'],
             (string) $attributes['realm_id'],
@@ -4929,8 +4935,46 @@ class SyncEngine
             (string) $attributes['local_uuid']
         ) ?? $legacy;
         $token = (string) $attributes['sync_token'];
+        $stale = $this->invoicesNoLongerPaid($ledger, $attributes, $current, $remote);
 
-        return array_merge($attributes, [PaymentTokens::COLUMN => PaymentTokens::with($current, $invoiceUuid, $token)]);
+        return array_merge($attributes, [
+            PaymentTokens::COLUMN => PaymentTokens::with($current, $invoiceUuid, $token, $stale),
+        ]);
+    }
+
+    /**
+     * The invoices whose token the payment link keeps although the payment no longer pays them:
+     * their linked QuickBooks invoice is not in the payment's lines. An invoice whose link this
+     * run did not load is kept, and so is every one when the payment lists no invoice.
+     *
+     * @param array<string, mixed>      $attributes
+     * @param array<string, mixed>|null $current
+     * @param array<string, mixed>      $remote
+     *
+     * @return array<int, string>
+     */
+    private function invoicesNoLongerPaid(SyncLedger $ledger, array $attributes, ?array $current, array $remote): array
+    {
+        $paid = [];
+        foreach (is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [] as $line) {
+            foreach (is_array($line['LinkedTxn'] ?? null) === true ? $line['LinkedTxn'] : [] as $txn) {
+                $invoice = is_array($txn) === true && in_array((string) ($txn['TxnType'] ?? ''), ['', 'Invoice'], true);
+                if ($invoice === true) {
+                    $paid[(string) ($txn['TxnId'] ?? '')] = true;
+                }
+            }
+        }
+        $company = (string) $attributes['company_uuid'];
+        $realm   = (string) $attributes['realm_id'];
+        $stale   = [];
+        foreach (array_keys(PaymentTokens::all($current)) as $uuid) {
+            $link = $ledger->link($company, $realm, 'invoice', $uuid);
+            if ($paid !== [] && is_array($link) === true && isset($paid[(string) ($link['qbo_id'] ?? '')]) === false) {
+                $stale[] = $uuid;
+            }
+        }
+
+        return $stale;
     }
 
     /**

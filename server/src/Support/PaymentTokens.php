@@ -59,16 +59,46 @@ class PaymentTokens
     }
 
     /**
-     * The column value once $invoiceUuid synced the payment at $token.
+     * The column value once $invoiceUuid synced the payment at $token. The invoices in $stale,
+     * which the payment no longer pays, lose their token.
      *
      * @param array<string, mixed>|null $link
+     * @param array<int, string>        $stale
      */
-    public static function with(?array $link, string $invoiceUuid, string $token): string
+    public static function with(?array $link, string $invoiceUuid, string $token, array $stale = []): string
     {
-        $tokens = self::all($link);
+        $tokens = array_diff_key(self::all($link), array_flip($stale));
         if ($invoiceUuid !== '') {
             $tokens[$invoiceUuid] = $token;
         }
+
+        return self::encode($tokens);
+    }
+
+    /**
+     * Merge what this run changed ($ours against $base, the value it loaded) into the value
+     * stored now ($theirs), so an invoice token another run stored meanwhile is kept. Tokens
+     * this run set win, and tokens it removed are removed.
+     */
+    public static function merge(?string $base, ?string $ours, ?string $theirs): string
+    {
+        $loaded = self::all([self::COLUMN => $base]);
+        $mine   = self::all([self::COLUMN => $ours]);
+        $merged = self::all([self::COLUMN => $theirs]);
+        foreach ($mine as $invoiceUuid => $token) {
+            if (($loaded[$invoiceUuid] ?? null) !== $token) {
+                $merged[$invoiceUuid] = $token;
+            }
+        }
+
+        return self::encode(array_diff_key($merged, array_diff_key($loaded, $mine)));
+    }
+
+    /**
+     * @param array<string, string> $tokens
+     */
+    private static function encode(array $tokens): string
+    {
         ksort($tokens);
 
         return (string) json_encode($tokens, JSON_UNESCAPED_SLASHES);

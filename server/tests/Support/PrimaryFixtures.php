@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Tests\Support;
 
 use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\PaymentTokens;
 
 /**
  * Records for the QuickBooks-as-Primary change detection tests: one company, one linked
@@ -31,6 +32,16 @@ class PrimaryFixtures
     public static function token(SyncLedger $ledger, string $type, string $uuid): string
     {
         return (string) ($ledger->link('company-uuid', 'realm-1', $type, $uuid)['sync_token'] ?? '');
+    }
+
+    /**
+     * The payment SyncToken each invoice last synced, as the payment link keeps them.
+     *
+     * @return array<string, string>
+     */
+    public static function invoiceTokens(SyncLedger $ledger, string $paymentId): array
+    {
+        return PaymentTokens::all($ledger->link('company-uuid', 'realm-1', 'payment', $paymentId));
     }
 
     /**

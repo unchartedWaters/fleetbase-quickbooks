@@ -15,6 +15,7 @@ use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\LedgerPaymentDates;
+use Fleetbase\Quickbooks\Support\PaymentTokens;
 use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
@@ -489,17 +490,54 @@ class FleetbaseDirectory
                     $this->upsertLinkByLocalKey($link);
                     continue;
                 }
-                $changedLinks[] = ['uuid' => $uuid, 'columns' => $changed];
+                $changedLinks[] = ['uuid' => $uuid, 'columns' => $changed, 'loaded' => $loaded];
                 continue;
             }
             $freshLinks[] = $link;
         }
         $inserted = $this->insertLinks($freshLinks);
         $this->releaseLinkIdentities(array_merge($identityReleases, $inserted['releases']));
-        $this->updateByUuid(new Link(), $changedLinks, $linkFields);
+        $this->updateByUuid(new Link(), $this->withMergedInvoiceTokens($changedLinks), $linkFields);
         $this->updateByUuid(new Link(), $inserted['updates'], $linkFields);
         $this->dropStaleInvoicePaymentLinks($ledger, $skipped);
         $this->rememberPaymentInvoices($ledger, $skipped);
+    }
+
+    /**
+     * A payment link's invoice tokens (see PaymentTokens) are merged into the value stored now,
+     * read again under a lock in this save, so a token another run stored after this one
+     * loaded the link is kept.
+     *
+     * @param array<int, array{uuid: string, columns: array<string, mixed>, loaded: array<string, mixed>}> $changedLinks
+     *
+     * @return array<int, array{uuid: string, columns: array<string, mixed>, loaded: array<string, mixed>}>
+     */
+    private function withMergedInvoiceTokens(array $changedLinks): array
+    {
+        $column = PaymentTokens::COLUMN;
+        $uuids  = [];
+        foreach ($changedLinks as $change) {
+            if (array_key_exists($column, $change['columns']) === true) {
+                $uuids[] = $change['uuid'];
+            }
+        }
+        $stored = [];
+        foreach (array_chunk($uuids, 500) as $chunk) {
+            $stored += Link::query()->whereIn('uuid', $chunk)->lockForUpdate()->pluck($column, 'uuid')->all();
+        }
+        foreach ($changedLinks as $index => $change) {
+            $merges = array_key_exists($column, $change['columns']) === true;
+            if ($merges === false || array_key_exists($change['uuid'], $stored) === false) {
+                continue;
+            }
+            $changedLinks[$index]['columns'][$column] = PaymentTokens::merge(
+                is_string($change['loaded'][$column] ?? null) === true ? $change['loaded'][$column] : null,
+                is_string($change['columns'][$column]) === true ? $change['columns'][$column] : null,
+                is_string($stored[$change['uuid']]) === true ? $stored[$change['uuid']] : null
+            );
+        }
+
+        return $changedLinks;
     }
 
     /**

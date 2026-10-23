@@ -870,6 +870,44 @@ test('a payment link keeps the payment token of each invoice it pays', function 
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
+test('a payment link save keeps an invoice token another run stored meanwhile', function () {
+    [$restore] = directorySqlite();
+    try {
+        directoryWebhookSchema(DB::connection('sqlite')->getSchemaBuilder());
+        DB::table('quickbooks_connections')->insert([
+            'uuid'         => 'conn-1',
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'environment'  => 'sandbox',
+            'needs_reauth' => 0,
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ]);
+        $directory       = new FleetbaseDirectory();
+        $ledger          = $directory->load('company-uuid')['ledger'];
+        $ledger->links[] = directoryWebhookLink('company-uuid', 'realm-1', 'payment', '4', 'Payment', '4')
+            + ['invoice_tokens' => '{"inv-1":"1","inv-3":"1"}'];
+        $directory->save($ledger);
+        $payment = static fn () => Link::query()->where('local_type', 'payment')->where('local_uuid', '4');
+
+        $ledger = $directory->load('company-uuid')['ledger'];
+        // Another run stores the token of inv-2 after this run loaded the link.
+        $payment()->update(['invoice_tokens' => '{"inv-1":"1","inv-2":"3","inv-3":"1"}']);
+        $ledger->rebuildIndex();
+        $ledger->putLink([
+            'company_uuid'   => 'company-uuid',
+            'local_type'     => 'payment',
+            'local_uuid'     => '4',
+            'invoice_tokens' => '{"inv-1":"2"}',
+        ]);
+        $directory->save($ledger);
+
+        expect((string) $payment()->value('invoice_tokens'))->toBe('{"inv-1":"2","inv-2":"3"}');
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
 test('a pending invoice load includes a payment stored under its quickbooks id and the line items', function () {
     [$restore] = directorySqlite();
     try {
