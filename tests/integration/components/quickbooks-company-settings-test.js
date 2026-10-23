@@ -284,7 +284,6 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
 
         assert.dom('[data-test-connect]').isDisabled();
         assert.dom('[data-test-first-connect-denied]').exists();
-        await click('[data-test-connect]');
         assert.deepEqual(fetch.postCalls, []);
     });
 

@@ -1197,7 +1197,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         await triggerKeyEvent(wallet, 'keydown', 'Enter');
         assert.dom(wallet).hasAttribute('aria-checked', 'false');
 
-        await triggerKeyEvent(wallet, 'keydown', 'a');
+        await triggerKeyEvent(wallet, 'keydown', 65);
         assert.dom(wallet).hasAttribute('aria-checked', 'false', 'other keys do nothing');
 
         await triggerKeyEvent(wallet, 'keydown', 'Enter');

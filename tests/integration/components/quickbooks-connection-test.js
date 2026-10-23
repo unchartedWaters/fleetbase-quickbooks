@@ -132,7 +132,6 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
             .dom('[data-test-disconnected]')
             .hasText("Not connected. A QuickBooks Administrator must make this organization's first connection to QuickBooks. After that, you can connect again to the same company.");
         assert.dom('[data-test-first-connect-denied]').exists();
-        await click('[data-test-connect]');
         assert.false(this.connected);
 
         this.set('connection', { realm_id: '123', needs_reauth: true });

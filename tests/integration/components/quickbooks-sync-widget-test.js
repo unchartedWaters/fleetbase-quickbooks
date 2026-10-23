@@ -268,6 +268,7 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
 
     test('the last sync time is formatted in the console locale', async function (assert) {
         this.owner.register('service:abilities', OperatorAbilitiesStubService);
+        this.owner.unregister('service:fetch');
         this.owner.register('service:fetch', PendingSummaryFetchStubService);
         const finished = '2026-03-01T10:05:00Z';
         const expected = this.owner.lookup('service:intl').formatDate(new Date(finished), { dateStyle: 'medium', timeStyle: 'short' });
