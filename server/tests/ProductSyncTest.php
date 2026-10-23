@@ -125,10 +125,37 @@ test('a name held by a product Fleetbase may not take gets a suffixed product of
         ->and(Products::linkOf($ledger, 'Mug')['qbo_id'])->toBe('qb-item-1')
         ->and(Products::linkOf($ledger, 'Mug')['state'])->toBeNull();
 })->with([
-    'inventory'   => [['Type' => 'Inventory']],
-    'sub-product' => [['SubItem' => true, 'ParentRef' => ['value' => '3']]],
-    'inactive'    => [['Active' => false]],
+    'inventory' => [['Type' => 'Inventory']],
+    'inactive'  => [['Active' => false]],
 ]);
+
+test('a QuickBooks sub-product does not hold its name, so the top-level product is used', function () {
+    [$engine, $client]       = qbEngine();
+    $ledger                  = Products::ledger($client);
+    $client->items['qb-4']   = Products::item('qb-4', 'Mug', ['SubItem' => true, 'ParentRef' => ['value' => '3']]);
+    $client->items['qb-5']   = Products::item('qb-5', 'Mug', ['Type' => 'Service']);
+    $ledger->products['p-1'] = Products::product('p-1', 'Mug');
+    $ledger->pending[]       = Products::pending('product', 'p-1');
+
+    $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
+
+    expect(Products::linkOf($ledger, 'Mug')['qbo_id'])->toBe('qb-5')
+        ->and(Products::linkOf($ledger, 'Mug')['state'])->toBe(ProductItems::ADOPTED)
+        ->and($client->itemWrites)->toBe([]);
+});
+
+test('a name only a QuickBooks sub-product has gets a product of that name', function () {
+    [$engine, $client]       = qbEngine();
+    $ledger                  = Products::ledger($client);
+    $client->items['qb-4']   = Products::item('qb-4', 'Mug', ['SubItem' => true, 'ParentRef' => ['value' => '3']]);
+    $ledger->products['p-1'] = Products::product('p-1', 'Mug');
+    $ledger->pending[]       = Products::pending('product', 'p-1');
+
+    $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->itemWrites[0]['create']['Name'])->toBe('Mug')
+        ->and(Products::linkOf($ledger, 'Mug')['qbo_id'])->toBe('qb-item-1');
+});
 
 test('a name another record already uses in QuickBooks is not taken over', function () {
     [$engine, $client]       = qbEngine();

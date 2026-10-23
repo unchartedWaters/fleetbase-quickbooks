@@ -10,10 +10,13 @@ use Fleetbase\Quickbooks\Support\InvoiceTax;
 test('the sales tax settings come from the QuickBooks preferences and company country', function () {
     $prefs     = ['TaxPrefs' => ['UsingSalesTax' => true, 'TaxGroupCodeRef' => ['value' => '2']]];
     $manual    = InvoiceTax::settings($prefs, 'US');
-    $automated = InvoiceTax::settings(['TaxPrefs' => ['UsingSalesTax' => true, 'PartnerTaxEnabled' => false]], 'US');
+    $automated = InvoiceTax::settings(['TaxPrefs' => ['UsingSalesTax' => true, 'PartnerTaxEnabled' => true]], 'US');
+    // Intuit: false means automated sales tax is on but not set up, so QuickBooks works out no tax.
+    $notSetUp = InvoiceTax::settings(['TaxPrefs' => ['UsingSalesTax' => true, 'PartnerTaxEnabled' => false]], 'US');
 
     expect($manual)->toBe(['mode' => InvoiceTax::US, 'automated' => false, 'rate' => '2'])
         ->and($automated)->toBe(['mode' => InvoiceTax::US, 'automated' => true, 'rate' => null])
+        ->and($notSetUp['automated'])->toBeFalse()
         ->and(InvoiceTax::settings(['TaxPrefs' => ['UsingSalesTax' => false]], 'US')['mode'])->toBe(InvoiceTax::OFF)
         ->and(InvoiceTax::settings([], 'US')['mode'])->toBe(InvoiceTax::OFF)
         ->and(InvoiceTax::settings(['TaxPrefs' => ['UsingSalesTax' => true]], 'GB')['mode'])->toBe(InvoiceTax::GLOBAL);
@@ -53,6 +56,18 @@ test('the invoice rate is the customer rate, then the company rate, never TAX or
         ->and(InvoiceTax::invoiceRate($as(InvoiceTax::US, 'TAX'), null))->toBeNull()
         ->and(InvoiceTax::invoiceRate($as(InvoiceTax::GLOBAL, '2'), null))->toBeNull()
         ->and(InvoiceTax::invoiceRate($as(InvoiceTax::OFF, '2'), null))->toBeNull();
+});
+
+test('with automated sales tax no invoice rate is sent, so QuickBooks chooses it', function () {
+    $automated = ['mode' => InvoiceTax::US, 'automated' => true, 'rate' => '2'];
+    $customer  = ['Taxable' => true, 'DefaultTaxCodeRef' => ['value' => '3']];
+
+    expect(InvoiceTax::invoiceRate($automated, $customer))->toBeNull()
+        ->and(InvoiceTax::plan($automated, $customer, ['svc' => ['Taxable' => true]], ['svc']))->toBe([
+            'lines'  => ['TAX'],
+            'rate'   => null,
+            'global' => null,
+        ]);
 });
 
 test('the tax plan holds each line code, the invoice rate, and the tax-exclusive flag outside the US', function () {

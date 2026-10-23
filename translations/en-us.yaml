@@ -272,7 +272,9 @@ quickbooks:
     product-adopted: 'QuickBooks already has a product named "{name}". Fleetbase uses it as it is and never changes it.'
     product-inactive: 'QuickBooks product "{name}" is inactive, so invoice lines with this name use the "Fleetbase service" item. Make the product active in QuickBooks to use it again.'
     product-name-taken: 'QuickBooks did not accept product "{name}": another QuickBooks product or category already uses that name. Rename one of them, then sync again.'
+    payment-capped: The amount paid in Fleetbase is more than the QuickBooks invoice total, so the payment was sent to QuickBooks for the invoice total. The rest stays recorded in Fleetbase only.
     invoice-no-tax-rate: The invoice was sent, but QuickBooks added no tax because neither the customer nor the company has a sales tax rate in QuickBooks. Set a sales tax rate in QuickBooks and edit the invoice to add the tax.
+    invoice-tax-lowered: QuickBooks worked out less tax for this invoice than Fleetbase had, so the Fleetbase tax, line tax rates and total were changed to the QuickBooks ones and the total went down. A payment above the new total is sent to QuickBooks for the total only. Check which products and customers are taxable, and the sales tax settings, in QuickBooks.
     invoice-tax-from-quickbooks: QuickBooks worked out the tax of this invoice, so the tax rates on its lines in Fleetbase were changed to the QuickBooks rates.
     invoice-number-unconfirmed: QuickBooks did not confirm a free invoice number, so Fleetbase did not create this invoice.
     invoice-number-taken: "QuickBooks invoice number {number} was not copied because another Fleetbase invoice already uses it."
