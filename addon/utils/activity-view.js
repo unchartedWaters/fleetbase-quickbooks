@@ -1,4 +1,5 @@
-function formatWhen(value) {
+// A Date for the component to format in the console locale; an unreadable value stays as text.
+function readWhen(value) {
     if (!value) {
         return '';
     }
@@ -8,7 +9,7 @@ function formatWhen(value) {
         return String(value);
     }
 
-    return when.toLocaleString();
+    return when;
 }
 
 export function activityRows(batches = []) {
@@ -32,7 +33,7 @@ function activityRow(batch, index) {
         failed: countField(batch, 'failed'),
         results: activityResults(batch),
         error: activityError(batch),
-        when: formatWhen(batch.finished_at || batch.created_at),
+        when: readWhen(batch.finished_at || batch.created_at),
     };
 }
 

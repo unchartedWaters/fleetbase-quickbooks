@@ -3,6 +3,7 @@ quickbooks:
     title: QuickBooks Setup
     card-title: Connection
     loading: Loading QuickBooks connection.
+    finishing: Finishing the QuickBooks connection…
     unavailable: QuickBooks status could not be loaded.
     settings-unavailable: QuickBooks settings could not be loaded.
     reauth-status: QuickBooks needs to be connected again before sync can continue. Choose Connect to QuickBooks.
@@ -17,9 +18,10 @@ quickbooks:
     home-currency-wallet: A wallet in another currency fails when it has no QuickBooks account yet and Fleetbase is Primary. A wallet already linked to an account is still sent.
     home-currency-primary: "When QuickBooks is Primary for Accounts / Wallets and changes come from QuickBooks (Both or From QuickBooks), the wallet takes the QuickBooks account's currency."
     income-account: 'Invoice lines use the QuickBooks product of their name: one Fleetbase keeps for each Storefront product and Fleet-Ops fee, else "Fleetbase service", which posts to the income account {account}. Products Fleetbase makes post to that account and are taxed like "Fleetbase service". QuickBooks taxes a line only when its product and the customer are taxable. To change the account or whether lines are taxed, edit the products in QuickBooks.'
-    disconnected-status: Not connected. Choose Connect to QuickBooks. Fleetbase then syncs customers, invoices, payments, and wallets with QuickBooks Online.
-    disconnected-no-permission: Not connected. You do not have permission to connect QuickBooks. Fleetbase syncs customers, invoices, payments, and wallets with QuickBooks Online after QuickBooks is connected.
+    disconnected-status: Not connected. Choose Connect to QuickBooks. Fleetbase then syncs customers, invoices, payments, wallets, and products with QuickBooks Online.
+    disconnected-no-permission: Not connected. You do not have permission to connect QuickBooks. Fleetbase syncs customers, invoices, payments, wallets, and products with QuickBooks Online after QuickBooks is connected.
     disconnected-unknown: Not connected.
+    disconnected-first-connect: Not connected. A QuickBooks Administrator must make this organization's first connection to QuickBooks. After that, you can connect again to the same company.
     disconnected-save-first: Not connected. An installation administrator must enter the QuickBooks credentials in Admin → QuickBooks → Settings before you can connect.
     disconnect: Disconnect
     disconnect-denied: You do not have permission to disconnect QuickBooks.
@@ -82,7 +84,13 @@ quickbooks:
       wallet: Wallet "{name}"
       product: Product "{name}"
       item: Product "{name}"
+  menu:
+    setup: QuickBooks Setup
+    activity: QuickBooks Activity
+    admin-settings: Settings
+    header-description: Sync Fleetbase customers, invoices, payments, wallets, and products with QuickBooks Online.
   widget:
+    description: Shows the last sync, how many customers, invoices, payments, wallets, and products are waiting, and Sync now.
     title: QuickBooks Sync
     refresh: Refresh QuickBooks status
     loading: Loading QuickBooks status.
@@ -110,6 +118,8 @@ quickbooks:
     reset-confirm-title: Reset to global defaults?
     reset-confirm: This replaces this organization's sync settings with a one-time copy of the current global defaults. Later changes to the global defaults will not affect them.
     reset-done: Sync settings reset to the global defaults.
+    turn-on-confirm-title: Start syncing these records?
+    turn-on-confirm: "Saving sends every existing record of these types to QuickBooks in the background: {entities}. Accounts / Wallets create one QuickBooks account per wallet."
     authentication: Authentication
     credentials-title: Getting your QuickBooks credentials
     credentials-create-app-before: "No QuickBooks app yet? Start with "
@@ -212,6 +222,7 @@ quickbooks:
     not-connected-reconnect: QuickBooks is not connected. Connect again from QuickBooks Setup.
     connection-works: QuickBooks connection works.
     console-host: Set CONSOLE_HOST so QuickBooks can return to the console.
+    console-host-connect: "QuickBooks cannot be connected yet: Fleetbase does not know the console address to return to after sign-in. Ask an installation administrator to set CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API."
     reauth: QuickBooks needs to be connected again. Choose Connect to QuickBooks on QuickBooks Setup.
     import-reauth: QuickBooks needs to be connected again before import can continue. Choose Connect to QuickBooks on QuickBooks Setup.
     oauth-other-user: This QuickBooks authorization was started by a different user or organization. Connect again from QuickBooks Setup.

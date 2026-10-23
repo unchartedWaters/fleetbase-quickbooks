@@ -52,10 +52,12 @@ class ConnectionController extends QuickbooksController
     public function show(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks view connection', $request);
-        $connection = $this->latestConnection($this->companyUuid($request));
+        $companyUuid = $this->companyUuid($request);
+        $connection  = $this->latestConnection($companyUuid);
 
         return response()->json([
-            'connection' => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
+            'connection'      => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
+            'can_connect_new' => $this->mayConnectFirst($request, $companyUuid),
         ]);
     }
 
@@ -220,6 +222,9 @@ class ConnectionController extends QuickbooksController
     {
         $this->authorizeQuickbooks('quickbooks connect connection', $request);
         $companyUuid = $this->companyUuid($request);
+        if ($this->mayConnectFirst($request, $companyUuid) === false) {
+            return response()->json(['message' => Translation::get(OAuthFlow::CHANGE_COMPANY_MESSAGE)], 403);
+        }
         $credentials = $this->credentials($companyUuid);
         if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '') {
             return response()->json([
@@ -230,6 +235,10 @@ class ConnectionController extends QuickbooksController
             return response()->json([
                 'message' => Translation::get('quickbooks.messages.redirect-not-public'),
             ], 422);
+        }
+        // Without it the callback could not hand the code back to the console after the Intuit sign-in.
+        if ($this->consoleHost() === '') {
+            return response()->json(['message' => Translation::get('quickbooks.messages.console-host-connect')], 422);
         }
         $cooling = $this->cooldown($companyUuid, 'start');
         if ($cooling !== null) {
@@ -425,7 +434,7 @@ class ConnectionController extends QuickbooksController
 
             foreach (Connection::query()->where('company_uuid', $companyUuid)->get() as $row) {
                 $token = $row instanceof Connection === true ? trim((string) $row->refresh_token) : '';
-                if ($token === '') {
+                if ($token === '' || $this->realmSharedWithOthers($row, $companyUuid) === true) {
                     continue;
                 }
 
@@ -444,6 +453,31 @@ class ConnectionController extends QuickbooksController
                 'exception'    => $exception::class,
             ]);
         }
+    }
+
+    /**
+     * Intuit may end the app's connection to the whole QuickBooks company on revoke, which would disconnect
+     * every other organization on it. While another one uses the realm, the revoke is skipped; this
+     * organization's row is still deleted, so Fleetbase no longer uses the token.
+     */
+    private function realmSharedWithOthers(Connection $row, string $companyUuid): bool
+    {
+        $realm = trim((string) $row->realm_id);
+        if ($realm === '') {
+            return false;
+        }
+        $shared = Connection::query()
+            ->where('realm_id', $realm)
+            ->where('company_uuid', '!=', $companyUuid)
+            ->exists();
+        if ($shared === true) {
+            Log::info('QuickBooks token not revoked: another organization uses this QuickBooks company.', [
+                'company_uuid' => $companyUuid,
+                'realm_id'     => $realm,
+            ]);
+        }
+
+        return $shared;
     }
 
     /**
@@ -505,6 +539,16 @@ class ConnectionController extends QuickbooksController
     }
 
     /**
+     * An organization that never connected can only connect a new company, which needs change-company.
+     * complete() still checks the company picked at Intuit.
+     */
+    private function mayConnectFirst(Request $request, string $companyUuid): bool
+    {
+        return $this->authorizer->can('quickbooks change-company connection', $request) === true
+            || $this->lastRealm($companyUuid) !== null;
+    }
+
+    /**
      * The realm of the current connection. After a disconnect, the realm the organization last
      * connected, or for a connection made before that was remembered, the realm of its links.
      */
@@ -559,12 +603,7 @@ class ConnectionController extends QuickbooksController
      */
     protected function redirectToConsole(array $query): RedirectResponse|JsonResponse
     {
-        // fleetbase.console.host falls back to 'fleetbase.io' when CONSOLE_HOST is unset.
-        $host = trim((string) config('quickbooks.console_host', ''));
-        if ($host === '') {
-            $fleetbaseHost = trim((string) config('fleetbase.console.host', ''));
-            $host          = $fleetbaseHost === 'fleetbase.io' ? '' : $fleetbaseHost;
-        }
+        $host = $this->consoleHost();
         if ($host === '') {
             return response()->json(['message' => Translation::get('quickbooks.messages.console-host')], 500);
         }
@@ -573,6 +612,21 @@ class ConnectionController extends QuickbooksController
         }
 
         return new RedirectResponse(rtrim($host, '/') . '/quickbooks?' . http_build_query($query));
+    }
+
+    /**
+     * The console origin the OAuth callback returns to, or '' when it is not known.
+     */
+    protected function consoleHost(): string
+    {
+        $host = trim((string) config('quickbooks.console_host', ''));
+        if ($host === '') {
+            // fleetbase.console.host falls back to 'fleetbase.io' when CONSOLE_HOST is unset.
+            $fleetbaseHost = trim((string) config('fleetbase.console.host', ''));
+            $host          = $fleetbaseHost === 'fleetbase.io' ? '' : $fleetbaseHost;
+        }
+
+        return $host;
     }
 
     /**

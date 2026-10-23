@@ -19,6 +19,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
+use Fleetbase\Quickbooks\Tests\Support\LastRealmController;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
@@ -598,6 +599,8 @@ test('a path-only computed callback uses a full public oauth url and otherwise s
 
     try {
         expect(SettingController::internalOAuthRedirectUrl())->toBe('/quickbooks/int/v1/oauth/callback');
+        // Connect also needs the console address the callback returns to.
+        config()->set('quickbooks.console_host', 'https://console.example.com');
 
         $kept = qbOAuthRedirect($controller->start(Request::create('/oauth/start', 'POST', [
             'company_uuid' => 'company-uuid',
@@ -619,6 +622,52 @@ test('a path-only computed callback uses a full public oauth url and otherwise s
             'company_uuid' => 'company-uuid',
         ]));
         expect($invalid->getStatusCode())->toBe(422);
+    } finally {
+        qbRestoreConfig($previous);
+        session(['company' => null]);
+    }
+});
+
+test('oauth start refuses before Intuit when no console host is configured', function () {
+    session(['company' => 'company-uuid']);
+    $previous = qbRememberConfig(['app.url', 'fleetbase.url', 'fleetbase.console.host', 'quickbooks.console_host']);
+    config()->set('app.url', null);
+    config()->set('fleetbase.url', null);
+    config()->set('fleetbase.console.host', 'fleetbase.io');
+    config()->set('quickbooks.console_host', null);
+    $public                                 = 'https://example.com/quickbooks/int/v1/oauth/callback';
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'                 => 'client-id',
+        'client_secret'             => (new SecretCipher())->encrypt('secret'),
+        'public_oauth_redirect_url' => $public,
+        'environment'               => 'sandbox',
+    ];
+    $controller = new ConnectionController(
+        new Authorizer(static fn () => true),
+        new OAuthFlow(new QuickBooksClient()),
+        new SettingsService(
+            new CredentialResolver(),
+            new Fleetbase\Quickbooks\Support\SyncSettingsResolver(),
+            new SecretCipher()
+        ),
+        $store,
+        new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
+    );
+    $start = static fn (): JsonResponse => $controller->start(Request::create('/oauth/start', 'POST'));
+
+    try {
+        $refused = $start();
+        config()->set('fleetbase.console.host', 'console.example.com');
+        $fleetbaseHost = $start();
+
+        expect($refused->getStatusCode())->toBe(422)
+            ->and($refused->getData(true))->not->toHaveKey('url')
+            ->and($refused->getData(true)['message'])->toBe('QuickBooks cannot be connected yet: Fleetbase does not'
+                . ' know the console address to return to after sign-in. Ask an installation administrator to set'
+                . ' CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API.')
+            ->and($fleetbaseHost->getStatusCode())->toBe(200)
+            ->and(qbOAuthRedirect($fleetbaseHost))->toBe($public);
     } finally {
         qbRestoreConfig($previous);
         session(['company' => null]);
@@ -800,6 +849,7 @@ test('oauth complete sends the redirect uri used at start even if the saved one 
 test('an operator may only reconnect the QuickBooks company the organization already uses', function (
     bool $administrator,
     ?string $lastRealm,
+    bool $startAllowed,
     bool $allowed,
 ) {
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
@@ -822,43 +872,21 @@ test('an operator may only reconnect the QuickBooks company the organization alr
         'client_secret' => (new SecretCipher())->encrypt('secret'),
         'environment'   => 'sandbox',
     ];
-    $operator = (new Quickbooks())->policies[1]['permissions'];
-    $checker  = $administrator === true
-        ? static fn (): bool => true
-        : static fn (string $permission): bool => in_array($permission, $operator, true);
-    $authorizer = new Authorizer($checker);
-    $flow       = new OAuthFlow(new QuickBooksClient());
-    $settings   = new SettingsService(
-        new CredentialResolver(),
-        new Fleetbase\Quickbooks\Support\SyncSettingsResolver(),
-        new SecretCipher()
-    );
-    $probe      = new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient());
-    $controller = new class($authorizer, $flow, $settings, $store, $probe) extends ConnectionController {
-        public ?string $last = null;
-
-        /** @var array<string, mixed>|null */
-        public ?array $saved = null;
-
-        protected function persist(array $connection): void
-        {
-            $this->saved = $connection;
-        }
-
-        protected function connectionIsStored(string $companyUuid): bool
-        {
-            return $this->saved !== null;
-        }
-
-        protected function lastRealm(string $companyUuid): ?string
-        {
-            return $this->last;
-        }
-    };
-    $controller->last = $lastRealm;
+    $controller = LastRealmController::make($administrator, $lastRealm, $store);
 
     try {
-        $started  = $controller->start(Request::create('/oauth/start', 'POST'));
+        $started = $controller->start(Request::create('/oauth/start', 'POST'));
+        if ($startAllowed === false) {
+            // A first connection the caller cannot make is refused before anyone signs in at Intuit.
+            expect($started->getStatusCode())->toBe(403)
+                ->and($started->getData(true))->not->toHaveKey('url')
+                ->and($started->getData(true)['message'])->toBe(
+                    'Only a QuickBooks Administrator can connect this organization to a new or different QuickBooks '
+                    . 'company. You can connect again to the QuickBooks company it already uses.'
+                );
+
+            return;
+        }
         $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
             'state'   => (string) $started->getData(true)['state'],
             'code'    => 'code',
@@ -893,12 +921,42 @@ test('an operator may only reconnect the QuickBooks company the organization alr
         session(['company' => null, 'user' => null]);
     }
 })->with([
-    'operator, same company'           => [false, '9341453000000001', true],
-    'operator, different company'      => [false, '9341453000000999', false],
-    'operator, first connection'       => [false, null, false],
-    'administrator, different company' => [true, '9341453000000999', true],
-    'administrator, first connection'  => [true, null, true],
+    'operator, same company'           => [false, '9341453000000001', true, true],
+    'operator, different company'      => [false, '9341453000000999', true, false],
+    'operator, first connection'       => [false, null, false, false],
+    'administrator, different company' => [true, '9341453000000999', true, true],
+    'administrator, first connection'  => [true, null, true, true],
 ]);
+
+test('oauth start refuses an operator whose organization never connected', function () {
+    session(['company' => 'company-uuid', 'user' => 'user-uuid']);
+    $previous = qbRememberConfig(['app.url', 'fleetbase.url', 'fleetbase.console.host', 'quickbooks.console_host']);
+    config()->set('app.url', 'https://example.com');
+    config()->set('fleetbase.url', null);
+    config()->set('quickbooks.console_host', 'https://console.example.com');
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'     => 'client-id',
+        'client_secret' => (new SecretCipher())->encrypt('secret'),
+        'environment'   => 'sandbox',
+    ];
+
+    try {
+        $refused = LastRealmController::make(false, null, $store)->start(Request::create('/oauth/start', 'POST'));
+        $again   = LastRealmController::make(false, '9341453000000001', $store)->start(
+            Request::create('/oauth/start', 'POST')
+        );
+
+        expect($refused->getStatusCode())->toBe(403)
+            ->and($refused->getData(true))->not->toHaveKey('url')
+            ->and($refused->getData(true)['message'])->toContain('Only a QuickBooks Administrator can connect')
+            ->and($again->getStatusCode())->toBe(200)
+            ->and((string) $again->getData(true)['url'])->toContain('appcenter.intuit.com');
+    } finally {
+        qbRestoreConfig($previous);
+        session(['company' => null, 'user' => null]);
+    }
+});
 
 test('oauth complete skips customer import when customers are turned off', function () {
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);

@@ -2,7 +2,7 @@ import { module, test } from 'qunit';
 import { setupTest } from 'dummy/tests/helpers';
 import extension from '@unchartedwaters/quickbooks-engine/extension';
 
-function captureRegistration() {
+function captureRegistration(intl = null) {
     const headerItems = [];
     const adminItems = [];
     const adminPanels = [];
@@ -19,6 +19,9 @@ function captureRegistration() {
                         transitions.push(args);
                     },
                 };
+            }
+            if (name === 'service:intl') {
+                return intl;
             }
 
             return null;
@@ -85,6 +88,23 @@ module('Unit | extension', function (hooks) {
         ]);
     });
 
+    test('menu titles come from translations', (assert) => {
+        const intl = { exists: (key) => key !== 'quickbooks.menu.activity', t: (key) => `T:${key}` };
+        const { headerItems, adminPanels, settingsItems, widgetCalls } = captureRegistration(intl);
+
+        assert.strictEqual(headerItems[0].title, 'QuickBooks', 'the product name needs no key');
+        assert.strictEqual(headerItems[0].description, 'T:quickbooks.menu.header-description');
+        assert.strictEqual(adminPanels[0].title, 'QuickBooks');
+        assert.strictEqual(adminPanels[0].items[0].title, 'T:quickbooks.menu.admin-settings');
+        assert.strictEqual(settingsItems[0].title, 'T:quickbooks.menu.setup');
+        assert.strictEqual(settingsItems[1].title, 'QuickBooks Activity', 'a key the service does not know falls back to English');
+        assert.strictEqual(settingsItems[0].id, 'quickbooks-setup', 'ids do not follow the translated title');
+        assert.strictEqual(settingsItems[1].id, 'quickbooks-activity');
+        assert.strictEqual(widgetCalls[0].widgets[0].name, 'T:quickbooks.widget.title');
+        assert.strictEqual(widgetCalls[0].widgets[0].description, 'T:quickbooks.widget.description');
+        assert.strictEqual(widgetCalls[0].widgets[0].category, 'QuickBooks');
+    });
+
     test('the header menu opens QuickBooks Setup', (assert) => {
         const { headerItems, transitions } = captureRegistration();
 
@@ -93,7 +113,7 @@ module('Unit | extension', function (hooks) {
         assert.strictEqual(headerItems[0].route, 'console.settings.virtual');
         assert.strictEqual(headerItems[0].slug, 'quickbooks-setup');
         assert.strictEqual(headerItems[0].view, 'index');
-        assert.strictEqual(headerItems[0].description, 'Sync customers, invoices, payments, and wallets with QuickBooks Online.');
+        assert.strictEqual(headerItems[0].description, 'Sync Fleetbase customers, invoices, payments, wallets, and products with QuickBooks Online.');
 
         headerItems[0].onClick(headerItems[0]);
 

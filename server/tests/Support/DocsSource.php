@@ -43,6 +43,22 @@ class DocsSource
     }
 
     /**
+     * The text under a level-two heading, up to the next level-two heading. Empty when the heading is missing.
+     */
+    public static function section(string $file, string $heading): string
+    {
+        $parts = preg_split('/^(?=## )/m', self::text($file));
+
+        foreach ($parts === false ? [] : $parts as $part) {
+            if (str_starts_with($part, '## ' . $heading . "\n") === true) {
+                return $part;
+            }
+        }
+
+        return '';
+    }
+
+    /**
      * Compares with runs of whitespace collapsed, so a phrase split by a line wrap still counts.
      *
      * @param array<int, string> $needed

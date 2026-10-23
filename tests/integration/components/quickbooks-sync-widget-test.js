@@ -265,4 +265,17 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
         assert.dom('[data-test-last-sync]').hasText('No sync yet');
         assert.dom('[data-test-sync-queue]').hasText('0 waiting');
     });
+
+    test('the last sync time is formatted in the console locale', async function (assert) {
+        this.owner.register('service:abilities', OperatorAbilitiesStubService);
+        this.owner.register('service:fetch', PendingSummaryFetchStubService);
+        const finished = '2026-03-01T10:05:00Z';
+        const expected = this.owner.lookup('service:intl').formatDate(new Date(finished), { dateStyle: 'medium', timeStyle: 'short' });
+
+        await render(hbs`<Widget::QuickbooksSync />`);
+        finishPendingSummary({ connection: null, credentials_configured: false, queue: 0, last_sync: { finished_at: finished } });
+        await settled();
+
+        assert.dom('[data-test-last-sync]').hasText(expected);
+    });
 });

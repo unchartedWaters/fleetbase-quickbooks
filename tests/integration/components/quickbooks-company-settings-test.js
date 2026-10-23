@@ -84,6 +84,35 @@ class FetchStubService extends Service {
     }
 }
 
+// The server's 422 body as ember-core rejects it with rawError: a plain object, not an Error.
+class FieldlessErrorFetchStubService extends FetchStubService {
+    postOptions = [];
+
+    async post(path, body, options) {
+        this.postCalls.push(path);
+        this.posts.push({ path, body });
+        this.postOptions.push(options);
+        if (path === 'settings') {
+            throw {
+                message: 'Choose the organization sync settings only.',
+                errors: { settings: 'Only the sync settings can be saved for an organization.' },
+            };
+        }
+
+        return {};
+    }
+}
+
+// A 403 body with rawError is a plain object with only a message.
+class ForbiddenFetchStubService extends FetchStubService {
+    async post(path, body) {
+        this.postCalls.push(path);
+        this.posts.push({ path, body });
+
+        throw { message: 'You do not have permission to change QuickBooks settings.' };
+    }
+}
+
 class CurrentUserStubService extends Service {
     companyId = 'company-uuid';
     id = 'user-uuid';
@@ -105,6 +134,16 @@ class DisconnectedFetchStubService extends FetchStubService {
         }
 
         return {};
+    }
+}
+
+class FirstConnectionFetchStubService extends DisconnectedFetchStubService {
+    async get(path) {
+        if (path === 'connection') {
+            return { connection: null, can_connect_new: false };
+        }
+
+        return super.get(path);
     }
 }
 
@@ -235,6 +274,18 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-import]').doesNotExist();
         await click('[data-test-connect]');
         assert.deepEqual(this.notifications.messages.at(-1), ['error', 'Configure QuickBooks Client ID, Client secret, and Redirect URI before connecting.']);
+    });
+
+    test('connect is off when the server says only an administrator can make the first connection', async function (assert) {
+        this.owner.register('service:fetch', FirstConnectionFetchStubService);
+        const fetch = this.owner.lookup('service:fetch');
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+
+        assert.dom('[data-test-connect]').isDisabled();
+        assert.dom('[data-test-first-connect-denied]').exists();
+        await click('[data-test-connect]');
+        assert.deepEqual(fetch.postCalls, []);
     });
 
     test('the connection screen stays loading until the connection request finishes', async function (assert) {
@@ -508,6 +559,32 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.dom('[data-test-sync="interval_minutes"]').hasValue('5');
         assert.dom('[data-test-sync="retry_limit"]').hasValue('5', 'unsaved edits are dropped');
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'Sync settings reset to the global defaults.']);
+    });
+
+    test('a field-less server error on save shows a toast', async function (assert) {
+        this.owner.register('service:fetch', FieldlessErrorFetchStubService);
+        const fetch = this.owner.lookup('service:fetch');
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+        await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
+
+        assert.true(fetch.postOptions.at(-1).rawError);
+        assert.deepEqual(this.notifications.messages.at(-1), ['error', 'Choose the organization sync settings only.']);
+        assert.dom('[data-test-error]').doesNotExist();
+    });
+
+    test('a refused save or reset shows the server message', async function (assert) {
+        this.owner.register('service:fetch', ForbiddenFetchStubService);
+        const fetch = this.owner.lookup('service:fetch');
+        fetch.hasCopy = true;
+
+        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
+        await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
+        assert.deepEqual(this.notifications.messages.at(-1), ['error', 'You do not have permission to change QuickBooks settings.']);
+
+        await click(document.querySelector('#next-view-section-subheader-actions [data-test-reset]'));
+        assert.deepEqual(this.notifications.messages.at(-1), ['error', 'You do not have permission to change QuickBooks settings.']);
+        assert.deepEqual(fetch.postCalls, ['settings', 'settings']);
     });
 
     test('declining the reset confirmation posts nothing', async function (assert) {
