@@ -262,7 +262,7 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
 
         assert.dom('[data-test-test]').doesNotExist();
         assert.dom('[data-test-disconnected]').includesText('Choose Connect to QuickBooks');
-        assert.dom('[data-test-disconnected]').includesText('syncs customers, invoices, payments, and wallets with QuickBooks Online');
+        assert.dom('[data-test-disconnected]').includesText('syncs customers, invoices, payments, wallets, and products with QuickBooks Online');
         assert.dom('[data-test-disconnected]').doesNotIncludeText('sends');
         assert.dom('[data-test-disconnected]').doesNotIncludeText('Open Actions');
         assert.dom('[data-test-connect]').isNotDisabled();

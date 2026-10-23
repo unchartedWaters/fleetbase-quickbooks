@@ -44,7 +44,7 @@ function registerHeaderItem(menuService, app, t) {
             view: 'index',
             icon: 'file-invoice-dollar',
             priority: 5,
-            description: t('quickbooks.menu.header-description', 'Sync customers, invoices, payments, and wallets with QuickBooks Online.'),
+            description: t('quickbooks.menu.header-description', 'Sync Fleetbase customers, invoices, payments, wallets, and products with QuickBooks Online.'),
             onClick: () => openOrganizationSetting(app, 'quickbooks-setup', 'index'),
         })
     );
@@ -108,7 +108,7 @@ function registerWidgets(widgetService, t) {
         new Widget({
             id: 'quickbooks-sync',
             name: t('quickbooks.widget.title', 'QuickBooks Sync'),
-            description: t('quickbooks.widget.description', 'Shows the last sync, how many customers, invoices, payments, and wallets are waiting, and Sync now.'),
+            description: t('quickbooks.widget.description', 'Shows the last sync, how many customers, invoices, payments, wallets, and products are waiting, and Sync now.'),
             icon: 'file-invoice-dollar',
             component: `#extension-component:${ENGINE}:widget/quickbooks-sync`,
             grid_options: { w: 4, h: 8, minW: 3, minH: 6 },

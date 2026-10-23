@@ -18,8 +18,8 @@ quickbooks:
     home-currency-wallet: A wallet in another currency fails when it has no QuickBooks account yet and Fleetbase is Primary. A wallet already linked to an account is still sent.
     home-currency-primary: "When QuickBooks is Primary for Accounts / Wallets and changes come from QuickBooks (Both or From QuickBooks), the wallet takes the QuickBooks account's currency."
     income-account: 'Invoice lines use the QuickBooks product of their name: one Fleetbase keeps for each Storefront product and Fleet-Ops fee, else "Fleetbase service", which posts to the income account {account}. Products Fleetbase makes post to that account and are taxed like "Fleetbase service". QuickBooks taxes a line only when its product and the customer are taxable. To change the account or whether lines are taxed, edit the products in QuickBooks.'
-    disconnected-status: Not connected. Choose Connect to QuickBooks. Fleetbase then syncs customers, invoices, payments, and wallets with QuickBooks Online.
-    disconnected-no-permission: Not connected. You do not have permission to connect QuickBooks. Fleetbase syncs customers, invoices, payments, and wallets with QuickBooks Online after QuickBooks is connected.
+    disconnected-status: Not connected. Choose Connect to QuickBooks. Fleetbase then syncs customers, invoices, payments, wallets, and products with QuickBooks Online.
+    disconnected-no-permission: Not connected. You do not have permission to connect QuickBooks. Fleetbase syncs customers, invoices, payments, wallets, and products with QuickBooks Online after QuickBooks is connected.
     disconnected-unknown: Not connected.
     disconnected-first-connect: Not connected. A QuickBooks Administrator must make this organization's first connection to QuickBooks. After that, you can connect again to the same company.
     disconnected-save-first: Not connected. An installation administrator must enter the QuickBooks credentials in Admin → QuickBooks → Settings before you can connect.
@@ -88,9 +88,9 @@ quickbooks:
     setup: QuickBooks Setup
     activity: QuickBooks Activity
     admin-settings: Settings
-    header-description: Sync customers, invoices, payments, and wallets with QuickBooks Online.
+    header-description: Sync Fleetbase customers, invoices, payments, wallets, and products with QuickBooks Online.
   widget:
-    description: Shows the last sync, how many customers, invoices, payments, and wallets are waiting, and Sync now.
+    description: Shows the last sync, how many customers, invoices, payments, wallets, and products are waiting, and Sync now.
     title: QuickBooks Sync
     refresh: Refresh QuickBooks status
     loading: Loading QuickBooks status.

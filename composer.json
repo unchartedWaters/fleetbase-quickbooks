@@ -1,7 +1,7 @@
 {
     "name": "unchartedwaters/quickbooks-api",
     "version": "0.0.2",
-    "description": "Sync Fleetbase customers, invoices, payments, and wallets with QuickBooks Online.",
+    "description": "Sync Fleetbase customers, invoices, payments, wallets, and products with QuickBooks Online.",
     "keywords": [
         "fleetbase",
         "fleetbase-extension",

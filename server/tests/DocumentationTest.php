@@ -87,6 +87,15 @@ test('the docs give the package names and the versions the host needs', function
         ->and(DocsSource::missing('README.md', ['flb install ' . $package['name']]))->toBe([]);
 });
 
+test('the README lists products among what syncs', function () {
+    $whatSyncs = DocsSource::section('README.md', 'What syncs');
+
+    expect($whatSyncs)->toContain('- Products');
+    foreach (['package.json', 'composer.json', 'extension.json'] as $manifest) {
+        expect(json_decode(DocsSource::text($manifest), true)['description'])->toContain('products');
+    }
+});
+
 test('the README links the setup guide and the guide links the Intuit developer portal', function () {
     expect(DocsSource::missing('README.md', ['](docs/SETUP.md']))->toBe([])
         ->and(DocsSource::missing('docs/SETUP.md', ['](https://developer.intuit.com']))->toBe([]);

@@ -113,7 +113,7 @@ module('Unit | extension', function (hooks) {
         assert.strictEqual(headerItems[0].route, 'console.settings.virtual');
         assert.strictEqual(headerItems[0].slug, 'quickbooks-setup');
         assert.strictEqual(headerItems[0].view, 'index');
-        assert.strictEqual(headerItems[0].description, 'Sync customers, invoices, payments, and wallets with QuickBooks Online.');
+        assert.strictEqual(headerItems[0].description, 'Sync Fleetbase customers, invoices, payments, wallets, and products with QuickBooks Online.');
 
         headerItems[0].onClick(headerItems[0]);
 

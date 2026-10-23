@@ -1,6 +1,7 @@
 # QuickBooks
 
-Fleetbase extension that syncs customers, invoices, payments, and wallets (QuickBooks accounts) with QuickBooks Online.
+Fleetbase extension that syncs customers, invoices, payments, wallets
+(QuickBooks accounts), and products (to QuickBooks only) with QuickBooks Online.
 
 The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks), checked out on its own, not inside the Fleetbase repository.
 
