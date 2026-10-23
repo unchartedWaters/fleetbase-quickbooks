@@ -198,9 +198,10 @@ class SyncEngine
     private ?array $customerRemoteCache = null;
 
     /**
-     * Fleetbase uuids whose block lookup failed. Failure is not "no such customer".
+     * Fleetbase uuids whose block lookup failed. Failure is not "no such customer". Each keeps
+     * the status QuickBooks gave, so it is thrown again as a refusal or as an outage.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $customerLookupFailed = [];
 
@@ -214,9 +215,9 @@ class SyncEngine
 
     /**
      * QuickBooks customers read for the tax of an invoice block, by QuickBooks id. Null is no such
-     * customer; a string is the error of a failed read. Null outside a block.
+     * customer; an exception is a failed read, thrown again with its status. Null outside a block.
      *
-     * @var array<string, array<string, mixed>|string|null>|null
+     * @var array<string, array<string, mixed>|QuickBooksException|null>|null
      */
     private ?array $taxCustomers = null;
 
@@ -289,9 +290,9 @@ class SyncEngine
     private ?array $paymentPrefetchIds = null;
 
     /**
-     * QuickBooks payment ids whose block read failed.
+     * QuickBooks payment ids whose block read failed, thrown again with the status QuickBooks gave.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $paymentReadFailed = [];
 
@@ -1564,7 +1565,7 @@ class SyncEngine
         }
         $baseline = $link;
         if (isset($this->customerLookupFailed[$uuid]) === true) {
-            throw new QuickBooksException(500, $this->customerLookupFailed[$uuid]);
+            throw $this->customerLookupFailed[$uuid];
         }
 
         $remote    = null;
@@ -1703,7 +1704,7 @@ class SyncEngine
         $remoteId = (string) $link['qbo_id'];
         if ($kind === 'customer') {
             if (isset($this->customerLookupFailed[$uuid]) === true) {
-                throw new QuickBooksException(500, $this->customerLookupFailed[$uuid]);
+                throw $this->customerLookupFailed[$uuid];
             }
             $cached = $this->customerRemoteCache[$uuid] ?? null;
             $remote = is_array($cached) === true && (string) ($cached['Id'] ?? '') === $remoteId
@@ -2031,7 +2032,7 @@ class SyncEngine
         $push         = $this->pushesRemote($direction);
         $customerUuid = (string) ($invoice['customer_uuid'] ?? '');
         if ($customerUuid !== '' && isset($this->customerLookupFailed[$customerUuid]) === true) {
-            throw new QuickBooksException(500, $this->customerLookupFailed[$customerUuid]);
+            throw $this->customerLookupFailed[$customerUuid];
         }
         if ($customerUuid !== '' && $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $customerUuid) === null) {
             if ($this->entityPaused($settings, 'customer') === true) {
@@ -2906,8 +2907,8 @@ class SyncEngine
     {
         if ($this->taxCustomers !== null && array_key_exists($customerRef, $this->taxCustomers) === true) {
             $cached = $this->taxCustomers[$customerRef];
-            if (is_string($cached) === true) {
-                throw new QuickBooksException(500, $cached);
+            if ($cached instanceof QuickBooksException) {
+                throw $cached;
             }
 
             return $cached;
@@ -4207,7 +4208,7 @@ class SyncEngine
         }
         foreach (array_keys($ids) as $id) {
             if (isset($this->paymentReadFailed[$id]) === true) {
-                throw new QuickBooksException(500, $this->paymentReadFailed[$id]);
+                throw $this->paymentReadFailed[$id];
             }
         }
 
@@ -4377,7 +4378,7 @@ class SyncEngine
     private function readPayment(array $connection, string $id): ?array
     {
         if (isset($this->paymentReadFailed[$id]) === true) {
-            throw new QuickBooksException(500, $this->paymentReadFailed[$id]);
+            throw $this->paymentReadFailed[$id];
         }
         if ($this->paymentById !== null) {
             if (array_key_exists($id, $this->paymentById) === false) {
@@ -5342,7 +5343,7 @@ class SyncEngine
 
                     return true;
                 }
-                $this->customerLookupFailed[(string) $only]  = $this->exceptionError($exception);
+                $this->customerLookupFailed[(string) $only]  = $exception;
                 $customerOutcome                             = 'failed';
             }
             if ($customerOutcome === 'failed' && isset($this->customerLookupFailed[(string) $only]) === false) {
@@ -5954,9 +5955,8 @@ class SyncEngine
                 if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
                     throw $exception;
                 }
-                $error = $this->exceptionError($exception);
                 foreach ($queries as $query) {
-                    $this->customerLookupFailed[$query['uuid']] = $error;
+                    $this->customerLookupFailed[$query['uuid']] = $exception;
                 }
                 $results = [];
             }
@@ -5973,15 +5973,16 @@ class SyncEngine
                 if (is_array($result) === false || empty($result['ok']) === true) {
                     $message                           = is_array($result) === true ? (string) ($result['error'] ?? '') : '';
                     $status                            = is_array($result) === true ? (int) ($result['status'] ?? 0) : 0;
-                    $this->customerLookupFailed[$uuid] = $this->batchItemAttemptError($message, $status);
+                    $this->customerLookupFailed[$uuid] = $this->batchItemFailure($message, $status);
                     continue;
                 }
                 $remote                           = $result['rows'][0] ?? null;
                 $this->customerRemoteCache[$uuid] = is_array($remote) === true ? $remote : null;
             }
             foreach ($queries as $query) {
-                if (isset($seen[$query['uuid']]) === false && isset($this->customerLookupFailed[$query['uuid']]) === false) {
-                    $this->customerLookupFailed[$query['uuid']] = self::SYNC_FAILED_MESSAGE;
+                $uuid = $query['uuid'];
+                if (isset($seen[$uuid]) === false && isset($this->customerLookupFailed[$uuid]) === false) {
+                    $this->customerLookupFailed[$uuid] = $this->batchItemFailure(self::SYNC_FAILED_MESSAGE, 500);
                 }
             }
         }
@@ -6080,7 +6081,7 @@ class SyncEngine
             if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
                 throw $exception;
             }
-            $this->customerLookupFailed[$query['uuid']] = $this->exceptionError($exception);
+            $this->customerLookupFailed[$query['uuid']] = $exception;
 
             return;
         }
@@ -6105,7 +6106,7 @@ class SyncEngine
                     if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
                         throw $exception;
                     }
-                    $this->customerLookupFailed[$query['uuid']] = $this->exceptionError($exception);
+                    $this->customerLookupFailed[$query['uuid']] = $exception;
                     continue;
                 }
                 $this->rememberCustomerByName($query, is_array($remote) === true ? $remote : null);
@@ -6121,7 +6122,7 @@ class SyncEngine
                     throw $exception;
                 }
                 foreach ($chunk as $query) {
-                    $this->customerLookupFailed[$query['uuid']] = $this->exceptionError($exception);
+                    $this->customerLookupFailed[$query['uuid']] = $exception;
                 }
                 continue;
             }
@@ -6133,7 +6134,7 @@ class SyncEngine
                 if (is_array($result) === false || empty($result['ok']) === true) {
                     $message                                    = is_array($result) === true ? (string) ($result['error'] ?? '') : '';
                     $status                                     = is_array($result) === true ? (int) ($result['status'] ?? 0) : 0;
-                    $this->customerLookupFailed[$query['uuid']] = $this->batchItemAttemptError($message, $status);
+                    $this->customerLookupFailed[$query['uuid']] = $this->batchItemFailure($message, $status);
                     continue;
                 }
                 $remote = $result['rows'][0] ?? null;
@@ -6279,7 +6280,7 @@ class SyncEngine
             foreach ($loaded['rows'] as $remote) {
                 $this->rememberPrefetchedInvoice($remote);
             }
-            $this->invoiceReadFailed = $loaded['failed'];
+            $this->invoiceReadFailed = $this->failedMessages($loaded['failed']);
         }
         if ($docs !== []) {
             $loaded = $this->queryWhereIn(
@@ -6292,7 +6293,7 @@ class SyncEngine
             foreach ($loaded['rows'] as $remote) {
                 $this->rememberPrefetchedInvoice($remote);
             }
-            $this->invoiceDocReadFailed = $loaded['failed'];
+            $this->invoiceDocReadFailed = $this->failedMessages($loaded['failed']);
         }
     }
 
@@ -6639,6 +6640,25 @@ class SyncEngine
     }
 
     /**
+     * A failed batch item kept for the other rows of the block. It keeps the status QuickBooks
+     * gave, so a refusal thrown again stops at the retry limit and an outage keeps retrying.
+     */
+    private function batchItemFailure(string $error, int $status): QuickBooksException
+    {
+        return new QuickBooksException($status, $this->batchItemAttemptError($error, $status));
+    }
+
+    /**
+     * @param array<string, QuickBooksException> $failed
+     *
+     * @return array<string, string>
+     */
+    private function failedMessages(array $failed): array
+    {
+        return array_map(static fn (QuickBooksException $failure): string => $failure->getMessage(), $failed);
+    }
+
+    /**
      * @param array<string, mixed> $connection
      * @param array<int, string>   $ids
      *
@@ -6740,7 +6760,7 @@ class SyncEngine
             foreach ($loaded['rows'] as $account) {
                 $this->rememberAccount($account);
             }
-            $this->accountReadFailed = $loaded['failed'];
+            $this->accountReadFailed = $this->failedMessages($loaded['failed']);
         }
 
         $acctNums = [];
@@ -6842,7 +6862,7 @@ class SyncEngine
             $values,
             static fn (string $value): ?array => null
         );
-        foreach ($loaded['failed'] as $value => $error) {
+        foreach ($this->failedMessages($loaded['failed']) as $value => $error) {
             $this->accountFieldFailed[$field . ':' . $value] = $error;
         }
 
@@ -6858,7 +6878,7 @@ class SyncEngine
      * @param array<int, string>         $values
      * @param callable(string): (?array) $readOne
      *
-     * @return array{rows: array<int, array<string, mixed>>, failed: array<string, string>}
+     * @return array{rows: array<int, array<string, mixed>>, failed: array<string, QuickBooksException>}
      */
     private function queryWhereIn(array $connection, string $entity, string $field, array $values, callable $readOne): array
     {
@@ -6880,7 +6900,7 @@ class SyncEngine
                     throw $exception;
                 }
 
-                return ['rows' => [], 'failed' => [$values[0] => $this->exceptionError($exception)]];
+                return ['rows' => [], 'failed' => [$values[0] => $exception]];
             }
 
             return ['rows' => is_array($remote) === true ? [$remote] : [], 'failed' => []];
@@ -6906,10 +6926,9 @@ class SyncEngine
                     if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
                         throw $exception;
                     }
-                    $error = $this->exceptionError($exception);
                     foreach ($chunk as $value) {
                         if (isset($matched[$value]) === false) {
-                            $failed[$value] = $error;
+                            $failed[$value] = $exception;
                         }
                     }
                     break;
@@ -6923,7 +6942,7 @@ class SyncEngine
                 if (is_array($result) === false || empty($result['ok']) === true) {
                     $message = is_array($result) === true ? (string) ($result['error'] ?? '') : '';
                     $status  = is_array($result) === true ? (int) ($result['status'] ?? 0) : 0;
-                    $error   = $this->batchItemAttemptError($message, $status);
+                    $error   = $this->batchItemFailure($message, $status);
                     foreach ($chunk as $value) {
                         if (isset($matched[$value]) === false) {
                             $failed[$value] = $error;

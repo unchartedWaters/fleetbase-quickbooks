@@ -313,6 +313,40 @@ test('an outage row fails once it is older than the outage window', function () 
         ->and($ledger->pending[0]['attempts'])->toBe(1);
 });
 
+test('a customer create every invoice of a block waits on keeps the status QuickBooks gave', function (
+    int $invoices,
+    int $status,
+    string $expected,
+) {
+    [$engine, $client]           = qbEngine();
+    $client->failWith            = new QuickBooksException($status, 'Duplicate Name Exists Error', null, '6240');
+    $ledger                      = batchLedger();
+    $ledger->customers['cust-1'] = customerRow('cust-1');
+    $created                     = gmdate('c', time() - 3600);
+    for ($index = 1; $index <= $invoices; $index++) {
+        $ledger->invoices['inv-' . $index] = invoiceFixture('inv-' . $index, 1000, 'sent', 'INV-' . $index);
+        $ledger->pending[]                 = pendingRow('invoice', 'inv-' . $index) + ['created_at' => $created];
+    }
+    $settings = qbSettings(['interval_minutes' => 1, 'retry_limit' => 3]);
+    $now      = time();
+
+    for ($run = 0; $run < 6; $run++) {
+        foreach (array_keys($ledger->pending) as $key) {
+            $ledger->pending[$key]['next_attempt_at'] = null;
+        }
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $client->creates                                      = 0;
+        $client->failOnCreate                                 = 1;
+        $engine->runScheduled($ledger, 'company-uuid', $settings, $now + $run * 60);
+    }
+
+    expect(array_column($ledger->pending, 'status'))->toBe(array_fill(0, $invoices, $expected));
+})->with([
+    'a refused create for one invoice'         => [1, 400, 'failed'],
+    'a refused create for a block of two'      => [2, 400, 'failed'],
+    'an outage on a create for a block of two' => [2, 503, 'pending'],
+]);
+
 test('the outage window and wait cap come from config', function () {
     [$engine, $client]              = qbEngine();
     $client->failOnCreate           = 1;
