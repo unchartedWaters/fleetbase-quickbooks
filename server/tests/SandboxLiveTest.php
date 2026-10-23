@@ -314,7 +314,8 @@ test('an update with a stale sync token is refused as a conflict', function () {
         $client->updateCustomer($connection, (string) $created['Id'], (string) $created['SyncToken'], ['DisplayName' => 'Fleetbase Test Stale B ' . sandboxTag()]);
         $this->fail('QuickBooks accepted an update with a stale SyncToken.');
     } catch (QuickBooksException $exception) {
-        expect($exception->status)->toBe(400)
+        // A stale SyncToken (5010) is a conflict to retry after reading the record again.
+        expect($exception->status)->toBe(409)
             ->and($exception->faultCode)->toBe('5010')
             ->and($exception->isNotFound())->toBeFalse();
     }

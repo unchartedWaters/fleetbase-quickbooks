@@ -85,8 +85,12 @@ class ImportDatabase
         ], $extra));
     }
 
-    public static function link(string $uuid, string $localUuid, string $qboId, string $companyUuid = 'company-uuid'): void
-    {
+    public static function link(
+        string $uuid,
+        string $localUuid,
+        string $qboId,
+        string $companyUuid = 'company-uuid',
+    ): void {
         DB::table('quickbooks_links')->insert([
             'uuid'         => $uuid,
             'company_uuid' => $companyUuid,
@@ -161,7 +165,8 @@ class ImportDatabase
             $table->string('trigger');
             $table->string('direction')->default('outbound');
             $table->string('status');
-            foreach (['created', 'updated', 'aligned', 'voided', 'unmatched', 'failed', 'linked', 'skipped'] as $count) {
+            $counts = ['created', 'updated', 'aligned', 'voided', 'unmatched', 'failed', 'linked', 'skipped'];
+            foreach ($counts as $count) {
                 $table->unsignedInteger($count . '_count')->default(0);
             }
             $table->timestamp('started_at')->nullable();
