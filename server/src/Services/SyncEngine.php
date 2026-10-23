@@ -832,7 +832,8 @@ class SyncEngine
     ): bool {
         $localUuid = (string) ($link['local_uuid'] ?? '');
         if ($name === 'Customer' && isset($ledger->customers[$localUuid]) === true) {
-            $this->applyCustomerFromRemote($ledger, $localUuid, $remote);
+            $clears = $this->copiesClears($settings, 'customer', $link, $remote);
+            $this->applyCustomerFromRemote($ledger, $localUuid, $remote, $clears);
 
             return true;
         }
@@ -843,7 +844,9 @@ class SyncEngine
         }
         if ($name === 'Invoice' && isset($ledger->invoices[$localUuid]) === true) {
             $reference = (string) ($settings['invoice_reference'] ?? 'fleetbase');
-            $this->applyInvoiceFromRemote($ledger, $localUuid, $remote, $reference, (string) $connection['realm_id']);
+            $realmId   = (string) $connection['realm_id'];
+            $clears    = $this->copiesClears($settings, 'invoice', $link, $remote);
+            $this->applyInvoiceFromRemote($ledger, $localUuid, $remote, $reference, $realmId, $clears);
             $this->applyPaymentStatus($ledger, $localUuid);
 
             return true;
@@ -853,7 +856,9 @@ class SyncEngine
         }
         if ($name === 'Account' && isset($ledger->wallets[$localUuid]) === true) {
             $reference = (string) ($settings['wallet_reference'] ?? 'fleetbase');
-            $this->applyWalletFromRemote($ledger, $localUuid, $this->withoutEmptyDescription($remote), $reference);
+            $clears    = $this->copiesClears($settings, 'wallet', $link, $remote);
+            $account   = $this->withoutEmptyDescription($remote, $clears);
+            $this->applyWalletFromRemote($ledger, $localUuid, $account, $reference);
 
             return true;
         }
@@ -1759,11 +1764,14 @@ class SyncEngine
 
         // QuickBooks wins only a record it changed since the last sync; otherwise Fleetbase is sent.
         if ($conflict === 'quickbooks' && $copy === true && QuickBooksChanges::since($baseline, $remote) === true) {
-            $this->applyCustomerFromRemote($ledger, $uuid, $remote);
-            $this->notePrimaryCopy('customer', $uuid, true);
+            $before = $ledger->customers[$uuid];
+            $clears = $this->copiesClears($settings, 'customer', $baseline, $remote);
+            $this->applyCustomerFromRemote($ledger, $uuid, $remote, $clears);
+            $changed = $ledger->customers[$uuid] !== $before;
+            $this->notePrimaryCopy('customer', $uuid, true, $changed);
             $inSync = $this->customerInSync($ledger, $uuid, $remote);
 
-            return $this->synced($ledger, $connection, 'customer', $uuid, $remote, 'updated', $inSync, $baseline);
+            return $this->syncedIf($ledger, $connection, 'customer', $uuid, $remote, $changed, $inSync, $baseline);
         }
 
         if ($reference === 'quickbooks' && $leads === false) {
@@ -1949,24 +1957,30 @@ class SyncEngine
         $conflict   = (string) ($settings['wallet_conflict'] ?? 'fleetbase');
         $pushClears = $this->sendsClears($conflict, $push, $copy);
         $payload    = $this->wallets->toQuickBooks($wallet, $reference);
-        // Same clear rule as customer notes. A Fleetbase clear is not filled back in
-        // from QuickBooks, and an empty QuickBooks description is not copied.
-        $walletCopy = function (array $remoteAccount) use ($ledger, $uuid, $pushClears): array {
-            $remoteDescription = trim((string) ($remoteAccount['Description'] ?? ''));
-            $localDescription  = trim((string) ($ledger->wallets[$uuid]['description'] ?? ''));
-            if ($remoteDescription === '' || ($pushClears === true && $localDescription === '')) {
-                unset($remoteAccount['Description']);
-            }
-
-            return $remoteAccount;
-        };
-        $link      = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'wallet', $uuid);
+        $link       = $ledger->link(
+            (string) $connection['company_uuid'],
+            (string) $connection['realm_id'],
+            'wallet',
+            $uuid
+        );
         if ($link !== null && $link['realm_id'] !== $connection['realm_id']) {
             $link = null;
         }
         $hadLink   = $link !== null;
         $baseline  = $link;
         $nameTaken = false;
+        // Same clear rule as customer notes. A Fleetbase clear is not filled back in from
+        // QuickBooks, and an empty QuickBooks description is copied only when QuickBooks changed
+        // the account since a known baseline.
+        $walletCopy = function (array $remoteAccount) use ($ledger, $uuid, $pushClears, $settings, $baseline): array {
+            $clears        = $this->copiesClears($settings, 'wallet', $baseline, $remoteAccount);
+            $remoteAccount = $this->withoutEmptyDescription($remoteAccount, $clears);
+            if ($pushClears === true && trim((string) ($ledger->wallets[$uuid]['description'] ?? '')) === '') {
+                unset($remoteAccount['Description']);
+            }
+
+            return $remoteAccount;
+        };
 
         if ($link === null && empty($payload['AcctNum']) === false) {
             $acctNum = (string) $payload['AcctNum'];
@@ -2344,6 +2358,7 @@ class SyncEngine
         $leads         = $this->fleetbaseLeads($settings, 'invoice', $baseline, $remote);
         $sendsDueClear = $pushClears;
         $pushClears    = $pushClears || $leads;
+        $clears        = $this->copiesClears($settings, 'invoice', $baseline, $remote);
         $numberChanged = $this->copyInvoiceNumber($ledger, $uuid, $remote, $reference);
         $partyChanged  = false;
         if ($leads === false && $this->quickbooksSupplies($settings, 'invoice') === true) {
@@ -2366,7 +2381,7 @@ class SyncEngine
             $remoteCents,
             $localCents,
             $reference,
-            $pushClears,
+            $pushClears || $clears,
             (string) $customerLink['qbo_id'],
             $pushClears === true && $currencyOk === true,
             $remoteSuppliesLines === false,
@@ -2416,8 +2431,8 @@ class SyncEngine
         if ($copy === true && ($conflict === 'quickbooks' || $push === false) && $edited === false) {
             $beforeStatus = (string) ($ledger->invoices[$uuid]['status'] ?? '');
             $realmId      = (string) $connection['realm_id'];
-            $applied      = $this->applyInvoiceFromRemote($ledger, $uuid, $remote, $reference, $realmId);
-            $changed      = $applied === true || $numberChanged === true;
+            $applied      = $this->applyInvoiceFromRemote($ledger, $uuid, $remote, $reference, $realmId, $clears);
+            $changed      = $applied === true || $numberChanged === true || $partyChanged === true;
             $this->applyPaymentStatus($ledger, $uuid);
             if ((string) ($ledger->invoices[$uuid]['status'] ?? '') !== $beforeStatus) {
                 $changed = true;
@@ -4074,6 +4089,22 @@ class SyncEngine
     }
 
     /**
+     * QuickBooks as Primary in two-way sync copies what QuickBooks emptied when QuickBooks changed
+     * the record since a known baseline: it wins the whole record, so both sides are equal again
+     * and the link stores the new token. Without a baseline (a first link) nothing is emptied.
+     *
+     * @param array<string, mixed>      $settings
+     * @param array<string, mixed>|null $baseline the link as it was before this sync
+     * @param array<string, mixed>      $remote
+     */
+    private function copiesClears(array $settings, string $kind, ?array $baseline, array $remote): bool
+    {
+        return $this->tokenDecides($settings, $kind) === true
+            && QuickBooksChanges::known($baseline, $remote) === true
+            && QuickBooksChanges::since($baseline, $remote) === true;
+    }
+
+    /**
      * The stored SyncToken decides a difference only for QuickBooks Primary in two-way sync.
      * Fleetbase Primary always sends, and From QuickBooks always copies.
      *
@@ -4187,6 +4218,7 @@ class SyncEngine
         array $remote,
         string $reference,
         string $realmId = '',
+        bool $clears = false,
     ): bool {
         // Both copies run: a number change must not skip the customer and currency copy.
         $numberChanged = $this->copyInvoiceNumber($ledger, $uuid, $remote, $reference) === true;
@@ -4199,11 +4231,8 @@ class SyncEngine
                 $changed                         = true;
             }
         }
-        // QuickBooks holds a longer Fleetbase note cut to its limit. That copy is not a change.
-        $note = (string) ($remote['PrivateNote'] ?? '');
-        if ($note !== '' && $note !== InvoiceMapper::privateNote((string) ($ledger->invoices[$uuid]['notes'] ?? ''))) {
-            $ledger->invoices[$uuid]['notes'] = $note;
-            $changed                          = true;
+        if ($this->copyInvoiceNote($ledger, $uuid, $remote, $clears) === true) {
+            $changed = true;
         }
 
         $current = $ledger->invoices[$uuid]['items'] ?? [];
@@ -4231,6 +4260,24 @@ class SyncEngine
     }
 
     /**
+     * QuickBooks holds a longer Fleetbase note cut to its limit. That copy is not a change. An
+     * empty QuickBooks note is copied only with $clears (see copiesClears).
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function copyInvoiceNote(SyncLedger $ledger, string $uuid, array $remote, bool $clears): bool
+    {
+        $note  = (string) ($remote['PrivateNote'] ?? '');
+        $local = InvoiceMapper::privateNote((string) ($ledger->invoices[$uuid]['notes'] ?? ''));
+        if (($note === '' && $clears === false) || $note === $local) {
+            return false;
+        }
+        $ledger->invoices[$uuid]['notes'] = $note;
+
+        return true;
+    }
+
+    /**
      * Copy the QuickBooks name onto the Fleetbase customer. A name that only differs by what
      * QuickBooks cannot store (a colon sent as a hyphen, a line break as a space) is the
      * same name and is kept, so the echo of Fleetbase's own push does not rewrite it.
@@ -4248,9 +4295,14 @@ class SyncEngine
 
     /**
      * @param array<string, mixed> $remote
+     * @param bool                 $clears also empty what QuickBooks holds empty (see copiesClears)
      */
-    private function applyCustomerFromRemote(SyncLedger $ledger, string $uuid, array $remote): void
-    {
+    private function applyCustomerFromRemote(
+        SyncLedger $ledger,
+        string $uuid,
+        array $remote,
+        bool $clears = false,
+    ): void {
         $this->copyCustomerName($ledger, $uuid, $remote);
         $email = (string) ($remote['PrimaryEmailAddr']['Address'] ?? '');
         if ($email !== '') {
@@ -4260,8 +4312,37 @@ class SyncEngine
         if ($phone !== '') {
             $ledger->customers[$uuid]['phone'] = $phone;
         }
+        if ($clears === true) {
+            $this->copyCustomerClears($ledger, $uuid, $remote);
+        }
         $this->copyCustomerNotesAndAddress($ledger, $uuid, $remote);
         $ledger->touchCustomer($uuid);
+    }
+
+    /**
+     * Empty the Fleetbase email, phone, notes and billing address that QuickBooks holds empty.
+     * QuickBooks leaves an empty field out of a record it returns, so a missing field is empty.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function copyCustomerClears(SyncLedger $ledger, string $uuid, array $remote): void
+    {
+        $customer = $ledger->customers[$uuid];
+        $emptied  = [
+            'email' => trim((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')) === '',
+            'phone' => trim((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')) === '',
+            'notes' => (string) ($remote['Notes'] ?? '') === '',
+        ];
+        foreach ($emptied as $field => $empty) {
+            if ($empty === true && trim((string) ($customer[$field] ?? '')) !== '') {
+                $ledger->customers[$uuid][$field] = null;
+            }
+        }
+        $bill    = is_array($remote['BillAddr'] ?? null) === true ? $remote['BillAddr'] : [];
+        $address = is_array($customer['address'] ?? null) === true ? $customer['address'] : [];
+        if ($this->customers->addressFromBillAddr($bill) === null && $this->customers->hasAddress($address) === true) {
+            $ledger->customers[$uuid]['address'] = $this->customers->addressFromBillAddr($bill, true);
+        }
     }
 
     /**
@@ -7620,14 +7701,21 @@ class SyncEngine
     }
 
     /**
-     * An empty QuickBooks description must not replace a Fleetbase description.
+     * An empty QuickBooks description does not replace a Fleetbase description, unless QuickBooks
+     * wins the whole account ($clears, see copiesClears).
      *
      * @param array<string, mixed> $remote
      *
      * @return array<string, mixed>
      */
-    private function withoutEmptyDescription(array $remote): array
+    private function withoutEmptyDescription(array $remote, bool $clears = false): array
     {
+        if ($clears === true) {
+            $description           = (string) ($remote['Description'] ?? '');
+            $remote['Description'] = trim($description) === '' ? '' : $description;
+
+            return $remote;
+        }
         if (trim((string) ($remote['Description'] ?? '')) === '') {
             unset($remote['Description']);
         }

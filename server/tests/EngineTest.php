@@ -1769,7 +1769,8 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
     [$sourceEngine, $sourceClient]    = qbEngine();
     $sourceLedger                     = engineLedger();
     $sourceLedger->wallets['wal-1']   = engineWallet('wal-1', ['description' => 'Keep']);
-    $sourceLedger->links[]            = engineLink('wallet', 'wal-1', 'acct-9');
+    // Without a known baseline: QuickBooks wins only a whole record it changed since one.
+    $sourceLedger->links[]            = array_merge(engineLink('wallet', 'wal-1', 'acct-9'), ['sync_token' => '']);
     $sourceClient->accounts['acct-9'] = [
         'Id'          => 'acct-9',
         'SyncToken'   => '1',

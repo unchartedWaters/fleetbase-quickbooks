@@ -6051,6 +6051,9 @@ class FleetbaseDirectory
     }
 
     /**
+     * The billing address to write. An address with no content is written only to empty one the
+     * customer had: QuickBooks, as Primary, emptied it.
+     *
      * @param array<string, mixed>      $customer
      * @param array<string, mixed>|null $loaded
      *
@@ -6067,7 +6070,9 @@ class FleetbaseDirectory
             return null;
         }
         if ($this->billingAddressHasContent($customer['address']) === false) {
-            return null;
+            $emptied = is_array($previous) === true && $this->billingAddressHasContent($previous) === true;
+
+            return $emptied === true ? $customer['address'] : null;
         }
 
         return $customer['address'];
@@ -6105,6 +6110,10 @@ class FleetbaseDirectory
             if ($updated > 0) {
                 return;
             }
+        }
+        // An emptied address empties the place it had; no place is made for no address.
+        if ($this->billingAddressHasContent($address) === false) {
+            return;
         }
 
         $created = $this->insertCustomerPlace($store, (string) $customer->company_uuid, (string) $customer->uuid, $address);

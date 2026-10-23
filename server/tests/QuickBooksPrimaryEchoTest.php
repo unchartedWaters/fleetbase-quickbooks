@@ -138,7 +138,7 @@ test('an invoice due date emptied in fleetbase takes the quickbooks due date, wh
         ->and(Primary::token($ledger, 'invoice', 'inv-1'))->toBe('1');
 });
 
-test('a phone cleared in quickbooks is not sent back from fleetbase', function () {
+test('a phone cleared in quickbooks is emptied in fleetbase and not sent back', function () {
     [$engine, $client, $ledger] = Primary::linkedCustomer('3', '4', '555-1111', '');
     unset($client->customers['qbo-customer']['PrimaryPhone']);
     $ledger->pending[] = Primary::pending('customer', 'cust-1', 'webhook');
@@ -148,7 +148,8 @@ test('a phone cleared in quickbooks is not sent back from fleetbase', function (
 
     expect($client->calls)->not->toContain('updateCustomer')
         ->and($client->customers['qbo-customer'])->not->toHaveKey('PrimaryPhone')
-        ->and(Primary::token($ledger, 'customer', 'cust-1'))->not->toBe('4');
+        ->and($ledger->customers['cust-1']['phone'])->toBeNull()
+        ->and(Primary::token($ledger, 'customer', 'cust-1'))->toBe('4');
 });
 
 test('a phone cleared in quickbooks and applied from a webhook is not sent back from fleetbase', function () {
@@ -161,7 +162,8 @@ test('a phone cleared in quickbooks and applied from a webhook is not sent back 
 
     expect($client->calls)->not->toContain('updateCustomer')
         ->and($client->customers['qbo-customer'])->not->toHaveKey('PrimaryPhone')
-        ->and(Primary::token($ledger, 'customer', 'cust-1'))->not->toBe('4');
+        ->and($ledger->customers['cust-1']['phone'])->toBeNull()
+        ->and(Primary::token($ledger, 'customer', 'cust-1'))->toBe('4');
 });
 
 test('an invoice moved in quickbooks to a customer fleetbase has not linked is not moved back', function () {

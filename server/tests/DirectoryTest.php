@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Observers\FlagInvoiceObserver;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Container\Container;
@@ -1290,6 +1291,66 @@ test('customer billing address and notes round-trip through the directory', func
             ->and($imported->street1)->toBe('9 Cobol Lane')
             ->and($imported->city)->toBe('Arlington')
             ->and($imported->owner_uuid)->toBe('cust-new');
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a billing address emptied in quickbooks clears the customer place, and no place is made for none', function () {
+    [$restore] = directorySqlite();
+    try {
+        $schema = DB::connection('sqlite')->getSchemaBuilder();
+        directoryWebhookSchema($schema);
+        $schema->table('contacts', function (Blueprint $table): void {
+            $table->string('public_id')->nullable();
+            $table->string('internal_id')->nullable();
+            $table->char('place_uuid', 36)->nullable();
+            $table->text('meta')->nullable();
+            $table->string('slug')->nullable();
+        });
+        $schema->create('places', function (Blueprint $table): void {
+            $table->char('uuid', 36)->primary();
+            $table->string('public_id')->nullable();
+            $table->char('company_uuid', 36)->nullable();
+            $table->char('owner_uuid', 36)->nullable();
+            $table->string('owner_type')->nullable();
+            $table->string('street1')->nullable();
+            $table->string('street2')->nullable();
+            $table->string('city')->nullable();
+            $table->string('province')->nullable();
+            $table->string('postal_code')->nullable();
+            $table->string('country')->nullable();
+            $table->timestamps();
+        });
+        directoryWebhookRows();
+        DB::table('places')->insert([
+            'uuid'         => 'place-1',
+            'company_uuid' => 'company-uuid',
+            'owner_uuid'   => 'cust-9',
+            'street1'      => '1 Analytical Engine',
+            'city'         => 'London',
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ]);
+        DB::table('contacts')->where('uuid', 'cust-9')->update(['place_uuid' => 'place-1']);
+        $empty = (new CustomerMapper())->addressFromBillAddr([], true);
+
+        $directory                              = new FleetbaseDirectory();
+        $ledger                                 = $directory->load('company-uuid')['ledger'];
+        $ledger->customers['cust-9']['address'] = $empty;
+        $directory->save($ledger);
+        $place  = DB::table('places')->where('uuid', 'place-1')->first();
+        $reload = (new FleetbaseDirectory())->load('company-uuid')['ledger'];
+
+        expect($place->street1)->toBeNull()
+            ->and($place->city)->toBeNull()
+            ->and($reload->customers['cust-9'])->not->toHaveKey('address');
+
+        $reload->customers['cust-9']['address'] = $empty;
+        DB::table('contacts')->where('uuid', 'cust-9')->update(['place_uuid' => null]);
+        (new FleetbaseDirectory())->save($reload);
+
+        expect(DB::table('places')->count())->toBe(1);
     } finally {
         $restore();
     }

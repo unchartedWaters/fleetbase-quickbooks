@@ -225,18 +225,50 @@ test('sec a remote customer update copies name email phone notes and address and
         ->and(array_column($ledger->batches, 'direction'))->toBe(['inbound']);
 });
 
-test('sec an empty remote customer field does not clear the fleetbase value', function () {
+test('sec an empty remote customer field keeps fleetbase without a baseline or a quickbooks change', function () {
+    // No stored token (a first link), or the token stored (QuickBooks did not change the customer).
+    $kept = secCustomer('cust-1', ['name' => 'Local Ada', 'phone' => '111', 'notes' => 'Keep']);
+    foreach (['', '1'] as $stored) {
+        [$engine, $client]           = qbEngine();
+        $ledger                      = secLedger();
+        $ledger->customers['cust-1'] = $kept;
+        $ledger->links[]             = secLink('customer', 'cust-1', 'qbo-1', ['sync_token' => $stored]);
+        $client->customers['qbo-1']  = [
+            'Id'               => 'qbo-1',
+            'SyncToken'        => '1',
+            'DisplayName'      => '   ',
+            'Notes'            => '',
+            'PrimaryEmailAddr' => ['Address' => ''],
+        ];
+
+        $engine->acceptRemoteChanges($ledger, 'company-uuid', [
+            ['entity' => 'Customer', 'id' => 'qbo-1', 'operation' => 'Update'],
+        ], secQuickBooksPrimary(), 1_000);
+
+        expect($ledger->customers['cust-1'])->toBe($kept);
+    }
+});
+
+test('sec an empty remote customer field clears fleetbase when quickbooks changed it since a baseline', function () {
     [$engine, $client]           = qbEngine();
     $ledger                      = secLedger();
     $ledger->customers['cust-1'] = secCustomer('cust-1', ['name' => 'Local Ada', 'phone' => '111', 'notes' => 'Keep']);
     $ledger->links[]             = secLink('customer', 'cust-1', 'qbo-1');
-    $client->customers['qbo-1']  = ['Id' => 'qbo-1', 'SyncToken' => '1', 'DisplayName' => '   ', 'Notes' => '', 'PrimaryEmailAddr' => ['Address' => '']];
+    $client->customers['qbo-1']  = [
+        'Id'               => 'qbo-1',
+        'SyncToken'        => '1',
+        'DisplayName'      => '   ',
+        'Notes'            => '',
+        'PrimaryEmailAddr' => ['Address' => ''],
+    ];
 
     $engine->acceptRemoteChanges($ledger, 'company-uuid', [
         ['entity' => 'Customer', 'id' => 'qbo-1', 'operation' => 'Update'],
     ], secQuickBooksPrimary(), 1_000);
 
-    expect($ledger->customers['cust-1'])->toBe(secCustomer('cust-1', ['name' => 'Local Ada', 'phone' => '111', 'notes' => 'Keep']));
+    // A blank QuickBooks name is never copied; the emptied email, phone and notes are.
+    $cleared = ['name' => 'Local Ada', 'email' => null, 'phone' => null, 'notes' => null];
+    expect($ledger->customers['cust-1'])->toBe(secCustomer('cust-1', $cleared));
 });
 
 test('sec deletes unknown entities empty ids unlinked ids and kinds quickbooks does not supply are not read', function () {
@@ -569,13 +601,13 @@ test('sec two payments in one delivery are read together and both count toward t
         ->and($ledger->invoices['inv-1']['status'])->toBe('paid');
 });
 
-test('sec a remote account update copies name currency and status and keeps an empty description out', function () {
+test('sec an account update without a baseline copies name currency and status, not an empty description', function () {
     [$engine, $client]          = qbEngine();
     $ledger                     = secLedger();
     $ledger->wallets['wal-1']   = secWallet('wal-1');
     $ledger->wallets['wal-2']   = secWallet('wal-2', ['balance' => 500]);
-    $ledger->links[]            = secLink('wallet', 'wal-1', 'acct-1');
-    $ledger->links[]            = secLink('wallet', 'wal-2', 'acct-2');
+    $ledger->links[]            = secLink('wallet', 'wal-1', 'acct-1', ['sync_token' => '']);
+    $ledger->links[]            = secLink('wallet', 'wal-2', 'acct-2', ['sync_token' => '']);
     $client->accounts['acct-1'] = ['Id' => 'acct-1', 'SyncToken' => '1', 'Name' => ' Ops Float ', 'Description' => '  ', 'CurrencyRef' => ['value' => 'cad'], 'Active' => false, 'AcctNum' => '4100'];
     $client->accounts['acct-2'] = ['Id' => 'acct-2', 'SyncToken' => '1', 'Name' => 'Reserve', 'Description' => 'Remote text', 'Active' => false, 'AcctNum' => '4200'];
 

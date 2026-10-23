@@ -355,9 +355,11 @@ Fleetbase due date takes the QuickBooks due date. QuickBooks reports each
 change Fleetbase makes; a report whose token the link already stores is
 skipped, so it does not undo a Fleetbase edit made since. When both systems
 changed the record, the QuickBooks values are copied and the Activity row says
-that a change made in Fleetbase was replaced. A token is stored only when both
-systems then hold the same values. When a QuickBooks change cannot be copied,
-such as a field emptied in QuickBooks or an invoice moved to a QuickBooks
+that a change made in Fleetbase was replaced. QuickBooks then wins the whole
+record: a customer email, phone, notes or billing address, an invoice note or
+an account description emptied in QuickBooks is emptied in Fleetbase too. A
+token is stored only when both systems then hold the same values. When a
+QuickBooks change cannot be copied, such as an invoice moved to a QuickBooks
 customer that has no Fleetbase link, the link keeps its older token:
 QuickBooks keeps winning that record, and the difference is not sent back.
 Invoice numbers and account numbers still come from QuickBooks. A customer
@@ -366,8 +368,8 @@ changed that customer; then the QuickBooks name is kept. QuickBooks decides tax,
 so a tax difference alone is copied from QuickBooks. A record linked without a
 stored token, such as a customer matched by the customer import or a record
 moved by a QuickBooks merge, counts as changed in QuickBooks on its first sync.
-That sync copies the QuickBooks values; the next one sends the values Fleetbase
-holds and QuickBooks lacks.
+That sync copies the values QuickBooks holds and empties nothing in Fleetbase;
+the next one sends the values Fleetbase holds and QuickBooks lacks.
 
 Sync frequency is the schedule. It is separate from each entity switch. There is
 no Enable schedule control, and a stored `enabled` flag does not stop the
