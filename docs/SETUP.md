@@ -635,6 +635,9 @@ balance out first if the wallet should close.
 Deletes made in Fleetbase also reach QuickBooks when the type's direction sends
 to QuickBooks. A deleted Fleetbase customer or wallet makes its linked
 QuickBooks customer or account inactive (QuickBooks does not delete them). A
+deleted customer whose QuickBooks balance is not zero is left active, so its
+open balance is not written off; the Activity row says why. Settle or move
+the balance in QuickBooks, then make the customer inactive there. A
 line item deleted from a Fleetbase invoice is removed from the QuickBooks
 invoice on the next sync, and lines added in QuickBooks stay. The QuickBooks
 line id of each item is kept in the item's `meta` column. An invoice synced

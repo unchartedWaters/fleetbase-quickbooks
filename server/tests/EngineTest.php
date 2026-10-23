@@ -4743,3 +4743,30 @@ test('a linked invoice whose note is longer than QuickBooks keeps is not updated
 
     expect($client->calls)->not->toContain('updateInvoice');
 });
+
+test('a deleted fleetbase customer with an open quickbooks balance is not made inactive', function () {
+    [$engine, $client]                 = qbEngine();
+    $ledger                            = engineLedger();
+    $ledger->customers['cust-1']       = engineCustomer('cust-1', ['deleted_at' => '2026-10-19 10:00:00']);
+    $ledger->links[]                   = engineLink('customer', 'cust-1', 'qbo-customer');
+    $ledger->pending[]                 = enginePending('customer', 'cust-1');
+    $client->customers['qbo-customer'] = [
+        'Id'              => 'qbo-customer',
+        'SyncToken'       => '3',
+        'DisplayName'     => 'Ada',
+        'Active'          => true,
+        'Balance'         => '1250.00',
+        'BalanceWithJobs' => '1250.00',
+    ];
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->calls)->not->toContain('updateCustomer')
+        ->and($client->customers['qbo-customer']['Active'])->toBeTrue()
+        ->and($ledger->attempts[0]['outcome'])->toBe('skipped')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe(
+            'Customer "Ada" was deleted in Fleetbase but still has an open balance of 1250.00 in QuickBooks,'
+            . ' so it was left active.'
+        )
+        ->and($ledger->pending[0]['status'])->toBe('done');
+});

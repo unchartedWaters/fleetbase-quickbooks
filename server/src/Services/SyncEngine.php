@@ -1610,8 +1610,42 @@ class SyncEngine
         if ($remote === null || (array_key_exists('Active', $remote) === true && $remote['Active'] === false)) {
             return 'aligned';
         }
+        if ($kind === 'customer' && $this->keepsOpenBalance($uuid, $remote) === true) {
+            return 'skipped';
+        }
 
         return $this->writeInactive($ledger, $connection, $kind, $uuid, $remote);
+    }
+
+    /**
+     * Making a customer with an open balance inactive can write that balance off in QuickBooks
+     * (its own screens add a credit memo), so a deleted Fleetbase customer whose QuickBooks
+     * balance is not zero stays active, and the row says why.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function keepsOpenBalance(string $uuid, array $remote): bool
+    {
+        $ref      = $remote['CurrencyRef'] ?? null;
+        $currency = is_array($ref) === true ? (string) ($ref['value'] ?? '') : '';
+        $balance  = $remote['BalanceWithJobs'] ?? $remote['Balance'] ?? '0';
+        try {
+            $minor = Amounts::toMinorUnits(is_int($balance) === true ? $balance : (string) $balance, $currency);
+        } catch (\Throwable) {
+            // An amount that cannot be read is not taken as zero: the customer stays active.
+            $minor = 1;
+        }
+        if ($minor === 0) {
+            return false;
+        }
+        $note = Translation::encode('quickbooks.messages.customer-inactive-open-balance', [
+            'name'   => (string) ($remote['DisplayName'] ?? ''),
+            'amount' => Amounts::centsToDecimal($minor, $currency),
+        ]);
+        $this->closeSkipped                  = true;
+        $this->rowNotes['customer:' . $uuid] = $note;
+
+        return true;
     }
 
     /**
