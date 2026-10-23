@@ -68,6 +68,14 @@ class SyncLedger
      */
     public ?\Closure $remoteLinkReader = null;
 
+    /**
+     * Reads the customer link of a QuickBooks customer this run did not load:
+     * (realm, QuickBooks id) => link, or null when it has none or its customer is gone.
+     *
+     * @var (\Closure(string, string): (array<string, mixed>|null))|null
+     */
+    public ?\Closure $customerLinkReader = null;
+
     private bool $indexed = false;
 
     /** @var array<string, int> */

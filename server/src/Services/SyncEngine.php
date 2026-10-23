@@ -570,30 +570,57 @@ class SyncEngine
         $attempts = [];
         foreach ($after as $type => $rows) {
             foreach ($rows as $uuid => $row) {
-                if (self::withoutRemoteMarkers($before[$type][$uuid] ?? null) === self::withoutRemoteMarkers($row)) {
-                    continue;
+                $previous = $before[$type][$uuid] ?? null;
+                $attempt  = $this->inboundAttempt($companyUuid, $type, (string) $uuid, $previous, $row);
+                if ($attempt !== null) {
+                    $attempts[] = $attempt;
                 }
-                $attempts[] = [
-                    'company_uuid' => $companyUuid,
-                    'local_type'   => $type,
-                    'local_uuid'   => (string) $uuid,
-                    'outcome'      => 'updated',
-                    'error'        => null,
-                ];
             }
         }
         if ($attempts === []) {
             return;
         }
+        $skipped           = count(array_keys(array_column($attempts, 'outcome'), 'skipped', true));
         $ledger->batches[] = array_merge($this->emptyBatch('webhook', 'finished'), [
             'company_uuid' => $companyUuid,
             'direction'    => 'inbound',
-            'updated'      => count($attempts),
-            'skipped'      => 0,
+            'updated'      => count($attempts) - $skipped,
+            'skipped'      => $skipped,
             'started_at'   => $now,
             'finished_at'  => $now,
         ]);
         array_push($ledger->attempts, ...$attempts);
+    }
+
+    /**
+     * A row the QuickBooks change altered, or one it left alone with a note saying why.
+     *
+     * @param array<string, mixed>|null $before
+     * @param array<string, mixed>      $after
+     *
+     * @return array<string, mixed>|null
+     */
+    private function inboundAttempt(
+        string $companyUuid,
+        string $type,
+        string $uuid,
+        ?array $before,
+        array $after,
+    ): ?array {
+        $note = $this->rowNotes[$type . ':' . $uuid] ?? null;
+        unset($this->rowNotes[$type . ':' . $uuid]);
+        $changed = self::withoutRemoteMarkers($before) !== self::withoutRemoteMarkers($after);
+        if ($changed === false && $note === null) {
+            return null;
+        }
+
+        return [
+            'company_uuid' => $companyUuid,
+            'local_type'   => $type,
+            'local_uuid'   => $uuid,
+            'outcome'      => $changed === true ? 'updated' : 'skipped',
+            'error'        => $note,
+        ];
     }
 
     /**
@@ -3527,8 +3554,10 @@ class SyncEngine
         string $reference,
         string $realmId = '',
     ): bool {
-        $changed = $this->copyInvoiceNumber($ledger, $uuid, $remote, $reference) === true
-            || $this->copyInvoiceCustomerAndCurrency($ledger, $uuid, $remote) === true;
+        // Both copies run: a number change must not skip the customer and currency copy.
+        $numberChanged = $this->copyInvoiceNumber($ledger, $uuid, $remote, $reference) === true;
+        $partyChanged  = $this->copyInvoiceCustomerAndCurrency($ledger, $uuid, $remote) === true;
+        $changed       = $numberChanged || $partyChanged;
         foreach (['TxnDate' => 'date', 'DueDate' => 'due_date'] as $remoteKey => $local) {
             $value = (string) ($remote[$remoteKey] ?? '');
             if ($value !== '' && (string) ($ledger->invoices[$uuid][$local] ?? '') !== $value) {
@@ -6665,9 +6694,13 @@ class SyncEngine
         $realm          = is_array($connection) === true ? (string) ($connection['realm_id'] ?? '') : '';
         $remoteCustomer = $this->remoteInvoiceCustomerId($remote);
         if ($remoteCustomer !== '' && $realm !== '') {
-            $link          = $ledger->linkForRemote($realm, 'Customer', $remoteCustomer);
-            $localCustomer = is_array($link) === true ? trim((string) ($link['local_uuid'] ?? '')) : '';
-            if ($localCustomer !== '' && $localCustomer !== (string) ($ledger->invoices[$uuid]['customer_uuid'] ?? '')) {
+            $localCustomer = $this->remoteInvoiceLocalCustomer($ledger, $realm, $remoteCustomer);
+            if ($localCustomer === '') {
+                $this->rowNotes['invoice:' . $uuid] ??= Translation::encode(
+                    'quickbooks.messages.invoice-customer-not-linked',
+                    ['id' => $remoteCustomer]
+                );
+            } elseif ($localCustomer !== (string) ($ledger->invoices[$uuid]['customer_uuid'] ?? '')) {
                 $ledger->invoices[$uuid]['customer_uuid'] = $localCustomer;
                 $changed                                  = true;
             }
@@ -6682,6 +6715,20 @@ class SyncEngine
         }
 
         return $changed;
+    }
+
+    /**
+     * The Fleetbase customer linked to a QuickBooks customer. A link this run did not load is
+     * read, but not added to the ledger: the row already exists and would be written again.
+     */
+    private function remoteInvoiceLocalCustomer(SyncLedger $ledger, string $realm, string $remoteCustomer): string
+    {
+        $link = $ledger->linkForRemote($realm, 'Customer', $remoteCustomer);
+        if ($link === null && $ledger->customerLinkReader !== null) {
+            $link = ($ledger->customerLinkReader)($realm, $remoteCustomer);
+        }
+
+        return is_array($link) === true ? trim((string) ($link['local_uuid'] ?? '')) : '';
     }
 
     private function copiesRemote(string $direction): bool

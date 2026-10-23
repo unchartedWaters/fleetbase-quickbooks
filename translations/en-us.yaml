@@ -266,6 +266,7 @@ quickbooks:
     invoice-customer-off: Customer sync is off, so this invoice cannot be synced.
     invoice-customer-failed: Invoice customer could not be synced to QuickBooks.
     invoice-customer-invalid: Invoice customer is not a Fleetbase customer.
+    invoice-customer-not-linked: "QuickBooks moved this invoice to customer {id}, which is not linked to a Fleetbase customer. The Fleetbase customer was kept."
     invoice-item-missing: "QuickBooks has no item for invoice lines. Fleetbase could not create its \"Fleetbase service\" item; add an Income account in QuickBooks and try again."
     invoice-product-failed: 'Fleetbase could not make a QuickBooks product for line "{name}", so the line uses the "Fleetbase service" item.'
     products-unavailable: Storefront products could not be read, so this was not synced. It is tried again on the next sync.

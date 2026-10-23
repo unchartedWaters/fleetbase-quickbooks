@@ -1424,8 +1424,42 @@ class FleetbaseDirectory
         $ledger->remoteLinkReader = function (string $realm, string $entity, array $ids, string $localUuid): array {
             return $this->linkedRemoteIds(null, $realm, $entity, $ids, $localUuid);
         };
+        $ledger->customerLinkReader = $this->customerLinkReader($companyUuid);
 
         return $ledger;
+    }
+
+    /**
+     * Reads one customer link of this organization that the run did not load, so a
+     * QuickBooks invoice moved to another customer finds that customer. The memory
+     * directory loads every link, so it has no reader.
+     */
+    private function customerLinkReader(string $companyUuid): ?\Closure
+    {
+        if ($this->memory !== null) {
+            return null;
+        }
+
+        return static function (string $realm, string $qboId) use ($companyUuid): ?array {
+            $link = Link::query()
+                ->where('company_uuid', $companyUuid)
+                ->where('realm_id', $realm)
+                ->where('local_type', 'customer')
+                ->where('qbo_entity', 'Customer')
+                ->where('qbo_id', $qboId)
+                ->first();
+            $class = 'Fleetbase\\FleetOps\\Models\\Customer';
+            if ($link === null || class_exists($class) === false) {
+                return null;
+            }
+            // The default scope leaves out a deleted customer.
+            $exists = $class::query()
+                ->where('uuid', (string) $link->local_uuid)
+                ->where('company_uuid', $companyUuid)
+                ->exists();
+
+            return $exists === true ? $link->toArray() : null;
+        };
     }
 
     /**
@@ -1722,6 +1756,8 @@ class FleetbaseDirectory
         $this->loaded['customers'] = $ledger->customers;
         $this->loaded['invoices']  = $ledger->invoices;
         $this->loaded['wallets']   = $ledger->wallets;
+
+        $ledger->customerLinkReader = $this->customerLinkReader($companyUuid);
 
         return $ledger;
     }
