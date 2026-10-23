@@ -2842,10 +2842,7 @@ class FleetbaseDirectory
             $values  = self::changedColumns($customer, $loaded, self::CUSTOMER_FIELDS);
             $address = $this->changedBillingAddress($customer, $loaded);
             if (isset($present[$uuid]) === true) {
-                $created = $this->updateExistingCustomer($class, $customer, $uuid, $values, $address);
-                if ($created !== null) {
-                    $fresh[] = $created;
-                }
+                $this->updateExistingCustomer($class, $customer, $uuid, $values, $address);
                 continue;
             }
             if ($values === [] && $address === null && $loaded !== null) {
@@ -2861,21 +2858,27 @@ class FleetbaseDirectory
      * @param array<string, mixed>      $customer
      * @param array<string, mixed>      $values
      * @param array<string, mixed>|null $address
-     *
-     * @return array<string, mixed>|null
      */
-    private function updateExistingCustomer(string $class, array $customer, string $uuid, array $values, ?array $address): ?array
-    {
+    private function updateExistingCustomer(
+        string $class,
+        array $customer,
+        string $uuid,
+        array $values,
+        ?array $address,
+    ): void {
         if ($values === [] && $address === null) {
-            return null;
+            return;
         }
+        // A customer deleted while this run was busy is left deleted. Its uuid is taken,
+        // so inserting it again would fail the whole save.
         /** @var Model|null $model */
         $model = $class::query()
+            ->withoutGlobalScope(\Illuminate\Database\Eloquent\SoftDeletingScope::class)
             ->where('uuid', $uuid)
             ->where('company_uuid', $customer['company_uuid'])
             ->first();
-        if ($model === null) {
-            return $customer;
+        if ($model === null || $model->getAttribute('deleted_at') !== null) {
+            return;
         }
         if ($values !== []) {
             $model->fill($values);
@@ -2886,8 +2889,6 @@ class FleetbaseDirectory
         if ($address !== null) {
             $this->writeBillingAddress($model, $address);
         }
-
-        return null;
     }
 
     /**

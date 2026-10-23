@@ -1548,3 +1548,25 @@ test('a payment moved to another invoice in quickbooks unpays the old invoice an
         $restore();
     }
 })->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a customer deleted after the load is not re-inserted and the rest of the save lands', function () {
+    $restore = dctSqlite();
+    try {
+        dctLoadRows();
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->loadPending('company-uuid', 50, time())['ledger'];
+        DB::table('contacts')->where('uuid', 'cust-a')->update(['deleted_at' => now()]);
+        $ledger->customers['cust-a']['name'] = 'New';
+        $ledger->invoices['inv-a']['notes']  = 'new';
+
+        $directory->save($ledger);
+        $rows = DB::table('contacts')->where('uuid', 'cust-a')->get();
+
+        expect(DB::table('ledger_invoices')->where('uuid', 'inv-a')->value('notes'))->toBe('new')
+            ->and($rows)->toHaveCount(1)
+            ->and($rows[0]->deleted_at)->not->toBeNull()
+            ->and($rows[0]->name)->toBe('Ada');
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
