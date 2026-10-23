@@ -124,8 +124,9 @@ class EnqueueWebhookSync
             $store->adminSync(),
             $store->defaultSync()
         );
-        $invoices = $this->knownInvoices($companyUuid, $events);
-        $payable  = $this->payableEvents($settings, $events);
+        [$events, $late] = $this->withoutStaleDeletes($events);
+        $invoices        = $this->knownInvoices($companyUuid, $events);
+        $payable         = $this->payableEvents($settings, $events);
         // A payment made in QuickBooks has no link yet. Its invoices are worth reading only when
         // payments take QuickBooks values; otherwise the read would change nothing.
         $readUnlinked = $this->quickbooksSupplies($settings, 'payment');
@@ -140,9 +141,97 @@ class EnqueueWebhookSync
         );
         [$deletes, $kept, $merges] = $this->onConnectedRealm($companyUuid, [$deletes, $kept, $merges]);
         [$notes, $refresh]         = $this->followMerges($companyUuid, $settings, $merges);
-        $this->dispatchFlush($companyUuid, $records, array_merge($inbound, $refresh), $deletes);
-        $this->noteKeptDeletes($companyUuid, $kept, $notes);
+        [$lateNotes, $lateReads]   = $this->staleDeleteChanges($companyUuid, $settings, $late);
+        $this->dispatchFlush($companyUuid, $records, array_merge($inbound, $refresh, $lateReads), $deletes);
+        $this->noteKeptDeletes($companyUuid, $kept, array_merge($notes, $lateNotes));
         $this->importCreatedCustomers($companyUuid);
+    }
+
+    /**
+     * A delivery that arrived too late keeps its deletes out of the usual path: they are
+     * never applied from the payload. See WebhookController::staleDelete().
+     *
+     * @param array<int, QuickBooksEntityChanged> $events
+     *
+     * @return array{0: array<int, QuickBooksEntityChanged>, 1: array<int, QuickBooksEntityChanged>}
+     */
+    private function withoutStaleDeletes(array $events): array
+    {
+        $current = [];
+        $late    = [];
+        foreach ($events as $event) {
+            if (in_array($event->operation, ['refresh', 'stale-delete'], true) === true) {
+                $late[] = $event;
+            } else {
+                $current[] = $event;
+            }
+        }
+
+        return [$current, $late];
+    }
+
+    /**
+     * A late payment delete or void reads the amount paid of the invoices it paid again from
+     * their QuickBooks balance, when payments take QuickBooks values. Settings that keep the
+     * payment note it as for any delete. Every other late delete of a linked record is noted.
+     *
+     * @param array<string, mixed>                $settings
+     * @param array<int, QuickBooksEntityChanged> $late
+     *
+     * @return array{
+     *     0: array<int, array{local_type: string, local_uuid: string, error: string}>,
+     *     1: array<int, array{entity: string, id: string, operation: string}>
+     * }
+     */
+    private function staleDeleteChanges(string $companyUuid, array $settings, array $late): array
+    {
+        [$late]   = $late === [] ? [[]] : $this->onConnectedRealm($companyUuid, [$late]);
+        $notes    = [];
+        $payments = [];
+        foreach ($late as $event) {
+            $kept = $this->keepsDelete($settings, $event);
+            if ($event->operation === 'refresh' && $kept === false) {
+                if ($this->quickbooksSupplies($settings, 'payment') === true) {
+                    $payments[] = $event;
+                }
+                continue;
+            }
+            $note = $this->staleDeleteNote($settings, $event, $kept);
+            if ($note !== null) {
+                $notes[] = $note;
+            }
+        }
+        $reads = [];
+        foreach ($this->paymentLookup()->lastKnownInvoices($companyUuid, $payments) as $invoices) {
+            array_push($reads, ...$this->invoicePaymentReads($invoices));
+        }
+
+        return [$notes, $reads];
+    }
+
+    /**
+     * The Activity note for a late delete of a linked record that was not applied.
+     *
+     * @param array<string, mixed> $settings
+     *
+     * @return array{local_type: string, local_uuid: string, error: string}|null
+     */
+    private function staleDeleteNote(array $settings, QuickBooksEntityChanged $event, bool $kept): ?array
+    {
+        $linked = is_string($event->localUuid) === true && $event->localUuid !== '';
+        if ($linked === false || $this->entityEnabled($settings, $event->entityType) === false) {
+            return null;
+        }
+        $error = Translation::encode('quickbooks.messages.remote-delete-late');
+        if ($kept === true) {
+            $key = self::DELETE_KEPT[$event->entityType] ?? null;
+            if ($key === null) {
+                return null;
+            }
+            $error = Translation::encode($key, ['id' => $event->quickbooksId]);
+        }
+
+        return ['local_type' => $event->entityType, 'local_uuid' => (string) $event->localUuid, 'error' => $error];
     }
 
     /**
@@ -444,13 +533,31 @@ class EnqueueWebhookSync
      */
     private function collectPreviousInvoices(array $settings, array $previous, array &$records, array &$inbound): void
     {
-        $supplied = $previous !== [] && $this->quickbooksSupplies($settings, 'payment') === true;
-        foreach ($previous as $uuid => $invoiceId) {
+        foreach (array_keys($previous) as $uuid) {
             $records['invoice|' . $uuid] = ['local_type' => 'invoice', 'local_uuid' => (string) $uuid];
-            if ($supplied === true && $invoiceId !== '') {
-                $inbound[] = ['entity' => SyncEngine::INVOICE_PAYMENTS, 'id' => $invoiceId, 'operation' => 'update'];
+        }
+        if ($previous !== [] && $this->quickbooksSupplies($settings, 'payment') === true) {
+            array_push($inbound, ...$this->invoicePaymentReads($previous));
+        }
+    }
+
+    /**
+     * Reads of the amount paid from each linked invoice's QuickBooks balance.
+     *
+     * @param array<string, string> $invoices invoice uuid => QuickBooks id
+     *
+     * @return array<int, array{entity: string, id: string, operation: string}>
+     */
+    private function invoicePaymentReads(array $invoices): array
+    {
+        $reads = [];
+        foreach ($invoices as $invoiceId) {
+            if ($invoiceId !== '') {
+                $reads[] = ['entity' => SyncEngine::INVOICE_PAYMENTS, 'id' => $invoiceId, 'operation' => 'update'];
             }
         }
+
+        return $reads;
     }
 
     /**

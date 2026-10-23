@@ -2181,8 +2181,11 @@ test('a signed webhook delete older than ten minutes is not applied and a down r
 
         try {
             $rejected = $controller->handle(qboChangedRequest($stale, qboChangedSignature($stale, 'verifier-token')));
+            // The stale delete is passed on only to be noted in Activity, never applied.
             expect($rejected->getStatusCode())->toBe(200)
-                ->and(qboChangedSeen())->toBe([]);
+                ->and(array_map(fn (QuickBooksEntityChanged $event) => $event->operation, qboChangedSeen()))
+                ->toBe(['stale-delete']);
+            $GLOBALS['qboChangedEvents'] = [];
 
             $previous = Cache::getFacadeRoot();
             Cache::swap(new class {

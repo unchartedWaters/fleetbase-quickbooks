@@ -115,6 +115,37 @@ class WebhookPaymentInvoices
     }
 
     /**
+     * The invoices each payment was last known to pay, read from its links without reading
+     * QuickBooks: invoices it is linked to straight, and its stored invoice. Only invoices
+     * linked to QuickBooks are listed, each with its QuickBooks invoice id.
+     *
+     * @param array<int, QuickBooksEntityChanged> $events
+     *
+     * @return array<string, array<string, string>> realm|payment id => invoice uuid => QuickBooks id
+     */
+    public function lastKnownInvoices(string $companyUuid, array $events): array
+    {
+        $idsByRealm = $this->paymentIdsByRealm($events, true);
+        if ($idsByRealm === []) {
+            return [];
+        }
+
+        $links  = new WebhookPaymentLinks();
+        $direct = [];
+        foreach ($links->paymentLinksByKey($companyUuid, $idsByRealm) as $key => $locals) {
+            $paymentId    = explode('|', (string) $key, 2)[1] ?? '';
+            $direct[$key] = array_values(array_filter(
+                $locals,
+                static fn (string $uuid): bool => $uuid !== '' && $uuid !== $paymentId
+            ));
+        }
+        $known  = self::mergeLists($direct, $links->storedPaymentInvoices($companyUuid, $idsByRealm));
+        $linked = $links->invoiceLinkIndex($companyUuid, array_keys($idsByRealm), [], $known, []);
+
+        return (new WebhookPaymentTargets())->previousInvoices($known, [], $linked, []);
+    }
+
+    /**
      * The stored invoice of each payment QuickBooks just returned. None is read when no
      * payment was read, as in the webhook request.
      *

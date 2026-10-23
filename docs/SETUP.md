@@ -565,7 +565,11 @@ as usual, while its deletes, voids and merged-away records are not applied, and
 a warning is logged. Reading the record back cannot stand in for those: a
 deleted or merged-away record reads as gone, a voided invoice reads as an
 invoice with no lines, and the record may have been restored since. The
-surviving record of a merge is still read. A delivery older than the replay
+surviving record of a merge is still read. A stale payment delete or void,
+when payments take QuickBooks values, instead makes Fleetbase read the amount
+paid of the invoices the payment was last known to pay from their QuickBooks
+balance. Any other stale delete of a linked record is listed in Activity, so
+it can be checked in QuickBooks and Fleetbase. A delivery older than the replay
 window is answered HTTP 200 and not applied at all. Set the window to 0 (or
 anything up to the maximum age) to apply no stale delivery, as before. Stale and
 too-old deliveries answer 200 whether or not their realm is connected, because

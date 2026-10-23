@@ -739,6 +739,69 @@ test('a payment moved off its stored invoice keeps that row while fleetbase hold
         ]);
 })->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
 
+test('a stale payment delete re-reads the balance of the invoice it paid', function () {
+    $client    = new WplClient();
+    $directory = wplDirectory();
+    $links     = [
+        wplLink('pay-4', 'payment', '4', 'Payment', '4'),
+        wplLink('map-4', 'payment-invoice', '4', 'PaymentInvoice', 'inv-a'),
+        wplLink('pay-5', 'payment', 'inv-b', 'Payment', '5'),
+        wplLink('link-inv-a', 'invoice', 'inv-a', 'Invoice', '10'),
+        wplLink('link-inv-b', 'invoice', 'inv-b', 'Invoice', '11'),
+    ];
+
+    $jobs = wplWithTables($links, [], fn () => wplWithServices($client, $directory, null, function ($dispatcher) {
+        wplRequest([
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'refresh', '4'),
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '5', 'refresh', 'inv-b'),
+        ], wplStore());
+
+        return $dispatcher->jobs;
+    }));
+
+    // Nothing is deleted from the late payload, and QuickBooks is not called in the request.
+    expect($client->calls)->toBe([])
+        ->and($directory->released)->toBe([])
+        ->and(wplJobs($jobs))->toBe([
+            ['apply', [
+                ['entity' => 'InvoicePayments', 'id' => '10', 'operation' => 'update'],
+                ['entity' => 'InvoicePayments', 'id' => '11', 'operation' => 'update'],
+            ]],
+        ]);
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a stale delete that is not applied is noted in activity', function () {
+    $client    = new WplClient();
+    $directory = wplDirectory();
+    $links     = [
+        wplLink('cust-9', 'customer', 'cust-9', 'Customer', '9'),
+        wplLink('pay-4', 'payment', '4', 'Payment', '4'),
+    ];
+
+    $jobs = wplWithTables($links, [], fn () => wplWithServices($client, $directory, null, function ($dispatcher) {
+        wplRequest([
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '9', 'stale-delete', 'cust-9'),
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'invoice', '12', 'stale-delete', null),
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'refresh', '4'),
+        ], wplStore(['payment_conflict' => 'fleetbase']));
+
+        return $dispatcher->jobs;
+    }));
+    $notes = array_map(
+        static fn (array $row): array => [$row['local_type'], $row['local_uuid'], qbText($row['error'])],
+        $directory->memory->attempts
+    );
+
+    expect($jobs)->toBe([])
+        ->and($directory->released)->toBe([])
+        ->and($notes)->toBe([
+            ['customer', 'cust-9', 'QuickBooks reported a delete too late to apply it safely.'
+                . ' Check this record in QuickBooks and Fleetbase.'],
+            ['payment', '4', 'A payment deleted or voided in QuickBooks (ID 4) is still counted in Fleetbase.'
+                . ' The payment sync settings do not let QuickBooks remove Fleetbase records.'],
+        ]);
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
 test('a failed batch read skips its payments without failing the job or deferring them again', function (string $failure) {
     $client                = new WplClient();
     $client->batchFailure  = $failure;
