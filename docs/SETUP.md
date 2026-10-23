@@ -412,6 +412,14 @@ notes, Sync now, and Disconnect][setup-connected]
 ![QuickBooks Setup when QuickBooks must be connected again: a red
 message, Connect to QuickBooks, and Disconnect][setup-reconnect]
 
+Sync now, reconcile, the customer import and Connect each run at most once
+per organization in `QUICKBOOKS_MANUAL_COOLDOWN_SECONDS` seconds (config key
+`quickbooks.manual_cooldown_seconds`, default 30; 0 turns it off). A repeat
+inside that time answers HTTP 429 and queues nothing, and the console shows
+"This was started a moment ago. Try again in a minute." While QuickBooks must
+be connected again, the skipped sync is written to Activity at most once per
+cooldown. If the cache cannot be reached, the actions are not limited.
+
 Connect uses PKCE (`S256`). The API stores a code verifier with the OAuth state and sends the code challenge on `https://appcenter.intuit.com/connect/oauth2` with scope `com.intuit.quickbooks.accounting`.
 
 Intuit redirects the browser to the public route `GET /quickbooks/int/v1/oauth/callback`. That request has no Fleetbase session. It checks the single-use state, keeps the code, and sends the browser to the console at `/quickbooks?oauth_state=...`. The signed-in console finishes the connection with `POST /quickbooks/int/v1/oauth/complete`, which checks the user and organization that started it and exchanges the code at `https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer`.

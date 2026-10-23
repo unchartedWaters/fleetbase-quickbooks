@@ -201,6 +201,7 @@ quickbooks:
     primary-payment: Choose Fleetbase or QuickBooks as Primary for Payments.
     primary-wallet: Choose Fleetbase or QuickBooks as Primary for Accounts / Wallets.
   messages:
+    action-cooldown: This was started a moment ago. Try again in a minute.
     unauthorized: This action is unauthorized.
     organization-required: Sign in to an organization to manage QuickBooks.
     organization-mismatch: You may only manage the QuickBooks connection for your own organization.

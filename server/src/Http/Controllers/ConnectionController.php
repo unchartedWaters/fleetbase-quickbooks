@@ -31,6 +31,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class ConnectionController extends QuickbooksController
@@ -230,6 +231,10 @@ class ConnectionController extends QuickbooksController
                 'message' => Translation::get('quickbooks.messages.redirect-not-public'),
             ], 422);
         }
+        $cooling = $this->cooldown($companyUuid, 'start');
+        if ($cooling !== null) {
+            return $cooling;
+        }
         $begun       = $this->oauth->begin(
             $companyUuid,
             (string) session('user', ''),
@@ -330,7 +335,8 @@ class ConnectionController extends QuickbooksController
     {
         $this->authorizeQuickbooks('quickbooks import-customers connection', $request);
         $companyUuid = $this->companyUuid($request);
-        $blocked     = $this->blockedConnection($companyUuid, 'import', 'inbound');
+        $blocked     = $this->blockedConnection($companyUuid, 'import', 'inbound')
+            ?? $this->cooldown($companyUuid, 'import');
         if ($blocked !== null) {
             return $blocked;
         }
@@ -343,7 +349,7 @@ class ConnectionController extends QuickbooksController
     {
         $this->authorizeQuickbooks('quickbooks reconcile sync', $request);
         $companyUuid = $this->companyUuid($request);
-        $blocked     = $this->blockedConnection($companyUuid, 'manual');
+        $blocked     = $this->blockedConnection($companyUuid, 'manual') ?? $this->cooldown($companyUuid, 'manual');
         if ($blocked !== null) {
             return $blocked;
         }
@@ -356,7 +362,7 @@ class ConnectionController extends QuickbooksController
     {
         $this->authorizeQuickbooks('quickbooks reconcile sync', $request);
         $companyUuid = $this->companyUuid($request);
-        $blocked     = $this->blockedConnection($companyUuid, 'now');
+        $blocked     = $this->blockedConnection($companyUuid, 'now') ?? $this->cooldown($companyUuid, 'now');
         if ($blocked !== null) {
             return $blocked;
         }
@@ -688,7 +694,9 @@ class ConnectionController extends QuickbooksController
             $message = 'quickbooks.messages.not-connected-connect';
         }
 
-        if (ConnectionGate::hasRealm($row) === false) {
+        // A blocked connection is recorded in Activity at most once per cooldown.
+        if (ConnectionGate::hasRealm($row) === false
+            || $this->firstInCooldown('quickbooks.blocked.' . $companyUuid . '.' . $trigger) === false) {
             return response()->json(['message' => Translation::render($message)], 422);
         }
 
@@ -715,6 +723,36 @@ class ConnectionController extends QuickbooksController
         $attempt->save();
 
         return response()->json(['message' => Translation::render($message)], 422);
+    }
+
+    /**
+     * One manual action per organization per cooldown (quickbooks.manual_cooldown_seconds),
+     * so repeated clicks or a script cannot flood the shared queue and Activity.
+     */
+    private function cooldown(string $companyUuid, string $action): ?JsonResponse
+    {
+        if ($this->firstInCooldown('quickbooks.action.' . $companyUuid . '.' . $action) === true) {
+            return null;
+        }
+
+        return response()->json(['message' => Translation::get('quickbooks.messages.action-cooldown')], 429);
+    }
+
+    /**
+     * True the first time $key is seen within the cooldown. A cooldown of 0 turns it off,
+     * and a cache that cannot be reached never blocks a sync.
+     */
+    private function firstInCooldown(string $key): bool
+    {
+        $seconds = (int) config('quickbooks.manual_cooldown_seconds', 30);
+        if ($seconds <= 0) {
+            return true;
+        }
+        try {
+            return Cache::add($key, true, $seconds) === true;
+        } catch (\Throwable) {
+            return true;
+        }
     }
 
     /**
