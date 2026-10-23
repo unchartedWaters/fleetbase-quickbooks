@@ -301,6 +301,31 @@ class PrimaryFixtures
     }
 
     /**
+     * Apply a QuickBooks webhook for one record, as ApplyRemoteChange does.
+     *
+     * @param array<string, mixed> $settings
+     */
+    public static function webhook(
+        SyncEngine $engine,
+        SyncLedger $ledger,
+        string $entity,
+        string $id,
+        array $settings = [],
+    ): void {
+        $settings = $settings === [] ? self::shippedSettings() : $settings;
+        $entities = [['entity' => $entity, 'id' => $id, 'operation' => 'Update']];
+        $engine->acceptRemoteChanges($ledger, 'company-uuid', $entities, $settings, time());
+    }
+
+    /**
+     * How many times the fake QuickBooks was called with $call.
+     */
+    public static function count(FakeQuickBooks $client, string $call): int
+    {
+        return count(array_keys($client->calls, $call, true));
+    }
+
+    /**
      * Run the queue again, as a later sync does.
      *
      * @param array<string, mixed> $settings

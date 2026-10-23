@@ -27,4 +27,18 @@ class QuickBooksChanges
 
         return $stored === '' || $current === '' || $stored !== $current;
     }
+
+    /**
+     * Whether the link holds a token for this QuickBooks record, that is a sync once left both
+     * sides equal. A link without one gives no baseline: the first sync after it merges.
+     *
+     * @param array<string, mixed>|null $link
+     * @param array<string, mixed>      $remote
+     */
+    public static function known(?array $link, array $remote): bool
+    {
+        return $link !== null
+            && trim((string) ($link['qbo_id'] ?? '')) === trim((string) ($remote['Id'] ?? ''))
+            && trim((string) ($link['sync_token'] ?? '')) !== '';
+    }
 }
