@@ -733,8 +733,11 @@ test('invoice and customer notes are cut to the QuickBooks limits', function () 
         'notes'    => str_repeat('i', 4001),
         'items'    => [],
     ], '7', 'item-1');
-    $customer = (new CustomerMapper())->toQuickBooks(['name' => 'Ada', 'notes' => str_repeat('c', 2001)]);
+    $customer = (new CustomerMapper())->toQuickBooks(['name' => 'Ada', 'notes' => str_repeat('c', 4001)]);
+    // QuickBooks stores a customer note of up to 4000 characters in full.
+    $kept = (new CustomerMapper())->toQuickBooks(['name' => 'Ada', 'notes' => str_repeat('k', 2500)]);
 
     expect(mb_strlen($invoice['PrivateNote']))->toBe(4000)
-        ->and(mb_strlen($customer['Notes']))->toBe(2000);
+        ->and(mb_strlen($customer['Notes']))->toBe(4000)
+        ->and(mb_strlen($kept['Notes']))->toBe(2500);
 });

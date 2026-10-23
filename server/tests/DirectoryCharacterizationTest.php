@@ -817,17 +817,53 @@ test('a loaded ledger can ask which quickbooks accounts any wallet in the realm 
     $restore = dctSqlite();
     try {
         dctConnection();
+        dctConnection('company-b');
         dctLinkRow('link-1', 'wallet', 'wal-other', 'Account', 'acct-9');
         dctLinkRow('link-2', 'wallet', 'wal-org-b', 'Account', 'acct-10', 'realm-1', 'company-b');
         dctLinkRow('link-3', 'wallet', 'wal-realm-2', 'Account', 'acct-11', 'realm-2');
+        // An organization that disconnected keeps its links for a reconnect; they do not count.
+        dctLinkRow('link-4', 'wallet', 'wal-org-c', 'Account', 'acct-13', 'realm-1', 'company-c');
 
         $ledger = (new FleetbaseDirectory())->load('company-uuid')['ledger'];
-        $ids    = ['acct-9', 'acct-10', 'acct-11', 'acct-12'];
+        $ids    = ['acct-9', 'acct-10', 'acct-11', 'acct-12', 'acct-13'];
         $linked = $ledger->remoteIdsLinked('realm-1', 'Account', $ids, 'wal-new');
         sort($linked);
 
         expect($linked)->toBe(['acct-10', 'acct-9'])
             ->and($ledger->remoteIdsLinked('realm-1', 'Account', ['acct-9'], 'wal-other'))->toBe([]);
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('the cross-organization guard ignores disconnected organizations and deleted customers', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        dctConnection('company-b');
+        dctConnection('company-d', 'realm-2');
+        dctContact('cust-live', 'Live');
+        dctContact('cust-gone', 'Gone', 'company-uuid', ['deleted_at' => now()]);
+        dctContact('cust-b', 'Other organization', 'company-b');
+        dctContact('cust-b-gone', 'Other organization, deleted', 'company-b', ['deleted_at' => now()]);
+        dctContact('cust-c', 'Disconnected organization', 'company-c');
+        dctContact('cust-d', 'Organization on another company', 'company-d');
+        dctLinkRow('l-live', 'customer', 'cust-live', 'Customer', '1');
+        dctLinkRow('l-gone', 'customer', 'cust-gone', 'Customer', '2');
+        dctLinkRow('l-b', 'customer', 'cust-b', 'Customer', '3', 'realm-1', 'company-b');
+        dctLinkRow('l-b-gone', 'customer', 'cust-b-gone', 'Customer', '4', 'realm-1', 'company-b');
+        dctLinkRow('l-c', 'customer', 'cust-c', 'Customer', '5', 'realm-1', 'company-c');
+        dctLinkRow('l-d', 'customer', 'cust-d', 'Customer', '6', 'realm-1', 'company-d');
+
+        $ledger  = (new FleetbaseDirectory())->load('company-uuid')['ledger'];
+        $linked  = [];
+        $queries = dctQueries(static function () use ($ledger, &$linked): void {
+            $linked = $ledger->remoteIdsLinked('realm-1', 'Customer', ['1', '2', '3', '4', '5', '6', '7'], 'cust-new');
+        });
+        sort($linked);
+
+        expect($linked)->toBe(['1', '3'])
+            ->and(count($queries))->toBeLessThanOrEqual(2);
     } finally {
         $restore();
     }

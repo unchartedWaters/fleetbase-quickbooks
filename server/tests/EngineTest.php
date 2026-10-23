@@ -283,6 +283,62 @@ test('quickbooks primary copies a note the fleetbase invoice does not have', fun
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
+test('quickbooks primary keeps a fleetbase invoice note quickbooks holds cut to its limit', function () {
+    $note                       = str_repeat('n', 4500);
+    [$engine, $client, $ledger] = engineLinkedInvoice(['notes' => $note], [
+        'PrivateNote' => mb_substr($note, 0, 4000),
+        'DueDate'     => '2026-09-20',
+    ]);
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+        'interval_minutes' => 1,
+        'invoice_conflict' => 'quickbooks',
+    ]), time());
+
+    expect($ledger->invoices['inv-1']['due_date'])->toBe('2026-09-20')
+        ->and($ledger->invoices['inv-1']['notes'])->toBe($note);
+});
+
+test('a long fleetbase customer note survives two syncs under quickbooks primary', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $note                        = str_repeat('n', 4500);
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['notes' => $note]);
+    $settings                    = qbSettings([
+        'interval_minutes'   => 1,
+        'customer_conflict'  => 'quickbooks',
+        'customer_reference' => 'quickbooks',
+    ]);
+
+    for ($run = 0; $run < 2; $run++) {
+        $ledger->pending                                      = [enginePending('customer', 'cust-1')];
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $engine->runScheduled($ledger, 'company-uuid', $settings, time() + $run * 120);
+    }
+
+    expect($client->calls)->toContain('getCustomer:1')
+        ->and(mb_strlen((string) $client->customers['1']['Notes']))->toBe(4000)
+        ->and($ledger->customers['cust-1']['notes'])->toBe($note);
+});
+
+test('a long fleetbase wallet description survives the create and the next sync', function () {
+    [$engine, $client]        = qbEngine();
+    $ledger                   = engineLedger();
+    $description              = str_repeat('d', 150);
+    $ledger->wallets['wal-1'] = engineWallet('wal-1', ['description' => $description]);
+    $settings                 = qbSettings(['interval_minutes' => 1, 'wallet_conflict' => 'quickbooks']);
+
+    for ($run = 0; $run < 2; $run++) {
+        $ledger->pending                                      = [enginePending('wallet', 'wal-1')];
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $engine->runScheduled($ledger, 'company-uuid', $settings, time() + $run * 120);
+    }
+    $account = $client->accounts[$ledger->link('company-uuid', 'realm-1', 'wallet', 'wal-1')['qbo_id']];
+
+    expect(mb_strlen((string) $account['Description']))->toBe(100)
+        ->and($ledger->wallets['wal-1']['description'])->toBe($description);
+});
+
 test('changing the invoice customer updates the quickbooks customer once', function () {
     [$engine, $client, $ledger] = engineLinkedInvoice(['customer_uuid' => 'cust-2'], [
         'CustomerRef' => ['value' => 'qbo-customer'],
@@ -836,6 +892,120 @@ test('a customer is not linked to a quickbooks customer another fleetbase custom
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-2')['qbo_id'])->not->toBe('58')
         ->and($client->customers['58']['DisplayName'])->toBe('Acme East');
 })->with(['one row' => ['single'], 'block' => ['block'], 'another organization' => ['another organization']]);
+
+test('a customer whose email match is taken links to the free quickbooks customer with its name', function (
+    string $variant,
+) {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => 'Acme East', 'email' => 'ap@acme.test']);
+    $ledger->customers['cust-2'] = engineCustomer('cust-2', ['name' => 'Acme West', 'email' => 'ap@acme.test']);
+    $ledger->links[]             = engineLink('customer', 'cust-1', '58');
+    $client->customers['58']     = [
+        'Id'               => '58',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Acme East',
+        'PrimaryEmailAddr' => ['Address' => 'ap@acme.test'],
+    ];
+    $client->customers['77'] = [
+        'Id'               => '77',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Acme West',
+        'PrimaryEmailAddr' => ['Address' => 'west@acme.test'],
+    ];
+    $ledger->pending[] = enginePending('customer', 'cust-2');
+    if ($variant === 'block') {
+        $ledger->pending[] = enginePending('customer', 'cust-1');
+    }
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+        'interval_minutes'   => 1,
+        'customer_reference' => 'quickbooks',
+    ]), time());
+
+    expect($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-2')['qbo_id'] ?? null)->toBe('77')
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-1')['qbo_id'])->toBe('58')
+        ->and($client->calls)->not->toContain('createCustomer');
+})->with(['one row' => ['single'], 'block' => ['block']]);
+
+test('a quickbooks customer linked only to a deleted fleetbase customer can be linked again', function (
+    string $variant,
+) {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['deleted_at' => '2026-10-01 00:00:00']);
+    $ledger->customers['cust-2'] = engineCustomer('cust-2');
+    $ledger->links[]             = engineLink('customer', 'cust-1', '58');
+    $client->customers['58']     = [
+        'Id'               => '58',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Ada',
+        'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+    ];
+    $ledger->pending[] = enginePending('customer', 'cust-2');
+    if ($variant === 'block') {
+        $ledger->customers['cust-3'] = engineCustomer('cust-3', ['name' => 'Bea', 'email' => 'bea@example.test']);
+        $ledger->pending[]           = enginePending('customer', 'cust-3');
+    }
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-2')['qbo_id'] ?? null)->toBe('58')
+        ->and(array_count_values($client->calls)['createCustomer'] ?? 0)->toBe($variant === 'block' ? 1 : 0);
+})->with(['one row' => ['single'], 'block' => ['block']]);
+
+test('a deleted customer does not make inactive a quickbooks customer another customer now syncs with', function () {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['deleted_at' => '2026-10-01 00:00:00']);
+    $ledger->customers['cust-2'] = engineCustomer('cust-2');
+    $ledger->links[]             = engineLink('customer', 'cust-1', '58');
+    $ledger->links[]             = engineLink('customer', 'cust-2', '58');
+    $client->customers['58']     = [
+        'Id'               => '58',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Ada',
+        'Active'           => true,
+        'PrimaryEmailAddr' => ['Address' => 'ada@example.test'],
+    ];
+    $ledger->pending[] = enginePending('customer', 'cust-1');
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($client->customers['58']['Active'])->toBeTrue()
+        ->and($ledger->pending[0]['status'])->toBe('done');
+});
+
+test('a customer whose email and name matches are both taken gets its own customer', function (string $variant) {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => 'Acme East', 'email' => 'ap@acme.test']);
+    $ledger->customers['cust-2'] = engineCustomer('cust-2', ['name' => 'Acme West', 'email' => 'ap@acme.test']);
+    $ledger->customers['cust-3'] = engineCustomer('cust-3', ['name' => 'Acme West', 'email' => 'w@acme.test']);
+    $ledger->links[]             = engineLink('customer', 'cust-1', '58');
+    $ledger->links[]             = engineLink('customer', 'cust-3', '77');
+    $client->customers['58']     = [
+        'Id'               => '58',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Acme East',
+        'PrimaryEmailAddr' => ['Address' => 'ap@acme.test'],
+    ];
+    $client->customers['77'] = [
+        'Id'               => '77',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Acme West',
+        'PrimaryEmailAddr' => ['Address' => 'w@acme.test'],
+    ];
+    $ledger->pending[] = enginePending('customer', 'cust-2');
+    if ($variant === 'block') {
+        $ledger->pending[] = enginePending('customer', 'cust-1');
+    }
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-2')['qbo_id'] ?? null)->not->toBeIn(['58', '77'])
+        ->and($client->calls)->toContain('createCustomer');
+})->with(['one row' => ['single'], 'block' => ['block']]);
 
 test(
     'a customer whose email matches a quickbooks customer another fleetbase customer syncs with gets its own customer',
@@ -2172,6 +2342,176 @@ test('failed linked payment reads fail their invoices without creating replaceme
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-two')['qbo_id'])->toBe('inv-2')
         ->and($client->calls)->not->toContain('createPayment');
 });
+
+test('a block read every invoice fails with keeps the status QuickBooks gave', function (
+    string $read,
+    int $status,
+    string $expected,
+) {
+    $client = new class extends FakeQuickBooks {
+        public string $failRead = '';
+
+        public int $failStatus = 500;
+
+        public function batch(array $connection, array $items): array
+        {
+            if (str_contains((string) ($items[0]['query'] ?? ''), $this->failRead) === true) {
+                return [(string) $items[0]['bId'] => [
+                    'ok'     => false, 'body' => [], 'rows' => [],
+                    'error'  => qbRequestFailed($this->failStatus, 'Refused'),
+                    'status' => $this->failStatus, 'halt' => false,
+                ]];
+            }
+
+            return parent::batch($connection, $items);
+        }
+    };
+    $client->failRead   = $read;
+    $client->failStatus = $status;
+    [$engine, $client]  = qbEngine($client);
+    $client->salesTax   = ['mode' => 'us', 'automated' => false, 'rate' => '2'];
+    $ledger             = engineLedger();
+    foreach (['one', 'two'] as $key) {
+        $ledger->customers['cust-' . $key]  = engineCustomer('cust-' . $key, ['name' => 'Ada ' . $key]);
+        $ledger->links[]                    = engineLink('customer', 'cust-' . $key, 'qbo-' . $key);
+        $client->customers['qbo-' . $key]   = [
+            'Id'          => 'qbo-' . $key,
+            'SyncToken'   => '0',
+            'DisplayName' => 'Ada ' . $key,
+        ];
+        $ledger->invoices['inv-' . $key]    = engineInvoice('inv-' . $key, [
+            'number'        => 'INV-' . strtoupper($key),
+            'customer_uuid' => 'cust-' . $key,
+            'status'        => 'paid',
+        ]);
+        $ledger->links[]   = engineLink('payment', 'inv-' . $key, 'pay-' . $key);
+        $ledger->pending[] = enginePending('invoice', 'inv-' . $key);
+    }
+    $settings = qbSettings(['interval_minutes' => 1, 'retry_limit' => 1]);
+
+    for ($run = 0; $run < 3; $run++) {
+        foreach (array_keys($ledger->pending) as $index) {
+            $ledger->pending[$index]['next_attempt_at'] = null;
+        }
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $engine->runScheduled($ledger, 'company-uuid', $settings, time() + $run * 60);
+    }
+
+    expect(array_column($ledger->pending, 'status'))->toBe([$expected, $expected])
+        ->and($client->calls)->not->toContain('createPayment');
+})->with([
+    'a refused payment read'       => ['from Payment where Id IN', 400, 'failed'],
+    'an outage on a payment read'  => ['from Payment where Id IN', 503, 'pending'],
+    'a refused tax customer read'  => ['from Customer where Id IN', 400, 'failed'],
+    'an outage on a customer read' => ['from Customer where Id IN', 503, 'pending'],
+]);
+
+test('a block customer lookup QuickBooks refuses stops at the retry limit', function (int $status, string $expected) {
+    $client = new class extends FakeQuickBooks {
+        public int $failStatus = 500;
+
+        public function batch(array $connection, array $items): array
+        {
+            $results = parent::batch($connection, $items);
+            foreach ($items as $item) {
+                if (str_contains((string) ($item['query'] ?? ''), 'PrimaryEmailAddr') === true) {
+                    $results[(string) $item['bId']] = [
+                        'ok'     => false, 'body' => [], 'rows' => [],
+                        'error'  => qbRequestFailed($this->failStatus, 'Refused'),
+                        'status' => $this->failStatus, 'halt' => false,
+                    ];
+                }
+            }
+
+            return $results;
+        }
+    };
+    $client->failStatus = $status;
+    [$engine, $client]  = qbEngine($client);
+    $ledger             = engineLedger();
+    foreach (['one', 'two'] as $key) {
+        $ledger->customers['cust-' . $key] = engineCustomer('cust-' . $key, ['email' => $key . '@example.test']);
+        $ledger->pending[]                 = enginePending('customer', 'cust-' . $key);
+    }
+    $settings = qbSettings(['interval_minutes' => 1, 'retry_limit' => 1]);
+
+    for ($run = 0; $run < 3; $run++) {
+        foreach (array_keys($ledger->pending) as $index) {
+            $ledger->pending[$index]['next_attempt_at'] = null;
+        }
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $engine->runScheduled($ledger, 'company-uuid', $settings, time() + $run * 60);
+    }
+
+    expect(array_column($ledger->pending, 'status'))->toBe([$expected, $expected])
+        ->and($client->calls)->not->toContain('createCustomer');
+})->with(['a refusal' => [400, 'failed'], 'an outage' => [503, 'pending']]);
+
+test('a failed invoice or account block read keeps the status QuickBooks gave', function (
+    string $read,
+    int $status,
+    string $expected,
+) {
+    $client = new class extends FakeQuickBooks {
+        public string $failRead = '';
+
+        public int $failStatus = 500;
+
+        public function batch(array $connection, array $items): array
+        {
+            if (str_contains((string) ($items[0]['query'] ?? ''), $this->failRead) === true) {
+                return [(string) $items[0]['bId'] => [
+                    'ok'     => false, 'body' => [], 'rows' => [],
+                    'error'  => qbRequestFailed($this->failStatus, 'Refused'),
+                    'status' => $this->failStatus, 'halt' => false,
+                ]];
+            }
+
+            return parent::batch($connection, $items);
+        }
+    };
+    $client->failRead                  = $read;
+    $client->failStatus                = $status;
+    [$engine, $client]                 = qbEngine($client);
+    $ledger                            = engineLedger();
+    $ledger->customers['cust-1']       = engineCustomer('cust-1');
+    $ledger->links[]                   = engineLink('customer', 'cust-1', 'qbo-customer');
+    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada'];
+    $type                              = str_contains($read, 'Invoice') === true ? 'invoice' : 'wallet';
+    foreach (['1', '2'] as $key) {
+        if ($type === 'invoice') {
+            $ledger->invoices['inv-' . $key] = engineInvoice('inv-' . $key, ['number' => 'INV-' . $key]);
+        } else {
+            $ledger->wallets['wal-' . $key] = engineWallet('wal-' . $key, ['name' => 'Wallet ' . $key]);
+        }
+        if (str_contains($read, 'Id IN') === true) {
+            $ledger->links[] = engineLink($type, $type === 'invoice' ? 'inv-' . $key : 'wal-' . $key, 'qb-' . $key);
+        }
+        $ledger->pending[] = enginePending($type, $type === 'invoice' ? 'inv-' . $key : 'wal-' . $key);
+    }
+    $settings = qbSettings(['interval_minutes' => 1, 'retry_limit' => 1]);
+
+    for ($run = 0; $run < 3; $run++) {
+        foreach (array_keys($ledger->pending) as $index) {
+            $ledger->pending[$index]['next_attempt_at'] = null;
+        }
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $engine->runScheduled($ledger, 'company-uuid', $settings, time() + $run * 60);
+    }
+
+    expect(array_column($ledger->pending, 'status'))->toBe([$expected, $expected])
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and($client->calls)->not->toContain('createAccount');
+})->with([
+    'a refused invoice read'            => ['from Invoice where Id IN', 400, 'failed'],
+    'an outage on an invoice read'      => ['from Invoice where Id IN', 503, 'pending'],
+    'a refused number read'             => ['from Invoice where DocNumber IN', 400, 'failed'],
+    'an outage on a number read'        => ['from Invoice where DocNumber IN', 503, 'pending'],
+    'a refused account read'            => ['from Account where Id IN', 400, 'failed'],
+    'an outage on an account read'      => ['from Account where Id IN', 503, 'pending'],
+    'a refused account name read'       => ['from Account where Name IN', 400, 'failed'],
+    'an outage on an account name read' => ['from Account where Name IN', 503, 'pending'],
+]);
 
 test('an invoice link and quickbooks number survive a 401 during payment prefetch', function () {
     $client = new class extends FakeQuickBooks {

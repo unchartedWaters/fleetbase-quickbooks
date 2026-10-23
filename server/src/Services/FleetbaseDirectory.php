@@ -1483,10 +1483,12 @@ class FleetbaseDirectory
         $this->loaded['customers'] = $ledger->customers;
         $this->loaded['invoices']  = $ledger->invoices;
         $this->loaded['wallets']   = $ledger->wallets;
-        // Only rows this run needs are loaded. Whether a QuickBooks account already belongs to
-        // another wallet, of any organization on that company, is read when it is asked.
-        $ledger->remoteLinkReader = function (string $realm, string $entity, array $ids, string $localUuid): array {
-            return $this->linkedRemoteIds(null, $realm, $entity, $ids, $localUuid);
+        // Only rows this run needs are loaded. Whether a QuickBooks record already belongs to
+        // another Fleetbase record, of any organization on that company, is read when it is asked.
+        $ledger->remoteLinkReader = function (string $realm, string $entity, array $ids, string $localUuid) use (
+            $companyUuid
+        ): array {
+            return $this->claimedRemoteIds($companyUuid, $realm, $entity, $ids, $localUuid);
         };
         $ledger->customerLinkReader = $this->customerLinkReader($companyUuid);
 
@@ -1913,6 +1915,69 @@ class FleetbaseDirectory
             ->whereIn('qbo_id', $ids)
             ->pluck('qbo_id')
             ->all()));
+    }
+
+    /**
+     * Which of these QuickBooks ids a Fleetbase record still syncs with, for the guard that keeps
+     * one QuickBooks record to one Fleetbase record. A link counts when its organization is
+     * $companyUuid or is connected to this realm: an organization that disconnected keeps its
+     * links for a reconnect, and they do not hold the record. A customer link of a deleted
+     * Fleet-Ops customer does not count either. One query reads the links; a second runs only
+     * when customer links were found, since Fleet-Ops may keep its tables on another connection.
+     *
+     * @param array<int, string> $ids
+     *
+     * @return array<int, string>
+     */
+    private function claimedRemoteIds(
+        string $companyUuid,
+        string $realm,
+        string $entity,
+        array $ids,
+        string $exceptLocalUuid,
+    ): array {
+        $ids = array_values(array_unique(array_filter(array_map('strval', $ids))));
+        if ($ids === [] || $realm === '') {
+            return [];
+        }
+        $connections = (new Connection())->newQuery()->select('company_uuid')->where('realm_id', $realm);
+        $links       = Link::query()
+            ->where('realm_id', $realm)
+            ->where('qbo_entity', $entity)
+            ->whereIn('qbo_id', $ids)
+            ->where('local_uuid', '!=', $exceptLocalUuid)
+            ->where(static function ($owner) use ($companyUuid, $connections): void {
+                $owner->where('company_uuid', $companyUuid)->orWhereIn('company_uuid', $connections);
+            })
+            ->get(['qbo_id', 'local_type', 'local_uuid']);
+        $deleted = $this->deletedCustomerUuids($links->where('local_type', 'customer')->pluck('local_uuid')->all());
+        $claimed = [];
+        foreach ($links as $link) {
+            if ($link->local_type !== 'customer' || isset($deleted[(string) $link->local_uuid]) === false) {
+                $claimed[(string) $link->qbo_id] = (string) $link->qbo_id;
+            }
+        }
+
+        return array_values($claimed);
+    }
+
+    /**
+     * The soft-deleted Fleet-Ops customers among these uuids, as keys.
+     *
+     * @param array<int, mixed> $uuids
+     *
+     * @return array<string, true>
+     */
+    private function deletedCustomerUuids(array $uuids): array
+    {
+        $class = 'Fleetbase\\FleetOps\\Models\\Customer';
+        $uuids = array_values(array_unique(array_map('strval', $uuids)));
+        if ($uuids === [] || class_exists($class) === false) {
+            return [];
+        }
+        $deleted = $class::onlyTrashed()->whereIn('uuid', $uuids)->pluck('uuid')->all();
+
+        return array_fill_keys(array_map('strval', $deleted), true);
     }
 
     /**

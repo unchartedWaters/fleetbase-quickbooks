@@ -208,9 +208,10 @@ class SyncEngine
     private ?array $customerRemoteCache = null;
 
     /**
-     * Fleetbase uuids whose block lookup failed. Failure is not "no such customer".
+     * Fleetbase uuids whose block lookup failed. Failure is not "no such customer". Each keeps
+     * the status QuickBooks gave, so it is thrown again as a refusal or as an outage.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $customerLookupFailed = [];
 
@@ -224,9 +225,9 @@ class SyncEngine
 
     /**
      * QuickBooks customers read for the tax of an invoice block, by QuickBooks id. Null is no such
-     * customer; a string is the error of a failed read. Null outside a block.
+     * customer; an exception is a failed read, thrown again with its status. Null outside a block.
      *
-     * @var array<string, array<string, mixed>|string|null>|null
+     * @var array<string, array<string, mixed>|QuickBooksException|null>|null
      */
     private ?array $taxCustomers = null;
 
@@ -264,29 +265,33 @@ class SyncEngine
 
     /**
      * QuickBooks invoice ids whose block read failed. Absence from invoiceById is a miss only when the id is not here.
+     * Each is thrown again with the status QuickBooks gave.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $invoiceReadFailed = [];
 
     /**
      * Invoice numbers whose block read failed. A failed read is not "no invoice with this number".
+     * Each is thrown again with the status QuickBooks gave.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $invoiceDocReadFailed = [];
 
     /**
      * QuickBooks account ids whose block read failed.
+     * Each is thrown again with the status QuickBooks gave.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $accountReadFailed = [];
 
     /**
      * Account field lookups that failed, keyed by "AcctNum:value" or "Name:value".
+     * Each is thrown again with the status QuickBooks gave.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $accountFieldFailed = [];
 
@@ -299,9 +304,9 @@ class SyncEngine
     private ?array $paymentPrefetchIds = null;
 
     /**
-     * QuickBooks payment ids whose block read failed.
+     * QuickBooks payment ids whose block read failed, thrown again with the status QuickBooks gave.
      *
-     * @var array<string, string>
+     * @var array<string, QuickBooksException>
      */
     private array $paymentReadFailed = [];
 
@@ -1604,7 +1609,7 @@ class SyncEngine
         }
         $baseline = $link;
         if (isset($this->customerLookupFailed[$uuid]) === true) {
-            throw new QuickBooksException(500, $this->customerLookupFailed[$uuid]);
+            throw $this->customerLookupFailed[$uuid];
         }
 
         $remote    = null;
@@ -1614,8 +1619,8 @@ class SyncEngine
             $remote = $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $cached, $link);
             $link   = $this->adoptRemoteCustomer($ledger, $connection, $uuid, $remote, $link);
         } elseif ($cacheHit === false && $link === null) {
-            $remote = $this->findRemoteCustomer($connection, $email, (string) ($payload['DisplayName'] ?? ''));
-            $remote = $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $remote, null);
+            $name   = (string) ($payload['DisplayName'] ?? '');
+            $remote = $this->findRemoteCustomer($ledger, $connection, $uuid, $email, $name);
             if ($remote !== null) {
                 $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote));
                 if ($reference === 'quickbooks' && $copy === true) {
@@ -1742,8 +1747,11 @@ class SyncEngine
         }
         $remoteId = (string) $link['qbo_id'];
         if ($kind === 'customer') {
+            if ($this->remoteTakenOver($ledger, $connection, $uuid, $remoteId) === true) {
+                return 'aligned';
+            }
             if (isset($this->customerLookupFailed[$uuid]) === true) {
-                throw new QuickBooksException(500, $this->customerLookupFailed[$uuid]);
+                throw $this->customerLookupFailed[$uuid];
             }
             $cached = $this->customerRemoteCache[$uuid] ?? null;
             $remote = is_array($cached) === true && (string) ($cached['Id'] ?? '') === $remoteId
@@ -1751,9 +1759,7 @@ class SyncEngine
                 : $this->client->getCustomer($connection, $remoteId);
         } else {
             if (isset($this->accountReadFailed[$remoteId]) === true) {
-                $this->lastError = $this->accountReadFailed[$remoteId];
-
-                return 'failed';
+                throw $this->accountReadFailed[$remoteId];
             }
             $remote = $this->accountById !== null
                 ? ($this->accountById[$remoteId] ?? null)
@@ -1767,6 +1773,17 @@ class SyncEngine
         }
 
         return $this->writeInactive($ledger, $connection, $kind, $uuid, $remote);
+    }
+
+    /**
+     * A live Fleetbase customer, of this organization or of another one on the same QuickBooks
+     * company, may link the QuickBooks customer a deleted customer kept. It is not made inactive.
+     *
+     * @param array<string, mixed> $connection
+     */
+    private function remoteTakenOver(SyncLedger $ledger, array $connection, string $uuid, string $remoteId): bool
+    {
+        return $ledger->remoteIdsLinked((string) $connection['realm_id'], 'Customer', [$remoteId], $uuid) !== [];
     }
 
     /**
@@ -1886,9 +1903,7 @@ class SyncEngine
         if ($link === null && empty($payload['AcctNum']) === false) {
             $acctNum = (string) $payload['AcctNum'];
             if (isset($this->accountFieldFailed['AcctNum:' . $acctNum]) === true) {
-                $this->lastError = $this->accountFieldFailed['AcctNum:' . $acctNum];
-
-                return 'failed';
+                throw $this->accountFieldFailed['AcctNum:' . $acctNum];
             }
             $existing = $this->accountByAcctNum !== null
                 ? ($this->accountByAcctNum[$acctNum] ?? null)
@@ -1904,9 +1919,7 @@ class SyncEngine
         if ($link !== null) {
             $accountId = (string) $link['qbo_id'];
             if (isset($this->accountReadFailed[$accountId]) === true) {
-                $this->lastError = $this->accountReadFailed[$accountId];
-
-                return 'failed';
+                throw $this->accountReadFailed[$accountId];
             }
             $remote = $this->accountById !== null
                 ? ($this->accountById[$accountId] ?? null)
@@ -1916,14 +1929,10 @@ class SyncEngine
             $acctNum = trim((string) ($payload['AcctNum'] ?? ''));
             $name    = trim((string) ($payload['Name'] ?? ''));
             if ($link === null && $acctNum !== '' && isset($this->accountFieldFailed['AcctNum:' . $acctNum]) === true) {
-                $this->lastError = $this->accountFieldFailed['AcctNum:' . $acctNum];
-
-                return 'failed';
+                throw $this->accountFieldFailed['AcctNum:' . $acctNum];
             }
             if ($name !== '' && isset($this->accountFieldFailed['Name:' . $name]) === true) {
-                $this->lastError = $this->accountFieldFailed['Name:' . $name];
-
-                return 'failed';
+                throw $this->accountFieldFailed['Name:' . $name];
             }
             $remote = $this->reattachWallet($ledger, $connection, $uuid, $wallet, $payload, $nameTaken);
             $link   = $remote === null ? null : $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'wallet', $uuid);
@@ -2071,7 +2080,7 @@ class SyncEngine
         $push         = $this->pushesRemote($direction);
         $customerUuid = (string) ($invoice['customer_uuid'] ?? '');
         if ($customerUuid !== '' && isset($this->customerLookupFailed[$customerUuid]) === true) {
-            throw new QuickBooksException(500, $this->customerLookupFailed[$customerUuid]);
+            throw $this->customerLookupFailed[$customerUuid];
         }
         if ($customerUuid !== '' && $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $customerUuid) === null) {
             if ($this->entityPaused($settings, 'customer') === true) {
@@ -2131,9 +2140,7 @@ class SyncEngine
         if ($link === null && $voided === false && empty($invoice['number']) === false) {
             $number = (string) $invoice['number'];
             if (isset($this->invoiceDocReadFailed[$number]) === true) {
-                $this->lastError = $this->invoiceDocReadFailed[$number];
-
-                return 'failed';
+                throw $this->invoiceDocReadFailed[$number];
             }
             $existing = $this->invoiceByDoc !== null
                 ? ($this->invoiceByDoc[$number] ?? null)
@@ -2157,9 +2164,7 @@ class SyncEngine
             }
             $remoteId = (string) $link['qbo_id'];
             if (isset($this->invoiceReadFailed[$remoteId]) === true) {
-                $this->lastError = $this->invoiceReadFailed[$remoteId];
-
-                return 'failed';
+                throw $this->invoiceReadFailed[$remoteId];
             }
             $remote = $this->invoiceById !== null
                 ? ($this->invoiceById[$remoteId] ?? null)
@@ -2189,9 +2194,7 @@ class SyncEngine
         if ($link !== null) {
             $remoteId = (string) $link['qbo_id'];
             if (isset($this->invoiceReadFailed[$remoteId]) === true) {
-                $this->lastError = $this->invoiceReadFailed[$remoteId];
-
-                return 'failed';
+                throw $this->invoiceReadFailed[$remoteId];
             }
             $remote = $this->invoiceById !== null
                 ? ($this->invoiceById[$remoteId] ?? null)
@@ -2946,8 +2949,8 @@ class SyncEngine
     {
         if ($this->taxCustomers !== null && array_key_exists($customerRef, $this->taxCustomers) === true) {
             $cached = $this->taxCustomers[$customerRef];
-            if (is_string($cached) === true) {
-                throw new QuickBooksException(500, $cached);
+            if ($cached instanceof QuickBooksException) {
+                throw $cached;
             }
 
             return $cached;
@@ -3955,8 +3958,9 @@ class SyncEngine
                 $changed                         = true;
             }
         }
+        // QuickBooks holds a longer Fleetbase note cut to its limit. That copy is not a change.
         $note = (string) ($remote['PrivateNote'] ?? '');
-        if ($note !== '' && $note !== (string) ($ledger->invoices[$uuid]['notes'] ?? '')) {
+        if ($note !== '' && $note !== InvoiceMapper::privateNote((string) ($ledger->invoices[$uuid]['notes'] ?? ''))) {
             $ledger->invoices[$uuid]['notes'] = $note;
             $changed                          = true;
         }
@@ -4024,6 +4028,7 @@ class SyncEngine
      * has none and QuickBooks is the source, so a match on name, email, and phone
      * still has to copy them. An empty QuickBooks note or address is not copied,
      * the same as email and phone. A Fleetbase-primary push sends the clear instead.
+     * A longer Fleetbase note that QuickBooks holds cut to its limit is kept in full.
      *
      * @param array<string, mixed> $remote
      */
@@ -4031,7 +4036,8 @@ class SyncEngine
     {
         $before = $ledger->customers[$uuid];
         $notes  = (string) ($remote['Notes'] ?? '');
-        if ($notes !== '') {
+        $sent   = mb_substr((string) ($before['notes'] ?? ''), 0, CustomerMapper::NOTES_MAX_LENGTH);
+        if ($notes !== '' && $notes !== $sent) {
             $ledger->customers[$uuid]['notes'] = $notes;
         }
         $bill = $remote['BillAddr'] ?? null;
@@ -4060,8 +4066,10 @@ class SyncEngine
             $ledger->wallets[$uuid]['name'] = $this->wallets->nameFromQuickBooks($ledger->wallets[$uuid], $name);
         }
 
-        if (array_key_exists('Description', $remote) === true) {
-            $ledger->wallets[$uuid]['description'] = (string) $remote['Description'];
+        // QuickBooks holds a longer Fleetbase description cut to its limit. That copy is not a change.
+        $description = array_key_exists('Description', $remote) === true ? (string) $remote['Description'] : null;
+        if ($description !== null && $description !== WalletMapper::description($ledger->wallets[$uuid])) {
+            $ledger->wallets[$uuid]['description'] = $description;
         }
 
         $currency = strtoupper(trim((string) ($remote['CurrencyRef']['value'] ?? '')));
@@ -4168,17 +4176,24 @@ class SyncEngine
 
     /**
      * The QuickBooks customer with this email, or else with this display name whatever its
-     * email. A phone number alone never matches.
+     * email. A phone number alone never matches. A match another Fleetbase customer already
+     * syncs with is passed over, so a taken email match does not hide a free name match.
      *
      * @param array<string, mixed> $connection
      *
      * @return array<string, mixed>|null
      */
-    private function findRemoteCustomer(array $connection, string $email, string $displayName): ?array
-    {
+    private function findRemoteCustomer(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        string $email,
+        string $displayName,
+    ): ?array {
         $email = trim($email);
         if ($email !== '') {
             $found = $this->client->findCustomerByEmail($connection, $email);
+            $found = $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $found, null);
             if ($found !== null) {
                 return $found;
             }
@@ -4188,8 +4203,9 @@ class SyncEngine
         if ($name === '') {
             return null;
         }
+        $found = $this->client->findCustomerByDisplayName($connection, $name);
 
-        return $this->client->findCustomerByDisplayName($connection, $name);
+        return $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $found, null);
     }
 
     /**
@@ -4239,7 +4255,7 @@ class SyncEngine
         }
         foreach (array_keys($ids) as $id) {
             if (isset($this->paymentReadFailed[$id]) === true) {
-                throw new QuickBooksException(500, $this->paymentReadFailed[$id]);
+                throw $this->paymentReadFailed[$id];
             }
         }
 
@@ -4409,7 +4425,7 @@ class SyncEngine
     private function readPayment(array $connection, string $id): ?array
     {
         if (isset($this->paymentReadFailed[$id]) === true) {
-            throw new QuickBooksException(500, $this->paymentReadFailed[$id]);
+            throw $this->paymentReadFailed[$id];
         }
         if ($this->paymentById !== null) {
             if (array_key_exists($id, $this->paymentById) === false) {
@@ -5377,7 +5393,7 @@ class SyncEngine
 
                     return true;
                 }
-                $this->customerLookupFailed[(string) $only]  = $this->exceptionError($exception);
+                $this->customerLookupFailed[(string) $only]  = $exception;
                 $customerOutcome                             = 'failed';
             }
             if ($customerOutcome === 'failed' && isset($this->customerLookupFailed[(string) $only]) === false) {
@@ -5989,9 +6005,8 @@ class SyncEngine
                 if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
                     throw $exception;
                 }
-                $error = $this->exceptionError($exception);
                 foreach ($queries as $query) {
-                    $this->customerLookupFailed[$query['uuid']] = $error;
+                    $this->customerLookupFailed[$query['uuid']] = $exception;
                 }
                 $results = [];
             }
@@ -6008,24 +6023,50 @@ class SyncEngine
                 if (is_array($result) === false || empty($result['ok']) === true) {
                     $message                           = is_array($result) === true ? (string) ($result['error'] ?? '') : '';
                     $status                            = is_array($result) === true ? (int) ($result['status'] ?? 0) : 0;
-                    $this->customerLookupFailed[$uuid] = $this->batchItemAttemptError($message, $status);
+                    $this->customerLookupFailed[$uuid] = $this->batchItemFailure($message, $status);
                     continue;
                 }
                 $remote                           = $result['rows'][0] ?? null;
                 $this->customerRemoteCache[$uuid] = is_array($remote) === true ? $remote : null;
             }
             foreach ($queries as $query) {
-                if (isset($seen[$query['uuid']]) === false && isset($this->customerLookupFailed[$query['uuid']]) === false) {
-                    $this->customerLookupFailed[$query['uuid']] = self::SYNC_FAILED_MESSAGE;
+                $uuid = $query['uuid'];
+                if (isset($seen[$uuid]) === false && isset($this->customerLookupFailed[$uuid]) === false) {
+                    $this->customerLookupFailed[$uuid] = $this->batchItemFailure(self::SYNC_FAILED_MESSAGE, 500);
                 }
             }
         }
 
-        /** @var array<int, array{bId: string, query: string, uuid: string, email: string, name: string}> $nameQueries */
+        $nameQueries = $this->nameQueriesAfterEmail($connection, $ledger, $queries);
+        foreach ($nameOnly as $query) {
+            if (isset($this->customerLookupFailed[$query['uuid']]) === false) {
+                $nameQueries[] = $query;
+            }
+        }
+        $this->prefetchCustomerNames($connection, $nameQueries);
+    }
+
+    /**
+     * A display-name lookup for each customer whose email found no QuickBooks customer, or found
+     * one another Fleetbase customer already syncs with: a free name match is the same customer.
+     *
+     * @param array<string, mixed>                                                                   $connection
+     * @param array<int, array{bId: string, query: string, uuid: string, by: string, value: string}> $queries
+     *
+     * @return array<int, array{bId: string, query: string, uuid: string, email: string, name: string}>
+     */
+    private function nameQueriesAfterEmail(array $connection, SyncLedger $ledger, array $queries): array
+    {
+        $taken       = $this->takenEmailMatches($connection, $ledger, $queries);
         $nameQueries = [];
         foreach ($queries as $query) {
             $uuid = $query['uuid'];
-            if ($query['by'] !== 'email' || isset($this->customerLookupFailed[$uuid]) === true || array_key_exists($uuid, $this->customerRemoteCache) === false || $this->customerRemoteCache[$uuid] !== null) {
+            if ($query['by'] !== 'email' || isset($this->customerLookupFailed[$uuid]) === true
+                || array_key_exists($uuid, $this->customerRemoteCache) === false) {
+                continue;
+            }
+            $remote = $this->customerRemoteCache[$uuid];
+            if ($remote !== null && isset($taken[(string) ($remote['Id'] ?? '')]) === false) {
                 continue;
             }
             $customer = $ledger->customers[$uuid] ?? null;
@@ -6044,12 +6085,36 @@ class SyncEngine
                 ];
             }
         }
-        foreach ($nameOnly as $query) {
-            if (isset($this->customerLookupFailed[$query['uuid']]) === false) {
-                $nameQueries[] = $query;
+
+        return $nameQueries;
+    }
+
+    /**
+     * The QuickBooks ids, as keys, that the email lookups found and that some Fleetbase customer
+     * already syncs with. One read covers the whole block. These customers have no link on this
+     * realm, so no link of their own needs excluding.
+     *
+     * @param array<string, mixed>                                                                   $connection
+     * @param array<int, array{bId: string, query: string, uuid: string, by: string, value: string}> $queries
+     *
+     * @return array<string, true>
+     */
+    private function takenEmailMatches(array $connection, SyncLedger $ledger, array $queries): array
+    {
+        $ids = [];
+        foreach ($queries as $query) {
+            $remote = $query['by'] === 'email' ? ($this->customerRemoteCache[$query['uuid']] ?? null) : null;
+            $id     = is_array($remote) === true ? (string) ($remote['Id'] ?? '') : '';
+            if ($id !== '') {
+                $ids[$id] = $id;
             }
         }
-        $this->prefetchCustomerNames($connection, $nameQueries);
+        if ($ids === []) {
+            return [];
+        }
+        $taken = $ledger->remoteIdsLinked((string) $connection['realm_id'], 'Customer', array_values($ids), '');
+
+        return array_fill_keys($taken, true);
     }
 
     /**
@@ -6066,7 +6131,7 @@ class SyncEngine
             if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
                 throw $exception;
             }
-            $this->customerLookupFailed[$query['uuid']] = $this->exceptionError($exception);
+            $this->customerLookupFailed[$query['uuid']] = $exception;
 
             return;
         }
@@ -6091,7 +6156,7 @@ class SyncEngine
                     if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
                         throw $exception;
                     }
-                    $this->customerLookupFailed[$query['uuid']] = $this->exceptionError($exception);
+                    $this->customerLookupFailed[$query['uuid']] = $exception;
                     continue;
                 }
                 $this->rememberCustomerByName($query, is_array($remote) === true ? $remote : null);
@@ -6107,7 +6172,7 @@ class SyncEngine
                     throw $exception;
                 }
                 foreach ($chunk as $query) {
-                    $this->customerLookupFailed[$query['uuid']] = $this->exceptionError($exception);
+                    $this->customerLookupFailed[$query['uuid']] = $exception;
                 }
                 continue;
             }
@@ -6119,7 +6184,7 @@ class SyncEngine
                 if (is_array($result) === false || empty($result['ok']) === true) {
                     $message                                    = is_array($result) === true ? (string) ($result['error'] ?? '') : '';
                     $status                                     = is_array($result) === true ? (int) ($result['status'] ?? 0) : 0;
-                    $this->customerLookupFailed[$query['uuid']] = $this->batchItemAttemptError($message, $status);
+                    $this->customerLookupFailed[$query['uuid']] = $this->batchItemFailure($message, $status);
                     continue;
                 }
                 $remote = $result['rows'][0] ?? null;
@@ -6629,6 +6694,15 @@ class SyncEngine
     }
 
     /**
+     * A failed batch item kept for the other rows of the block. It keeps the status QuickBooks
+     * gave, so a refusal thrown again stops at the retry limit and an outage keeps retrying.
+     */
+    private function batchItemFailure(string $error, int $status): QuickBooksException
+    {
+        return new QuickBooksException($status, $this->batchItemAttemptError($error, $status));
+    }
+
+    /**
      * @param array<string, mixed> $connection
      * @param array<int, string>   $ids
      *
@@ -6848,7 +6922,7 @@ class SyncEngine
      * @param array<int, string>         $values
      * @param callable(string): (?array) $readOne
      *
-     * @return array{rows: array<int, array<string, mixed>>, failed: array<string, string>}
+     * @return array{rows: array<int, array<string, mixed>>, failed: array<string, QuickBooksException>}
      */
     private function queryWhereIn(array $connection, string $entity, string $field, array $values, callable $readOne): array
     {
@@ -6870,7 +6944,7 @@ class SyncEngine
                     throw $exception;
                 }
 
-                return ['rows' => [], 'failed' => [$values[0] => $this->exceptionError($exception)]];
+                return ['rows' => [], 'failed' => [$values[0] => $exception]];
             }
 
             return ['rows' => is_array($remote) === true ? [$remote] : [], 'failed' => []];
@@ -6896,10 +6970,9 @@ class SyncEngine
                     if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
                         throw $exception;
                     }
-                    $error = $this->exceptionError($exception);
                     foreach ($chunk as $value) {
                         if (isset($matched[$value]) === false) {
-                            $failed[$value] = $error;
+                            $failed[$value] = $exception;
                         }
                     }
                     break;
@@ -6913,7 +6986,7 @@ class SyncEngine
                 if (is_array($result) === false || empty($result['ok']) === true) {
                     $message = is_array($result) === true ? (string) ($result['error'] ?? '') : '';
                     $status  = is_array($result) === true ? (int) ($result['status'] ?? 0) : 0;
-                    $error   = $this->batchItemAttemptError($message, $status);
+                    $error   = $this->batchItemFailure($message, $status);
                     foreach ($chunk as $value) {
                         if (isset($matched[$value]) === false) {
                             $failed[$value] = $error;

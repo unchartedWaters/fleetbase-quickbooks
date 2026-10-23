@@ -151,7 +151,10 @@ class SyncLedger
         $linked = [];
         foreach ($ids as $id) {
             $link = $this->linkForRemote($realmId, $entity, $id);
-            if ($link !== null && (string) ($link['local_uuid'] ?? '') !== $localUuid) {
+            if ($link === null || (string) ($link['local_uuid'] ?? '') === $localUuid) {
+                continue;
+            }
+            if ($this->linkHolds($link) === true) {
                 $linked[] = $id;
             }
         }
@@ -161,6 +164,26 @@ class SyncLedger
         }
 
         return array_values(array_unique(array_map('strval', $linked)));
+    }
+
+    /**
+     * Whether a loaded link still holds its QuickBooks record. A link of a deleted Fleetbase
+     * customer does not. A customer link whose customer this run did not load is left to the
+     * reader, which checks the stored customer; with no reader it holds.
+     *
+     * @param Link $link
+     */
+    private function linkHolds(array $link): bool
+    {
+        if (($link['local_type'] ?? null) !== 'customer') {
+            return true;
+        }
+        $customer = $this->customerRow((string) ($link['local_uuid'] ?? ''));
+        if ($customer === null) {
+            return $this->remoteLinkReader === null;
+        }
+
+        return empty($customer['deleted_at']) === true;
     }
 
     /**
@@ -263,24 +286,34 @@ class SyncLedger
     }
 
     /**
-     * Email, then display name. Empty keys are skipped. A phone number alone never matches.
-     * Names are compared the way QuickBooks stores them (a colon becomes a dash).
+     * The customer with this email, then the one with this display name, each at most once.
+     * The caller takes the first one free to link. Empty keys are skipped. A phone number
+     * alone never matches. Names are compared the way QuickBooks stores them (a colon becomes
+     * a dash).
      *
-     * @return array<string, mixed>|null
+     * @return array<int, array<string, mixed>>
      */
-    public function matchCustomer(string $email, string $name): ?array
+    public function matchCustomers(string $email, string $name): array
     {
         $this->ensureIndex();
         $email = strtolower(trim($email));
         $name  = CustomerMapper::displayName($name);
+        $uuids = [];
         if ($email !== '' && isset($this->customersByEmail[$email]) === true) {
-            return $this->customerRow($this->customersByEmail[$email]);
+            $uuids[] = $this->customersByEmail[$email];
         }
         if ($name !== '' && isset($this->customersByName[$name]) === true) {
-            return $this->customerRow($this->customersByName[$name]);
+            $uuids[] = $this->customersByName[$name];
+        }
+        $matches = [];
+        foreach (array_unique($uuids) as $uuid) {
+            $row = $this->customerRow($uuid);
+            if ($row !== null) {
+                $matches[] = $row;
+            }
         }
 
-        return null;
+        return $matches;
     }
 
     /**

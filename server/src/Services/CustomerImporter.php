@@ -541,24 +541,45 @@ class CustomerImporter
     }
 
     /**
+     * Link the Fleetbase customer with this email, or else the one with this name, unless it
+     * already syncs with another QuickBooks customer. A taken email match does not hide a free
+     * name match.
+     *
      * @param array<string, mixed> $remote
      */
     private function linkMatchedCustomer(SyncLedger $ledger, array $remote, string $remoteId, string $company, string $realm): bool
     {
-        $match = $ledger->matchCustomer(
+        $matches = $ledger->matchCustomers(
             strtolower((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')),
             $this->displayName($remote)
         );
-        if ($match === null) {
-            return false;
+        foreach ($matches as $match) {
+            $matchCompany = (string) ($match['company_uuid'] ?? $company);
+            $link         = $ledger->link($matchCompany, $realm, 'customer', (string) $match['uuid']);
+            $storedId     = is_array($link) === true ? (string) ($link['qbo_id'] ?? '') : '';
+            if ($link === null || $storedId === '' || $storedId === $remoteId) {
+                $this->linkMatch($ledger, $match, $link, $remoteId, $matchCompany, $realm);
+
+                return true;
+            }
         }
 
-        $matchCompany = (string) ($match['company_uuid'] ?? $company);
-        $link         = $ledger->link($matchCompany, $realm, 'customer', (string) $match['uuid']);
-        $storedId     = is_array($link) === true ? (string) ($link['qbo_id'] ?? '') : '';
-        if ($link !== null && $storedId !== '' && $storedId !== $remoteId) {
-            return false;
-        }
+        return false;
+    }
+
+    /**
+     * @param array<string, mixed>      $match
+     * @param array<string, mixed>|null $link
+     */
+    private function linkMatch(
+        SyncLedger $ledger,
+        array $match,
+        ?array $link,
+        string $remoteId,
+        string $matchCompany,
+        string $realm,
+    ): void {
+        $storedId = is_array($link) === true ? (string) ($link['qbo_id'] ?? '') : '';
         if ($remoteId !== '') {
             // The Fleetbase customer keeps its own details, so this link stores no SyncToken: the
             // first sync treats the differences as QuickBooks changes. A stored token is kept.
@@ -573,8 +594,6 @@ class CustomerImporter
                 'sync_token'   => $kept,
             ]);
         }
-
-        return true;
     }
 
     /**
