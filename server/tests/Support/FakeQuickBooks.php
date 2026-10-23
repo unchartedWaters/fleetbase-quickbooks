@@ -156,8 +156,12 @@ class FakeQuickBooks extends QuickBooksClient
      */
     public function updateCustomer(array $connection, string $id, string $syncToken, array $payload): array
     {
-        $this->calls[]        = 'updateCustomer';
-        $record               = array_merge($payload, ['Id' => $id, 'SyncToken' => (string) ((int) $syncToken + 1)]);
+        $this->calls[] = 'updateCustomer';
+        // QuickBooksClient sends every customer update sparse: a field the payload leaves out keeps its value.
+        $record               = array_merge($this->customers[$id] ?? [], $payload, [
+            'Id'        => $id,
+            'SyncToken' => (string) ((int) $syncToken + 1),
+        ]);
         $this->customers[$id] = $record;
 
         return $record;

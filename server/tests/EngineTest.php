@@ -3112,7 +3112,8 @@ test('a linked customer deleted in fleetbase is made inactive in quickbooks', fu
         ->and($client->calls)->toContain('updateCustomer')
         ->and($client->calls)->not->toContain('createCustomer')
         ->and($client->customers['qbo-customer']['Active'])->toBeFalse()
-        ->and($client->customers['qbo-customer'])->not->toHaveKey('DisplayName');
+        // The sparse update sends only Active, so QuickBooks keeps the name.
+        ->and($client->customers['qbo-customer']['DisplayName'])->toBe('Ada');
 });
 
 test('a deleted fleetbase customer or wallet is never created and an inactive one is left alone', function () {
