@@ -288,7 +288,13 @@ test('a merge dispatches the surviving record as an update and the merged-away r
     $body     = (string) json_encode(['eventNotifications' => [[
         'realmId'         => 'realm-1',
         'dataChangeEvent' => ['entities' => [
-            ['name' => 'Customer', 'id' => '2', 'operation' => 'Merge', 'deletedId' => '1'],
+            [
+                'name'        => 'Customer',
+                'id'          => '2',
+                'operation'   => 'Merge',
+                'deletedId'   => '1',
+                'lastUpdated' => gmdate('Y-m-d\TH:i:s\Z'),
+            ],
         ]],
     ]]]);
 

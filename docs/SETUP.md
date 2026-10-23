@@ -560,7 +560,9 @@ not block Intuit's retry; a repeat that arrives during processing gets HTTP 409,
 so Intuit retries it. Once processed, an exact repeat is answered HTTP 200 and
 not applied again for `quickbooks.webhook.stale_replay_seconds` (default
 604800, 7 days, and never less than `quickbooks.webhook.max_age_seconds`), so a
-captured body cannot be replayed later as a stale one.
+captured body cannot be replayed later as a stale one. A body with a change
+that carries no timestamp cannot be aged, so it is treated like a stale one:
+its creates and updates are read, its deletes and merges are not applied.
 
 A delivery whose event `time` (or `lastUpdated` in the older format) is older
 than `quickbooks.webhook.max_age_seconds` (default 600) is stale. Intuit can

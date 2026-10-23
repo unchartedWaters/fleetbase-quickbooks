@@ -24,6 +24,7 @@ use Fleetbase\Quickbooks\Support\WebhookSignature;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
+use Fleetbase\Quickbooks\Tests\Support\WebhookBodies;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
 use Illuminate\Container\Container;
@@ -313,6 +314,8 @@ test('a valid signature returns 200 and enqueues one job per known realm', funct
   ] } }
 ] }
 JSON;
+    // The Void is applied only from a dated body.
+    $body = WebhookBodies::dated($body);
 
     withoutWebhookVerifier(function () use ($settings, $body) {
         $store = webhookAdminStore($settings, 'verifier-token');

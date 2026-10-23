@@ -376,14 +376,14 @@ function whrCloudEvent(string $type, string $entityId, string $realmId, ?string 
 
 test('a cloudevents delivery dispatches one event per in-scope entity on each connected realm', function () {
     $body = json_encode([
-        whrCloudEvent('qbo.customer.created.v1', '55', 'realm-whr'),
-        whrCloudEvent('qbo.vendor.created.v1', '9', 'realm-whr'),
-        whrCloudEvent('qbo.invoice.updated.v1', '8', 'realm-whr'),
-        whrCloudEvent('qbo.invoice.emailed.v1', '8', 'realm-whr'),
-        whrCloudEvent('qbo.payment.created.v1', '3', 'realm-unknown'),
-        whrCloudEvent('qbo.account.merged.v1', '7', 'realm-whr'),
-        whrCloudEvent('qbo.payment.voided.v1', '4', 'realm-two'),
-        whrCloudEvent('qbo.invoice.deleted.v1', '6', 'realm-two'),
+        whrCloudEvent('qbo.customer.created.v1', '55', 'realm-whr', whrStamp(0)),
+        whrCloudEvent('qbo.vendor.created.v1', '9', 'realm-whr', whrStamp(0)),
+        whrCloudEvent('qbo.invoice.updated.v1', '8', 'realm-whr', whrStamp(0)),
+        whrCloudEvent('qbo.invoice.emailed.v1', '8', 'realm-whr', whrStamp(0)),
+        whrCloudEvent('qbo.payment.created.v1', '3', 'realm-unknown', whrStamp(0)),
+        whrCloudEvent('qbo.account.merged.v1', '7', 'realm-whr', whrStamp(0)),
+        whrCloudEvent('qbo.payment.voided.v1', '4', 'realm-two', whrStamp(0)),
+        whrCloudEvent('qbo.invoice.deleted.v1', '6', 'realm-two', whrStamp(0)),
     ]);
     $controller = whrController(whrSettings(), whrStore(), [
         'realm-whr' => 'company-a',
@@ -544,4 +544,33 @@ test('a delivery older than the stale replay window is acknowledged but not appl
     } finally {
         config()->set('quickbooks.webhook.stale_replay_seconds', $previous);
     }
+});
+
+test('a signed delete with no timestamp is not applied from the payload', function () {
+    $body       = whrBody('', 'Delete');
+    $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+
+    whrWithEvents(function (array &$seen) use ($controller, $body) {
+        $response = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+        Cache::flush();
+        $replayed = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+
+        expect($response->getStatusCode())->toBe(200)
+            ->and($replayed->getStatusCode())->toBe(200)
+            ->and(array_map(static fn (QuickBooksEntityChanged $event): string => $event->operation, $seen))
+            ->not->toContain('delete');
+    });
+});
+
+test('an undated create is still read back from QuickBooks', function () {
+    $body       = whrBody();
+    $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+
+    whrWithEvents(function (array &$seen) use ($controller, $body) {
+        $response = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+
+        expect($response->getStatusCode())->toBe(200)
+            ->and($seen)->toHaveCount(1)
+            ->and($seen[0]->operation)->toBe('create');
+    });
 });

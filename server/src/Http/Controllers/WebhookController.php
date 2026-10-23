@@ -112,7 +112,7 @@ class WebhookController extends Controller
         // and a worker that dies here leaves a key that expires on its own, so Intuit's
         // retry of the identical body is processed and the events are not lost.
         try {
-            $this->dispatchEntities($this->entitiesByRealm($rawBody, $stale), $matched);
+            $this->dispatchEntities($this->changesToApply($rawBody, $stale), $matched);
             app(EnqueueWebhookSync::class)->flush($this->store);
         } catch (\Throwable $exception) {
             $this->replay->forget($rawBody);
@@ -187,6 +187,18 @@ class WebhookController extends Controller
         }
 
         return $matched;
+    }
+
+    /**
+     * The body's changes by realm, without deletes and merges for a stale body or an undated one.
+     * An undated change cannot be aged, so a captured body could be replayed once the replay store
+     * forgets it. Checked after the expired test, so an undated body is never dropped as a whole.
+     *
+     * @return array<int, WebhookGroup>
+     */
+    private function changesToApply(string $rawBody, bool $stale): array
+    {
+        return $this->entitiesByRealm($rawBody, $stale === true || $this->replay->hasUndatedChange($rawBody) === true);
     }
 
     /**
