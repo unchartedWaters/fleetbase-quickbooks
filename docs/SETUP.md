@@ -21,26 +21,56 @@ screens without the surrounding Fleetbase console menus.
 ## What syncs
 
 - **Customers** — name, email, phone, notes, and billing address.
-- **Invoices** — number, dates, notes, currency, tax, total, and the sales-item
+- **Invoices** — number, dates, notes, currency, total, and the sales-item
   lines Fleetbase understands (description, quantity, unit price, and amount).
   Draft invoices are sent after they leave draft. QuickBooks products,
   discounts, and other line types are not copied back. A discount added in
-  QuickBooks, and tax that QuickBooks works out itself (`TxnTaxDetail`, such as
-  automated sales tax), stay on the QuickBooks invoice. Fleetbase cannot change
-  them, so they are left out when the totals are compared and do not cause
-  another update. When QuickBooks shows such an invoice as fully paid (no
-  balance left), its Fleetbase status is paid, although the amount paid is less
-  than the Fleetbase total. A new line from Fleetbase uses the QuickBooks
-  product "Fleetbase service", which Fleetbase creates against the first Income
-  account QuickBooks lists. When Fleetbase updates an invoice, a line it matches
-  by its stored line id or its content keeps its QuickBooks product and tax
-  code, and description-only and bundle lines stay. A QuickBooks line with no
-  description arrives in Fleetbase with its product name, and a description
-  longer than 191 characters is cut to fit a Ledger line. An update from
-  Fleetbase leaves the QuickBooks text of such a line as it is. If "Fleetbase
-  service" is made inactive in QuickBooks, the first invoice QuickBooks then
-  refuses makes Fleetbase forget it, and the next sync finds or creates an
-  active one.
+  QuickBooks stays on the QuickBooks invoice. Fleetbase cannot change it, so it
+  is left out when the totals are compared and does not cause another update.
+  When QuickBooks shows such an invoice as fully paid (no balance left), its
+  Fleetbase status is paid, although the amount paid is less than the
+  Fleetbase total. QuickBooks works out the tax (see Tax below). A new line
+  from Fleetbase uses the QuickBooks product "Fleetbase service". Fleetbase
+  creates it posting to an active income account: a service or fee income
+  account first, then sales of product income, then other income, and never a
+  discount, refund or unapplied cash account. The connection card names that
+  account. To post invoice lines to another account, change the income account
+  on "Fleetbase service" in QuickBooks. When Fleetbase updates an invoice, a
+  line it matches by its stored line id or its content keeps its QuickBooks
+  product and tax code, and description-only and bundle lines stay. A
+  QuickBooks line with no description arrives in Fleetbase with its product
+  name, and a description longer than 191 characters is cut to fit a Ledger
+  line. An update from Fleetbase leaves the QuickBooks text of such a line as
+  it is. If "Fleetbase service" is made inactive in QuickBooks, the first
+  invoice QuickBooks then refuses makes Fleetbase forget it, and the next sync
+  finds or creates an active one.
+- **Tax** — QuickBooks works out invoice tax, and Fleetbase never sends a tax
+  amount. When sales tax is on in QuickBooks, a line Fleetbase sends is taxable
+  when both the QuickBooks product ("Fleetbase service") and the QuickBooks
+  customer are taxable. The invoice gets the customer's sales tax rate, else
+  the company's default rate. A customer Fleetbase creates in QuickBooks is
+  taxable at the company rate until it is changed in QuickBooks. The
+  "Fleetbase service" product Fleetbase creates is not taxable (QuickBooks
+  creates it that way; checked in the sandbox), so make that product taxable
+  in QuickBooks to have its lines taxed. An invoice
+  QuickBooks already has keeps its rate, and a line Fleetbase matches keeps its
+  tax code. When neither the customer nor the company has a rate, the invoice
+  is sent without tax and Activity says so. When invoices sync both ways, the
+  tax QuickBooks worked out is copied onto the Fleetbase invoice: the tax, each
+  line's tax rate and amount, and a total of the lines plus that tax. Tax on a
+  line only QuickBooks has is left out. When this changes a tax rate on a
+  Fleetbase line, Activity says so. When an amount paid is recorded, the
+  status follows the new total, so a paid invoice can become part-paid when
+  tax is added. An invoice marked paid with no amount recorded stays paid, and
+  its QuickBooks payment is the new total. A payment larger than the
+  QuickBooks balance is kept by QuickBooks as unapplied credit. With invoices
+  From Fleetbase only, Fleetbase keeps its own tax and the two can differ. With
+  QuickBooks as Primary, the QuickBooks lines, tax and total are copied, and
+  each taxed line gets its share of the tax. Tax is compared only through the
+  lines, so a tax difference does not cause another update. An invoice
+  QuickBooks holds with tax included in its amounts keeps the QuickBooks
+  total. A tax amount typed over in QuickBooks is worked out again when
+  Fleetbase next sends the lines.
 - **Payments** — a payment for a paid Fleetbase invoice. Amount and date are
   compared when a payment already exists. The payload includes `TxnDate`: the
   day the invoice was paid in the organization's timezone (the app timezone when
@@ -178,7 +208,8 @@ that the settings shown are the current global defaults][setup-not-connected]
 To upgrade, run `php artisan migrate`. The new migration gives every existing
 organization (with a QuickBooks connection or an organization settings row) a
 copy of its current effective settings, so nothing changes for them at upgrade.
-It is also required for the earlier `quickbooks_links` index migration.
+It is also required for the earlier `quickbooks_links` index migration, and
+for the column that holds the income account shown on the connection card.
 
 Organization settings lists **QuickBooks Setup** and **QuickBooks Activity**
 with Organization, Two Factor, and Notifications. QuickBooks Setup is route
@@ -617,13 +648,14 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   it to allow one), so the later create fails once and the next sync reserves a
   new number.
 - **Quantities.** Fleetbase invoice line quantities are whole numbers. A fractional QuickBooks quantity imports as 1 unit at the line amount.
-- **Tax.** Invoice tax is sent as an ordinary sales line whose description is
-  `Tax` prefixed with a word joiner (`Support/InvoiceMapper.php`). No
-  `TxnTaxDetail` or tax code is sent. A QuickBooks company that uses automated
-  sales tax can show different tax and totals than Fleetbase. That difference,
-  like a QuickBooks discount, is left out when Fleetbase compares totals
-  (`InvoiceMapper::quickbooksAdjustmentCents`), so it does not cause an update
-  on every sync. On the way back, only that synthetic line is read as tax.
+- **Tax.** Checked live in a US QuickBooks company with manual sales tax.
+  Automated sales tax and companies outside the US (VAT and GST) are not
+  tested live. With automated sales tax, Fleetbase sends the same tax codes and
+  rate, and QuickBooks is expected to choose the rate itself. Outside the US,
+  each line is sent with the product's sales tax code, else the customer's
+  default code, and a new invoice says its amounts are before tax. The tax is
+  copied back to the invoice there, but not shared over its lines
+  (`Support/InvoiceTax.php`, `InvoiceMapper::fromQuickBooks`).
 - **Partial payments.** An invoice has at most one QuickBooks Payment from this
   package. Partial and later payments are not created as separate Payments. The
   one Payment is created with the amount recorded as paid on the Fleetbase

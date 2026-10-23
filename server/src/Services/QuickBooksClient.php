@@ -2,6 +2,7 @@
 
 namespace Fleetbase\Quickbooks\Services;
 
+use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\NextDocNumber;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\Translation;
@@ -24,6 +25,9 @@ class QuickBooksClient
 
     /** @var array<string, array<string, mixed>> */
     private array $preferencesByRealm = [];
+
+    /** @var array<string, string> */
+    private array $countryByRealm = [];
 
     /**
      * The Fleetbase record a single write belongs to (for example invoice:<uuid>), set by
@@ -169,6 +173,36 @@ class QuickBooksClient
         $value = $this->preferences($connection)['CurrencyPrefs']['MultiCurrencyEnabled'] ?? false;
 
         return filter_var($value, FILTER_VALIDATE_BOOLEAN) === true;
+    }
+
+    /**
+     * How QuickBooks taxes invoices for this company (see InvoiceTax::settings). The country is
+     * read once per company, like the preferences.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array{mode: string, automated: bool, rate: string|null}
+     */
+    public function salesTax(array $connection): array
+    {
+        $realm = (string) ($connection['realm_id'] ?? '');
+        if (array_key_exists($realm, $this->countryByRealm) === false) {
+            $this->countryByRealm[$realm] = (string) ($this->companyInfo($connection)['Country'] ?? '');
+        }
+
+        return InvoiceTax::settings($this->preferences($connection), $this->countryByRealm[$realm]);
+    }
+
+    /**
+     * An item by id, active or not, or null when QuickBooks has none.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    public function item(array $connection, string $id): ?array
+    {
+        return $this->read($connection, 'item/' . rawurlencode($id), 'Item');
     }
 
     /**
@@ -1021,18 +1055,56 @@ class QuickBooksClient
             return (string) $existing[0]['Id'];
         }
 
-        $income = $this->query($connection, "select * from Account where AccountType = 'Income' maxresults 1", 'Account');
-        if (isset($income[0]['Id']) === false) {
+        $query   = "select * from Account where AccountType = 'Income' maxresults 1000";
+        $account = self::serviceIncomeAccount($this->query($connection, $query, 'Account'));
+        if ($account === null) {
             return '';
         }
 
         $created = $this->entity($connection, 'post', 'item', [
             'Name'             => 'Fleetbase service',
             'Type'             => 'NonInventory',
-            'IncomeAccountRef' => ['value' => (string) $income[0]['Id']],
+            'IncomeAccountRef' => ['value' => $account],
         ], 'Item');
 
         return (string) ($created['Id'] ?? '');
+    }
+
+    /**
+     * The income account a new Fleetbase product posts to: an active service income account, then
+     * product sales, then other primary income, top-level accounts before sub-accounts, oldest first.
+     * QuickBooks' own "Billable Expense Income" and "Uncategorized Income" (English names) come
+     * last. Discount, refund and unapplied cash accounts reduce income, so they are never used.
+     *
+     * @param array<int, array<string, mixed>> $accounts
+     */
+    public static function serviceIncomeAccount(array $accounts): ?string
+    {
+        $subtypes = ['ServiceFeeIncome' => 0, 'SalesOfProductIncome' => 1, 'OtherPrimaryIncome' => 2];
+        $never    = ['DiscountsRefundsGiven', 'UnappliedCashPaymentIncome'];
+        $fallback = ['billable expense income', 'uncategorized income'];
+        $best     = null;
+        $bestRank = null;
+        foreach ($accounts as $account) {
+            $id      = trim((string) ($account['Id'] ?? ''));
+            $subtype = (string) ($account['AccountSubType'] ?? '');
+            if ($id === '' || ($account['Active'] ?? true) === false || in_array($subtype, $never, true) === true) {
+                continue;
+            }
+            $name = strtolower(trim((string) ($account['Name'] ?? '')));
+            $rank = [
+                in_array($name, $fallback, true) === true ? 1 : 0,
+                $subtypes[$subtype] ?? count($subtypes),
+                ($account['SubAccount'] ?? false) === true ? 1 : 0,
+                ctype_digit($id) === true ? (int) $id : PHP_INT_MAX,
+            ];
+            if ($bestRank === null || $rank < $bestRank) {
+                $best     = $id;
+                $bestRank = $rank;
+            }
+        }
+
+        return $best;
     }
 
     /**
@@ -1569,7 +1641,8 @@ class QuickBooksClient
     private function decodeBody(Response $response): array
     {
         $json = preg_replace(
-            '/"(Amount|TotalAmt|Balance|UnitPrice)"\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/',
+            '/"(Amount|TotalAmt|Balance|UnitPrice|TotalTax|TaxPercent|NetAmountTaxable)"'
+                . '\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/',
             '"$1":"$2"',
             $response->body()
         );

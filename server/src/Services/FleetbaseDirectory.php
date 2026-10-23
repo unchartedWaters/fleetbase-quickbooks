@@ -13,6 +13,7 @@ use Fleetbase\Quickbooks\Notifications\QuickbooksNeedsReauth;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
+use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\LedgerPaymentDates;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
@@ -36,7 +37,15 @@ class FleetbaseDirectory
     public const PENDING_TIMES = ['next_attempt_at'];
 
     /** The only connection fields a batch writes; the rest belong to connect and disconnect. */
-    public const CONNECTION_ENGINE_FIELDS = ['rate_limited_until', 'last_rate_limit_wait', 'last_batch_at', 'home_currency', 'default_item_id', 'needs_reauth'];
+    public const CONNECTION_ENGINE_FIELDS = [
+        'rate_limited_until',
+        'last_rate_limit_wait',
+        'last_batch_at',
+        'home_currency',
+        'default_item_id',
+        'default_item_account',
+        'needs_reauth',
+    ];
 
     public const CONNECTION_TOKEN_FIELDS = ['access_token', 'refresh_token', 'token_expires_at', 'needs_reauth'];
 
@@ -2282,6 +2291,8 @@ class FleetbaseDirectory
                 'quantity'    => (int) $item->quantity,
                 'unit_price'  => (int) $item->unit_price,
                 'amount'      => (int) $item->amount,
+                'tax_rate'    => InvoiceMapper::taxRate($item->tax_rate),
+                'tax_amount'  => (int) $item->tax_amount,
                 'uuid'        => $uuid,
             ];
             if ($stored !== null) {
@@ -2348,6 +2359,54 @@ class FleetbaseDirectory
         }
 
         return array_values(array_filter($rows));
+    }
+
+    /**
+     * Line tax writes for an invoice whose line taxes QuickBooks worked out (SyncEngine::copyQuickBooksTax).
+     * Lines QuickBooks replaced are written whole instead (replaceInvoiceLines).
+     *
+     * @param array<string, mixed> $invoice
+     *
+     * @return array<int, array{uuid: string, columns: array<string, mixed>}>
+     */
+    private function lineTaxRows(array $invoice): array
+    {
+        $live = $this->lineMeta[(string) ($invoice['uuid'] ?? '')]['live'] ?? null;
+        $copy = empty($invoice['line_taxes_from_quickbooks']) === false && self::replacesLines($invoice) === false;
+        if ($copy === false || is_array($live) === false) {
+            return [];
+        }
+        $rows = [];
+        foreach (is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [] as $item) {
+            $itemUuid = is_array($item) === true ? (string) ($item['uuid'] ?? '') : '';
+            if ($itemUuid === '' || array_key_exists($itemUuid, $live) === false) {
+                continue;
+            }
+            $rows[] = ['uuid' => $itemUuid, 'columns' => [
+                'tax_rate'   => InvoiceMapper::taxRate($item['tax_rate'] ?? 0),
+                'tax_amount' => (int) ($item['tax_amount'] ?? 0),
+            ]];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * One write per item: the columns of rows for the same item are merged.
+     *
+     * @param array<int, array{uuid: string, columns: array<string, mixed>}> $rows
+     *
+     * @return array<int, array{uuid: string, columns: array<string, mixed>}>
+     */
+    private static function rowsByUuid(array $rows): array
+    {
+        $merged = [];
+        foreach ($rows as $row) {
+            $columns              = $row['columns'] + ($merged[$row['uuid']]['columns'] ?? []);
+            $merged[$row['uuid']] = ['uuid' => $row['uuid'], 'columns' => $columns];
+        }
+
+        return array_values($merged);
     }
 
     /**
@@ -2611,12 +2670,12 @@ class FleetbaseDirectory
         foreach ($ledger->invoices as $invoice) {
             $this->persistInvoice($class, $invoice, $skipped);
             if (isset($skipped[(string) ($invoice['company_uuid'] ?? '')]) === false) {
-                $metaRows = array_merge($metaRows, $this->lineMetaRows($invoice));
+                $metaRows = array_merge($metaRows, $this->lineMetaRows($invoice), $this->lineTaxRows($invoice));
             }
         }
         $itemClass = 'Fleetbase\\Ledger\\Models\\InvoiceItem';
         if ($metaRows !== [] && class_exists($itemClass) === true) {
-            $this->updateByUuid(new $itemClass(), $metaRows, ['meta']);
+            $this->updateByUuid(new $itemClass(), self::rowsByUuid($metaRows), ['meta', 'tax_rate', 'tax_amount']);
         }
     }
 
@@ -5269,8 +5328,8 @@ class FleetbaseDirectory
                 'quantity'     => (int) ($item['quantity'] ?? 1),
                 'unit_price'   => (int) ($item['unit_price'] ?? 0),
                 'amount'       => (int) ($item['amount'] ?? 0),
-                'tax_rate'     => 0,
-                'tax_amount'   => 0,
+                'tax_rate'     => InvoiceMapper::taxRate($item['tax_rate'] ?? 0),
+                'tax_amount'   => (int) ($item['tax_amount'] ?? 0),
                 'created_at'   => $now,
                 'updated_at'   => $now,
             ];

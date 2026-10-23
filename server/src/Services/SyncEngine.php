@@ -8,6 +8,7 @@ use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\ContentHash;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
+use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\Translation;
 use Fleetbase\Quickbooks\Support\WalletMapper;
@@ -189,6 +190,37 @@ class SyncEngine
      * @var array<string, string>
      */
     private array $customerLookupFailed = [];
+
+    /**
+     * QuickBooks sales tax settings by company for an invoice block. A failed read is kept, so the
+     * other invoices of the block fail with it instead of reading again. Null outside a block.
+     *
+     * @var array<string, array{mode: string, automated: bool, rate: string|null}|QuickBooksException>|null
+     */
+    private ?array $salesTaxByCompany = null;
+
+    /**
+     * QuickBooks customers read for the tax of an invoice block, by QuickBooks id. Null is no such
+     * customer; a string is the error of a failed read. Null outside a block.
+     *
+     * @var array<string, array<string, mixed>|string|null>|null
+     */
+    private ?array $taxCustomers = null;
+
+    /**
+     * QuickBooks items read for the tax of an invoice block, by id, by company. Null is no such item.
+     * Null outside a block.
+     *
+     * @var array<string, array<string, array<string, mixed>|null>>|null
+     */
+    private ?array $taxItems = null;
+
+    /**
+     * Activity notes for rows that did not fail, by "type:uuid".
+     *
+     * @var array<string, string>
+     */
+    private array $rowNotes = [];
 
     /**
      * QuickBooks invoice ids whose block read failed. Absence from invoiceById is a miss only when the id is not here.
@@ -409,8 +441,10 @@ class SyncEngine
      */
     public function runScheduled(SyncLedger $ledger, string $companyUuid, array $settings, int $now, bool $force = false, bool $ignoreInterval = false): array
     {
-        $trigger    = $force === true ? 'now' : 'scheduled';
-        $connection = $ledger->connection($companyUuid);
+        // A note left by a run that stopped before recording its row is not shown on this run.
+        $this->rowNotes = [];
+        $trigger        = $force === true ? 'now' : 'scheduled';
+        $connection     = $ledger->connection($companyUuid);
         if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false) {
             return $this->emptyBatch($trigger, 'skipped');
         }
@@ -447,7 +481,9 @@ class SyncEngine
      */
     public function reconcile(SyncLedger $ledger, string $companyUuid, array $settings, int $now): array
     {
-        $connection = $ledger->connection($companyUuid);
+        // A note left by a run that stopped before recording its row is not shown on this run.
+        $this->rowNotes = [];
+        $connection     = $ledger->connection($companyUuid);
         if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false) {
             return $this->emptyBatch('manual', 'skipped');
         }
@@ -471,7 +507,9 @@ class SyncEngine
      */
     public function acceptRemoteChanges(SyncLedger $ledger, string $companyUuid, array $entities, array $settings, int $now): void
     {
-        $connection = $ledger->connection($companyUuid);
+        // A note left by a run that stopped before recording its row is not shown on this run.
+        $this->rowNotes = [];
+        $connection     = $ledger->connection($companyUuid);
         if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false || empty($connection['needs_reauth']) === false) {
             return;
         }
@@ -714,7 +752,9 @@ class SyncEngine
      */
     public function syncEntities(SyncLedger $ledger, string $companyUuid, array $rows, array $settings, int $now): array
     {
-        $connection = $ledger->connection($companyUuid);
+        // A note left by a run that stopped before recording its row is not shown on this run.
+        $this->rowNotes = [];
+        $connection     = $ledger->connection($companyUuid);
         if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false || empty($connection['needs_reauth']) === false) {
             return $this->emptyBatch('catalog', 'skipped');
         }
@@ -1561,6 +1601,9 @@ class SyncEngine
             if ($this->rejectLongDocNumber($payload) === true) {
                 return 'failed';
             }
+            $plan    = $this->invoiceTaxPlan($ledger, $connection, $uuid, (string) $customerLink['qbo_id'], $itemId);
+            $payload = $this->invoices->withTax($payload, $plan);
+            $this->noteMissingTaxRate($uuid, $payload);
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
                     'bId'       => 'invoice:' . $uuid,
@@ -1577,6 +1620,9 @@ class SyncEngine
             $this->copyInvoiceNumber($ledger, $uuid, $created, $reference);
             $createdId = (string) ($created['Id'] ?? '');
             $this->recordPushedLines($ledger, $uuid, $connection, $createdId, $payload, $created, []);
+            if ($copy === true) {
+                $this->copyQuickBooksTax($ledger, $uuid, $created);
+            }
 
             return $this->withPayment('created', $this->syncPayment($ledger, $connection, $ledger->invoices[$uuid], (string) $customerLink['qbo_id'], (string) ($created['Id'] ?? ''), $settings));
         }
@@ -1614,6 +1660,11 @@ class SyncEngine
             $items   = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
             $paired  = $this->invoiceMapper($invoice)->pairedLineIds($items, $remote, $removed, $mapped);
             $this->recordLineMap($ledger, $uuid, $connection, (string) $remote['Id'], $paired, $stored['uuids']);
+            $copiesTax = $copy === true && $remoteSuppliesLines === false;
+            if ($copiesTax === true && $this->copyQuickBooksTax($ledger, $uuid, $remote) === true) {
+                $outcome = 'updated';
+                $invoice = $ledger->invoices[$uuid];
+            }
             if ($this->writeBuffer !== null) {
                 return $outcome;
             }
@@ -1667,9 +1718,14 @@ class SyncEngine
         if ($this->rejectLongDocNumber($payload) === true) {
             return 'failed';
         }
+        // The tax plan goes on before the QuickBooks lines are paired, so a matched line and the
+        // invoice keep the tax code and rate QuickBooks holds.
+        $plan    = $this->invoiceTaxPlan($ledger, $connection, $uuid, (string) $customerLink['qbo_id'], $itemId);
+        $payload = $this->invoices->withTax($payload, $plan);
         $payload = $this->invoiceMapper($ledger->invoices[$uuid])
             ->withExistingLineIds($payload, $remote, $removed, $mapped);
         $this->rememberPushedLineIds($ledger, $uuid, $payload);
+        $this->noteMissingTaxRate($uuid, $payload);
 
         if ($this->writeBuffer !== null) {
             $payload['Id']        = (string) $remote['Id'];
@@ -1694,6 +1750,9 @@ class SyncEngine
         $ledger->putLink($this->linkFrom($connection, 'invoice', $uuid, 'Invoice', $updated));
         $remoteId = (string) $remote['Id'];
         $this->recordPushedLines($ledger, $uuid, $connection, $remoteId, $payload, $updated, $stored['uuids']);
+        if ($copy === true && $remoteSuppliesLines === false) {
+            $this->copyQuickBooksTax($ledger, $uuid, $updated);
+        }
 
         return $this->withPayment('updated', $this->syncPayment($ledger, $connection, $ledger->invoices[$uuid], (string) $customerLink['qbo_id'], (string) ($updated['Id'] ?? $remote['Id']), $settings));
     }
@@ -2018,6 +2077,260 @@ class SyncEngine
     }
 
     /**
+     * The tax code of each line and the invoice rate (InvoiceTax::plan), from the QuickBooks sales
+     * tax settings, customer and service item. A read that fails fails the invoice, so its lines
+     * are not sent untaxed by mistake.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array{lines?: array<int, string|null>, rate?: string|null, global?: string|null}
+     */
+    private function invoiceTaxPlan(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        string $customerRef,
+        string $itemId,
+    ): array {
+        $settings = $this->salesTaxSettings($connection);
+        $taxed    = $settings['mode'] !== InvoiceTax::OFF;
+        $item     = $this->taxItem($ledger, $connection, $itemId, $taxed);
+        if ($taxed === false) {
+            return [];
+        }
+        $items = is_array($ledger->invoices[$uuid]['items'] ?? null) === true ? $ledger->invoices[$uuid]['items'] : [];
+
+        return InvoiceTax::plan(
+            $settings,
+            $this->taxCustomer($connection, $customerRef),
+            $item === null ? [] : [$itemId => $item],
+            array_fill(0, count($items), $itemId)
+        );
+    }
+
+    /**
+     * Lines coded taxable on an invoice with no sales tax rate get no tax from QuickBooks, which
+     * Activity says.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function noteMissingTaxRate(string $uuid, array $payload): void
+    {
+        if (isset($payload['TxnTaxDetail']['TxnTaxCodeRef']['value']) === true) {
+            return;
+        }
+        foreach (is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [] as $line) {
+            if (is_array($line) === true && ($line['SalesItemLineDetail']['TaxCodeRef']['value'] ?? null) === 'TAX') {
+                $this->rowNotes['invoice:' . $uuid] = Translation::encode('quickbooks.messages.invoice-no-tax-rate');
+
+                return;
+            }
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array{mode: string, automated: bool, rate: string|null}
+     */
+    private function salesTaxSettings(array $connection): array
+    {
+        $companyUuid = (string) $connection['company_uuid'];
+        $cached      = $this->salesTaxByCompany[$companyUuid] ?? null;
+        if ($cached instanceof QuickBooksException) {
+            throw $cached;
+        }
+        if (is_array($cached) === true) {
+            return $cached;
+        }
+        try {
+            $settings = $this->client->salesTax($connection);
+        } catch (QuickBooksException $exception) {
+            $lasting = $exception->isUnauthorized() === false && $exception->isRateLimit() === false;
+            if ($this->salesTaxByCompany !== null && $lasting === true) {
+                $this->salesTaxByCompany[$companyUuid] = $exception;
+            }
+
+            throw $exception;
+        }
+        if ($this->salesTaxByCompany !== null) {
+            $this->salesTaxByCompany[$companyUuid] = $settings;
+        }
+
+        return $settings;
+    }
+
+    /**
+     * The QuickBooks item the invoice lines use, read once per block. Its income account is kept on
+     * the connection for the connection card. Without sales tax ($required false) a failed read
+     * only leaves the card as it was.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    private function taxItem(SyncLedger $ledger, array $connection, string $itemId, bool $required): ?array
+    {
+        $companyUuid = (string) $connection['company_uuid'];
+        if ($this->taxItems !== null && array_key_exists($itemId, $this->taxItems[$companyUuid] ?? []) === true) {
+            return $this->taxItems[$companyUuid][$itemId];
+        }
+        try {
+            $item = $this->client->item($connection, $itemId);
+        } catch (QuickBooksException $exception) {
+            if ($required === true || $exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
+                throw $exception;
+            }
+            $item = null;
+        }
+        if ($this->taxItems !== null) {
+            $this->taxItems[$companyUuid][$itemId] = $item;
+        }
+        $account = is_array($item) === true ? trim((string) ($item['IncomeAccountRef']['name'] ?? '')) : '';
+        if ($account !== '' && isset($ledger->connections[$companyUuid]) === true) {
+            $ledger->connections[$companyUuid]['default_item_account'] = $account;
+        }
+
+        return $item;
+    }
+
+    /**
+     * The QuickBooks customer of an invoice, for its taxable flag and rate. A block reads its
+     * customers in one query (prefetchTaxCustomers).
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    private function taxCustomer(array $connection, string $customerRef): ?array
+    {
+        if ($this->taxCustomers !== null && array_key_exists($customerRef, $this->taxCustomers) === true) {
+            $cached = $this->taxCustomers[$customerRef];
+            if (is_string($cached) === true) {
+                throw new QuickBooksException(500, $cached);
+            }
+
+            return $cached;
+        }
+        $customer = $this->client->getCustomer($connection, $customerRef);
+        if ($this->taxCustomers !== null) {
+            $this->taxCustomers[$customerRef] = $customer;
+        }
+
+        return $customer;
+    }
+
+    /**
+     * When QuickBooks taxes invoices, read the QuickBooks customers of the block's invoices in one
+     * query. A failed tax settings read is left for each invoice to fail with.
+     *
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $rows
+     */
+    private function prefetchTaxCustomers(array $connection, SyncLedger $ledger, array $rows): void
+    {
+        try {
+            $settings = $this->salesTaxSettings($connection);
+        } catch (QuickBooksException $exception) {
+            if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
+                throw $exception;
+            }
+
+            return;
+        }
+        if ($settings['mode'] === InvoiceTax::OFF) {
+            return;
+        }
+        $companyUuid = (string) $connection['company_uuid'];
+        $realm       = (string) $connection['realm_id'];
+        $ids         = [];
+        foreach ($rows as $row) {
+            $invoice      = $ledger->invoices[(string) ($row['local_uuid'] ?? '')] ?? null;
+            $customerUuid = is_array($invoice) === true ? (string) ($invoice['customer_uuid'] ?? '') : '';
+            $link         = $customerUuid === ''
+                ? null
+                : $ledger->link($companyUuid, $realm, 'customer', $customerUuid);
+            $id           = is_array($link) === true ? trim((string) ($link['qbo_id'] ?? '')) : '';
+            if ($id !== '') {
+                $ids[$id] = $id;
+            }
+        }
+        $loaded = $this->queryWhereIn(
+            $connection,
+            'Customer',
+            'Id',
+            array_values($ids),
+            fn (string $id): ?array => $this->client->getCustomer($connection, $id)
+        );
+        foreach ($ids as $id) {
+            $this->taxCustomers[$id] = null;
+        }
+        foreach ($loaded['rows'] as $remote) {
+            $id = trim((string) ($remote['Id'] ?? ''));
+            if (isset($ids[$id]) === true) {
+                $this->taxCustomers[$id] = $remote;
+            }
+        }
+        foreach ($loaded['failed'] as $id => $error) {
+            $this->taxCustomers[(string) $id] = $error;
+        }
+    }
+
+    /**
+     * Copy the tax QuickBooks worked out on the lines Fleetbase sent onto the Fleetbase invoice:
+     * the tax, each line's share of it, and the total that follows. The status follows the new
+     * total. Activity says when a line tax rate Fleetbase had changed. Returns whether anything
+     * changed.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function copyQuickBooksTax(SyncLedger $ledger, string $uuid, array $remote): bool
+    {
+        $invoice = $ledger->invoices[$uuid] ?? null;
+        if (is_array($invoice) === false) {
+            return false;
+        }
+        $items    = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
+        $taxed    = $this->invoiceMapper($invoice)->quickBooksTax($remote, $items);
+        $subtotal = 0;
+        $changed  = false;
+        $replaced = false;
+        foreach ($taxed['items'] as $index => $item) {
+            $subtotal += (int) ($item['amount'] ?? 0);
+            $before    = is_array($items[$index] ?? null) === true ? $items[$index] : [];
+            $rate      = InvoiceMapper::taxRate($before['tax_rate'] ?? 0);
+            $changed   = $changed || $rate !== $item['tax_rate']
+                || (int) ($before['tax_amount'] ?? 0) !== $item['tax_amount'];
+            $replaced  = $replaced || ($rate !== '0.00' && $rate !== $item['tax_rate']);
+        }
+        $previous = (int) ($invoice['tax'] ?? 0);
+        // The lines of a tax-inclusive invoice already hold the tax.
+        $total = $taxed['inclusive'] === true ? $subtotal : $subtotal + $taxed['tax'];
+        if ($changed === false && $previous === $taxed['tax'] && (int) ($invoice['total'] ?? 0) === $total) {
+            return false;
+        }
+        foreach ($taxed['items'] as $index => $item) {
+            $ledger->invoices[$uuid]['items'][$index]['tax_rate']   = $item['tax_rate'];
+            $ledger->invoices[$uuid]['items'][$index]['tax_amount'] = $item['tax_amount'];
+        }
+        $ledger->invoices[$uuid]['tax']                        = $taxed['tax'];
+        $ledger->invoices[$uuid]['total']                      = $total;
+        $ledger->invoices[$uuid]['replace_from_quickbooks']    = true;
+        $ledger->invoices[$uuid]['line_taxes_from_quickbooks'] = true;
+        // An invoice marked paid with no amount recorded is paid in full, whatever its new total
+        // (paymentAmountCents sends that total), so only a recorded amount moves the status.
+        if ((int) ($invoice['amount_paid'] ?? 0) !== 0) {
+            $this->applyPaymentStatus($ledger, $uuid);
+        }
+        if ($replaced === true) {
+            $note                                 = 'quickbooks.messages.invoice-tax-from-quickbooks';
+            $this->rowNotes['invoice:' . $uuid] ??= Translation::encode($note);
+        }
+
+        return true;
+    }
+
+    /**
      * Fault 2500 (invalid reference) on an invoice can mean the stored service item was made
      * inactive in QuickBooks, which renames it "... (deleted)" and refuses it on new lines.
      * When the stored item is no longer active it is forgotten, so the next sync finds or creates
@@ -2054,9 +2367,11 @@ class SyncEngine
             return;
         }
         if (is_array($stored) === true) {
-            $ledger->connections[$companyUuid]['default_item_id'] = null;
+            $ledger->connections[$companyUuid]['default_item_id']      = null;
+            $ledger->connections[$companyUuid]['default_item_account'] = null;
         }
-        $connection['default_item_id'] = null;
+        $connection['default_item_id']      = null;
+        $connection['default_item_account'] = null;
         if ($this->serviceItemByCompany !== null) {
             unset($this->serviceItemByCompany[$companyUuid]);
         }
@@ -2178,14 +2493,19 @@ class SyncEngine
         $localItems = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
         $compared   = $remote;
         if ($ignoreExtraSalesLines === true) {
+            // QuickBooks works out the tax of the lines Fleetbase sends, so only the lines are compared.
+            $localCents = array_sum(array_map(
+                static fn (mixed $item): int => is_array($item) === true ? (int) ($item['amount'] ?? 0) : 0,
+                $localItems
+            ));
             $removed     = $lines['removed'] ?? [];
             $mapped      = $lines['mapped'] ?? false;
             $limited     = $this->invoiceMapper($invoice)
                 ->withoutUnmatchedSalesLines($localItems, $remote, $removed, $mapped);
             $compared    = $limited['remote'];
             $remoteCents -= $limited['omitted_cents'];
-            // Fleetbase sends the lines, so a discount or tax QuickBooks adds is not a change to send:
-            // an update keeps it and the totals would differ again on every sync.
+            // Fleetbase sends the lines, so a discount or the tax QuickBooks adds is not a change to
+            // send: an update keeps it and the totals would differ again on every sync.
             $remoteCents -= $this->invoiceMapper($invoice)->quickbooksAdjustmentCents($remote);
         }
 
@@ -2219,31 +2539,44 @@ class SyncEngine
             }
         }
         $mapped         = $this->invoiceMapper($invoice)->fromQuickBooks($compared, $localItems);
-        $local['items'] = $this->hashableInvoiceItems($localItems);
-        $local['tax']   = (int) ($invoice['tax'] ?? 0);
-        $other['items'] = $mapped['items'];
-        $other['tax']   = $mapped['tax'];
+        $local['items'] = $this->hashableInvoiceItems($localItems, $ignoreExtraSalesLines === false);
+        $other['items'] = $this->hashableInvoiceItems($mapped['items'], $ignoreExtraSalesLines === false);
+        if ($ignoreExtraSalesLines === false) {
+            $local['tax'] = (int) ($invoice['tax'] ?? 0);
+            $other['tax'] = $mapped['tax'];
+        }
 
         return ContentHash::of($local) === ContentHash::of($other);
     }
 
     /**
-     * The line id, item uuid and stored line are how a sync pairs a Fleetbase line. They are not
-     * part of the content hash.
+     * The content of each line, as InvoiceMapper::item builds it. The line id, item uuid and stored
+     * line are how a sync pairs a line, so they are left out. The line tax is left out too when
+     * QuickBooks works it out from the lines Fleetbase sends ($withTax false).
      *
      * @param array<int, mixed> $items
      *
      * @return array<int, array<string, mixed>>
      */
-    private function hashableInvoiceItems(array $items): array
+    private function hashableInvoiceItems(array $items, bool $withTax = true): array
     {
         $clean = [];
         foreach ($items as $item) {
             if (is_array($item) === false) {
                 continue;
             }
-            unset($item['qbo_line_id'], $item['uuid'], $item['qbo_line']);
-            $clean[] = $item;
+            $line = InvoiceMapper::item(
+                (string) ($item['description'] ?? ''),
+                (int) ($item['quantity'] ?? 1),
+                (int) ($item['unit_price'] ?? 0),
+                (int) ($item['amount'] ?? 0),
+                InvoiceMapper::taxRate($item['tax_rate'] ?? 0),
+                (int) ($item['tax_amount'] ?? 0)
+            );
+            if ($withTax === false) {
+                unset($line['tax_rate'], $line['tax_amount']);
+            }
+            $clean[] = $line;
         }
 
         return $clean;
@@ -2265,9 +2598,6 @@ class SyncEngine
         $sales = [];
         foreach ($lines as $line) {
             if (is_array($line) === false || (string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
-                continue;
-            }
-            if ((string) ($line['Description'] ?? '') === InvoiceMapper::TAX_LINE_DESCRIPTION) {
                 continue;
             }
             $sales[] = trim((string) ($line['Id'] ?? ''));
@@ -3989,8 +4319,12 @@ class SyncEngine
         $this->serviceItemErrors    = [];
         $this->serviceItemChecked   = false;
         $this->reservedDocNumbers   = null;
+        $this->salesTaxByCompany    = [];
+        $this->taxCustomers         = [];
+        $this->taxItems             = [];
         try {
             $this->prefetchInvoices($connection, $ledger, $rows);
+            $this->prefetchTaxCustomers($connection, $ledger, $rows);
             $this->prefetchPayments($connection, $ledger, $rows);
             $this->reserveInvoiceDocNumbers($ledger, $connection, $rows, $settings);
 
@@ -4025,6 +4359,10 @@ class SyncEngine
             $this->serviceItemChecked   = null;
             $this->customersPrepared    = false;
             $this->customerLookupFailed = [];
+            $this->salesTaxByCompany    = null;
+            $this->taxCustomers         = null;
+            $this->taxItems             = null;
+            $this->rowNotes             = [];
         }
     }
 
@@ -4284,7 +4622,28 @@ class SyncEngine
                     (string) ($settings['invoice_reference'] ?? 'fleetbase')
                 );
             }
+            if ($this->copiesTaxAfterPush($settings, $plan['outcome']) === true) {
+                $this->copyQuickBooksTax($ledger, (string) $uuid, $result['body']);
+            }
         }
+    }
+
+    /**
+     * Whether a push copies back the tax QuickBooks worked out on the lines Fleetbase sent: in
+     * two-way sync, after a create, and after an update unless QuickBooks lines are Primary (that
+     * update already copied QuickBooks onto Fleetbase).
+     *
+     * @param array<string, mixed> $settings
+     */
+    private function copiesTaxAfterPush(array $settings, string $outcome): bool
+    {
+        $direction = $this->direction($settings, 'invoice');
+        $conflict  = (string) ($settings['invoice_conflict'] ?? 'fleetbase');
+        if ($this->copiesRemote($direction) === false || $this->pushesRemote($direction) === false) {
+            return false;
+        }
+
+        return $outcome === 'created' || ($outcome === 'updated' && $conflict !== 'quickbooks');
     }
 
     /**
@@ -5802,7 +6161,10 @@ class SyncEngine
             'local_type'   => $row['local_type'],
             'local_uuid'   => $row['local_uuid'],
             'outcome'      => $outcome,
-            'error'        => $this->lastError ?? $retryError ?? $this->primaryReplacedNote($row, $outcome),
+            'error'        => $this->lastError
+                ?? $retryError
+                ?? $this->rowNote($row, $outcome)
+                ?? $this->primaryReplacedNote($row, $outcome),
         ];
         // A failure Fleetbase decided itself (lastError) is final for this data. A failure
         // from QuickBooks was classified by failure(). A row that did not fail is not counted.
@@ -5823,6 +6185,20 @@ class SyncEngine
             $ledger->updatePending((string) $connection['company_uuid'], (string) $row['local_type'], (string) $row['local_uuid'], ['status' => 'done']);
         }
         $this->closeSkipped = false;
+    }
+
+    /**
+     * The note this sync left on a row that did not fail. It is read once.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function rowNote(array $row, string $outcome): ?string
+    {
+        $key  = (string) ($row['local_type'] ?? '') . ':' . (string) ($row['local_uuid'] ?? '');
+        $note = $this->rowNotes[$key] ?? null;
+        unset($this->rowNotes[$key]);
+
+        return $outcome === 'failed' ? null : $note;
     }
 
     /**
@@ -6008,6 +6384,28 @@ class QuickBooksHttpGate extends QuickBooksClient
     public function batch(array $connection, array $items): array
     {
         return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->batch($connection, $items));
+    }
+
+    public function salesTax(array $connection): array
+    {
+        /** @var array{mode: string, automated: bool, rate: string|null} $settings */
+        $settings = $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->salesTax($connection)
+        );
+
+        return $settings;
+    }
+
+    public function item(array $connection, string $id): ?array
+    {
+        /** @var array<string, mixed>|null $item */
+        $item = $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?array => $this->inner->item($connection, $id)
+        );
+
+        return $item;
     }
 
     public function ensureServiceItem(array $connection): string

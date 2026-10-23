@@ -1172,7 +1172,7 @@ test('oauth state is validated before the code exchange', function () {
         'sandbox-quickbooks.api.intuit.com/*' => Http::response([
             'CompanyInfo'   => ['CompanyName' => 'unchartedWaters', 'Country' => 'US'],
             'Preferences'   => ['CurrencyPrefs' => ['HomeCurrency' => ['value' => 'USD']]],
-            'Item'          => ['Id' => '7'],
+            'Item'          => ['Id' => '7', 'IncomeAccountRef' => ['value' => '79', 'name' => 'Services']],
             'QueryResponse' => ['Item' => [], 'Account' => [['Id' => '79', 'AccountType' => 'Income']]],
         ], 200),
     ]);
@@ -1207,6 +1207,8 @@ test('oauth state is validated before the code exchange', function () {
     expect($connection['refresh_token'])->toBe('refresh')
         ->and($connection['home_currency'])->toBe('USD')
         ->and($connection['default_item_id'])->toBe('7')
+        // The connection card names the income account the service item posts to.
+        ->and($connection['default_item_account'])->toBe('Services')
         ->and($connection)->not->toHaveKey('import_customers');
 });
 
@@ -1241,6 +1243,11 @@ test('completing a handle again is allowed only for the user who completed it an
         public function ensureServiceItem(array $connection): string
         {
             return '7';
+        }
+
+        public function item(array $connection, string $id): ?array
+        {
+            return null;
         }
     };
     $flow        = new OAuthFlow($client);

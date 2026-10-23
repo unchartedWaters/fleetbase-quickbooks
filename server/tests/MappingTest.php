@@ -44,7 +44,8 @@ test('customer invoice and payment payloads match the quickbooks shape', functio
         ->and($invoice['CustomerRef']['value'])->toBe('cust-9')
         ->and($invoice['DocNumber'])->toBe('INV-1')
         ->and($invoice['Line'][0]['SalesItemLineDetail']['ItemRef']['value'])->toBe('item-1')
-        ->and($invoice['Line'][1]['Description'])->toBe(InvoiceMapper::TAX_LINE_DESCRIPTION)
+        // QuickBooks works out the tax, so the Fleetbase tax is not sent as a line.
+        ->and($invoice['Line'])->toHaveCount(1)
         ->and($payment['Line'][0]['LinkedTxn'][0])->toBe(['TxnId' => 'inv-9', 'TxnType' => 'Invoice']);
 });
 

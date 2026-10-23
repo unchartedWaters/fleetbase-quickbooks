@@ -1,6 +1,8 @@
 <?php
 
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
+use Fleetbase\Quickbooks\Support\InvoiceMapper;
+use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
@@ -73,7 +75,7 @@ test('the fleetbase service item is created against an income account', function
     });
 
     expect((new QuickBooksClient())->ensureServiceItem(clientConnection()))->toBe('12');
-    Http::assertSent(fn (Request $request) => str_contains(urldecode($request->url()), "AccountType = 'Income' maxresults 1"));
+    Http::assertSent(fn (Request $request) => str_contains(urldecode($request->url()), "AccountType = 'Income'"));
     Http::assertSent(fn (Request $request) => $request->method() === 'POST'
         && $request['Type'] === 'NonInventory'
         && $request['IncomeAccountRef'] === ['value' => '79']);
@@ -566,4 +568,96 @@ test('credential and token parameters are hidden from stack traces', function ()
         ->and($sensitive('tokenRequest', 'credentials'))->toBeTrue()
         ->and($sensitive('tokenRequest', 'form'))->toBeTrue()
         ->and($sensitive('accounting', 'connection'))->toBeTrue();
+});
+
+test('the fleetbase service item posts to a service income account, not a discount one', function () {
+    $income   = static fn (string $id, string $name, string $subtype, array $extra = []): array => $extra + [
+        'Id'             => $id,
+        'Name'           => $name,
+        'AccountSubType' => $subtype,
+        'Active'         => true,
+    ];
+    $accounts = [
+        $income('85', 'Billable Expense Income', 'ServiceFeeIncome'),
+        $income('86', 'Discounts given', 'DiscountsRefundsGiven'),
+        $income('87', 'Unapplied Cash Payment Income', 'UnappliedCashPaymentIncome'),
+        $income('30', 'Uncategorized Income', 'ServiceFeeIncome'),
+        $income('3', 'Old services', 'ServiceFeeIncome', ['Active' => false]),
+        $income('79', 'Sales of Product Income', 'SalesOfProductIncome'),
+        $income('52', 'Installation', 'ServiceFeeIncome', ['SubAccount' => true]),
+        $income('5', 'Fees Billed', 'ServiceFeeIncome'),
+        $income('45', 'Landscaping Services', 'OtherPrimaryIncome'),
+    ];
+
+    expect(QuickBooksClient::serviceIncomeAccount($accounts))->toBe('5')
+        ->and(QuickBooksClient::serviceIncomeAccount(array_slice($accounts, 0, 6)))->toBe('79')
+        ->and(QuickBooksClient::serviceIncomeAccount([$accounts[8], $accounts[0]]))->toBe('45')
+        // QuickBooks' own catch-all accounts are a last resort; a discount account never is.
+        ->and(QuickBooksClient::serviceIncomeAccount(array_slice($accounts, 0, 5)))->toBe('30')
+        ->and(QuickBooksClient::serviceIncomeAccount(array_slice($accounts, 1, 2)))->toBeNull();
+});
+
+test('a new fleetbase service item uses the service income account QuickBooks lists', function () {
+    Http::fake(function (Request $request) {
+        $url = urldecode($request->url());
+        if (str_contains($url, 'from Item') === true) {
+            return Http::response(['QueryResponse' => []], 200);
+        }
+        if (str_contains($url, 'from Account') === true) {
+            return Http::response(['QueryResponse' => ['Account' => [
+                ['Id' => '85', 'Name' => 'Billable Expense Income', 'AccountSubType' => 'ServiceFeeIncome'],
+                ['Id' => '1', 'Name' => 'Services', 'AccountSubType' => 'ServiceFeeIncome', 'Active' => true],
+            ]]], 200);
+        }
+
+        return Http::response(['Item' => ['Id' => '12']], 200);
+    });
+
+    expect((new QuickBooksClient())->ensureServiceItem(clientConnection()))->toBe('12');
+    Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
+        && $request['IncomeAccountRef'] === ['value' => '1']);
+});
+
+test('QuickBooks tax figures stay strings, so a calculated tax is not refused as a float', function () {
+    Http::fake([
+        'sandbox-quickbooks.api.intuit.com/*' => Http::response(
+            '{"Invoice":{"Id":"7","TotalAmt":108.8,"TxnTaxDetail":{"TotalTax":8.8,"TaxLine":[{"Amount":8.8,'
+            . '"TaxLineDetail":{"PercentBased":true,"TaxPercent":8.8,"NetAmountTaxable":100}}]}}}',
+            200,
+            ['Content-Type' => 'application/json']
+        ),
+    ]);
+
+    $invoice = (new QuickBooksClient())->getInvoice(clientConnection(), '7');
+    $detail  = $invoice['TxnTaxDetail'];
+
+    expect($detail['TotalTax'])->toBe('8.8')
+        ->and($detail['TaxLine'][0]['TaxLineDetail']['TaxPercent'])->toBe('8.8')
+        ->and($detail['TaxLine'][0]['TaxLineDetail']['NetAmountTaxable'])->toBe('100')
+        ->and((new InvoiceMapper())->quickbooksAdjustmentCents($invoice))->toBe(880);
+});
+
+test('the sales tax settings read the preferences and the company country once per company', function () {
+    Http::fake(function (Request $request) {
+        if (str_contains($request->url(), '/companyinfo/') === true) {
+            return Http::response(['CompanyInfo' => ['CompanyName' => 'Sandbox', 'Country' => 'US']], 200);
+        }
+
+        $prefs = ['TaxPrefs' => ['UsingSalesTax' => true, 'TaxGroupCodeRef' => ['value' => '2']]];
+
+        return Http::response(['Preferences' => $prefs], 200);
+    });
+    $client = new QuickBooksClient();
+
+    expect($client->salesTax(clientConnection()))->toBe(['mode' => InvoiceTax::US, 'automated' => false, 'rate' => '2'])
+        ->and($client->salesTax(clientConnection())['rate'])->toBe('2');
+    Http::assertSentCount(2);
+});
+
+test('an item is read by id, inactive or not', function () {
+    $item = ['Id' => '20', 'Active' => false, 'Taxable' => true];
+    Http::fake(['sandbox-quickbooks.api.intuit.com/*' => Http::response(['Item' => $item], 200)]);
+
+    expect((new QuickBooksClient())->item(clientConnection(), '20'))->toBe($item);
+    Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/item/20'));
 });

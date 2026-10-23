@@ -5,9 +5,9 @@ namespace Fleetbase\Quickbooks\Support;
 class InvoiceMapper
 {
     /**
-     * Word joiner prefix so a product the user named "Tax" is not treated as this line.
+     * The highest line tax rate a Ledger line holds (ledger_invoice_items.tax_rate is decimal(5,2)).
      */
-    public const TAX_LINE_DESCRIPTION = "\u{2060}Tax";
+    private const LINE_TAX_RATE_MAX = 999.99;
 
     /**
      * Characters a Ledger invoice line description holds (ledger_invoice_items.description).
@@ -34,17 +34,28 @@ class InvoiceMapper
     }
 
     /**
-     * @param array<string, mixed> $invoice
-     * @param bool                 $pushClears include an empty note and due date so a Fleetbase clear is sent
+     * QuickBooks works out the tax, so no tax amount is sent: each line carries the tax code in
+     * $tax['lines'] (by position), the invoice its rate, and a new invoice outside the US whether
+     * its amounts include tax (see InvoiceTax::plan).
+     *
+     * $pushClears includes an empty note and due date so a Fleetbase clear is sent.
+     *
+     * @param array<string, mixed>                                                             $invoice
+     * @param array{lines?: array<int, string|null>, rate?: string|null, global?: string|null} $tax
      *
      * @return array<string, mixed>
      */
-    public function toQuickBooks(array $invoice, string $customerRef, string $itemId, bool $pushClears = false): array
-    {
+    public function toQuickBooks(
+        array $invoice,
+        string $customerRef,
+        string $itemId,
+        bool $pushClears = false,
+        array $tax = [],
+    ): array {
         $lines    = [];
         $items    = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
         $currency = (string) ($invoice['currency'] ?? '');
-        foreach ($items as $item) {
+        foreach (array_values($items) as $item) {
             $amountCents = (int) ($item['amount'] ?? 0);
             $qty         = (int) ($item['quantity'] ?? 1);
             $line        = [
@@ -64,26 +75,44 @@ class InvoiceMapper
             $lines[] = $line;
         }
 
-        $tax = (int) ($invoice['tax'] ?? 0);
-        if ($tax > 0) {
-            $lines[] = [
-                'Amount'              => Amounts::centsToDecimal($tax, $currency),
-                'DetailType'          => 'SalesItemLineDetail',
-                'Description'         => self::TAX_LINE_DESCRIPTION,
-                'SalesItemLineDetail' => [
-                    'ItemRef'   => ['value' => $itemId],
-                    'Qty'       => 1,
-                    'UnitPrice' => Amounts::centsToDecimal($tax, $currency),
-                ],
-            ];
-        }
-
         $payload = [
             'CustomerRef' => ['value' => $customerRef],
             'Line'        => $lines,
         ];
 
-        return $this->withInvoiceFields($payload, $invoice, $pushClears);
+        return $this->withTax($this->withInvoiceFields($payload, $invoice, $pushClears), $tax);
+    }
+
+    /**
+     * Put the tax plan (InvoiceTax::plan) on a payload: each sales line its tax code, in order, and
+     * the invoice its rate and tax-exclusive flag. Nothing is added for a missing or empty value.
+     *
+     * @param array<string, mixed>                                                             $payload
+     * @param array{lines?: array<int, string|null>, rate?: string|null, global?: string|null} $tax
+     *
+     * @return array<string, mixed>
+     */
+    public function withTax(array $payload, array $tax): array
+    {
+        $codes    = $tax['lines'] ?? [];
+        $position = 0;
+        foreach (is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [] as $index => $line) {
+            if (is_array($line) === false || (string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
+                continue;
+            }
+            $code = $codes[$position++] ?? null;
+            if (is_string($code) === true && $code !== '') {
+                $payload['Line'][$index]['SalesItemLineDetail']['TaxCodeRef'] = ['value' => $code];
+            }
+        }
+        if (is_string($tax['rate'] ?? null) === true && $tax['rate'] !== '') {
+            $payload['TxnTaxDetail'] = ['TxnTaxCodeRef' => ['value' => $tax['rate']]];
+        }
+        if (is_string($tax['global'] ?? null) === true && $tax['global'] !== '') {
+            $payload['GlobalTaxCalculation'] = $tax['global'];
+        }
+
+        return $payload;
     }
 
     /**
@@ -125,8 +154,8 @@ class InvoiceMapper
      * payload replaces. A line that already carries one of those ids keeps it;
      * other Fleetbase lines take the remaining ids in order. A matched line keeps
      * its QuickBooks product and tax code. Extra sales lines, and every other line
-     * type, are included unchanged so the update does not delete them. A cleared
-     * tax amount updates the existing tax line to zero instead of leaving it.
+     * type, are included unchanged so the update does not delete them. The invoice
+     * keeps the tax rate and tax-inclusive setting QuickBooks holds.
      * Sales lines whose item was deleted in Fleetbase
      * ($removed) are left out, so QuickBooks removes them. Once the invoice has stored
      * line ids ($mapped), a line without one pairs only with a line of the same content.
@@ -140,25 +169,12 @@ class InvoiceMapper
     public function withExistingLineIds(array $payload, array $remote, array $removed = [], bool $mapped = false): array
     {
         $lines       = is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [];
-        $taxId       = null;
-        $itemId      = '';
         $remote      = $this->withoutRemovedLines($remote, $removed);
-        $remoteSales = $this->remoteSalesLines($remote, $taxId, $itemId);
+        $remoteSales = $this->remoteSalesLines($remote);
         $wanted      = [];
         $salesAt     = [];
-        $hasTax      = false;
         foreach ($lines as $index => $line) {
-            if (is_array($line) === false) {
-                continue;
-            }
-            if ((string) ($line['Description'] ?? '') === self::TAX_LINE_DESCRIPTION) {
-                $hasTax = true;
-                if ($taxId !== null) {
-                    $lines[$index]['Id'] = $taxId;
-                }
-                continue;
-            }
-            if ((string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
+            if (is_array($line) === false || (string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
                 continue;
             }
             $salesAt[] = $index;
@@ -167,7 +183,6 @@ class InvoiceMapper
                 'description' => (string) ($line['Description'] ?? ''),
                 'amount'      => $this->lineAmount($line['Amount'] ?? 0),
             ];
-            $itemId    = self::itemRef($line) ?? $itemId;
         }
         $byPosition      = [];
         $paired          = $this->pairSalesLines($wanted, $remoteSales, $mapped, $byPosition);
@@ -177,11 +192,33 @@ class InvoiceMapper
             $remoteSales,
             $salesAt,
             $paired,
-            $byPosition,
-            $hasTax,
-            $taxId,
-            $itemId
+            $byPosition
         );
+        // A new invoice says whether its amounts include tax; an update keeps what QuickBooks has.
+        unset($payload['GlobalTaxCalculation']);
+
+        return self::withRemoteTaxRate($payload, $remote);
+    }
+
+    /**
+     * An invoice given a sales tax rate in QuickBooks keeps it, over the customer or company rate a
+     * new invoice gets. QuickBooks refuses a line update that does not send the rate again (fault
+     * 6000, "error while calculating tax").
+     *
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $remote
+     *
+     * @return array<string, mixed>
+     */
+    private static function withRemoteTaxRate(array $payload, array $remote): array
+    {
+        $ref  = $remote['TxnTaxDetail']['TxnTaxCodeRef'] ?? null;
+        $rate = is_array($ref) === true ? trim((string) ($ref['value'] ?? '')) : '';
+        if ($rate === '') {
+            return $payload;
+        }
+        $detail                  = is_array($payload['TxnTaxDetail'] ?? null) === true ? $payload['TxnTaxDetail'] : [];
+        $payload['TxnTaxDetail'] = ['TxnTaxCodeRef' => ['value' => $rate]] + $detail;
 
         return $payload;
     }
@@ -203,9 +240,6 @@ class InvoiceMapper
         array $salesAt,
         array $paired,
         array $byPosition,
-        bool $hasTax,
-        ?string $taxId,
-        string $itemId,
     ): array {
         $pairedRemote = [];
         foreach ($paired as $localIndex => $remoteIndex) {
@@ -227,20 +261,6 @@ class InvoiceMapper
                 $keepCodes  = isset($byPosition[$localIndex]) === false;
                 $lines[$at] = self::withRemoteLineCodes($line, $remoteSales[$remoteIndex], $keepCodes);
             }
-        }
-        if ($hasTax === false && $taxId !== null) {
-            $zero    = Amounts::centsToDecimal(0);
-            $lines[] = [
-                'Id'                  => $taxId,
-                'Amount'              => $zero,
-                'DetailType'          => 'SalesItemLineDetail',
-                'Description'         => self::TAX_LINE_DESCRIPTION,
-                'SalesItemLineDetail' => [
-                    'ItemRef'   => ['value' => $itemId !== '' ? $itemId : '1'],
-                    'Qty'       => 1,
-                    'UnitPrice' => $zero,
-                ],
-            ];
         }
         foreach ($this->extraRemoteLines($remote, $pairedRemote) as $line) {
             $lines[] = $line;
@@ -327,9 +347,6 @@ class InvoiceMapper
             }
             $detail = (string) ($line['DetailType'] ?? '');
             if ($detail === 'SalesItemLineDetail') {
-                if ((string) ($line['Description'] ?? '') === self::TAX_LINE_DESCRIPTION) {
-                    continue;
-                }
                 if (isset($pairedSales[$sales]) === false) {
                     $extra[] = $line;
                 }
@@ -354,7 +371,7 @@ class InvoiceMapper
      * comparison. A Fleetbase line that already has a QuickBooks id keeps that line.
      * The rest pair with the remaining remote sales lines in order. Lines past that
      * set stay in QuickBooks; their amount is returned so the compared total can
-     * leave them out. Discount, subtotal, and the synthetic tax line are kept.
+     * leave them out. Discount and subtotal lines are kept.
      * A line whose item was deleted in Fleetbase ($removed) is never paired and
      * stays in the comparison, so the invoice does not look aligned while it remains.
      *
@@ -370,9 +387,7 @@ class InvoiceMapper
         array $removed = [],
         bool $mapped = false,
     ): array {
-        $taxId       = null;
-        $itemId      = '';
-        $remoteSales = $this->remoteSalesLines($this->withoutRemovedLines($remote, $removed), $taxId, $itemId);
+        $remoteSales = $this->remoteSalesLines($this->withoutRemovedLines($remote, $removed));
         $paired      = [];
         $wanted      = $this->wantedLines($localItems);
         foreach ($this->pairSalesLines($wanted, $remoteSales, $mapped) as $remoteIndex) {
@@ -420,9 +435,7 @@ class InvoiceMapper
      */
     public function pairedLineIds(array $localItems, array $remote, array $removed = [], bool $mapped = false): array
     {
-        $taxId       = null;
-        $itemId      = '';
-        $remoteSales = $this->remoteSalesLines($this->withoutRemovedLines($remote, $removed), $taxId, $itemId);
+        $remoteSales = $this->remoteSalesLines($this->withoutRemovedLines($remote, $removed));
         $ids         = [];
         $wanted      = $this->wantedLines($localItems);
         foreach ($this->pairSalesLines($wanted, $remoteSales, $mapped) as $localIndex => $remoteIndex) {
@@ -433,7 +446,7 @@ class InvoiceMapper
     }
 
     /**
-     * Ids of the product sales lines, in order. The synthetic tax line is skipped.
+     * Ids of the product sales lines, in order.
      *
      * @param array<string, mixed> $invoice
      *
@@ -529,27 +542,14 @@ class InvoiceMapper
      *
      * @return array<int, array<string, mixed>>
      */
-    private function remoteSalesLines(array $remote, ?string &$taxId, string &$itemId): array
+    private function remoteSalesLines(array $remote): array
     {
         $sales = [];
         $lines = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
         foreach ($lines as $line) {
-            if (is_array($line) === false || (string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
-                continue;
+            if (is_array($line) === true && $this->isProductSalesLine($line) === true) {
+                $sales[] = $line;
             }
-            $detail = is_array($line['SalesItemLineDetail'] ?? null) === true ? $line['SalesItemLineDetail'] : [];
-            $ref    = is_array($detail['ItemRef'] ?? null) === true ? trim((string) ($detail['ItemRef']['value'] ?? '')) : '';
-            if ($ref !== '' && $itemId === '') {
-                $itemId = $ref;
-            }
-            if ((string) ($line['Description'] ?? '') === self::TAX_LINE_DESCRIPTION) {
-                $id = trim((string) ($line['Id'] ?? ''));
-                if ($id !== '') {
-                    $taxId = $id;
-                }
-                continue;
-            }
-            $sales[] = $line;
         }
 
         return $sales;
@@ -652,26 +652,11 @@ class InvoiceMapper
     }
 
     /**
-     * The item id of a payload sales line, or null when it names none.
-     *
-     * @param array<mixed> $line
-     */
-    private static function itemRef(array $line): ?string
-    {
-        $ref = is_array($line['SalesItemLineDetail']['ItemRef'] ?? null) === true
-            ? trim((string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? ''))
-            : '';
-
-        return $ref === '' ? null : $ref;
-    }
-
-    /**
      * @param array<string, mixed> $line
      */
     private function isProductSalesLine(array $line): bool
     {
-        return (string) ($line['DetailType'] ?? '') === 'SalesItemLineDetail'
-            && (string) ($line['Description'] ?? '') !== self::TAX_LINE_DESCRIPTION;
+        return (string) ($line['DetailType'] ?? '') === 'SalesItemLineDetail';
     }
 
     /**
@@ -685,7 +670,8 @@ class InvoiceMapper
     public function quickbooksAdjustmentCents(array $remote): int
     {
         $detail = is_array($remote['TxnTaxDetail'] ?? null) === true ? $remote['TxnTaxDetail'] : [];
-        $cents  = $this->lineAmount($detail['TotalTax'] ?? 0);
+        // Lines of a tax-inclusive invoice already hold the tax, so it is not added to them.
+        $cents  = self::taxInclusive($remote) === true ? 0 : $this->lineAmount($detail['TotalTax'] ?? 0);
         $lines  = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
         foreach ($lines as $line) {
             if (is_array($line) === true && (string) ($line['DetailType'] ?? '') === 'DiscountLineDetail') {
@@ -698,10 +684,11 @@ class InvoiceMapper
 
     /**
      * Copy the QuickBooks fields this mapper already understands.
-     * Sales item lines become description (see fleetbaseDescription), quantity, unit price, and amount.
-     * Only the synthetic tax line this mapper writes is stored as tax. Discounts, products, and other
-     * line types are omitted; TotalAmt is still returned. A line with no description stays empty
-     * when the Fleetbase line in its place ($localItems) is empty too, so it is not a change.
+     * Sales item lines become description (see fleetbaseDescription), quantity, unit price, amount
+     * and the line's share of the tax (lineTaxes). The tax is the tax QuickBooks calculated.
+     * Discounts, products, and other line types are omitted; TotalAmt is still returned. A line
+     * with no description stays empty when the Fleetbase line in its place ($localItems) is empty
+     * too, so it is not a change.
      *
      * @param array<string, mixed> $remote
      * @param array<int, mixed>    $localItems
@@ -710,55 +697,213 @@ class InvoiceMapper
      */
     public function fromQuickBooks(array $remote, array $localItems = []): array
     {
-        $items = [];
-        $tax   = 0;
-        $lines = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
+        $items   = [];
+        $taxable = [];
+        $lines   = is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [];
         foreach ($lines as $line) {
-            if (is_array($line) === false || (string) ($line['DetailType'] ?? '') !== 'SalesItemLineDetail') {
+            if (is_array($line) === false || $this->isProductSalesLine($line) === false) {
                 continue;
             }
 
-            $description = self::fleetbaseDescription($line);
-            $amountCents = $this->lineAmount($line['Amount'] ?? 0);
-            if ($description === self::TAX_LINE_DESCRIPTION) {
-                $tax += $amountCents;
-                continue;
-            }
+            $description      = self::fleetbaseDescription($line);
+            $amountCents      = $this->lineAmount($line['Amount'] ?? 0);
             $local            = $localItems[count($items)] ?? null;
             $localDescription = is_array($local) === true ? (string) ($local['description'] ?? '') : null;
             if ($localDescription !== null && self::sameDescription($localDescription, $line) === true) {
                 $description = $localDescription;
             }
 
-            $detail   = is_array($line['SalesItemLineDetail'] ?? null) === true ? $line['SalesItemLineDetail'] : [];
-            $quantity = self::wholeQuantity($detail['Qty'] ?? 1);
+            $detail    = is_array($line['SalesItemLineDetail'] ?? null) === true ? $line['SalesItemLineDetail'] : [];
+            $taxable[] = trim((string) ($detail['TaxCodeRef']['value'] ?? '')) === 'TAX';
+            $quantity  = self::wholeQuantity($detail['Qty'] ?? 1);
             if ($quantity === null) {
                 // A Fleetbase line quantity is a whole number, so 1.5 hours cannot be kept as 1.5.
                 // One unit at the line amount keeps quantity times price equal to the QuickBooks line.
-                $items[] = [
-                    'description' => $description,
-                    'quantity'    => 1,
-                    'unit_price'  => $amountCents,
-                    'amount'      => $amountCents,
-                ];
+                $items[] = self::item($description, 1, $amountCents, $amountCents);
                 continue;
             }
             $unitCents = array_key_exists('UnitPrice', $detail) === true
                 ? $this->lineAmount($detail['UnitPrice'])
                 : ($quantity > 0 ? intdiv($amountCents, max($quantity, 1)) : $amountCents);
-            $items[] = [
-                'description' => $description,
-                'quantity'    => $quantity > 0 ? $quantity : 1,
-                'unit_price'  => $unitCents,
-                'amount'      => $amountCents,
-            ];
+            $items[] = self::item($description, $quantity > 0 ? $quantity : 1, $unitCents, $amountCents);
         }
+        $taxDetail = is_array($remote['TxnTaxDetail'] ?? null) === true ? $remote['TxnTaxDetail'] : [];
+        $tax       = $this->lineAmount($taxDetail['TotalTax'] ?? 0);
 
         return [
-            'items' => $items,
+            'items' => $this->lineTaxes($items, $taxable, $tax, $taxDetail),
             'tax'   => $tax,
             'total' => $this->lineAmount($remote['TotalAmt'] ?? 0),
         ];
+    }
+
+    /**
+     * The tax QuickBooks worked out on the lines Fleetbase sent. The tax is shared by amount over
+     * the QuickBooks lines coded TAX (US), the rounding left on the last one, and each Fleetbase
+     * item takes the share of its QuickBooks line (qbo_line_id), so the tax of a line only
+     * QuickBooks has is left out and the item taxes add up to the invoice tax. When the tax cannot
+     * be shared (no TAX line with a positive taxed amount, or a rate a Ledger line cannot hold, as
+     * outside the US) the whole tax is kept on the invoice and the items get none.
+     *
+     * @param array<string, mixed> $remote
+     * @param array<int, mixed>    $items
+     *
+     * @return array{tax: int, items: array<int, array<string, mixed>>, inclusive: bool}
+     */
+    public function quickBooksTax(array $remote, array $items): array
+    {
+        $detail = is_array($remote['TxnTaxDetail'] ?? null) === true ? $remote['TxnTaxDetail'] : [];
+        $tax    = $this->lineAmount($detail['TotalTax'] ?? 0);
+        $taxed  = [];
+        $base   = 0;
+        foreach (is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [] as $line) {
+            $id   = is_array($line) === true ? trim((string) ($line['Id'] ?? '')) : '';
+            $code = $id !== '' ? trim((string) ($line['SalesItemLineDetail']['TaxCodeRef']['value'] ?? '')) : '';
+            if ($code === 'TAX' && $this->isProductSalesLine($line) === true) {
+                $taxed[$id] = $this->lineAmount($line['Amount'] ?? 0);
+                $base += $taxed[$id];
+            }
+        }
+        $rate   = $base > 0 ? (self::taxPercent($detail) ?? ($tax / $base * 100)) : 0.0;
+        $shares = [];
+        if ($tax !== 0 && $base > 0 && $rate > 0 && $rate <= self::LINE_TAX_RATE_MAX) {
+            $left = $tax;
+            $last = array_key_last($taxed);
+            foreach ($taxed as $id => $amount) {
+                $shares[$id] = $id === $last ? $left : self::share($tax, $amount, $base);
+                $left -= $shares[$id];
+            }
+        }
+        $clean = [];
+        $sum   = 0;
+        foreach ($items as $index => $item) {
+            if (is_array($item) === false) {
+                continue;
+            }
+            $share              = $shares[trim((string) ($item['qbo_line_id'] ?? ''))] ?? null;
+            $item['tax_rate']   = $share === null ? '0.00' : self::taxRate($rate);
+            $item['tax_amount'] = $share ?? 0;
+            $sum += $item['tax_amount'];
+            $clean[$index]      = $item;
+        }
+
+        return ['tax' => $shares === [] ? $tax : $sum, 'items' => $clean, 'inclusive' => self::taxInclusive($remote)];
+    }
+
+    /**
+     * Whether the QuickBooks invoice amounts include tax (non-US companies only).
+     *
+     * @param array<string, mixed> $remote
+     */
+    public static function taxInclusive(array $remote): bool
+    {
+        return (string) ($remote['GlobalTaxCalculation'] ?? '') === 'TaxInclusive';
+    }
+
+    /**
+     * $tax times $amount over $base, rounded half away from zero, in integers.
+     */
+    private static function share(int $tax, int $amount, int $base): int
+    {
+        $product = $tax * $amount;
+        $sign    = $product < 0 ? -1 : 1;
+
+        return $sign * intdiv(2 * abs($product) + $base, 2 * $base);
+    }
+
+    /**
+     * A Fleetbase invoice line, with its tax fields in the order the directory reads them.
+     *
+     * @return array{
+     *     description: string, quantity: int, unit_price: int, amount: int, tax_rate: string, tax_amount: int
+     * }
+     */
+    public static function item(
+        string $description,
+        int $quantity,
+        int $unitPrice,
+        int $amount,
+        string $rate = '0.00',
+        int $tax = 0,
+    ): array {
+        return [
+            'description' => $description,
+            'quantity'    => $quantity,
+            'unit_price'  => $unitPrice,
+            'amount'      => $amount,
+            'tax_rate'    => $rate,
+            'tax_amount'  => $tax,
+        ];
+    }
+
+    /**
+     * A Ledger line tax rate as the directory reads it: two decimals.
+     */
+    public static function taxRate(mixed $rate): string
+    {
+        return number_format(is_numeric($rate) === true ? (float) $rate : 0.0, 2, '.', '');
+    }
+
+    /**
+     * Share the invoice tax over the US lines coded TAX, so the Ledger line taxes add up to it and a
+     * Ledger edit, which recalculates each line's tax from its rate, keeps it. The rate is the sum of
+     * the QuickBooks tax line percents, else the tax over the taxed amount. Amounts are shared by
+     * line amount, the rounding left on the last taxed line. Nothing is shared when the taxed amount
+     * is not positive or the rate does not fit a Ledger line. Lines outside the US carry tax codes
+     * whose rates are not read here, so they keep none.
+     *
+     * @param array<int, array<string, mixed>> $items
+     * @param array<int, bool>                 $taxable
+     * @param array<string, mixed>             $taxDetail
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function lineTaxes(array $items, array $taxable, int $tax, array $taxDetail): array
+    {
+        $taxed = array_keys(array_filter($taxable));
+        $base  = 0;
+        foreach ($taxed as $index) {
+            $base += (int) $items[$index]['amount'];
+        }
+        if ($tax === 0 || $base <= 0) {
+            return $items;
+        }
+        $rate = self::taxPercent($taxDetail) ?? ($tax / $base * 100);
+        if ($rate <= 0 || $rate > self::LINE_TAX_RATE_MAX) {
+            return $items;
+        }
+        $left = $tax;
+        $last = end($taxed);
+        foreach ($taxed as $index) {
+            $amount                        = (int) $items[$index]['amount'];
+            $share                         = $index === $last ? $left : self::share($tax, $amount, $base);
+            $left -= $share;
+            $items[$index]['tax_rate']     = self::taxRate($rate);
+            $items[$index]['tax_amount']   = $share;
+        }
+
+        return $items;
+    }
+
+    /**
+     * The summed percent of QuickBooks' tax lines, or null when one is not percent based.
+     *
+     * @param array<string, mixed> $taxDetail
+     */
+    private static function taxPercent(array $taxDetail): ?float
+    {
+        $lines = is_array($taxDetail['TaxLine'] ?? null) === true ? $taxDetail['TaxLine'] : [];
+        $sum   = 0.0;
+        foreach ($lines as $line) {
+            $detail = is_array($line) === true ? ($line['TaxLineDetail'] ?? null) : null;
+            $detail = is_array($detail) === true ? $detail : [];
+            if (($detail['PercentBased'] ?? false) !== true || is_numeric($detail['TaxPercent'] ?? null) === false) {
+                return null;
+            }
+            $sum += (float) $detail['TaxPercent'];
+        }
+
+        return $lines === [] ? null : $sum;
     }
 
     /**

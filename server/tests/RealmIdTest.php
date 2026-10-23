@@ -67,6 +67,11 @@ function realmClient(?Throwable $firstCall = null, ?Throwable $secondCall = null
 
             return '7';
         }
+
+        public function item(array $connection, string $id): ?array
+        {
+            return null;
+        }
     };
 }
 

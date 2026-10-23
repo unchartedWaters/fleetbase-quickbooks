@@ -24,6 +24,20 @@ class InvoiceLines
     }
 
     /**
+     * A QuickBooks tax line of the invoice tax detail, at a percent rate.
+     *
+     * @return array<string, mixed>
+     */
+    public static function tax(string $amount, string $percent): array
+    {
+        return [
+            'Amount'        => $amount,
+            'DetailType'    => 'TaxLineDetail',
+            'TaxLineDetail' => ['PercentBased' => true, 'TaxPercent' => $percent],
+        ];
+    }
+
+    /**
      * A deleted Fleetbase line whose QuickBooks line was stored on an earlier sync.
      *
      * @return array<string, mixed>

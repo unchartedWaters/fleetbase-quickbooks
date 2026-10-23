@@ -21,7 +21,7 @@ function quantityRemote(mixed $qty, string $amount, ?string $unitPrice): array
 test('a whole quantity from quickbooks keeps its quantity and unit price', function () {
     $mapped = (new InvoiceMapper())->fromQuickBooks(quantityRemote(3, '30.00', '10.00'));
 
-    expect($mapped['items'])->toBe([['description' => 'Labor', 'quantity' => 3, 'unit_price' => 1000, 'amount' => 3000]]);
+    expect($mapped['items'])->toBe([InvoiceMapper::item('Labor', 3, 1000, 3000)]);
 });
 
 test('a whole quantity sent as a float or decimal string is still whole', function () {
@@ -37,7 +37,7 @@ test('a fractional quantity from quickbooks becomes one unit at the line amount'
     foreach ([1.5, '1.5', 0.5] as $qty) {
         $mapped = $mapper->fromQuickBooks(quantityRemote($qty, '15.00', '10.00'));
 
-        expect($mapped['items'])->toBe([['description' => 'Labor', 'quantity' => 1, 'unit_price' => 1500, 'amount' => 1500]])
+        expect($mapped['items'])->toBe([InvoiceMapper::item('Labor', 1, 1500, 1500)])
             ->and($mapped['items'][0]['quantity'] * $mapped['items'][0]['unit_price'])->toBe($mapped['items'][0]['amount'])
             ->and($mapped['total'])->toBe(1500);
     }
@@ -61,7 +61,7 @@ test('a missing quantity is one', function () {
 test('an outgoing line keeps the amount for the quantity it was given', function () {
     $payload = (new InvoiceMapper())->toQuickBooks([
         'currency' => 'USD',
-        'items'    => [['description' => 'Labor', 'quantity' => 3, 'unit_price' => 1000, 'amount' => 3000]],
+        'items'    => [InvoiceMapper::item('Labor', 3, 1000, 3000)],
     ], 'cust-1', 'item-1');
     $detail = $payload['Line'][0]['SalesItemLineDetail'];
 
