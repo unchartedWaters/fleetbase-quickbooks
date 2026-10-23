@@ -70,6 +70,9 @@ importers:
       ember-cli-htmlbars:
         specifier: ^6.3.0
         version: 6.3.0(supports-color@8.1.1)
+      ember-concurrency:
+        specifier: ^4.0.4
+        version: 4.0.6(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-intl:
         specifier: 6.3.2
         version: 6.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
@@ -131,12 +134,6 @@ importers:
       ember-composable-helpers:
         specifier: ^5.0.0
         version: 5.0.0(supports-color@8.1.1)
-      ember-concurrency:
-        specifier: ^3.1.1
-        version: 3.1.1(@babel/core@7.29.7(supports-color@8.1.1))(ember-source@4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
-      ember-concurrency-decorators:
-        specifier: ^2.0.3
-        version: 2.0.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-data:
         specifier: ^4.12.5
         version: 4.12.8(@babel/core@7.29.7(supports-color@8.1.1))(@ember/string@3.1.1(supports-color@8.1.1))(@glimmer/tracking@1.1.2)(ember-source@4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
@@ -390,20 +387,6 @@ packages:
     peerDependencies:
       '@babel/core': ^7.0.0-0
 
-  '@babel/plugin-proposal-nullish-coalescing-operator@7.18.6':
-    resolution: {integrity: sha512-wQxQzxYeJqHcfppzBDnm1yAY0jSRkUXR2z8RePZYrKwMKgMlE8+Z6LUno+bd6LvbGh8Gltvy74+9pIYkr+XkKA==}
-    engines: {node: '>=6.9.0'}
-    deprecated: This proposal has been merged to the ECMAScript standard and thus this plugin is no longer maintained. Please use @babel/plugin-transform-nullish-coalescing-operator instead.
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
-
-  '@babel/plugin-proposal-optional-chaining@7.21.0':
-    resolution: {integrity: sha512-p4zeefM72gpmEe2fkUr/OnOXpWEf8nAgk7ZYVqqfFiyIG7oFfVZcCrU64hWn5xp4tQ9LkV4bTIa5rD0KANpKNA==}
-    engines: {node: '>=6.9.0'}
-    deprecated: This proposal has been merged to the ECMAScript standard and thus this plugin is no longer maintained. Please use @babel/plugin-transform-optional-chaining instead.
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
-
   '@babel/plugin-proposal-private-methods@7.18.6':
     resolution: {integrity: sha512-nutsvktDItsNn4rpGItSNV2sz1XwS+nfU0Rg8aCx3W3NOKVzdMjJRu0O5OkgDp3ZGICSTbgRpxZoWsxoKRvbeA==}
     engines: {node: '>=6.9.0'}
@@ -439,16 +422,6 @@ packages:
   '@babel/plugin-syntax-import-attributes@7.29.7':
     resolution: {integrity: sha512-zGYcYfq/WmZ4V+kBIXQon9dSSc8ircGZqw9ZaNhhGj9nZkeBu1jHLBDQqYYi5WA9uawvA2sIMbry2nCFhf5Djg==}
     engines: {node: '>=6.9.0'}
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
-
-  '@babel/plugin-syntax-nullish-coalescing-operator@7.8.3':
-    resolution: {integrity: sha512-aSff4zPII1u2QD7y+F8oDsz19ew4IGEJg9SVW+bqwpwtfFleiQDMdzA/R+UlWDzfnHFCxxleFT0PMIrR36XLNQ==}
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
-
-  '@babel/plugin-syntax-optional-chaining@7.8.3':
-    resolution: {integrity: sha512-KoK9ErH1MBlCPxV0VANkXW2/dw4vlbGDrFgz8bmUsBGYkFRcbRwMh6cIJubdPrkxRwuGdtCk0v/wPTKbQgBjkg==}
     peerDependencies:
       '@babel/core': ^7.0.0-0
 
@@ -771,11 +744,6 @@ packages:
 
   '@babel/plugin-transform-typescript@7.5.5':
     resolution: {integrity: sha512-pehKf4m640myZu5B2ZviLaiBlxMCjSZ1qTEO459AXKX5GnPueyulJeCqZFs1nz/Ya2dDzXQ1NxZ/kKNWyD4h6w==}
-    peerDependencies:
-      '@babel/core': ^7.0.0-0
-
-  '@babel/plugin-transform-typescript@7.8.7':
-    resolution: {integrity: sha512-7O0UsPQVNKqpHeHLpfvOG4uXmlw+MOxYvUv6Otc9uH5SYMIxvF6eBdjkWvC3f9G+VXe0RsNExyAQBeTRug/wqQ==}
     peerDependencies:
       '@babel/core': ^7.0.0-0
 
@@ -3825,10 +3793,6 @@ packages:
     resolution: {integrity: sha512-lo5YArbJzJi5ssvaGqTt6+FnhTALnSvYVuxM7lfyL1UCMudyNJ94ovH5C7n5il7ATd6WsNiAPRUO/v+s5Jq/aA==}
     engines: {node: 8.* || >= 10.*}
 
-  ember-cli-typescript@3.1.4:
-    resolution: {integrity: sha512-HJ73kL45OGRmIkPhBNFt31I1SGUvdZND+LCH21+qpq3pPlFpJG8GORyXpP+2ze8PbnITNLzwe5AwUrpyuRswdQ==}
-    engines: {node: 8.* || >= 10.*}
-
   ember-cli-typescript@4.2.1:
     resolution: {integrity: sha512-0iKTZ+/wH6UB/VTWKvGuXlmwiE8HSIGcxHamwNhEC5x1mN3z8RfvsFZdQWYUzIWFN2Tek0gmepGRPTwWdBYl/A==}
     engines: {node: 10.* || >= 12.*}
@@ -3878,10 +3842,6 @@ packages:
     peerDependencies:
       ember-concurrency: ^2.0.0-rc.1
 
-  ember-concurrency-decorators@2.0.3:
-    resolution: {integrity: sha512-r6O34YKI/slyYapVsuOPnmaKC4AsmBSwvgcadbdy+jHNj+mnryXPkm+3hhhRnFdlsKUKdEuXvl43lhjhYRLhhA==}
-    engines: {node: 10.* || >= 12}
-
   ember-concurrency-ts@0.3.1:
     resolution: {integrity: sha512-lE9uqPgK1Y9PN/0BJ5zE2a+h95izRCn6FCyt7qVV3012TlblTynsBaoUuAbN1T3KfzFsrJaXwsxzRbDjEde2Sw==}
     engines: {node: 10.* || >= 12}
@@ -3891,12 +3851,6 @@ packages:
   ember-concurrency@2.3.7:
     resolution: {integrity: sha512-sz6sTIXN/CuLb5wdpauFa+rWXuvXXSnSHS4kuNzU5GSMDX1pLBWSuovoUk61FUe6CYRqBmT1/UushObwBGickQ==}
     engines: {node: 10.* || 12.* || 14.* || >= 16}
-
-  ember-concurrency@3.1.1:
-    resolution: {integrity: sha512-doXFYYfy1C7jez+jDDlfahTp03QdjXeSY/W3Zbnx/q3UNJ9g10Shf2d7M/HvWo/TC22eU+6dPLIpqd/6q4pR+Q==}
-    engines: {node: 16.* || >= 18}
-    peerDependencies:
-      ember-source: ^3.28.0 || ^4.0.0 || >=5.0.0
 
   ember-concurrency@4.0.6:
     resolution: {integrity: sha512-Ikwl2YwXVe8aBwrT1deWTcUVxVu6KxS1qeU1ks3EML1Q/nxwKgxCkGqTJavxczawO8H/SIW45dV4r7z5Yqd2Xg==}
@@ -4483,10 +4437,6 @@ packages:
 
   execa@2.1.0:
     resolution: {integrity: sha512-Y/URAVapfbYy2Xp/gb6A0E7iR8xeqOCXsuuaoMn7A5PzrXUK84E1gyiEfq0wQd/GHA6GsoHWwhNq8anb0mleIw==}
-    engines: {node: ^8.12.0 || >=9.7.0}
-
-  execa@3.4.0:
-    resolution: {integrity: sha512-r9vdGQk4bmCuK1yKQu1KTwcT2zwfWdbdaXfCtAh+5nU/4fSX+JAb7vZGvI5naJrQlvONrEB20jeruESI69530g==}
     engines: {node: ^8.12.0 || >=9.7.0}
 
   execa@4.1.0:
@@ -8764,21 +8714,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/plugin-proposal-nullish-coalescing-operator@7.18.6(@babel/core@7.29.7(supports-color@8.1.1))':
-    dependencies:
-      '@babel/core': 7.29.7(supports-color@8.1.1)
-      '@babel/helper-plugin-utils': 7.29.7
-      '@babel/plugin-syntax-nullish-coalescing-operator': 7.8.3(@babel/core@7.29.7(supports-color@8.1.1))
-
-  '@babel/plugin-proposal-optional-chaining@7.21.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)':
-    dependencies:
-      '@babel/core': 7.29.7(supports-color@8.1.1)
-      '@babel/helper-plugin-utils': 7.29.7
-      '@babel/helper-skip-transparent-expression-wrappers': 7.29.7(supports-color@8.1.1)
-      '@babel/plugin-syntax-optional-chaining': 7.8.3(@babel/core@7.29.7(supports-color@8.1.1))
-    transitivePeerDependencies:
-      - supports-color
-
   '@babel/plugin-proposal-private-methods@7.18.6(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)':
     dependencies:
       '@babel/core': 7.29.7(supports-color@8.1.1)
@@ -8812,16 +8747,6 @@ snapshots:
       '@babel/helper-plugin-utils': 7.29.7
 
   '@babel/plugin-syntax-import-attributes@7.29.7(@babel/core@7.29.7(supports-color@8.1.1))':
-    dependencies:
-      '@babel/core': 7.29.7(supports-color@8.1.1)
-      '@babel/helper-plugin-utils': 7.29.7
-
-  '@babel/plugin-syntax-nullish-coalescing-operator@7.8.3(@babel/core@7.29.7(supports-color@8.1.1))':
-    dependencies:
-      '@babel/core': 7.29.7(supports-color@8.1.1)
-      '@babel/helper-plugin-utils': 7.29.7
-
-  '@babel/plugin-syntax-optional-chaining@7.8.3(@babel/core@7.29.7(supports-color@8.1.1))':
     dependencies:
       '@babel/core': 7.29.7(supports-color@8.1.1)
       '@babel/helper-plugin-utils': 7.29.7
@@ -9182,15 +9107,6 @@ snapshots:
       '@babel/plugin-syntax-typescript': 7.29.7(@babel/core@7.29.7(supports-color@8.1.1))
 
   '@babel/plugin-transform-typescript@7.5.5(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)':
-    dependencies:
-      '@babel/core': 7.29.7(supports-color@8.1.1)
-      '@babel/helper-create-class-features-plugin': 7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
-      '@babel/helper-plugin-utils': 7.29.7
-      '@babel/plugin-syntax-typescript': 7.29.7(@babel/core@7.29.7(supports-color@8.1.1))
-    transitivePeerDependencies:
-      - supports-color
-
-  '@babel/plugin-transform-typescript@7.8.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)':
     dependencies:
       '@babel/core': 7.29.7(supports-color@8.1.1)
       '@babel/helper-create-class-features-plugin': 7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
@@ -13459,26 +13375,6 @@ snapshots:
       - '@babel/core'
       - supports-color
 
-  ember-cli-typescript@3.1.4(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1):
-    dependencies:
-      '@babel/plugin-proposal-nullish-coalescing-operator': 7.18.6(@babel/core@7.29.7(supports-color@8.1.1))
-      '@babel/plugin-proposal-optional-chaining': 7.21.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
-      '@babel/plugin-transform-typescript': 7.8.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
-      ansi-to-html: 0.6.15
-      broccoli-stew: 3.0.0(supports-color@8.1.1)
-      debug: 4.4.3(supports-color@8.1.1)
-      ember-cli-babel-plugin-helpers: 1.1.1
-      execa: 3.4.0
-      fs-extra: 8.1.0
-      resolve: 1.22.12
-      rsvp: 4.8.5
-      semver: 6.3.1
-      stagehand: 1.0.1(supports-color@8.1.1)
-      walk-sync: 2.2.0
-    transitivePeerDependencies:
-      - '@babel/core'
-      - supports-color
-
   ember-cli-typescript@4.2.1(supports-color@8.1.1):
     dependencies:
       ansi-to-html: 0.6.15
@@ -13720,16 +13616,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  ember-concurrency-decorators@2.0.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1):
-    dependencies:
-      '@ember-decorators/utils': 6.1.1(supports-color@8.1.1)
-      ember-cli-babel: 7.26.11(supports-color@8.1.1)
-      ember-cli-htmlbars: 4.5.0(supports-color@8.1.1)
-      ember-cli-typescript: 3.1.4(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
-    transitivePeerDependencies:
-      - '@babel/core'
-      - supports-color
-
   ember-concurrency-ts@0.3.1(ember-concurrency@2.3.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1):
     dependencies:
       ember-cli-babel: 7.26.11(supports-color@8.1.1)
@@ -13748,20 +13634,6 @@ snapshots:
       ember-cli-htmlbars: 5.7.2(supports-color@8.1.1)
       ember-compatibility-helpers: 1.2.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-destroyable-polyfill: 2.0.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
-    transitivePeerDependencies:
-      - '@babel/core'
-      - supports-color
-
-  ember-concurrency@3.1.1(@babel/core@7.29.7(supports-color@8.1.1))(ember-source@4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1):
-    dependencies:
-      '@babel/helper-plugin-utils': 7.29.7
-      '@babel/types': 7.29.7
-      '@glimmer/tracking': 1.1.2
-      ember-cli-babel: 7.26.11(supports-color@8.1.1)
-      ember-cli-babel-plugin-helpers: 1.1.1
-      ember-cli-htmlbars: 6.3.0(supports-color@8.1.1)
-      ember-compatibility-helpers: 1.2.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
-      ember-source: 4.8.6(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(supports-color@8.1.1)(webpack@5.108.1(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
     transitivePeerDependencies:
       - '@babel/core'
       - supports-color
@@ -14803,19 +14675,6 @@ snapshots:
       is-stream: 2.0.1
       merge-stream: 2.0.0
       npm-run-path: 3.1.0
-      onetime: 5.1.2
-      p-finally: 2.0.1
-      signal-exit: 3.0.7
-      strip-final-newline: 2.0.0
-
-  execa@3.4.0:
-    dependencies:
-      cross-spawn: 7.0.6
-      get-stream: 5.2.0
-      human-signals: 1.1.1
-      is-stream: 2.0.1
-      merge-stream: 2.0.0
-      npm-run-path: 4.0.1
       onetime: 5.1.2
       p-finally: 2.0.1
       signal-exit: 3.0.7
