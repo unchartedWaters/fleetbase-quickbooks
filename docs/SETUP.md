@@ -358,10 +358,13 @@ changed the record, the QuickBooks values are copied and the Activity row says
 that a change made in Fleetbase was replaced. QuickBooks then wins the whole
 record: a customer email, phone, notes or billing address, an invoice note or
 an account description emptied in QuickBooks is emptied in Fleetbase too. A
-token is stored only when both systems then hold the same values. When a
-QuickBooks change cannot be copied, such as an invoice moved to a QuickBooks
-customer that has no Fleetbase link, the link keeps its older token:
-QuickBooks keeps winning that record, and the difference is not sent back.
+token is stored only when both systems then hold the same values. Two
+QuickBooks changes cannot be copied, and count as in sync once taken: an
+invoice moved to a QuickBooks customer that has no Fleetbase link keeps its
+Fleetbase customer, and Activity says so; a wallet that still holds money stays
+open when QuickBooks makes its account inactive. A later Fleetbase edit of that
+invoice or wallet is sent, keeps the QuickBooks customer and leaves the account
+inactive.
 Invoice numbers and account numbers still come from QuickBooks. A customer
 renamed in Fleetbase is sent like any other field, unless QuickBooks also
 changed that customer; then the QuickBooks name is kept. QuickBooks decides tax,

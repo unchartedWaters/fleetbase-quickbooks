@@ -2063,6 +2063,8 @@ class SyncEngine
         }
 
         $before = $wallet;
+        $active = $remote['Active'] ?? null;
+        $remote = $this->withKeptInactive($settings, $wallet, $remote);
         // QuickBooks wins only an account it changed since the last sync; otherwise Fleetbase is sent.
         $leads  = $this->fleetbaseLeads($settings, 'wallet', $baseline, $remote);
         if ($leads === true) {
@@ -2127,6 +2129,9 @@ class SyncEngine
             }
         }
         $payload = $this->wallets->keepUniqueName($ledger->wallets[$uuid], $payload, $remote);
+        if ($active === false && array_key_exists('Active', $remote) === false) {
+            unset($payload['Active']);
+        }
 
         if ($this->writeBuffer !== null) {
             $payload['Id']        = (string) $remote['Id'];
@@ -2359,6 +2364,8 @@ class SyncEngine
         $sendsDueClear = $pushClears;
         $pushClears    = $pushClears || $leads;
         $clears        = $this->copiesClears($settings, 'invoice', $baseline, $remote);
+        $customerRef   = (string) $customerLink['qbo_id'];
+        $customerRef   = $this->keptCustomerRef($ledger, $connection, $settings, $customerRef, $remote);
         $numberChanged = $this->copyInvoiceNumber($ledger, $uuid, $remote, $reference);
         $partyChanged  = false;
         if ($leads === false && $this->quickbooksSupplies($settings, 'invoice') === true) {
@@ -2382,7 +2389,7 @@ class SyncEngine
             $localCents,
             $reference,
             $pushClears || $clears,
-            (string) $customerLink['qbo_id'],
+            $customerRef,
             $pushClears === true && $currencyOk === true,
             $remoteSuppliesLines === false,
             ['removed' => $removed, 'mapped' => $mapped]
@@ -2400,7 +2407,7 @@ class SyncEngine
         }
         // QuickBooks did not change the invoice since the last sync, so a Fleetbase change is sent.
         $edited  = $leads === true
-            && $this->fleetbaseEditedInvoice($invoice, $remote, $reference, (string) $customerLink['qbo_id'], $stored);
+            && $this->fleetbaseEditedInvoice($invoice, $remote, $reference, $customerRef, $stored);
         $matched = $matched === true && $edited === false;
         if ($matched === true) {
             $outcome = ($numberChanged === true || $partyChanged === true) ? 'updated' : 'aligned';
@@ -2454,7 +2461,7 @@ class SyncEngine
             }
 
             $payload = $this->invoices->withLineItems(
-                $this->invoices->toQuickBooks($ledger->invoices[$uuid], (string) $customerLink['qbo_id'], $itemId),
+                $this->invoices->toQuickBooks($ledger->invoices[$uuid], $customerRef, $itemId),
                 $lineItems
             );
         }
@@ -2470,7 +2477,7 @@ class SyncEngine
         if ($pushClears === true) {
             $payload = $this->invoicePayloadWithClears(
                 $ledger->invoices[$uuid],
-                (string) $customerLink['qbo_id'],
+                $customerRef,
                 $itemId,
                 $lineItems,
                 $reference,
@@ -4038,6 +4045,7 @@ class SyncEngine
             return true;
         }
         $reference = (string) ($settings['wallet_reference'] ?? 'fleetbase');
+        $remote    = $this->withKeptInactive($settings, $wallet, $remote);
 
         return $this->wallets->matches($wallet, $this->wallets->toQuickBooks($wallet, $reference, true), $remote);
     }
@@ -4070,9 +4078,60 @@ class SyncEngine
             (string) ($invoice['customer_uuid'] ?? '')
         );
         $ref       = is_array($customer) === true ? (string) ($customer['qbo_id'] ?? '') : '';
+        $ref       = $this->keptCustomerRef($ledger, $connection, $settings, $ref, $remote);
         $reference = (string) ($settings['invoice_reference'] ?? 'fleetbase');
 
         return $this->fleetbaseEditedInvoice($invoice, $remote, $reference, $ref, $stored) === false;
+    }
+
+    /**
+     * The QuickBooks customer an invoice is compared with and sent to. QuickBooks as Primary in
+     * two-way sync keeps a customer QuickBooks moved the invoice to when Fleetbase has not linked
+     * it: the Fleetbase customer stays (Activity says so), the invoice counts as in sync, and a
+     * later Fleetbase edit does not move it back. Otherwise the Fleetbase customer's own.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $remote
+     */
+    private function keptCustomerRef(
+        SyncLedger $ledger,
+        array $connection,
+        array $settings,
+        string $customerRef,
+        array $remote,
+    ): string {
+        $remoteCustomer = $this->remoteInvoiceCustomerId($remote);
+        $moved          = $remoteCustomer !== '' && $remoteCustomer !== trim($customerRef);
+        if ($moved === false || $this->tokenDecides($settings, 'invoice') === false) {
+            return $customerRef;
+        }
+        $local = $this->remoteInvoiceLocalCustomer($ledger, (string) $connection['realm_id'], $remoteCustomer);
+
+        return $local === '' ? $remoteCustomer : $customerRef;
+    }
+
+    /**
+     * QuickBooks as Primary in two-way sync leaves a wallet that still holds money open when
+     * QuickBooks made its account inactive (applyWalletFromRemote). That difference is kept:
+     * the account is compared as if active, and a push leaves Active out.
+     *
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $wallet
+     * @param array<string, mixed> $remote
+     *
+     * @return array<string, mixed>
+     */
+    private function withKeptInactive(array $settings, array $wallet, array $remote): array
+    {
+        $inactive   = array_key_exists('Active', $remote) === true && (bool) $remote['Active'] === false;
+        $holdsMoney = (int) ($wallet['balance'] ?? 0) !== 0;
+        if ($inactive === true && $holdsMoney === true && $this->wallets->isActive($wallet) === true
+            && $this->tokenDecides($settings, 'wallet') === true) {
+            unset($remote['Active']);
+        }
+
+        return $remote;
     }
 
     /**

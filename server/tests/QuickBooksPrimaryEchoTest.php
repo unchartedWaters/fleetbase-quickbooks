@@ -179,7 +179,7 @@ test('an invoice moved in quickbooks to a customer fleetbase has not linked is n
     expect($client->calls)->not->toContain('updateInvoice')
         ->and($client->invoices['qb-1']['CustomerRef']['value'])->toBe('qbo-x')
         ->and($ledger->invoices['inv-1']['customer_uuid'])->toBe('cust-1')
-        ->and(Primary::token($ledger, 'invoice', 'inv-1'))->not->toBe('2');
+        ->and(Primary::token($ledger, 'invoice', 'inv-1'))->toBe('2');
 });
 
 test('a due date quickbooks added is copied before the invoice token is stored', function () {
