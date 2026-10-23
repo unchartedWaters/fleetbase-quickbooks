@@ -426,6 +426,8 @@ host, Connect answers HTTP 422 and does not open Intuit; a callback that still
 arrives returns HTTP 500.
 
 **Disconnect** revokes the refresh token at Intuit (`developer.api.intuit.com/v2/oauth2/tokens/revoke`) on a best-effort basis, then deletes the local connection row and this organization's still-pending sync rows. A failed revoke does not block the disconnect. `quickbooks_links` rows are kept so a later reconnect restores the mappings. Disconnect does not change the Intuit app or its webhook subscription.
+The revoke is skipped while another organization is connected to the same
+QuickBooks company, so that organization stays connected.
 
 Home currency comes from QuickBooks Preferences. The admin-only
 `POST /quickbooks/int/v1/connection/test` endpoint also reads Preferences; the

@@ -427,7 +427,7 @@ class ConnectionController extends QuickbooksController
 
             foreach (Connection::query()->where('company_uuid', $companyUuid)->get() as $row) {
                 $token = $row instanceof Connection === true ? trim((string) $row->refresh_token) : '';
-                if ($token === '') {
+                if ($token === '' || $this->realmSharedWithOthers($row, $companyUuid) === true) {
                     continue;
                 }
 
@@ -446,6 +446,31 @@ class ConnectionController extends QuickbooksController
                 'exception'    => $exception::class,
             ]);
         }
+    }
+
+    /**
+     * Intuit may end the app's connection to the whole QuickBooks company on revoke, which would disconnect
+     * every other organization on it. While another one uses the realm, the revoke is skipped; this
+     * organization's row is still deleted, so Fleetbase no longer uses the token.
+     */
+    private function realmSharedWithOthers(Connection $row, string $companyUuid): bool
+    {
+        $realm = trim((string) $row->realm_id);
+        if ($realm === '') {
+            return false;
+        }
+        $shared = Connection::query()
+            ->where('realm_id', $realm)
+            ->where('company_uuid', '!=', $companyUuid)
+            ->exists();
+        if ($shared === true) {
+            Log::info('QuickBooks token not revoked: another organization uses this QuickBooks company.', [
+                'company_uuid' => $companyUuid,
+                'realm_id'     => $realm,
+            ]);
+        }
+
+        return $shared;
     }
 
     /**
