@@ -190,11 +190,11 @@ class WebhookController extends Controller
     }
 
     /**
-     * The body's changes by realm. A stale body leaves out its deletes and merges: by the
+     * The body's changes by realm. A stale body does not apply its deletes and merges: by the
      * time it arrives the record may have been restored or changed again, and reading it
      * back cannot stand in for them (a deleted record and a merged-away one both read as
      * gone, and a voided invoice reads as an invoice with no lines). Intuit reports the
-     * surviving record of a merge as an update, so that record is still read.
+     * surviving record of a merge as an update, so that record is still read. See staleDelete().
      *
      * @return array<int, WebhookGroup>
      */
@@ -213,7 +213,10 @@ class WebhookController extends Controller
             }
             if ($stale === true && in_array($mapped['operation'], self::STALE_SKIPPED, true) === true) {
                 $skipped++;
-                continue;
+                $mapped = $this->staleDelete($mapped);
+                if ($mapped === null) {
+                    continue;
+                }
             }
             $this->addEntity($groups, $realmId, $mapped);
         }
@@ -223,6 +226,25 @@ class WebhookController extends Controller
         }
 
         return $groups;
+    }
+
+    /**
+     * A stale delete is never applied. A payment's becomes a refresh: the invoices it paid have
+     * their balance read again from QuickBooks. Any other is passed on only to be noted in
+     * Activity. A stale merge is dropped.
+     *
+     * @param WebhookEntity $mapped
+     *
+     * @return WebhookEntity|null
+     */
+    private function staleDelete(array $mapped): ?array
+    {
+        if ($mapped['operation'] !== 'delete') {
+            return null;
+        }
+        $mapped['operation'] = $mapped['entityType'] === 'payment' ? 'refresh' : 'stale-delete';
+
+        return $mapped;
     }
 
     /**

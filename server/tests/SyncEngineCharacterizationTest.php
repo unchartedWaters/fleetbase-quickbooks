@@ -385,7 +385,7 @@ test('sec a remote invoice update copies dates note lines and totals and marks i
         ->and(array_key_exists('amount_paid', $invoice))->toBeFalse();
 });
 
-test('sec a remote invoice number wins under a quickbooks reference and then the customer is not copied in the same pass', function () {
+test('sec a remote invoice number and customer are both copied under a quickbooks reference', function () {
     [$engine, $client]           = qbEngine();
     $ledger                      = secLedger();
     $ledger->customers['cust-1'] = secCustomer('cust-1');
@@ -406,7 +406,7 @@ test('sec a remote invoice number wins under a quickbooks reference and then the
 
     expect($client->calls)->toBe(['batch'])
         ->and($ledger->invoices['inv-1']['number'])->toBe('QB-1')
-        ->and($ledger->invoices['inv-1']['customer_uuid'])->toBe('cust-1')
+        ->and($ledger->invoices['inv-1']['customer_uuid'])->toBe('cust-2')
         ->and($ledger->invoices['inv-1']['replace_from_quickbooks'])->toBeTrue()
         ->and($ledger->invoices['inv-2']['number'])->toBe('INV-2')
         ->and($ledger->invoices['inv-2']['customer_uuid'])->toBe('cust-2')

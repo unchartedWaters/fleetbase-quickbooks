@@ -221,9 +221,11 @@ test('a delete older than ten minutes is acknowledged but not applied, one insid
             $old     = $controller->handle(whrRequest($stale, whrSign($stale, 'verifier-token')));
             $current = $controller->handle(whrRequest($fresh, whrSign($fresh, 'verifier-token')));
 
+            // The stale delete is passed on only to be noted in Activity.
             expect($old->getStatusCode())->toBe(200)
                 ->and($current->getStatusCode())->toBe(200)
-                ->and($seen)->toHaveCount(1);
+                ->and(array_map(fn (QuickBooksEntityChanged $event) => $event->operation, $seen))
+                ->toBe(['stale-delete', 'delete']);
         });
     } finally {
         config()->set('quickbooks.webhook.max_age_seconds', $previous);
@@ -256,7 +258,8 @@ test('the maximum delivery age is configurable and drives the replay cache lifet
 
             expect($rejected->getStatusCode())->toBe(200)
                 ->and($accepted->getStatusCode())->toBe(200)
-                ->and($seen)->toHaveCount(1);
+                ->and(array_map(fn (QuickBooksEntityChanged $event) => $event->operation, $seen))
+                ->toBe(['stale-delete', 'delete']);
         });
     } finally {
         config()->set('quickbooks.webhook.max_age_seconds', $previous);
@@ -429,9 +432,11 @@ test('a stale cloudevents delete is acknowledged but not applied and a fresh one
             $old     = $controller->handle(whrRequest($stale, whrSign($stale, 'verifier-token')));
             $current = $controller->handle(whrRequest($fresh, whrSign($fresh, 'verifier-token')));
 
+            // The stale delete is passed on only to be noted in Activity.
             expect($old->getStatusCode())->toBe(200)
                 ->and($current->getStatusCode())->toBe(200)
-                ->and($seen)->toHaveCount(1);
+                ->and(array_map(fn (QuickBooksEntityChanged $event) => $event->operation, $seen))
+                ->toBe(['stale-delete', 'delete']);
         });
     } finally {
         config()->set('quickbooks.webhook.max_age_seconds', $previous);
@@ -461,7 +466,7 @@ test('a cloudevents delivery needs a valid signature and a signed body with no r
     });
 });
 
-test('a stale delivery applies its creates and updates as reads and skips its deletes and merges', function () {
+test('a stale delivery reads its updates, re-reads payment deletes, and applies no delete or merge', function () {
     $at     = whrStamp(700);
     $merged = whrCloudEvent('qbo.customer.merged.v1', '12', 'realm-whr', $at);
 
@@ -484,9 +489,13 @@ test('a stale delivery applies its creates and updates as reads and skips its de
         );
 
         expect($response->getStatusCode())->toBe(200)
+            // A stale payment void only re-reads its invoices' balances, and a stale customer
+            // delete is passed on only to be noted in Activity. The merge is still skipped.
             ->and($summary)->toBe([
                 ['customer', '55', 'create'],
                 ['invoice', '8', 'update'],
+                ['customer', '9', 'stale-delete'],
+                ['payment', '4', 'refresh'],
                 ['customer', '12', 'update'],
             ]);
     });

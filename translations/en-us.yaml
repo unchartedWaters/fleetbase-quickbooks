@@ -263,11 +263,13 @@ quickbooks:
     remote-merge-kept:
       customer: "QuickBooks merged customer {id} into customer {into}, which another Fleetbase customer already syncs with. Both Fleetbase customers were kept; merge them in Fleetbase if they are the same."
       wallet: "QuickBooks merged account {id} into account {into}, which another Fleetbase wallet already syncs with. Both Fleetbase wallets were kept."
+    remote-delete-late: QuickBooks reported a delete too late to apply it safely. Check this record in QuickBooks and Fleetbase.
     remote-delete-wallet-balance: "An account deleted in QuickBooks (ID {id}) was kept as a wallet in Fleetbase, because the wallet still holds a balance or its balance could not be read."
     invoice-missing: Invoice no longer exists in Fleetbase.
     invoice-customer-off: Customer sync is off, so this invoice cannot be synced.
     invoice-customer-failed: Invoice customer could not be synced to QuickBooks.
     invoice-customer-invalid: Invoice customer is not a Fleetbase customer.
+    invoice-customer-not-linked: "QuickBooks moved this invoice to customer {id}, which is not linked to a Fleetbase customer. The Fleetbase customer was kept."
     invoice-item-missing: "QuickBooks has no item for invoice lines. Fleetbase could not create its \"Fleetbase service\" item; add an Income account in QuickBooks and try again."
     invoice-product-failed: 'Fleetbase could not make a QuickBooks product for line "{name}", so the line uses the "Fleetbase service" item.'
     products-unavailable: Storefront products could not be read, so this was not synced. It is tried again on the next sync.

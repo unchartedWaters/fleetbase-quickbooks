@@ -4,6 +4,7 @@ use Fleetbase\Quickbooks\Events\QuickBooksEntityChanged;
 use Fleetbase\Quickbooks\Http\Controllers\SettingController;
 use Fleetbase\Quickbooks\Http\Controllers\WebhookController;
 use Fleetbase\Quickbooks\Jobs\ApplyRemoteChange;
+use Fleetbase\Quickbooks\Jobs\ResolveWebhookPayments;
 use Fleetbase\Quickbooks\Jobs\SyncCompanyBatch;
 use Fleetbase\Quickbooks\Jobs\SyncWebhookBatch;
 use Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync;
@@ -1760,7 +1761,7 @@ test('a delete or void webhook does not create a pending sync row', function () 
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
-test('a payment webhook queues the linked invoice and skips an unlinked payment', function () {
+test('payments from quickbooks leave linked and unlinked payment webhooks to the payment job', function () {
     $defaultConnection = config('database.default');
     $sqliteConnection  = config('database.connections.sqlite');
     config()->set('database.default', 'sqlite');
@@ -1839,8 +1840,9 @@ test('a payment webhook queues the linked invoice and skips an unlinked payment'
             $listener->flush($store);
             $queries = array_column($connection->getQueryLog(), 'query');
 
-            $batch  = null;
-            $remote = null;
+            $batch   = null;
+            $remote  = null;
+            $resolve = null;
             foreach ($dispatcher->jobs as $job) {
                 if (($job instanceof SyncWebhookBatch) === true) {
                     $batch = $job;
@@ -1848,22 +1850,24 @@ test('a payment webhook queues the linked invoice and skips an unlinked payment'
                 if (($job instanceof ApplyRemoteChange) === true) {
                     $remote = $job;
                 }
+                if (($job instanceof ResolveWebhookPayments) === true) {
+                    $resolve = $job;
+                }
             }
 
+            // With payments from QuickBooks, the linked payment is read in the payment job too,
+            // because QuickBooks may have moved it to another invoice.
             expect($batch)->toBeInstanceOf(SyncWebhookBatch::class)
                 ->and($remote)->toBeInstanceOf(ApplyRemoteChange::class)
                 ->and($batch->records)->toBe([
                     ['local_type' => 'customer', 'local_uuid' => 'cust-1'],
-                    ['local_type' => 'invoice', 'local_uuid' => 'inv-9'],
                 ])
-                ->and(array_column($batch->records, 'local_type'))->not->toContain('payment')
                 ->and($remote->entities)->toBe([
                     ['entity' => 'Customer', 'id' => '1', 'operation' => 'update'],
-                    ['entity' => 'Payment', 'id' => '4', 'operation' => 'create'],
                 ])
-                ->and($queries)->toHaveCount(2)
-                ->and($queries[0])->toContain('qbo_id')
-                ->and($queries[1])->toContain('local_uuid');
+                ->and(array_column($resolve->events, 'id'))->toBe(['4', '99'])
+                ->and($queries)->toHaveCount(1)
+                ->and($queries[0])->toContain('qbo_id');
         });
     } finally {
         DB::purge('sqlite');
@@ -2177,8 +2181,11 @@ test('a signed webhook delete older than ten minutes is not applied and a down r
 
         try {
             $rejected = $controller->handle(qboChangedRequest($stale, qboChangedSignature($stale, 'verifier-token')));
+            // The stale delete is passed on only to be noted in Activity, never applied.
             expect($rejected->getStatusCode())->toBe(200)
-                ->and(qboChangedSeen())->toBe([]);
+                ->and(array_map(fn (QuickBooksEntityChanged $event) => $event->operation, qboChangedSeen()))
+                ->toBe(['stale-delete']);
+            $GLOBALS['qboChangedEvents'] = [];
 
             $previous = Cache::getFacadeRoot();
             Cache::swap(new class {

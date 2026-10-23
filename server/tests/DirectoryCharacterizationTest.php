@@ -1484,3 +1484,189 @@ test('a product link keeps its name and state, and a cleared state is written', 
         $restore();
     }
 })->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a webhook invoice moved to another linked customer in quickbooks takes that customer', function () {
+    $restore = dctSqlite();
+    try {
+        dctLoadRows();
+        $entities               = [['entity' => 'Invoice', 'id' => '10', 'operation' => 'Update']];
+        $loaded                 = (new FleetbaseDirectory())->loadLinked('company-uuid', $entities);
+        [$engine, $client]      = qbEngine();
+        $client->invoices['10'] = [
+            'Id'          => '10', 'SyncToken' => '1', 'DocNumber' => 'inv-a', 'CustomerRef' => ['value' => '2'],
+            'TotalAmt'    => '10.00', 'Balance' => '10.00',
+            'Line'        => [[
+                'Id'                  => '1', 'DetailType' => 'SalesItemLineDetail', 'Amount' => '10.00',
+                'Description'         => 'x', 'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+            ]],
+        ];
+
+        $engine->acceptRemoteChanges(
+            $loaded['ledger'],
+            'company-uuid',
+            $entities,
+            qbSettings(['invoice_conflict' => 'quickbooks']),
+            time()
+        );
+
+        expect($loaded['ledger']->invoices['inv-a']['customer_uuid'])->toBe('cust-b');
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('an invoice number and customer changed together in quickbooks are both copied', function () {
+    $restore = dctSqlite();
+    try {
+        dctLoadRows();
+        $entities               = [['entity' => 'Invoice', 'id' => '10', 'operation' => 'Update']];
+        $loaded                 = (new FleetbaseDirectory())->loadLinked('company-uuid', $entities);
+        [$engine, $client]      = qbEngine();
+        $client->invoices['10'] = [
+            'Id'          => '10', 'SyncToken' => '1', 'DocNumber' => 'QB-1001', 'CustomerRef' => ['value' => '2'],
+            'TotalAmt'    => '10.00', 'Balance' => '10.00',
+            'Line'        => [[
+                'Id'                  => '1', 'DetailType' => 'SalesItemLineDetail', 'Amount' => '10.00',
+                'Description'         => 'x', 'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+            ]],
+        ];
+
+        $engine->acceptRemoteChanges(
+            $loaded['ledger'],
+            'company-uuid',
+            $entities,
+            qbSettings(['invoice_conflict' => 'quickbooks', 'invoice_reference' => 'quickbooks']),
+            time()
+        );
+
+        expect($loaded['ledger']->invoices['inv-a']['number'])->toBe('QB-1001')
+            ->and($loaded['ledger']->invoices['inv-a']['customer_uuid'])->toBe('cust-b');
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('an invoice moved to an unlinked quickbooks customer keeps its customer and says why', function () {
+    $restore = dctSqlite();
+    try {
+        dctLoadRows();
+        $entities               = [['entity' => 'Invoice', 'id' => '10', 'operation' => 'Update']];
+        $loaded                 = (new FleetbaseDirectory())->loadLinked('company-uuid', $entities);
+        [$engine, $client]      = qbEngine();
+        $client->invoices['10'] = [
+            'Id'          => '10', 'SyncToken' => '1', 'DocNumber' => 'inv-a', 'CustomerRef' => ['value' => '99'],
+            'TotalAmt'    => '10.00', 'Balance' => '10.00', 'PrivateNote' => 'moved',
+            'Line'        => [[
+                'Id'                  => '1', 'DetailType' => 'SalesItemLineDetail', 'Amount' => '10.00',
+                'Description'         => 'x', 'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+            ]],
+        ];
+
+        $engine->acceptRemoteChanges(
+            $loaded['ledger'],
+            'company-uuid',
+            $entities,
+            qbSettings(['invoice_conflict' => 'quickbooks']),
+            time()
+        );
+        $notes = array_column(array_filter(
+            $loaded['ledger']->attempts,
+            static fn (array $attempt): bool => $attempt['local_uuid'] === 'inv-a'
+        ), 'error');
+
+        expect($loaded['ledger']->invoices['inv-a']['customer_uuid'])->toBe('cust-c')
+            ->and(array_map('qbText', $notes))->toBe([
+                'QuickBooks moved this invoice to customer 99, which is not linked to a Fleetbase customer.'
+                . ' The Fleetbase customer was kept.',
+            ]);
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a customer link whose fleetbase customer is deleted is not used for a moved invoice', function () {
+    $restore = dctSqlite();
+    try {
+        dctLoadRows();
+        DB::table('contacts')->where('uuid', 'cust-b')->update(['deleted_at' => now()]);
+        $entities = [['entity' => 'Invoice', 'id' => '10', 'operation' => 'Update']];
+        $loaded   = (new FleetbaseDirectory())->loadLinked('company-uuid', $entities);
+        $reader   = $loaded['ledger']->customerLinkReader;
+
+        expect($reader)->not->toBeNull()
+            ->and($reader('realm-1', '2'))->toBeNull()
+            ->and($reader('realm-1', '1')['local_uuid'])->toBe('cust-a');
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a payment moved to another invoice in quickbooks unpays the old invoice and pays the new one', function () {
+    $restore = dctSqlite();
+    try {
+        dctLoadRows();
+        DB::table('ledger_invoices')->where('uuid', 'inv-a')->update(['amount_paid' => 1000, 'status' => 'paid']);
+        dctLinkRow('l-pay-6', 'payment', '6', 'Payment', '6');
+        dctLinkRow('l-map-6', 'payment-invoice', '6', 'PaymentInvoice', 'inv-a');
+        $entities = [
+            ['entity' => 'Payment', 'id' => '6', 'operation' => 'update'],
+            ['entity' => 'Invoice', 'id' => '11', 'operation' => 'update'],
+            ['entity' => 'InvoicePayments', 'id' => '10', 'operation' => 'update'],
+        ];
+        $directory              = new FleetbaseDirectory();
+        $loaded                 = $directory->loadLinked('company-uuid', $entities);
+        [$engine, $client]      = qbEngine();
+        $client->payments['6']  = [
+            'Id'   => '6', 'SyncToken' => '1', 'TotalAmt' => '10.00', 'CustomerRef' => ['value' => '2'],
+            'Line' => [['Amount' => '10.00', 'LinkedTxn' => [['TxnType' => 'Invoice', 'TxnId' => '11']]]],
+        ];
+        $client->invoices['10'] = ['Id' => '10', 'SyncToken' => '2', 'TotalAmt' => '10.00', 'Balance' => '10.00'];
+        $client->invoices['11'] = [
+            'Id'          => '11', 'SyncToken' => '2', 'DocNumber' => 'inv-b', 'CustomerRef' => ['value' => '2'],
+            'TotalAmt'    => '10.00', 'Balance' => '0',
+            'Line'        => [[
+                'Id'                  => '1', 'DetailType' => 'SalesItemLineDetail', 'Amount' => '10.00',
+                'Description'         => 'x', 'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+            ]],
+        ];
+
+        $engine->acceptRemoteChanges(
+            $loaded['ledger'],
+            'company-uuid',
+            $entities,
+            qbSettings(['payment_conflict' => 'quickbooks']),
+            time()
+        );
+        // This schema has no Activity tables.
+        $loaded['ledger']->batches  = [];
+        $loaded['ledger']->attempts = [];
+        $directory->save($loaded['ledger']);
+
+        expect(DB::table('ledger_invoices')->where('uuid', 'inv-a')->value('amount_paid'))->toBe(0)
+            ->and(DB::table('ledger_invoices')->where('uuid', 'inv-b')->value('amount_paid'))->toBe(1000);
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a customer deleted after the load is not re-inserted and the rest of the save lands', function () {
+    $restore = dctSqlite();
+    try {
+        dctLoadRows();
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->loadPending('company-uuid', 50, time())['ledger'];
+        DB::table('contacts')->where('uuid', 'cust-a')->update(['deleted_at' => now()]);
+        $ledger->customers['cust-a']['name'] = 'New';
+        $ledger->invoices['inv-a']['notes']  = 'new';
+
+        $directory->save($ledger);
+        $rows = DB::table('contacts')->where('uuid', 'cust-a')->get();
+
+        expect(DB::table('ledger_invoices')->where('uuid', 'inv-a')->value('notes'))->toBe('new')
+            ->and($rows)->toHaveCount(1)
+            ->and($rows[0]->deleted_at)->not->toBeNull()
+            ->and($rows[0]->name)->toBe('Ada');
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');

@@ -71,6 +71,32 @@ class WebhookPaymentLinks
     }
 
     /**
+     * Points each stored payment-invoice row at the invoice its payment pays now, or drops
+     * the row when it pays none, so a later sync does not count it on the old invoice.
+     *
+     * @param array<string, string> $stale realm|payment id => invoice uuid, or ''
+     */
+    public function repointStoredPaymentInvoices(string $companyUuid, array $stale): void
+    {
+        foreach ($stale as $key => $invoiceUuid) {
+            [$realm, $paymentId] = array_pad(explode('|', (string) $key, 2), 2, '');
+            if ($companyUuid === '' || $realm === '' || $paymentId === '') {
+                continue;
+            }
+            $rows = Link::query()
+                ->where('company_uuid', $companyUuid)
+                ->where('realm_id', $realm)
+                ->where('local_type', 'payment-invoice')
+                ->where('local_uuid', $paymentId);
+            if ($invoiceUuid === '') {
+                $rows->delete();
+            } else {
+                $rows->update(['qbo_id' => $invoiceUuid]);
+            }
+        }
+    }
+
+    /**
      * The distinct non-empty realms and payment ids to look up.
      *
      * @param array<string, array<int, string>> $idsByRealm
