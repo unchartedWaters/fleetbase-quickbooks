@@ -142,8 +142,10 @@ module('Unit | Utility | activity-view characterization', () => {
             { uuid: '5', created_at: 0 },
         ]);
 
-        assert.strictEqual(rows[0].when, new Date(finished).toLocaleString());
-        assert.strictEqual(rows[1].when, new Date(created).toLocaleString());
+        // The component formats the Date in the console locale.
+        assert.true(rows[0].when instanceof Date);
+        assert.strictEqual(rows[0].when.toISOString(), new Date(finished).toISOString());
+        assert.strictEqual(rows[1].when.toISOString(), new Date(created).toISOString());
         assert.strictEqual(rows[2].when, '');
         assert.strictEqual(rows[3].when, 'not a date');
         assert.strictEqual(rows[4].when, '');

@@ -1,6 +1,7 @@
 # QuickBooks
 
-Fleetbase extension that syncs customers, invoices, payments, and wallets (QuickBooks accounts) with QuickBooks Online.
+Fleetbase extension that syncs customers, invoices, payments, wallets
+(QuickBooks accounts), and products (to QuickBooks only) with QuickBooks Online.
 
 The package lives in [unchartedWaters/fleetbase-quickbooks](https://github.com/unchartedWaters/fleetbase-quickbooks), checked out on its own, not inside the Fleetbase repository.
 
@@ -296,7 +297,9 @@ settings; for a connection made before this was remembered, the realm on its
 kept links). Connecting a different company, or a
 first connection, needs `quickbooks change-company connection`, which the
 Administrator gets from `quickbooks * connection`. Otherwise finishing the
-connection returns HTTP 403, and nothing is saved or queued. On an existing
+connection returns HTTP 403, and nothing is saved or queued. For a first
+connection, Connect is turned off on QuickBooks Setup with a note, and
+`oauth/start` answers HTTP 403 before Intuit sign-in. On an existing
 install, run `php artisan fleetbase:create-permissions` so the new permission
 exists; the Administrator's wildcard already covers it. Global settings
 (Admin → QuickBooks → Settings) need an installation administrator; no role
@@ -358,7 +361,7 @@ Sync frequency is the schedule. It is separate from each entity switch. There is
 no Enable schedule control, and a stored `enabled` flag does not stop the
 scheduler. Sync now with no connection returns HTTP 422 and does not save an
 activity row. The console shows that error. A stored realm that needs reconnect
-returns HTTP 422 and saves a skipped activity row.
+returns HTTP 422 and saves a skipped activity row, at most once per cooldown.
 
 ### Environments
 
@@ -430,9 +433,11 @@ Sync now, reconcile, the customer import and Connect each run at most once
 per organization in `QUICKBOOKS_MANUAL_COOLDOWN_SECONDS` seconds (config key
 `quickbooks.manual_cooldown_seconds`, default 30; 0 turns it off). A repeat
 inside that time answers HTTP 429 and queues nothing, and the console shows
-"This was started a moment ago. Try again in a minute." While QuickBooks must
-be connected again, the skipped sync is written to Activity at most once per
-cooldown. If the cache cannot be reached, the actions are not limited.
+"This was started a moment ago. Try again shortly." A Connect that is
+cancelled at Intuit or fails to finish, and an action that could not be
+queued, can be tried again at once. While QuickBooks must be connected again,
+the skipped sync is written to Activity at most once per cooldown. If the cache
+cannot be reached, the actions are not limited.
 
 Connect uses PKCE (`S256`). The API stores a code verifier with the OAuth state and sends the code challenge on `https://appcenter.intuit.com/connect/oauth2` with scope `com.intuit.quickbooks.accounting`.
 
@@ -450,9 +455,12 @@ something other than its default `fleetbase.io`, so set `CONSOLE_HOST` (or
 `QUICKBOOKS_CONSOLE_HOST`) explicitly. One of those must be the console origin
 so the callback can return to the console. An `http://` or `https://` prefix is
 kept. If the host has no prefix, the API adds `https://`. Without a console
-host, the callback returns HTTP 500.
+host, Connect answers HTTP 422 and does not open Intuit; a callback that still
+arrives returns HTTP 500.
 
 **Disconnect** revokes the refresh token at Intuit (`developer.api.intuit.com/v2/oauth2/tokens/revoke`) on a best-effort basis, then deletes the local connection row and this organization's still-pending sync rows. A failed revoke does not block the disconnect. `quickbooks_links` rows are kept so a later reconnect restores the mappings. Disconnect does not change the Intuit app or its webhook subscription.
+The revoke is skipped while another organization is connected to the same
+QuickBooks company, so that organization stays connected.
 
 Home currency comes from QuickBooks Preferences. The admin-only
 `POST /quickbooks/int/v1/connection/test` endpoint also reads Preferences; the
@@ -549,7 +557,9 @@ after the imported customers are saved, and the customers and their links are
 saved together, so a worker that stops before the save imports those pages
 again.
 
-Sync now with no connection returns HTTP 422 and does not save an activity row. The console shows that error. A stored realm that needs reconnect returns HTTP 422 and saves a skipped activity row.
+Sync now with no connection returns HTTP 422 and does not save an activity
+row. The console shows that error. A stored realm that needs reconnect returns
+HTTP 422 and saves a skipped activity row, at most once per cooldown.
 
 Activity rows list, under Results, only the counts above zero: created,
 updated, unchanged (aligned), linked, voided, not matched, skipped, and failed.
@@ -597,7 +607,9 @@ not block Intuit's retry; a repeat that arrives during processing gets HTTP 409,
 so Intuit retries it. Once processed, an exact repeat is answered HTTP 200 and
 not applied again for `quickbooks.webhook.stale_replay_seconds` (default
 604800, 7 days, and never less than `quickbooks.webhook.max_age_seconds`), so a
-captured body cannot be replayed later as a stale one.
+captured body cannot be replayed later as a stale one. A body with a change
+that carries no timestamp cannot be aged, so it is treated like a stale one:
+its creates and updates are read, its deletes and merges are not applied.
 
 A delivery whose event `time` (or `lastUpdated` in the older format) is older
 than `quickbooks.webhook.max_age_seconds` (default 600) is stale. Intuit can
@@ -687,6 +699,9 @@ balance out first if the wallet should close.
 Deletes made in Fleetbase also reach QuickBooks when the type's direction sends
 to QuickBooks. A deleted Fleetbase customer or wallet makes its linked
 QuickBooks customer or account inactive (QuickBooks does not delete them). A
+deleted customer whose QuickBooks balance is not zero is left active, so its
+open balance is not written off; the Activity row says why. Settle or move
+the balance in QuickBooks, then make the customer inactive there. A
 line item deleted from a Fleetbase invoice is removed from the QuickBooks
 invoice on the next sync, and lines added in QuickBooks stay. The QuickBooks
 line id of each item is kept in the item's `meta` column. An invoice synced
@@ -722,6 +737,11 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   another currency fails when it has no QuickBooks account yet and Fleetbase is
   Primary, whether or not multi-currency is on. With multi-currency on,
   QuickBooks applies its own exchange rate because no `ExchangeRate` is sent.
+  A QuickBooks customer has one currency, fixed when it is created. A customer
+  that Fleetbase creates takes the currency of the first invoice that creates
+  it. An invoice in another currency than its QuickBooks customer fails with a
+  message that names both currencies, and nothing is sent: QuickBooks needs a
+  separate customer for each currency.
   Invoices that were posted in the home currency by an earlier version stay
   aligned until a push is attempted. Earlier versions sent zero-decimal
   currency amounts (such as JPY) at 1/100; check those invoices in QuickBooks.
@@ -813,6 +833,13 @@ flb install @unchartedwaters/quickbooks-engine
 
 Pass `--path` with the Fleetbase directory when that directory is not the current one. `flb install` looks the package up on `https://api.fleetbase.io/~registry/v1/lookup` and installs `@unchartedwaters/quickbooks-engine` and `unchartedwaters/quickbooks-api`.
 
+`flb install` only adds the packages. From the Fleetbase API directory, run
+`php artisan migrate --force` and `php artisan fleetbase:create-permissions`
+(both are part of Fleetbase's `api/deploy.sh`), then rebuild or restart the
+console so it includes the engine. Make sure queue workers and the Laravel
+scheduler (cron every minute) run, and set `CONSOLE_HOST` on the API to the
+console address.
+
 `.github/workflows/deploy.yml` publishes this package to the Fleetbase registry with `flb publish` when a `v*` tag is pushed. The tag has to contain that workflow, and the GitHub secrets named in it have to exist.
 
 It publishes only when the tagged commit is on `main` and the PHP and Ember
@@ -881,7 +908,7 @@ On this machine the repository is checked out at `/opt/fleetbase-quickbooks` on 
 
 Starting OAuth needs a public https redirect URL. The redirect that Intuit receives is the `public_oauth_redirect_url` setting (Public OAuth Redirect URL on Admin → QuickBooks → Settings) when it is set, otherwise the computed callback on the API host. Either one must pass `Support/PublicHttps`: it has to be `https://`, and localhost, loopback, private, link-local, and other internal addresses are rejected, as is a hostname that does not resolve to a public address. A dev server on a private IP such as `10.30.0.34` therefore cannot connect as it is. Put a public https tunnel or reverse proxy in front of the API, save its callback URL (`https://<public host>/quickbooks/int/v1/oauth/callback`) as Public OAuth Redirect URL, and list the same URL under Redirect URIs in the Intuit app. Without a usable redirect, connect returns HTTP 422 and does not open Intuit.
 
-Set `CONSOLE_HOST` (or `QUICKBOOKS_CONSOLE_HOST`) on the API to the console origin. The OAuth callback redirects the browser there, and returns HTTP 500 without it. Sync now and the schedule do not need the public redirect once a connection exists.
+Set `CONSOLE_HOST` (or `QUICKBOOKS_CONSOLE_HOST`) on the API to the console origin. The OAuth callback redirects the browser there. Without a console host, Connect answers HTTP 422 and does not open Intuit. Sync now and the schedule do not need the public redirect once a connection exists.
 
 `api/composer.json` requires `unchartedwaters/quickbooks-api` and has a path repository at `../../fleetbase-quickbooks`. The running `application`, `queue`, and `scheduler` containers get the package from the ensure script and the read-only mount. The console UI is the copy baked into the console image.
 

@@ -1,5 +1,6 @@
 <?php
 
+use Fleetbase\Quickbooks\Auth\Schemas\Quickbooks;
 use Fleetbase\Quickbooks\Http\Controllers\ConnectionController;
 use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Models\PendingSync;
@@ -82,10 +83,10 @@ function revokeWithDatabase(callable $work): void
     }
 }
 
-function revokeController(MemorySettingsStore $store): ConnectionController
+function revokeController(MemorySettingsStore $store, ?Authorizer $authorizer = null): ConnectionController
 {
     return new ConnectionController(
-        new Authorizer(static fn () => true),
+        $authorizer ?? new Authorizer(static fn () => true),
         new OAuthFlow(new QuickBooksClient()),
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
         $store,
@@ -108,14 +109,19 @@ function revokeStore(bool $withCredentials = true): MemorySettingsStore
     return $store;
 }
 
-function revokeSeed(): void
+/**
+ * Seeds this company and another one. By default both use the same QuickBooks company (realm).
+ */
+function revokeSeed(bool $sharedRealm = true): void
 {
     foreach (['company-uuid' => 'refresh-token-one', 'other-company' => 'refresh-token-other'] as $company => $token) {
         $connection = new Connection();
         $connection->fill([
             'uuid'          => 'conn-' . $company,
             'company_uuid'  => $company,
-            'realm_id'      => '9341453000000001',
+            'realm_id'      => $company === 'other-company' && $sharedRealm === false
+                ? '9341453000000002'
+                : '9341453000000001',
             'refresh_token' => $token,
             'environment'   => 'sandbox',
             'needs_reauth'  => false,
@@ -186,7 +192,7 @@ test('a revoke that Intuit refuses or cannot answer raises a QuickBooksException
 
 test('disconnect revokes the refresh token then removes the connection and this company pending rows only', function () {
     revokeWithDatabase(function () {
-        revokeSeed();
+        revokeSeed(false);
         Http::swap(new Illuminate\Http\Client\Factory());
         Http::fake(['developer.api.intuit.com/*' => Http::response('', 200)]);
         session(['company' => 'company-uuid']);
@@ -220,7 +226,7 @@ test('disconnect still completes when Intuit fails or times out and logs no toke
         },
     ] as $answer) {
         revokeWithDatabase(function () use ($answer) {
-            revokeSeed();
+            revokeSeed(false);
             LoggerManager::$records = [];
             Http::swap(new Illuminate\Http\Client\Factory());
             Http::fake(['developer.api.intuit.com/*' => $answer]);
@@ -239,6 +245,27 @@ test('disconnect still completes when Intuit fails or times out and logs no toke
                 ->and($logged)->not->toContain('client-id');
         });
     }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('disconnect does not revoke at Intuit while another organization uses the same realm', function () {
+    revokeWithDatabase(function () {
+        revokeSeed();
+        LoggerManager::$records = [];
+        Http::swap(new Illuminate\Http\Client\Factory());
+        Http::fake(['developer.api.intuit.com/*' => Http::response('', 200)]);
+        session(['company' => 'company-uuid']);
+
+        $response = revokeController(revokeStore())->disconnect(Request::create('/disconnect', 'POST'));
+
+        expect($response->getStatusCode())->toBe(200)
+            ->and(Http::recorded())->toHaveCount(0)
+            ->and(Connection::query()->pluck('company_uuid')->all())->toBe(['other-company'])
+            ->and(PendingSync::query()->where('company_uuid', 'company-uuid')->where('status', 'pending')->exists())
+            ->toBeFalse()
+            ->and(LoggerManager::$records)->toHaveCount(1)
+            ->and(LoggerManager::$records[0]['level'])->toBe('info')
+            ->and(json_encode(LoggerManager::$records))->not->toContain('refresh-token-one');
+    });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
 test('disconnect does not call Intuit when the app credentials or the refresh token are missing', function () {
@@ -353,5 +380,26 @@ test('after a disconnect an operator may reconnect only the company the organiza
         $controller->disconnect(Request::create('/disconnect', 'POST'));
 
         expect($controller->realmFor('company-uuid'))->toBe('9341453000000005');
+    });
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('connection show tells an operator whether it may make a first connection', function () {
+    revokeWithDatabase(function () {
+        $operator   = (new Quickbooks())->policies[1]['permissions'];
+        $authorizer = new Authorizer(static fn (string $permission): bool => in_array($permission, $operator, true));
+        session(['company' => 'company-uuid']);
+        $show = static fn (?Authorizer $authorizer = null): array => revokeController(revokeStore(), $authorizer)
+            ->show(Request::create('/connection', 'GET'))
+            ->getData(true);
+
+        $neverConnected = $show($authorizer);
+        $administrator  = $show();
+        revokeSeed();
+        $connected = $show($authorizer);
+
+        expect($neverConnected)->toBe(['connection' => null, 'can_connect_new' => false])
+            ->and($administrator['can_connect_new'])->toBeTrue()
+            ->and($connected['can_connect_new'])->toBeTrue()
+            ->and($connected['connection']['realm_id'])->toBe('9341453000000001');
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');

@@ -12,4 +12,9 @@ module('Unit | engine build', () => {
         assert.notOk(entries[`${ENGINE}/config/asset-manifest`], 'no config/asset-manifest module');
         assert.notOk(entries[`${ENGINE}/instance-initializers/load-asset-manifest`], 'no load-asset-manifest instance initializer');
     });
+
+    // The return from Intuit waits for oauth/complete in the settings route's model hook; without a loading template the page stays blank.
+    test('the settings route has a loading template while oauth completes', (assert) => {
+        assert.ok(window.requirejs.entries[`${ENGINE}/templates/settings-loading`]);
+    });
 });

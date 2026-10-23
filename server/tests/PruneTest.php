@@ -250,6 +250,8 @@ test('the failed count names each record once and leaves out records flagged aga
             ['f-3', 'inv-3', 'failed', 10, 9], ['p-3', 'inv-3', 'pending', 2, 2],
             // Sent long ago, failed since: still failed.
             ['d-4', 'inv-4', 'done', 30, 29], ['f-4', 'inv-4', 'failed', 10, 9],
+            // Failed before the 90 day Activity retention: its Activity row is gone, so it is not counted.
+            ['f-5', 'inv-5', 'failed', 120, 100],
         ];
         foreach ($rows as [$uuid, $record, $status, $created, $updated]) {
             DB::table('quickbooks_pending_syncs')->insert([

@@ -112,7 +112,7 @@ class WebhookController extends Controller
         // and a worker that dies here leaves a key that expires on its own, so Intuit's
         // retry of the identical body is processed and the events are not lost.
         try {
-            $this->dispatchEntities($this->entitiesByRealm($rawBody, $stale), $matched);
+            $this->dispatchEntities($this->changesToApply($rawBody, $stale), $matched);
             app(EnqueueWebhookSync::class)->flush($this->store);
         } catch (\Throwable $exception) {
             $this->replay->forget($rawBody);
@@ -190,15 +190,35 @@ class WebhookController extends Controller
     }
 
     /**
+     * The body's changes by realm, with an undated body handled like a stale one for its deletes and merges.
+     * An undated change cannot be aged, so a captured body could be replayed once the replay store
+     * forgets it. Checked after the expired test, so an undated body is never dropped as a whole.
+     *
+     * @return array<int, WebhookGroup>
+     */
+    private function changesToApply(string $rawBody, bool $stale): array
+    {
+        if ($stale === true) {
+            return $this->entitiesByRealm($rawBody, true, 'is older than the maximum age');
+        }
+        if ($this->replay->hasUndatedChange($rawBody) === true) {
+            return $this->entitiesByRealm($rawBody, true, 'has a change with no time, so it cannot be aged');
+        }
+
+        return $this->entitiesByRealm($rawBody, false);
+    }
+
+    /**
      * The body's changes by realm. A stale body does not apply its deletes and merges: by the
      * time it arrives the record may have been restored or changed again, and reading it
      * back cannot stand in for them (a deleted record and a merged-away one both read as
      * gone, and a voided invoice reads as an invoice with no lines). Intuit reports the
      * surviving record of a merge as an update, so that record is still read. See staleDelete().
+     * $why says in the log why the body is handled as stale.
      *
      * @return array<int, WebhookGroup>
      */
-    private function entitiesByRealm(string $rawBody, bool $stale): array
+    private function entitiesByRealm(string $rawBody, bool $stale, string $why = ''): array
     {
         $groups  = [];
         $skipped = 0;
@@ -221,7 +241,7 @@ class WebhookController extends Controller
             $this->addEntity($groups, $realmId, $mapped);
         }
         if ($stale === true) {
-            SafeLog::warning('QuickBooks webhook delivery is older than the maximum age: its records are read again'
+            SafeLog::warning('QuickBooks webhook delivery ' . $why . ': its records are read again'
                 . ' from QuickBooks and its deletes and merges were not applied.', ['skipped' => $skipped]);
         }
 

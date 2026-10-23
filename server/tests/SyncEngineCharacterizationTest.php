@@ -979,6 +979,7 @@ function secDocNumberClient(string $latest): FakeQuickBooks
     return $client;
 }
 
+// Each case is its own QuickBooks company: numbers handed out in one realm are a floor for the next run there.
 test('sec invoice numbers for a block skip taken numbers and stop at the check budget', function () {
     $client = secDocNumberClient('INV-009');
     foreach (['INV-010', 'INV-012'] as $doc) {
@@ -992,16 +993,16 @@ test('sec invoice numbers for a block skip taken numbers and stop at the check b
         $doc                    = sprintf('INV-%03d', $i);
         $client->invoices[$doc] = ['Id' => $doc, 'DocNumber' => $doc];
     }
-    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-1'], 2))->toBe(['INV-016'])
+    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-2'], 2))->toBe(['INV-016'])
         ->and($client->calls)->toBe(['latestInvoiceDocNumber', 'batch']);
 
     $client = secDocNumberClient('');
-    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-1'], 2))->toBe(['1', '2'])
-        ->and($client->nextInvoiceDocNumbers(['realm_id' => 'realm-1'], 0))->toBe([]);
+    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-3'], 2))->toBe(['1', '2'])
+        ->and($client->nextInvoiceDocNumbers(['realm_id' => 'realm-3'], 0))->toBe([]);
 
     $client                      = secDocNumberClient('INV-009');
     $client->invoices['INV-010'] = ['Id' => 'INV-010', 'DocNumber' => 'INV-010'];
-    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-1'], 1))->toBe(['INV-011'])
+    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-4'], 1))->toBe(['INV-011'])
         ->and($client->calls)->toBe(['latestInvoiceDocNumber', 'findInvoiceByDocNumber', 'findInvoiceByDocNumber']);
 });
 

@@ -84,7 +84,7 @@ class WebhookReplayGuard
     /**
      * True when a signed change timestamp (CloudEvents time, or the older lastUpdated) is
      * older than the maximum delivery age.
-     * A body with no timestamp is left to the replay store.
+     * A body with no timestamp is not stale; see hasUndatedChange.
      */
     public function isStale(string $rawBody, int $now): bool
     {
@@ -92,13 +92,31 @@ class WebhookReplayGuard
     }
 
     /**
-     * True when a signed change timestamp is older than the stale replay window, or cannot
-     * be read. Such a delivery is not applied at all: the replay store no longer remembers
-     * a body that old, so applying it would let a captured body be replayed.
+     * True when a signed change timestamp is older than the stale replay window, or its value
+     * cannot be parsed. Such a delivery is not applied at all: the replay store no longer
+     * remembers a body that old, so applying it would let a captured body be replayed.
+     * A change with no timestamp is not expired; its deletes and merges are withheld instead
+     * (see hasUndatedChange).
      */
     public function isExpired(string $rawBody, int $now): bool
     {
         return $this->olderThan($rawBody, $now, $this->staleReplaySeconds());
+    }
+
+    /**
+     * True when any change carries no timestamp. Its age cannot be checked, so once the replay
+     * store forgets the body it could be replayed: its deletes and merges are not applied from
+     * the payload, as for a stale body. Creates and updates are still read back from QuickBooks.
+     */
+    public function hasUndatedChange(string $rawBody): bool
+    {
+        foreach (WebhookPayload::changes($rawBody) as $change) {
+            if (array_key_exists('time', $change) === false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function olderThan(string $rawBody, int $now, int $seconds): bool

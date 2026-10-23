@@ -63,3 +63,19 @@ test('the GitHub Release and the GitHub Packages publish'
     ['create-release.yml', 'create'],
     ['ember.yml', 'github_publish'],
 ]);
+
+test('every workflow declares token permissions', function () {
+    $files = DocsSource::files('.github/workflows/*.yml');
+    $open  = [];
+    foreach ($files as $file) {
+        $workflow = Yaml::parse(DocsSource::text('.github/workflows/' . basename($file)));
+        $jobs     = is_array($workflow['jobs'] ?? null) === true ? $workflow['jobs'] : [];
+        $everyJob = $jobs !== [] && array_filter($jobs, static fn ($job): bool => !isset($job['permissions'])) === [];
+        if (isset($workflow['permissions']) === false && $everyJob === false) {
+            $open[] = basename($file);
+        }
+    }
+
+    expect($files)->not->toBe([])
+        ->and($open)->toBe([]);
+});

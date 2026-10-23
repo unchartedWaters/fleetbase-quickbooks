@@ -12,6 +12,12 @@ use Symfony\Component\Yaml\Yaml;
 
 uses()->beforeEach(function () {
     Illuminate\Support\Facades\Http::swap(new Factory());
+    // The bootstrap cache is one array store for the whole process; a test starts with it empty.
+    try {
+        Illuminate\Support\Facades\Cache::flush();
+    } catch (Throwable) {
+        // No cache bound: nothing to clear.
+    }
     // Tests repeat manual actions for one organization in one shared cache. The cooldown
     // tests turn it on themselves.
     config()->set('quickbooks.manual_cooldown_seconds', 0);
