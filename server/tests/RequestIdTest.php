@@ -356,3 +356,30 @@ test('a single pending customer create carries a requestid', function () use ($r
     expect($creates)->toHaveCount(1)
         ->and($creates[0]['query']['requestid'] ?? '')->not->toBe('');
 });
+
+test('a retried write keeps its requestid on a later day, so a create lost before midnight'
+. ' is not saved twice', function () use ($requestIdConnection) {
+    $sent = [];
+    Http::fake(function (Request $request) use (&$sent) {
+        parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+        $sent[] = $query['requestid'] ?? '';
+        $rows   = [];
+        foreach ($request->data()['BatchItemRequest'] ?? [] as $item) {
+            $rows[] = ['bId' => $item['bId'], 'Customer' => ['Id' => '5', 'SyncToken' => '0']];
+        }
+
+        return Http::response(['Invoice' => ['Id' => '9', 'SyncToken' => '0'], 'BatchItemResponse' => $rows], 200);
+    });
+    $client = new QuickBooksClient();
+
+    // Fixed values: the id depends on the realm, the request, the record and the body only.
+    $client->withWriteKey(
+        'invoice:a',
+        fn () => $client->createInvoice($requestIdConnection, ['DocNumber' => 'A-1', 'Line' => []])
+    );
+    $client->batch($requestIdConnection, [
+        ['bId' => 'customer:a', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Ada']],
+    ]);
+
+    expect($sent)->toBe(['132717ef-a41a-009c-1c30-9bc218148d53', '3c268bf8-4175-13f0-9cd9-26f1385189fe']);
+});

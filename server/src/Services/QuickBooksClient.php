@@ -1629,9 +1629,10 @@ class QuickBooksClient
      * Intuit applies a write whose requestid it has already seen only once and answers with
      * the first result, so a create that timed out after QuickBooks saved it is not saved
      * again when the run retries it. The id hashes the realm, the request, the Fleetbase
-     * record (the bIds of a batch, or the key set by withWriteKey) and the UTC day: a retry
-     * of the same write reuses it, while a changed body, another record or a later day (a
-     * record deleted in QuickBooks and created again) gets a new one. Reads, a batch of
+     * record (the bIds of a batch, or the key set by withWriteKey) and the body: a retry of
+     * the same write reuses it on any day, while a changed body (an update carries its
+     * SyncToken) or another record gets a new one. Intuit matches the id alone and remembers
+     * only successes. Reads, a batch of
      * queries only, and a single write with no record key carry none. The id is a UUID-shaped
      * 36 characters; Intuit counts it together with each batch bId (see wireBatchIds).
      *
@@ -1657,7 +1658,6 @@ class QuickBooksClient
             $path,
             $isBatch === true ? '' : (string) $this->writeKey,
             is_string($body) === true ? $body : '',
-            gmdate('Y-m-d'),
         ]));
 
         return implode('-', [
