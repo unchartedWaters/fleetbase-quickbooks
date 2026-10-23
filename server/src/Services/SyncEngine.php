@@ -4015,6 +4015,19 @@ class SyncEngine
     }
 
     /**
+     * Whether a row that did not fail is done. A first link waiting for its follow-up stays
+     * pending (followUpFirstLink).
+     *
+     * @param array<string, mixed> $row
+     */
+    private function closesRow(array $row, string $outcome, bool $tracksPending): bool
+    {
+        $followUp = $this->takeFollowUp($row);
+
+        return $outcome !== 'failed' && $outcome !== 'skipped' && $tracksPending === true && $followUp === false;
+    }
+
+    /**
      * Whether this row's record waits for the follow-up of a first link. Read once.
      *
      * @param array<string, mixed> $row
@@ -7983,8 +7996,7 @@ class SyncEngine
             ]);
         }
         $this->lastError = null;
-        $followUp        = $this->takeFollowUp($row);
-        if ($outcome !== 'failed' && $outcome !== 'skipped' && $tracksPending === true && $followUp === false) {
+        if ($this->closesRow($row, $outcome, $tracksPending) === true) {
             $ledger->updatePending((string) $connection['company_uuid'], (string) $row['local_type'], (string) $row['local_uuid'], ['status' => 'done']);
         }
         if ($outcome === 'skipped' && $this->closeSkipped === true && $tracksPending === true) {
