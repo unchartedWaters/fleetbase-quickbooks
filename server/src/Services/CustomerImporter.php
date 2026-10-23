@@ -19,7 +19,28 @@ class CustomerImporter
     private $creator;
 
     /**
-     * Email and phone rows for one import(), keyed by company. Reset when import() starts.
+     * Adds the stored links a page needs to the ledger:
+     * function(SyncLedger $ledger, array $qboIds, array $localUuids): void.
+     */
+    private ?\Closure $linkLoader = null;
+
+    /**
+     * The Fleetbase customers import() was given. Loading links rebuilds the ledger index,
+     * so they are remembered again after each load.
+     *
+     * @var array<int, mixed>
+     */
+    private array $givenCustomers = [];
+
+    /**
+     * Fleetbase customers the last import() or importIds() created, by uuid.
+     *
+     * @var array<string, true>
+     */
+    private array $created = [];
+
+    /**
+     * Customer identity rows for one import(), keyed by company. Reset when import() starts.
      *
      * @var array{company: string, rows: array<int, object>}|null
      */
@@ -38,6 +59,15 @@ class CustomerImporter
     public function __construct(private QuickBooksClient $client, ?callable $creator = null)
     {
         $this->creator = $creator;
+    }
+
+    /**
+     * Read the stored links of each page's QuickBooks customers and matching Fleetbase
+     * customers before matching, so customers already linked are not linked or created again.
+     */
+    public function useLinkLoader(?\Closure $loader): void
+    {
+        $this->linkLoader = $loader;
     }
 
     /**
@@ -67,9 +97,8 @@ class CustomerImporter
             return $batch;
         }
 
-        $pageSize                = max(1, min(self::MAX_PAGE_SIZE, $pageSize));
-        $this->companyCandidates = null;
-        $this->unsavedCursor     = null;
+        $pageSize = max(1, min(self::MAX_PAGE_SIZE, $pageSize));
+        $this->startRun($fleetbaseCustomers);
         $ledger->ensureIndex();
         $this->rememberFleetbaseCustomers($ledger, $fleetbaseCustomers);
 
@@ -129,9 +158,8 @@ class CustomerImporter
             return $batch;
         }
 
-        $this->companyCandidates = null;
-        $this->unsavedCursor     = null;
-        $page                    = [];
+        $this->startRun([]);
+        $page = [];
         foreach ($wanted as $id) {
             $remote = $this->client->getCustomer($connection, $id);
             if (is_array($remote) === true) {
@@ -151,6 +179,25 @@ class CustomerImporter
         $ledger->batches[]    = $batch;
 
         return $batch;
+    }
+
+    /**
+     * @param array<int, mixed> $fleetbaseCustomers
+     */
+    private function startRun(array $fleetbaseCustomers): void
+    {
+        $this->companyCandidates = null;
+        $this->unsavedCursor     = null;
+        $this->givenCustomers    = $fleetbaseCustomers;
+        $this->created           = [];
+    }
+
+    /**
+     * Whether the last import() or importIds() created this Fleetbase customer.
+     */
+    public function createdCustomer(string $uuid): bool
+    {
+        return isset($this->created[$uuid]);
     }
 
     /**
@@ -340,89 +387,110 @@ class CustomerImporter
 
     /**
      * One lookup for this page. The ledger hash index matches; local customers are not scanned per row.
+     * The stored links of the page's QuickBooks customers and of the matching local customers
+     * are loaded first, so a customer that is already linked is not linked or created again.
      *
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $page
      */
     private function rememberCandidates(SyncLedger $ledger, array $connection, array $page): bool
     {
-        [$emails, $phones, $names] = $this->candidateKeys($page);
-        if ($emails === [] && $phones === [] && $names === []) {
-            return true;
-        }
-
-        $class = 'Fleetbase\\FleetOps\\Models\\Customer';
-        if (class_exists($class) === false) {
-            return true;
-        }
-
-        $companyUuid = (string) ($connection['company_uuid'] ?? '');
+        [$emails, $names] = $this->candidateKeys($page);
+        $class            = 'Fleetbase\\FleetOps\\Models\\Customer';
+        $companyUuid      = (string) ($connection['company_uuid'] ?? '');
         try {
-            $candidates = $this->candidateContacts($class, $companyUuid);
+            $matching = [];
+            if (($emails !== [] || $names !== []) && class_exists($class) === true) {
+                $candidates = $this->candidateContacts($class, $companyUuid);
+                $matching   = $this->matchingCandidates($candidates, $companyUuid, $emails, $names);
+            }
+            $this->loadLinks($ledger, $page, array_keys($matching));
         } catch (\Throwable $exception) {
             return false;
         }
 
-        $this->rememberMatchingCandidates($ledger, $candidates, $companyUuid, $emails, $phones, $names);
+        foreach ($matching as $row) {
+            $ledger->customers[$row['uuid']] = $row;
+            $ledger->rememberCustomer($row['uuid'], $row);
+        }
 
         return true;
     }
 
     /**
+     * @param array<int, mixed>  $page
+     * @param array<int, string> $localUuids
+     */
+    private function loadLinks(SyncLedger $ledger, array $page, array $localUuids): void
+    {
+        if ($this->linkLoader === null) {
+            return;
+        }
+        $qboIds = [];
+        foreach ($page as $remote) {
+            if (is_array($remote) === true && (string) ($remote['Id'] ?? '') !== '') {
+                $qboIds[] = (string) $remote['Id'];
+            }
+        }
+        ($this->linkLoader)($ledger, $qboIds, array_map('strval', $localUuids));
+        $this->rememberFleetbaseCustomers($ledger, $this->givenCustomers);
+    }
+
+    /**
+     * The emails and names a page can match by. A phone number alone never matches.
+     *
      * @param array<int, mixed> $page
      *
-     * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, string>}
+     * @return array{0: array<int, string>, 1: array<int, string>}
      */
     private function candidateKeys(array $page): array
     {
         $emails = [];
-        $phones = [];
         $names  = [];
         foreach ($page as $remote) {
             if (is_array($remote) === false) {
                 continue;
             }
             $email = strtolower(trim((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')));
-            $phone = $this->digits(trim((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')));
-            $name  = $this->displayName($remote);
+            $name  = CustomerMapper::displayName($this->displayName($remote));
             if ($email !== '') {
                 $emails[] = $email;
-            }
-            if ($phone !== '') {
-                $phones[] = $phone;
             }
             if ($name !== '') {
                 $names[] = $name;
             }
         }
 
-        return [
-            array_values(array_unique($emails)),
-            array_values(array_unique($phones)),
-            array_values(array_unique($names)),
-        ];
+        return [array_values(array_unique($emails)), array_values(array_unique($names))];
     }
 
     /**
+     * The local customers that share an email or name with the page, keyed by uuid.
+     *
      * @param iterable<mixed>    $candidates
      * @param array<int, string> $emails
-     * @param array<int, string> $phones
      * @param array<int, string> $names
+     *
+     * @return array<string, array<string, mixed>>
      */
-    private function rememberMatchingCandidates(SyncLedger $ledger, iterable $candidates, string $companyUuid, array $emails, array $phones, array $names): void
-    {
+    private function matchingCandidates(
+        iterable $candidates,
+        string $companyUuid,
+        array $emails,
+        array $names,
+    ): array {
         $emailSet = array_fill_keys($emails, true);
-        $phoneSet = array_fill_keys($phones, true);
         $nameSet  = array_fill_keys($names, true);
+        $matching = [];
         foreach ($candidates as $customer) {
             if (is_object($customer) === false) {
                 continue;
             }
             $uuid = (string) ($customer->uuid ?? '');
-            if ($uuid === '' || $this->candidateMatches($customer, $emailSet, $phoneSet, $nameSet) === false) {
+            if ($uuid === '' || $this->candidateMatches($customer, $emailSet, $nameSet) === false) {
                 continue;
             }
-            $row = [
+            $matching[$uuid] = [
                 'uuid'         => $uuid,
                 'company_uuid' => $companyUuid,
                 'type'         => 'customer',
@@ -430,24 +498,21 @@ class CustomerImporter
                 'email'        => $customer->email,
                 'phone'        => $customer->phone,
             ];
-            $ledger->customers[$uuid] = $row;
-            $ledger->rememberCustomer($uuid, $row);
         }
+
+        return $matching;
     }
 
     /**
      * @param array<string, true> $emailSet
-     * @param array<string, true> $phoneSet
      * @param array<string, true> $nameSet
      */
-    private function candidateMatches(object $customer, array $emailSet, array $phoneSet, array $nameSet): bool
+    private function candidateMatches(object $customer, array $emailSet, array $nameSet): bool
     {
         $email = strtolower(trim((string) ($customer->email ?? '')));
-        $phone = $this->digits(trim((string) ($customer->phone ?? '')));
-        $name  = (string) ($customer->name ?? '');
+        $name  = CustomerMapper::displayName((string) ($customer->name ?? ''));
 
         return ($email !== '' && isset($emailSet[$email]) === true)
-            || ($phone !== '' && isset($phoneSet[$phone]) === true)
             || ($name !== '' && isset($nameSet[$name]) === true);
     }
 
@@ -482,7 +547,6 @@ class CustomerImporter
     {
         $match = $ledger->matchCustomer(
             strtolower((string) ($remote['PrimaryEmailAddr']['Address'] ?? '')),
-            $this->digits((string) ($remote['PrimaryPhone']['FreeFormNumber'] ?? '')),
             $this->displayName($remote)
         );
         if ($match === null) {
@@ -534,6 +598,7 @@ class CustomerImporter
                 'qbo_id'       => (string) ($remote['Id'] ?? ''),
                 'sync_token'   => (string) ($remote['SyncToken'] ?? '0'),
             ]);
+            $this->created[(string) $created['uuid']] = true;
             SyncSuppressor::resume();
         } catch (\Throwable) {
             SyncSuppressor::resume();
@@ -591,15 +656,10 @@ class CustomerImporter
         return trim((string) ($remote['GivenName'] ?? '') . ' ' . (string) ($remote['FamilyName'] ?? ''));
     }
 
-    private function digits(string $value): string
-    {
-        return preg_replace('/\D+/', '', $value) ?? '';
-    }
-
     /**
      * Identity rows for this company's customers, loaded once per import.
      * The query filters on company and type so it can use that index. Email
-     * case and phone punctuation are compared in PHP, not in SQL.
+     * case and name punctuation are compared in PHP, not in SQL.
      *
      * @param class-string $class
      *

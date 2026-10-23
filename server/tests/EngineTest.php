@@ -742,20 +742,130 @@ test('quickbooks primary counts an email change as updated when the name stays t
         ->and($client->calls)->not->toContain('updateCustomer');
 });
 
-test('a fleetbase primary customer does not link a quickbooks customer that has a different email', function () {
+test('a customer whose name matches links even when the emails differ', function (string $variant) {
     [$engine, $client]           = qbEngine();
     $ledger                      = engineLedger();
     $ledger->customers['cust-1'] = engineCustomer('cust-1');
     $client->customers['qbo-5']  = ['Id' => 'qbo-5', 'SyncToken' => '2', 'DisplayName' => 'Ada', 'PrimaryEmailAddr' => ['Address' => 'old@example.test']];
     $ledger->pending[]           = enginePending('customer', 'cust-1');
+    if ($variant === 'block') {
+        $ledger->customers['cust-9'] = engineCustomer('cust-9', ['name' => 'Grace', 'email' => 'grace@example.test']);
+        $ledger->pending[]           = enginePending('customer', 'cust-9');
+    }
 
-    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'customer_reference' => 'fleetbase']), time());
+    $settings = qbSettings(['interval_minutes' => 1, 'customer_reference' => 'fleetbase']);
+    $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($client->calls)->toContain('findCustomerByEmail')
+    expect($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-1')['qbo_id'])->toBe('qbo-5')
+        ->and(array_count_values($client->calls)['createCustomer'] ?? 0)->toBe($variant === 'block' ? 1 : 0);
+})->with(['one row' => ['single'], 'block' => ['block']]);
+
+test('two fleetbase customers with the same name do not both link to one quickbooks customer', function (
+    string $variant,
+) {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => 'Acme', 'email' => 'east@acme.test']);
+    $ledger->customers['cust-2'] = engineCustomer('cust-2', ['name' => 'Acme', 'email' => 'west@acme.test']);
+    $client->customers['58']     = [
+        'Id'               => '58',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Acme',
+        'PrimaryEmailAddr' => ['Address' => 'ap@acme.test'],
+    ];
+    if ($variant === 'linked') {
+        $ledger->links[] = engineLink('customer', 'cust-1', '58');
+    } else {
+        $ledger->pending[] = enginePending('customer', 'cust-1');
+    }
+    $ledger->pending[] = enginePending('customer', 'cust-2');
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+        'interval_minutes'   => 1,
+        'customer_reference' => 'quickbooks',
+        'customer_conflict'  => 'quickbooks',
+    ]), time());
+
+    $linked = array_filter(
+        $ledger->links,
+        static fn (array $link): bool => $link['local_type'] === 'customer' && $link['qbo_id'] === '58'
+    );
+    expect(array_column($linked, 'local_uuid'))->toBe(['cust-1'])
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-2')['qbo_id'])->not->toBe('58')
         ->and($client->calls)->toContain('createCustomer')
-        ->and($client->customers['qbo-5']['PrimaryEmailAddr']['Address'])->toBe('old@example.test')
-        ->and($batch['created'])->toBe(1);
-});
+        ->and($ledger->customers['cust-2']['email'])->toBe('west@acme.test');
+})->with(['one already linked' => ['linked'], 'both in one block' => ['block']]);
+
+test('a customer is not linked to a quickbooks customer another fleetbase customer already uses', function (
+    string $variant,
+) {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-2'] = engineCustomer('cust-2', ['name' => 'Acme West', 'email' => 'ap@acme.test']);
+    $client->customers['58']     = [
+        'Id'               => '58',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Acme East',
+        'PrimaryEmailAddr' => ['Address' => 'ap@acme.test'],
+    ];
+    if ($variant === 'another organization') {
+        $ledger->remoteLinkReader = static function (string $realm, string $entity, array $ids): array {
+            return $entity === 'Customer' ? array_values(array_intersect($ids, ['58'])) : [];
+        };
+    } else {
+        $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => 'Acme East', 'email' => 'ap@acme.test']);
+        $ledger->links[]             = engineLink('customer', 'cust-1', '58');
+    }
+    $ledger->pending[] = enginePending('customer', 'cust-2');
+    if ($variant === 'block') {
+        $ledger->pending[] = enginePending('customer', 'cust-1');
+    }
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+        'interval_minutes'   => 1,
+        'customer_reference' => 'quickbooks',
+        'customer_conflict'  => 'quickbooks',
+    ]), time());
+
+    expect($ledger->customers['cust-2']['name'])->toBe('Acme West')
+        ->and($client->calls)->toContain('createCustomer')
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-2')['qbo_id'])->not->toBe('58')
+        ->and($client->customers['58']['DisplayName'])->toBe('Acme East');
+})->with(['one row' => ['single'], 'block' => ['block'], 'another organization' => ['another organization']]);
+
+test(
+    'a customer whose email matches a quickbooks customer another fleetbase customer syncs with gets its own customer',
+    function (string $variant) {
+        [$engine, $client]           = qbEngine();
+        $ledger                      = engineLedger();
+        $ledger->customers['cust-2'] = engineCustomer('cust-2', ['email' => 'acme@x.test', 'name' => 'Other']);
+        $client->customers['qbo-58'] = [
+            'Id'               => 'qbo-58',
+            'SyncToken'        => '0',
+            'DisplayName'      => 'Acme',
+            'PrimaryEmailAddr' => ['Address' => 'acme@x.test'],
+        ];
+        if ($variant === 'same organization') {
+            $ledger->customers['cust-1'] = engineCustomer('cust-1', ['email' => 'acme@x.test', 'name' => 'Acme']);
+            $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-58');
+        } else {
+            $ledger->remoteLinkReader = static function (string $realm, string $entity, array $ids): array {
+                return $entity === 'Customer' ? array_values(array_intersect($ids, ['qbo-58'])) : [];
+            };
+        }
+        $ledger->pending[] = enginePending('customer', 'cust-2');
+        if ($variant === 'block') {
+            $ledger->customers['cust-3'] = engineCustomer('cust-3', ['email' => 'third@x.test', 'name' => 'Third']);
+            $ledger->pending[]           = enginePending('customer', 'cust-3');
+        }
+
+        $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+        expect($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-2')['qbo_id'])->not->toBe('qbo-58')
+            ->and($client->calls)->toContain('createCustomer')
+            ->and($client->customers['qbo-58']['DisplayName'])->toBe('Acme');
+    }
+)->with(['another organization' => ['cross'], 'same organization' => ['same organization'], 'block' => ['block']]);
 
 test('rows that fail without a quickbooks error record why and stop retrying', function () {
     [$engine, $client]         = qbEngine();

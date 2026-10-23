@@ -2,6 +2,8 @@
 
 namespace Fleetbase\Quickbooks\Services;
 
+use Fleetbase\Quickbooks\Support\CustomerMapper;
+
 /**
  * In-memory snapshot the sync engine mutates. Production loads and saves it through Eloquent.
  *
@@ -83,12 +85,9 @@ class SyncLedger
     private array $customersByEmail = [];
 
     /** @var array<string, string> */
-    private array $customersByPhone = [];
-
-    /** @var array<string, string> */
     private array $customersByName = [];
 
-    /** @var array<string, array{email: string, phone: string, name: string}> */
+    /** @var array<string, array{email: string, name: string}> */
     private array $customerKeys = [];
 
     /** @var array<string, array<string, mixed>> */
@@ -181,7 +180,6 @@ class SyncLedger
         $this->linksByRemote    = [];
         $this->remoteKeyByIndex = [];
         $this->customersByEmail = [];
-        $this->customersByPhone = [];
         $this->customersByName  = [];
         $this->customerKeys     = [];
         $this->customerRows     = [];
@@ -216,23 +214,18 @@ class SyncLedger
         $previous = $this->customerKeys[$uuid] ?? null;
         if ($previous !== null) {
             $this->forgetCustomerKey($this->customersByEmail, $previous['email'], $uuid);
-            $this->forgetCustomerKey($this->customersByPhone, $previous['phone'], $uuid);
             $this->forgetCustomerKey($this->customersByName, $previous['name'], $uuid);
         }
 
         $email = strtolower(trim((string) ($customer['email'] ?? '')));
-        $phone = preg_replace('/\D+/', '', (string) ($customer['phone'] ?? '')) ?? '';
-        $name  = (string) ($customer['name'] ?? '');
+        $name  = CustomerMapper::displayName((string) ($customer['name'] ?? ''));
         if ($email !== '' && isset($this->customersByEmail[$email]) === false) {
             $this->customersByEmail[$email] = $uuid;
-        }
-        if ($phone !== '' && isset($this->customersByPhone[$phone]) === false) {
-            $this->customersByPhone[$phone] = $uuid;
         }
         if ($name !== '' && isset($this->customersByName[$name]) === false) {
             $this->customersByName[$name] = $uuid;
         }
-        $this->customerKeys[$uuid] = ['email' => $email, 'phone' => $phone, 'name' => $name];
+        $this->customerKeys[$uuid] = ['email' => $email, 'name' => $name];
         $this->customerRows[$uuid] = $customer;
     }
 
@@ -262,19 +255,18 @@ class SyncLedger
     }
 
     /**
-     * Email, then phone, then display name. Empty keys are skipped.
+     * Email, then display name. Empty keys are skipped. A phone number alone never matches.
+     * Names are compared the way QuickBooks stores them (a colon becomes a dash).
      *
      * @return array<string, mixed>|null
      */
-    public function matchCustomer(string $email, string $phone, string $name): ?array
+    public function matchCustomer(string $email, string $name): ?array
     {
         $this->ensureIndex();
         $email = strtolower(trim($email));
+        $name  = CustomerMapper::displayName($name);
         if ($email !== '' && isset($this->customersByEmail[$email]) === true) {
             return $this->customerRow($this->customersByEmail[$email]);
-        }
-        if ($phone !== '' && isset($this->customersByPhone[$phone]) === true) {
-            return $this->customerRow($this->customersByPhone[$phone]);
         }
         if ($name !== '' && isset($this->customersByName[$name]) === true) {
             return $this->customerRow($this->customersByName[$name]);
