@@ -20,6 +20,13 @@ From the Fleetbase directory, install the Fleetbase QuickBooks extension from th
 flb install @unchartedwaters/quickbooks-engine
 ```
 
+`flb install` only adds the packages. From the Fleetbase API directory, run
+`php artisan migrate --force` and `php artisan fleetbase:create-permissions`
+(both are part of Fleetbase's `api/deploy.sh`), then rebuild or restart the
+console so it includes the engine. Make sure queue workers and the Laravel
+scheduler (cron every minute) run, and set `CONSOLE_HOST` on the API to the
+console address.
+
 You also need a QuickBooks app on the Intuit Developer Portal. Intuit's guide is
 [Create and start developing your app](https://developer.intuit.com/app/developer/qbo/docs/get-started/start-developing-your-app),
 and [docs/SETUP.md](docs/SETUP.md#create-a-quickbooks-app) lists the app

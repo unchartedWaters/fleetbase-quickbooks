@@ -762,6 +762,13 @@ flb install @unchartedwaters/quickbooks-engine
 
 Pass `--path` with the Fleetbase directory when that directory is not the current one. `flb install` looks the package up on `https://api.fleetbase.io/~registry/v1/lookup` and installs `@unchartedwaters/quickbooks-engine` and `unchartedwaters/quickbooks-api`.
 
+`flb install` only adds the packages. From the Fleetbase API directory, run
+`php artisan migrate --force` and `php artisan fleetbase:create-permissions`
+(both are part of Fleetbase's `api/deploy.sh`), then rebuild or restart the
+console so it includes the engine. Make sure queue workers and the Laravel
+scheduler (cron every minute) run, and set `CONSOLE_HOST` on the API to the
+console address.
+
 `.github/workflows/deploy.yml` publishes this package to the Fleetbase registry with `flb publish` when a `v*` tag is pushed. The tag has to contain that workflow, and the GitHub secrets named in it have to exist.
 
 It publishes only when the tagged commit is on `main` and the PHP and Ember

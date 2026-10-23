@@ -64,8 +64,14 @@ test('the setup guide names every console command and the install commands', fun
         $needed[] = '`php artisan fleetbase:create-permissions`';
     }
 
+    // flb install only adds the packages; a fresh install also needs the tables and the roles.
+    $install = ['php artisan migrate', 'php artisan fleetbase:create-permissions'];
+    $guide   = DocsSource::section('docs/SETUP.md', 'Requirements and install');
+
     expect($needed)->toContain('`quickbooks:sync`')
-        ->and(DocsSource::missing('docs/SETUP.md', $needed))->toBe([]);
+        ->and(DocsSource::missing('docs/SETUP.md', $needed))->toBe([])
+        ->and(DocsSource::absentFrom($guide, $install))->toBe([])
+        ->and(DocsSource::absentFrom(DocsSource::section('README.md', 'Quick start'), $install))->toBe([]);
 });
 
 test('the docs give the package names and the versions the host needs', function () {
