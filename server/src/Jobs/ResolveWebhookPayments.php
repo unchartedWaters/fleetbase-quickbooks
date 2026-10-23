@@ -42,9 +42,11 @@ class ResolveWebhookPayments implements ShouldQueue
 
     public int $timeout = BatchRunner::LOCK_SECONDS;
 
-    public const RETRY_LIMIT = 3;
-
-    public const RETRY_DELAY_SECONDS = 5;
+    /**
+     * Retries after a token refresh that could not run (the company lock was busy, or Intuit
+     * failed for now), waiting WebhookRetry::busyDelay() each time.
+     */
+    public const RETRY_LIMIT = 8;
 
     /**
      * Retries made after QuickBooks could not answer. Not a constructor argument, so a job
@@ -96,9 +98,10 @@ class ResolveWebhookPayments implements ShouldQueue
         $connection = $tokens->refreshIfDue($connection, $now);
         $blocked    = ConnectionTokens::blockedMessage($connection, $now);
         if ($blocked !== null) {
-            $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', $blocked);
-            if (in_array($blocked, [ConnectionTokens::ALREADY_RUNNING, TokenRefresher::UNAVAILABLE_MESSAGE], true) === true) {
-                $this->retryLater();
+            // A temporary block is recorded in Activity only once this delivery gives up.
+            $temporary = [ConnectionTokens::ALREADY_RUNNING, TokenRefresher::UNAVAILABLE_MESSAGE];
+            if (in_array($blocked, $temporary, true) === false || $this->retryLater() === false) {
+                $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', $blocked);
             }
 
             return;
@@ -184,19 +187,22 @@ class ResolveWebhookPayments implements ShouldQueue
 
     /**
      * The token could not be refreshed for a temporary reason. Queue this delivery again.
+     * False once the retries are used up.
      */
-    private function retryLater(): void
+    private function retryLater(): bool
     {
         if ($this->attempt >= self::RETRY_LIMIT) {
-            return;
+            return false;
         }
 
         $retry                    = new self($this->companyUuid, $this->events, $this->attempt + 1);
         $retry->quickbooksAttempt = $this->quickbooksAttempt;
-        $retry->delay(self::RETRY_DELAY_SECONDS * ($this->attempt + 1));
+        $retry->delay(WebhookRetry::busyDelay($this->attempt));
         $dispatcher = Container::getInstance()->make(Dispatcher::class);
         if ($dispatcher instanceof Dispatcher === true) {
             $dispatcher->dispatch($retry);
         }
+
+        return true;
     }
 }

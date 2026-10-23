@@ -319,6 +319,24 @@ test('any other 400 on a read still throws', function () {
     }
 });
 
+test('a single write stale object fault is transient', function () {
+    Http::fake([
+        'sandbox-quickbooks.api.intuit.com/*' => Http::response([
+            'Fault' => ['Error' => [['code' => '5010', 'Detail' => 'Stale Object Error']], 'type' => 'ValidationFault'],
+        ], 400),
+    ]);
+
+    try {
+        (new QuickBooksClient())->updateCustomer(clientConnection(), '58', '3', ['DisplayName' => 'Ada']);
+        expect(false)->toBeTrue();
+    } catch (QuickBooksException $exception) {
+        // The same rule as a 5010 inside a batch: the record changed in QuickBooks, so a retry reads it again.
+        expect($exception->faultCode)->toBe('5010')
+            ->and($exception->status)->toBe(409)
+            ->and($exception->isTransient())->toBeTrue();
+    }
+});
+
 test('one new invoice number is a latest query and one existence query', function () {
     Http::fake(function (Request $request) {
         $url = urldecode($request->url());

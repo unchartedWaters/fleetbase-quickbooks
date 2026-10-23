@@ -369,6 +369,14 @@ HTTP 429 does not use Retry delay. It uses the `Retry-After` header when that
 header is present, otherwise 60 seconds. A repeated 429 doubles the previous
 wait, still capped at 900 seconds.
 
+Errors that mean QuickBooks could not be reached (timeouts, network errors,
+HTTP 408, 409 and 5xx) do not use up the retry attempts. Those rows keep
+retrying, waiting longer each time up to one hour between tries, for up to 72
+hours (config keys `quickbooks.sync.outage_backoff_cap_seconds` and
+`quickbooks.sync.outage_retry_hours`). After that they are marked failed. The
+QuickBooks Sync widget counts the records that could not be sent; Activity
+shows why.
+
 ## Connect and disconnect
 
 Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved by an installation administrator in Admin → QuickBooks → Settings for the install and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
@@ -403,6 +411,14 @@ notes, Sync now, and Disconnect][setup-connected]
 
 ![QuickBooks Setup when QuickBooks must be connected again: a red
 message, Connect to QuickBooks, and Disconnect][setup-reconnect]
+
+Sync now, reconcile, the customer import and Connect each run at most once
+per organization in `QUICKBOOKS_MANUAL_COOLDOWN_SECONDS` seconds (config key
+`quickbooks.manual_cooldown_seconds`, default 30; 0 turns it off). A repeat
+inside that time answers HTTP 429 and queues nothing, and the console shows
+"This was started a moment ago. Try again in a minute." While QuickBooks must
+be connected again, the skipped sync is written to Activity at most once per
+cooldown. If the cache cannot be reached, the actions are not limited.
 
 Connect uses PKCE (`S256`). The API stores a code verifier with the OAuth state and sends the code challenge on `https://appcenter.intuit.com/connect/oauth2` with scope `com.intuit.quickbooks.accounting`.
 
@@ -597,6 +613,12 @@ limit do not all call QuickBooks at the same moment. After 5 retries the change
 is dropped, a warning is logged, and Activity shows a failed webhook sync: save
 the record in QuickBooks again to send it again. Laravel's own retries stay off
 (`$tries = 1`). Other QuickBooks errors are not retried.
+
+When another sync holds the company lock, or the access token cannot be
+refreshed for now, these jobs also queue themselves again: after 5 seconds,
+doubled on each retry up to 2 minutes, 8 times (about 9 minutes, close to the
+10-minute lock lifetime). Activity shows the skipped webhook sync only when the
+last retry gives up, so a busy lock does not fill Activity.
 
 Intuit sends a JSON array of CloudEvents. Each event's `type` names the entity
 and event (for example `qbo.invoice.updated.v1`), `intuitentityid` is the

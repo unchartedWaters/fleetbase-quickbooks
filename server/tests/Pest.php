@@ -12,6 +12,9 @@ use Symfony\Component\Yaml\Yaml;
 
 uses()->beforeEach(function () {
     Illuminate\Support\Facades\Http::swap(new Factory());
+    // Tests repeat manual actions for one organization in one shared cache. The cooldown
+    // tests turn it on themselves.
+    config()->set('quickbooks.manual_cooldown_seconds', 0);
 })->in(__DIR__);
 
 function qbSettings(array $overrides = []): array

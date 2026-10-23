@@ -92,6 +92,7 @@ quickbooks:
     no-sync: No sync yet
     records-waiting: Records waiting
     waiting: "{count} waiting"
+    records-failed: "{count, plural, one {# record} other {# records}} could not be sent to QuickBooks. See Activity."
     credentials-missing: Sync now is unavailable until an installation administrator enters the QuickBooks Client ID and Client secret in Admin → QuickBooks → Settings.
     reauth: Needs to be connected again
     reauth-setup: Connect again on QuickBooks Setup.
@@ -200,6 +201,7 @@ quickbooks:
     primary-payment: Choose Fleetbase or QuickBooks as Primary for Payments.
     primary-wallet: Choose Fleetbase or QuickBooks as Primary for Accounts / Wallets.
   messages:
+    action-cooldown: This was started a moment ago. Try again in a minute.
     unauthorized: This action is unauthorized.
     organization-required: Sign in to an organization to manage QuickBooks.
     organization-mismatch: You may only manage the QuickBooks connection for your own organization.

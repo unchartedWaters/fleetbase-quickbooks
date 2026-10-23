@@ -140,3 +140,13 @@ test('a queued retry wakes a little after the wait,'
         ->and(WebhookRetry::spread(0))->toBe(0)
         ->and(WebhookRetry::spread(5))->toBeLessThanOrEqual(6);
 });
+
+test('a busy lock retry waits 5 seconds, doubled per retry up to 2 minutes, with jitter', function () {
+    $waits = array_map(static fn (int $retries): int => WebhookRetry::busyDelay($retries), range(0, 7));
+    $bases = [5, 10, 20, 40, 80, 120, 120, 120];
+
+    foreach ($bases as $index => $base) {
+        expect($waits[$index])->toBeGreaterThanOrEqual($base)
+            ->and($waits[$index])->toBeLessThanOrEqual($base + max(1, intdiv($base, 10)));
+    }
+});

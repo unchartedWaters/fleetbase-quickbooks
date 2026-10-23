@@ -1155,7 +1155,10 @@ class QuickBooksClient
     private function tokenRequest(#[\SensitiveParameter] array $credentials, #[\SensitiveParameter] array $form): array
     {
         try {
+            // The company lock is held for this call, so it must not hang on Intuit.
             $response = Http::asForm()
+                ->timeout(15)
+                ->connectTimeout(5)
                 ->withBasicAuth($credentials['client_id'], $credentials['client_secret'])
                 ->post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', $form);
         } catch (ConnectionException) {
@@ -1656,7 +1659,11 @@ class QuickBooksClient
             $message = Translation::encode('quickbooks.messages.request-rejected', ['detail' => $faultDetail]);
         }
 
-        throw new QuickBooksException($response->status(), $message, $response->header('Retry-After'), $faultCode);
+        // A stale SyncToken only means the record changed in QuickBooks meanwhile: temporary,
+        // as batchFaultStatus() treats it inside a batch.
+        $thrown = $response->status() === 400 && $faultCode === '5010' ? 409 : $response->status();
+
+        throw new QuickBooksException($thrown, $message, $response->header('Retry-After'), $faultCode);
     }
 
     /**

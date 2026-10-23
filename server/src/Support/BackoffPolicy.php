@@ -56,6 +56,24 @@ class BackoffPolicy
         return min(self::CAP_SECONDS, $wait);
     }
 
+    /**
+     * Wait before a retry after QuickBooks could not be reached (timeout, network error,
+     * 408, 409 or 5xx). Same doubling as defaultWait, but capped at $capSeconds (never
+     * below the normal cap), with jitter so rows that failed together do not all retry
+     * in the same second.
+     */
+    public function outageWait(int $baseSeconds, int $attempt, int $capSeconds): int
+    {
+        $cap  = max(self::CAP_SECONDS, $capSeconds);
+        $wait = max(1, $baseSeconds);
+        for ($step = max(0, $attempt - 1); $step > 0 && $wait < $cap; $step--) {
+            $wait *= 2;
+        }
+        $jitter = $this->jitter;
+
+        return min($cap, max(1, (int) $jitter(min($cap, $wait))));
+    }
+
     private function parseRetryAfter(string $retryAfter): int
     {
         if (is_numeric($retryAfter) === true) {

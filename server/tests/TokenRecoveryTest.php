@@ -5,6 +5,7 @@ use Fleetbase\Quickbooks\Jobs\ApplyRemoteChange;
 use Fleetbase\Quickbooks\Jobs\ResolveWebhookPayments;
 use Fleetbase\Quickbooks\Jobs\SyncWebhookBatch;
 use Fleetbase\Quickbooks\Listeners\EnqueueWebhookSync;
+use Fleetbase\Quickbooks\Services\BatchRunner;
 use Fleetbase\Quickbooks\Services\ConnectionTokens;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
@@ -466,7 +467,7 @@ test('a remote change is recorded as skipped when the refresh token was refused'
         ->and($jobs)->toBe([]);
 });
 
-test('a remote change is recorded as skipped and queued again when the refresh was temporary', function () {
+test('a remote change is queued again without a skipped row when the refresh was temporary', function () {
     $client               = new TokenRecoveryClient();
     $client->refreshError = new QuickBooksException(503, 'unavailable');
     [$tokens, $stored]    = trcTokens($client, time() - 30);
@@ -480,11 +481,46 @@ test('a remote change is recorded as skipped and queued again when the refresh w
         return $dispatcher->jobs;
     });
 
+    // Activity records the skip only once the retries are used up.
     expect($engine->calls)->toBe([])
-        ->and($directory->skipped[0]['message'])->toBe(TokenRefresher::UNAVAILABLE_MESSAGE)
+        ->and($directory->skipped)->toBe([])
         ->and($jobs)->toHaveCount(1)
         ->and($jobs[0])->toBeInstanceOf(ApplyRemoteChange::class)
         ->and($jobs[0]->lockAttempt)->toBe(1);
+});
+
+test('a payment job waits out a refresh that failed for now and records the skip only when it gives up', function () {
+    $client               = new TokenRecoveryClient();
+    $client->refreshError = new QuickBooksException(503, 'unavailable');
+    [$tokens, $stored]    = trcTokens($client, time() - 30);
+    $directory            = new class extends FleetbaseDirectory {
+        /** @var array<int, string> */
+        public array $messages = [];
+
+        public function saveSkipped(string $companyUuid, string $trigger, string $direction, string $message): void
+        {
+            $this->messages[] = $message;
+        }
+    };
+    $directory->memory = $stored->memory;
+
+    $event = ['realm_id' => 'realm-1', 'entity_type' => 'payment', 'id' => '4', 'operation' => 'update'];
+
+    $jobs = trcWithBus(function ($dispatcher) use ($directory, $tokens, $event) {
+        $settings = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
+        $job      = new ResolveWebhookPayments('company-uuid', [$event + ['local_uuid' => '4']]);
+        for ($run = 0; $run <= ResolveWebhookPayments::RETRY_LIMIT; $run++) {
+            $job->handle($settings, new MemorySettingsStore(), $directory, $tokens);
+            $job = end($dispatcher->jobs);
+        }
+
+        return $dispatcher->jobs;
+    });
+    $delays = array_map(static fn (ResolveWebhookPayments $retry): int => (int) $retry->delay, $jobs);
+
+    expect($jobs)->toHaveCount(ResolveWebhookPayments::RETRY_LIMIT)
+        ->and(array_sum($delays))->toBeGreaterThanOrEqual(BatchRunner::LOCK_SECONDS - 120)
+        ->and($directory->messages)->toBe([TokenRefresher::UNAVAILABLE_MESSAGE]);
 });
 
 /**

@@ -90,6 +90,11 @@ function dctSchema(Illuminate\Database\Schema\Builder $schema): void
         $table->timestamp('next_attempt_at')->nullable();
         $table->timestamps();
     });
+    // Production has the same rule: one open row per record (see the open-identity migration).
+    DB::connection('sqlite')->statement(
+        'CREATE UNIQUE INDEX quickbooks_pending_open_unique'
+        . " ON quickbooks_pending_syncs(company_uuid, local_type, local_uuid) WHERE status = 'pending'"
+    );
     $schema->create('contacts', function (Blueprint $table) {
         $table->char('uuid', 36)->primary();
         $table->string('public_id')->nullable();
@@ -1279,13 +1284,53 @@ test('linking a customer queues again its invoices that failed while it had no Q
         // Only invoices with a failed row are read, never every invoice the linked customers have.
         $invoices = dctStatements($queries, 'select', 'ledger_invoices');
 
-        expect($rows['pend-a1'])->toBe('pending')
-            ->and((int) DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-a1')->value('attempts'))->toBe(0)
+        $a1 = DB::table('quickbooks_pending_syncs')->where('local_uuid', 'inv-a1')->get();
+
+        expect($a1)->toHaveCount(1)
+            ->and($a1[0]->status)->toBe('pending')
+            ->and((int) $a1[0]->attempts)->toBe(0)
             ->and($rows['pend-a2'])->toBe('done')
             ->and($rows['pend-b1'])->toBe('failed')
             ->and($rows['pend-cust-a'])->toBe('done')
             ->and(array_filter($invoices, static fn (string $sql): bool => str_contains($sql, '"customer_uuid" in')))
             ->toBe([]);
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('linking a customer reopens one row per invoice even with two failed rows and an open row', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        dctContact('cust-a', 'Ada');
+        dctInvoice('inv-a1', 'cust-a');
+        dctInvoice('inv-a3', 'cust-a');
+        dctPendingRow('pend-cust-a', 'customer', 'cust-a');
+        dctPendingRow('pend-a1', 'invoice', 'inv-a1', 'failed');
+        dctPendingRow('pend-a1b', 'invoice', 'inv-a1', 'failed');
+        dctPendingRow('pend-a3', 'invoice', 'inv-a3', 'failed');
+        dctPendingRow('pend-a3-open', 'invoice', 'inv-a3', 'pending', now()->addHour());
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->loadPending('company-uuid', 100, time())['ledger'];
+
+        $ledger->putLink([
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'local_type'   => 'customer',
+            'local_uuid'   => 'cust-a',
+            'qbo_entity'   => 'Customer',
+            'qbo_id'       => '93',
+            'sync_token'   => '0',
+        ]);
+        $ledger->updatePending('company-uuid', 'customer', 'cust-a', ['status' => 'done']);
+        $directory->save($ledger);
+        $open = static fn (string $invoice): array => DB::table('quickbooks_pending_syncs')
+            ->where('local_uuid', $invoice)->pluck('status')->all();
+
+        expect(DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-cust-a')->value('status'))->toBe('done')
+            ->and($open('inv-a1'))->toBe(['pending'])
+            ->and($open('inv-a3'))->toBe(['pending']);
     } finally {
         $restore();
     }

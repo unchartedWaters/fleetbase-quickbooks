@@ -40,9 +40,11 @@ class ApplyRemoteChange implements ShouldQueue
 
     public int $timeout = BatchRunner::LOCK_SECONDS;
 
-    public const LOCK_RETRY_LIMIT = 3;
-
-    public const LOCK_RETRY_DELAY_SECONDS = 5;
+    /**
+     * Retries after a busy company lock, waiting WebhookRetry::busyDelay() each time, so a
+     * delivery outlasts a lock held (or orphaned) for its whole lifetime.
+     */
+    public const LOCK_RETRY_LIMIT = 8;
 
     /**
      * Retries made after QuickBooks could not answer. Not a constructor argument, so a job
@@ -104,8 +106,10 @@ class ApplyRemoteChange implements ShouldQueue
             return null;
         }
         if ($lock->get() === false) {
-            $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', 'quickbooks.messages.sync-running');
-            $this->retryBusyLock();
+            // Activity records the busy lock only once this delivery gives up.
+            if ($this->retryBusyLock() === false) {
+                $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', 'quickbooks.messages.sync-running');
+            }
 
             return null;
         }
@@ -299,31 +303,33 @@ class ApplyRemoteChange implements ShouldQueue
         }
 
         $this->reacquireCompanyLock($lock);
-        $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', $blocked);
-        if (in_array($blocked, [ConnectionTokens::ALREADY_RUNNING, TokenRefresher::UNAVAILABLE_MESSAGE], true) === true) {
-            $this->retryBusyLock();
+        $temporary = in_array($blocked, [ConnectionTokens::ALREADY_RUNNING, TokenRefresher::UNAVAILABLE_MESSAGE], true);
+        if ($temporary === false || $this->retryBusyLock() === false) {
+            $directory->saveSkipped($this->companyUuid, 'webhook', 'inbound', $blocked);
         }
 
         return true;
     }
 
     /**
-     * The company lock is held by another sync. Queue this delivery again.
-     * Giving up here drops the webhook: Intuit already received HTTP 200.
+     * The company lock is held by another sync. Queue this delivery again. False once the
+     * retries are used up: giving up drops the webhook, as Intuit already received HTTP 200.
      */
-    private function retryBusyLock(): void
+    private function retryBusyLock(): bool
     {
         if ($this->lockAttempt >= self::LOCK_RETRY_LIMIT) {
-            return;
+            return false;
         }
 
         $retry                    = new self($this->companyUuid, $this->entities, $this->lockAttempt + 1);
         $retry->quickbooksAttempt = $this->quickbooksAttempt;
-        $retry->delay(self::LOCK_RETRY_DELAY_SECONDS * ($this->lockAttempt + 1));
+        $retry->delay(WebhookRetry::busyDelay($this->lockAttempt));
         $dispatcher = Container::getInstance()->make(Dispatcher::class);
         if ($dispatcher instanceof Dispatcher === true) {
             $dispatcher->dispatch($retry);
         }
+
+        return true;
     }
 
     /**

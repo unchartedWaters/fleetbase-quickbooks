@@ -20,6 +20,8 @@ use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Connection;
@@ -1015,6 +1017,45 @@ test('the oauth callback limit comes from config and zero turns it off', functio
     }
 });
 
+test('oauth start twice in a row answers 429 the second time', function () {
+    session(['company' => 'company-uuid']);
+    $public                                 = 'https://example.com/quickbooks/int/v1/oauth/callback';
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'client_id'                 => 'client-id',
+        'client_secret'             => (new SecretCipher())->encrypt('secret'),
+        'public_oauth_redirect_url' => $public,
+        'environment'               => 'sandbox',
+    ];
+    $controller = new ConnectionController(
+        new Authorizer(static fn () => true),
+        new OAuthFlow(new QuickBooksClient()),
+        new SettingsService(
+            new CredentialResolver(),
+            new Fleetbase\Quickbooks\Support\SyncSettingsResolver(),
+            new SecretCipher()
+        ),
+        $store,
+        new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
+    );
+    $previous = [Cache::getFacadeRoot(), config('quickbooks.manual_cooldown_seconds')];
+    Cache::swap(new Repository(new ArrayStore()));
+    config()->set('quickbooks.manual_cooldown_seconds', 30);
+
+    try {
+        $first  = $controller->start(Request::create('/oauth/start', 'POST'));
+        $second = $controller->start(Request::create('/oauth/start', 'POST'));
+    } finally {
+        Cache::swap($previous[0]);
+        config()->set('quickbooks.manual_cooldown_seconds', $previous[1]);
+        session(['company' => null]);
+    }
+
+    expect($first->getStatusCode())->toBe(200)
+        ->and($second->getStatusCode())->toBe(429)
+        ->and($second->getData(true)['message'])->toBe('This was started a moment ago. Try again in a minute.');
+});
+
 test('oauth start rejects missing client id or redirect uri', function () {
     session(['company' => 'company-uuid']);
     $controller = new ConnectionController(
@@ -1497,7 +1538,10 @@ test('summary last sync is the latest finished batch and stays empty when every 
         public function select($query, $bindings = [], $useReadPdo = true)
         {
             if (str_contains(strtolower($query), 'count(') === true) {
-                return [['aggregate' => 0]];
+                // Three rows of this company could not be sent; none are waiting.
+                $failed = in_array('failed', $bindings, true) === true && ($bindings[0] ?? null) === 'company-uuid';
+
+                return [['aggregate' => $failed === true ? 3 : 0]];
             }
 
             if (str_contains($query, 'quickbooks_sync_batches') === false) {
@@ -1558,6 +1602,8 @@ test('summary last sync is the latest finished batch and stays empty when every 
         $ran = $controller->summary($request)->getData(true);
 
         expect($ran['credentials_configured'])->toBeFalse()
+            ->and($ran['queue'])->toBe(0)
+            ->and($ran['failed'])->toBe(3)
             ->and($ran['last_sync']['status'])->toBe('finished')
             ->and($ran['last_sync']['trigger'])->toBe('now')
             ->and($ran['last_sync']['created_count'])->toBe(4)
