@@ -963,6 +963,7 @@ class QuickBooksClient
      *   bId, operation (create|update|void|delete), entity (Customer|Invoice|Payment|Account|Item), payload
      * or a query:
      *   bId, query
+     * A write may also carry key, which goes into the requestid and is not sent.
      *
      * @param array<string, mixed>                                                                                                $connection
      * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
@@ -1295,8 +1296,16 @@ class QuickBooksClient
      */
     private function postBatch(array $connection, array $items): array
     {
-        $requests  = self::batchRequests($items);
-        $keyed     = ['BatchItemRequest' => $requests];
+        $requests = self::batchRequests($items);
+        $keyed    = ['BatchItemRequest' => $requests];
+        // An item's key (the record and the pending row driving it) is part of the requestid, not sent.
+        $keys = array_filter(
+            array_column($items, 'key', 'bId'),
+            static fn (mixed $key): bool => is_string($key) === true && $key !== ''
+        );
+        if ($keys !== []) {
+            $keyed['keys'] = $keys;
+        }
         $requestId = $this->requestId((string) $connection['realm_id'], 'post', 'batch', $keyed);
         $wireIds   = self::wireBatchIds(array_column($requests, 'bId'), $requestId);
         foreach ($requests as $index => $request) {
@@ -1629,9 +1638,11 @@ class QuickBooksClient
      * Intuit applies a write whose requestid it has already seen only once and answers with
      * the first result, so a create that timed out after QuickBooks saved it is not saved
      * again when the run retries it. The id hashes the realm, the request, the Fleetbase
-     * record (the bIds of a batch, or the key set by withWriteKey) and the body: a retry of
-     * the same write reuses it on any day, while a changed body (an update carries its
-     * SyncToken) or another record gets a new one. Intuit matches the id alone and remembers
+     * record (the bIds and item keys of a batch, or the key set by withWriteKey; the engine
+     * adds the pending row that drives the write) and the body: a retry of the same write
+     * reuses it on any day, while a changed body (an update carries its SyncToken), another
+     * record or a new pending row (a record deleted in QuickBooks and created again) gets a
+     * new one. Intuit matches the id alone and remembers
      * only successes. Reads, a batch of
      * queries only, and a single write with no record key carry none. The id is a UUID-shaped
      * 36 characters; Intuit counts it together with each batch bId (see wireBatchIds).

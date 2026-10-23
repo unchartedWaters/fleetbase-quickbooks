@@ -8,6 +8,7 @@ use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\WalletMapper;
+use Fleetbase\Quickbooks\Tests\Support\CustomerCreateRun;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
@@ -382,4 +383,58 @@ test('a retried write keeps its requestid on a later day, so a create lost befor
     ]);
 
     expect($sent)->toBe(['132717ef-a41a-009c-1c30-9bc218148d53', '3c268bf8-4175-13f0-9cd9-26f1385189fe']);
+});
+
+test('a create retried from the same pending row reuses its requestid,'
+. ' and a create from a new pending row gets a new one', function () {
+    $first   = CustomerCreateRun::requestIds(['cust-1' => 'row-1']);
+    $retried = CustomerCreateRun::requestIds(['cust-1' => 'row-1']);
+    // A record deleted in QuickBooks and created again is driven by a new pending row.
+    $recreated = CustomerCreateRun::requestIds(['cust-1' => 'row-2']);
+
+    expect($first)->toHaveCount(1)
+        ->and($first[0])->not->toBe('')
+        ->and($retried)->toBe($first)
+        ->and($recreated)->toHaveCount(1)
+        ->and($recreated[0])->not->toBe($first[0]);
+});
+
+test('a block of creates retried from the same pending rows reuses its requestid,'
+. ' and one from new pending rows gets a new one', function () {
+    $first     = CustomerCreateRun::requestIds(['cust-1' => 'row-1', 'cust-2' => 'row-2']);
+    $retried   = CustomerCreateRun::requestIds(['cust-1' => 'row-1', 'cust-2' => 'row-2']);
+    $recreated = CustomerCreateRun::requestIds(['cust-1' => 'row-1', 'cust-2' => 'row-3']);
+
+    expect($first)->toHaveCount(1)
+        ->and($first[0])->not->toBe('')
+        ->and($retried)->toBe($first)
+        ->and($recreated)->toHaveCount(1)
+        ->and($recreated[0])->not->toBe($first[0]);
+});
+
+test('a batch item key changes the requestid and is not sent to quickbooks', function () use ($requestIdConnection) {
+    $sent = [];
+    Http::fake(function (Request $request) use (&$sent) {
+        parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+        $sent[] = ['id' => $query['requestid'] ?? '', 'items' => $request->data()['BatchItemRequest']];
+        $rows   = [];
+        foreach ($request->data()['BatchItemRequest'] as $item) {
+            $rows[] = ['bId' => $item['bId'], 'Customer' => ['Id' => '5', 'SyncToken' => '0']];
+        }
+
+        return Http::response(['BatchItemResponse' => $rows], 200);
+    });
+    $client = new QuickBooksClient();
+    $item   = [
+        'bId' => 'customer:a', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'A'],
+    ];
+
+    $client->batch($requestIdConnection, [$item + ['key' => 'customer:a:row-1']]);
+    $client->batch($requestIdConnection, [$item + ['key' => 'customer:a:row-1']]);
+    $client->batch($requestIdConnection, [$item + ['key' => 'customer:a:row-2']]);
+
+    expect($sent[1]['id'])->toBe($sent[0]['id'])
+        ->and($sent[2]['id'])->not->toBe($sent[0]['id'])
+        ->and($sent[0]['items'])
+        ->toBe([['bId' => 'customer:a', 'operation' => 'create', 'Customer' => ['DisplayName' => 'A']]]);
 });

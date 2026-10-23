@@ -176,6 +176,16 @@ class SyncEngine
     private ?array $writeBuffer = null;
 
     /**
+     * The open pending row that drives each record's write in this run, as row uuid by
+     * "type:local uuid". A retry of a lost create comes from the same row, so its requestid
+     * stays the same; a record created again later (deleted in QuickBooks) comes from a new
+     * row and gets a new requestid, instead of Intuit's answer for the deleted record.
+     *
+     * @var array<string, string>
+     */
+    private array $writeRows = [];
+
+    /**
      * Line ids to record once a buffered invoice write succeeds, keyed by Fleetbase uuid.
      *
      * Edited marks an update QuickBooks as Primary sent because only Fleetbase changed the invoice.
@@ -1064,6 +1074,7 @@ class SyncEngine
         $counts                    = $this->rowTypeCounts($rows);
         $handled                   = [];
         $this->accountNamesCreated = [];
+        $this->writeRows           = self::writeRows($rows);
         $this->prepareLineProducts($ledger, $connection, $rows, $settings);
         foreach ($rows as $row) {
             if ($this->isRateLimited($connection, $now) === true) {
@@ -1104,6 +1115,35 @@ class SyncEngine
         }
 
         return $connection;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     *
+     * @return array<string, string>
+     */
+    private static function writeRows(array $rows): array
+    {
+        $writeRows = [];
+        foreach ($rows as $row) {
+            $rowUuid = (string) ($row['uuid'] ?? '');
+            $record  = (string) ($row['local_type'] ?? 'invoice') . ':' . (string) ($row['local_uuid'] ?? '');
+            if ($rowUuid !== '') {
+                $writeRows[$record] = $rowUuid;
+            }
+        }
+
+        return $writeRows;
+    }
+
+    /**
+     * The requestid key of one record's write: the record, and the pending row driving it.
+     */
+    private function writeKey(string $record): string
+    {
+        $rowUuid = $this->writeRows[$record] ?? '';
+
+        return $rowUuid === '' ? $record : $record . ':' . $rowUuid;
     }
 
     /**
@@ -5172,7 +5212,7 @@ class SyncEngine
             // Every write of this row carries a requestid named for the row, so a retried create whose
             // first answer was lost is applied once by QuickBooks. Nested writes share the key.
             $outcome = $this->client->withWriteKey(
-                $row['local_type'] . ':' . $row['local_uuid'],
+                $this->writeKey($row['local_type'] . ':' . $row['local_uuid']),
                 fn (): string => match ($row['local_type']) {
                     'customer' => $this->syncCustomer($ledger, $connection, (string) $row['local_uuid'], $settings),
                     'wallet'   => $this->syncWallet($ledger, $connection, (string) $row['local_uuid'], $settings),
@@ -5318,6 +5358,9 @@ class SyncEngine
         } elseif (count($needed) === 1) {
             $only = array_key_first($needed);
             try {
+                // No pending row drives this customer, so its key is the record alone. A lost create
+                // is still found again by email or name, and QuickBooks refuses a second customer of
+                // the same name (customers are made inactive, never deleted).
                 $customerOutcome = $this->client->withWriteKey(
                     'customer:' . $only,
                     fn (): string => $this->syncCustomer($ledger, $connection, (string) $only, $settings)
@@ -6487,6 +6530,9 @@ class SyncEngine
         if (count($ops) === 1) {
             return [$ops[0]['bId'] => $this->executeOneWrite($connection, $ops[0])];
         }
+        foreach ($ops as $index => $op) {
+            $ops[$index]['key'] = $this->writeKey($op['bId']);
+        }
 
         return $this->client->batch($connection, $ops);
     }
@@ -6509,7 +6555,8 @@ class SyncEngine
     {
         try {
             $payload = $op['payload'];
-            $body    = $this->client->withWriteKey($op['bId'], fn () => match ($op['entity'] . ':' . $op['operation']) {
+            $key     = $this->writeKey($op['bId']);
+            $body    = $this->client->withWriteKey($key, fn () => match ($op['entity'] . ':' . $op['operation']) {
                 'Customer:create' => $this->client->createCustomer($connection, $payload),
                 'Customer:update' => $this->client->updateCustomer($connection, (string) ($payload['Id'] ?? ''), (string) ($payload['SyncToken'] ?? '0'), $payload),
                 'Invoice:create'  => $this->client->createInvoice($connection, $payload),
