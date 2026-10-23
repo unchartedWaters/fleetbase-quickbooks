@@ -49,6 +49,18 @@ function tenantSqlite(): callable
         $table->unsignedInteger('customer_import_start')->nullable();
         $table->timestamps();
     });
+    // The customer import reads the stored links of each page.
+    DB::connection('sqlite')->getSchemaBuilder()->create('quickbooks_links', function (Blueprint $table) {
+        $table->char('uuid', 36)->primary();
+        $table->char('company_uuid', 36);
+        $table->string('realm_id');
+        $table->string('local_type');
+        $table->char('local_uuid', 36);
+        $table->string('qbo_entity');
+        $table->string('qbo_id');
+        $table->string('sync_token')->default('0');
+        $table->timestamps();
+    });
 
     return function () use ($defaultConnection, $sqliteConnection, $fleetbaseConnection): void {
         DB::purge('sqlite');

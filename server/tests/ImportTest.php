@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\WebhookRetry;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
+use Fleetbase\Quickbooks\Tests\Support\ImportDatabase;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
 use Illuminate\Container\Container;
@@ -825,6 +826,55 @@ test('importing named customers that are all linked already records nothing', fu
     expect($client->calls)->toBe([])
         ->and($ledger->batches)->toBe([]);
 });
+
+test('a full import with a real directory does not duplicate a customer it already links', function () {
+    $restore  = ImportDatabase::open();
+    $previous = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+    try {
+        ImportDatabase::connection();
+        ImportDatabase::contact('cust-a', 'Harbor: West');
+        ImportDatabase::link('l-a', 'cust-a', '58');
+        $client                = new FakeQuickBooks();
+        $client->customerPages = [1 => [remoteCustomer('58', 'Harbor- West', null, null)]];
+
+        (new ImportCustomers('company-uuid'))->handle(new CustomerImporter($client), new FleetbaseDirectory());
+
+        expect(DB::table('contacts')->count())->toBe(1)
+            ->and(ImportDatabase::linkedTo('58'))->toBe(['cust-a']);
+    } finally {
+        Cache::swap($previous);
+        $restore();
+    }
+});
+
+test('an import does not drop a quickbooks customer whose email matches a customer linked elsewhere', function (
+    array $ids,
+) {
+    $restore  = ImportDatabase::open();
+    $previous = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+    try {
+        ImportDatabase::connection();
+        ImportDatabase::contact('acme-west', 'Acme West', ['email' => 'ap@acme.test']);
+        ImportDatabase::link('l-west', 'acme-west', '58');
+        $client                  = new FakeQuickBooks();
+        $client->customerPages   = [1 => [remoteCustomer('95', 'Acme East', 'ap@acme.test', null)]];
+        $client->customers['95'] = remoteCustomer('95', 'Acme East', 'ap@acme.test', null);
+
+        (new ImportCustomers('company-uuid', null, true, 0, $ids, $ids === [] ? '' : 'realm-1'))
+            ->handle(new CustomerImporter($client), new FleetbaseDirectory());
+
+        $east = ImportDatabase::linkedTo('95');
+        expect(DB::table('contacts')->count())->toBe(2)
+            ->and($east)->toHaveCount(1)
+            ->and($east[0])->not->toBe('acme-west')
+            ->and(ImportDatabase::linkedTo('58'))->toBe(['acme-west']);
+    } finally {
+        Cache::swap($previous);
+        $restore();
+    }
+})->with(['the catalog' => [[]], 'a named import' => [['95']]]);
 
 function importWith(array $remote, array $local): array
 {

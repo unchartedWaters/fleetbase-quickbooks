@@ -1811,6 +1811,86 @@ class FleetbaseDirectory
     }
 
     /**
+     * Add this organization's stored customer links that a customer import page needs: those
+     * to these QuickBooks customers and those of these Fleetbase customers. They count as
+     * loaded, so the import's "already linked" checks see them and the save writes only what
+     * the import changed. Links the ledger already holds are kept as they are.
+     *
+     * @param array<int, string> $qboIds
+     * @param array<int, string> $localUuids
+     */
+    public function rememberCustomerLinks(
+        SyncLedger $ledger,
+        string $companyUuid,
+        string $realm,
+        array $qboIds,
+        array $localUuids,
+    ): void {
+        if ($this->memory !== null || $companyUuid === '') {
+            return;
+        }
+        $held = [];
+        foreach ($ledger->links as $link) {
+            $held[$this->customerLinkKey($link)] = true;
+        }
+        $added = false;
+        foreach ($this->storedCustomerLinks($companyUuid, $realm, $qboIds, $localUuids) as $link) {
+            $key = $this->customerLinkKey($link);
+            if (isset($held[$key]) === true) {
+                continue;
+            }
+            $held[$key] = true;
+            $this->rememberLoadedLink($ledger, $link);
+            $added = true;
+        }
+        if ($added === true) {
+            $ledger->rebuildIndex();
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $link
+     */
+    private function customerLinkKey(array $link): string
+    {
+        return (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '')
+            . '|' . (string) ($link['local_uuid'] ?? '');
+    }
+
+    /**
+     * @param array<int, string> $qboIds
+     * @param array<int, string> $localUuids
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function storedCustomerLinks(string $companyUuid, string $realm, array $qboIds, array $localUuids): array
+    {
+        $query = static fn () => Link::query()->where('company_uuid', $companyUuid)->where('local_type', 'customer');
+        $reads = [];
+        $ids   = array_values(array_unique(array_filter(array_map('strval', $qboIds))));
+        if ($realm !== '') {
+            foreach (array_chunk($ids, 500) as $chunk) {
+                $reads[] = $query()->where('realm_id', $realm)->where('qbo_entity', 'Customer')
+                    ->whereIn('qbo_id', $chunk);
+            }
+        }
+        $uuids = array_values(array_unique(array_filter(array_map('strval', $localUuids))));
+        foreach (array_chunk($uuids, 500) as $chunk) {
+            $reads[] = $query()->whereIn('local_uuid', $chunk);
+        }
+        $rows = [];
+        foreach ($reads as $read) {
+            foreach ($read->get() as $link) {
+                if ($link instanceof Link) {
+                    $rows[] = $link->toArray();
+                }
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
      * @param array<string, array<string, true>> $idsByEntity
      *
      * @return array<int, array<string, mixed>>

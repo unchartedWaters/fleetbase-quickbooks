@@ -297,6 +297,19 @@ class ImportCustomers implements ShouldQueue
         $ledger                                  = $directory->memory ?? new SyncLedger();
         $ledger->connections[$this->companyUuid] = $connection;
         $started                                 = time();
+        if ($directory->memory === null) {
+            // The ledger starts empty, so each page reads the links its customers already have.
+            $realm = (string) ($connection['realm_id'] ?? '');
+            $importer->useLinkLoader(
+                fn (SyncLedger $pageLedger, array $ids, array $uuids) => $directory->rememberCustomerLinks(
+                    $pageLedger,
+                    $this->companyUuid,
+                    $realm,
+                    $ids,
+                    $uuids
+                )
+            );
+        }
         if ($this->customerIds !== []) {
             return $this->runNamedImport($importer, $directory, $lock, $ledger, $connection);
         }
