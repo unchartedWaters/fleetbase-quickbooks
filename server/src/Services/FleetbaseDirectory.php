@@ -660,20 +660,38 @@ class FleetbaseDirectory
                 if ($requeue === []) {
                     continue;
                 }
-                PendingSync::query()
-                    ->where('company_uuid', $companyUuid)
-                    ->where('local_type', 'invoice')
-                    ->where('status', 'failed')
-                    ->whereIn('local_uuid', array_map('strval', $requeue))
-                    ->update([
-                        'status'          => 'pending',
-                        'attempts'        => 0,
-                        'next_attempt_at' => null,
-                        'updated_at'      => now(),
-                    ]);
+                $this->reopenInvoices((string) $companyUuid, array_map('strval', $requeue));
             }
         }
         $this->linkedCustomers = [];
+    }
+
+    /**
+     * One open row per invoice: an invoice that already has one keeps it (the insert is
+     * ignored, as the open-identity index allows only one), and is sent on the next run.
+     * The failed rows are then retired, so a later customer link does not read them again.
+     *
+     * @param array<int, string> $invoiceUuids
+     */
+    private function reopenInvoices(string $companyUuid, array $invoiceUuids): void
+    {
+        $this->writePendingMany(array_map(static fn (string $uuid): array => [
+            'company_uuid' => $companyUuid,
+            'local_type'   => 'invoice',
+            'local_uuid'   => $uuid,
+            'reason'       => 'customer-linked',
+            'attempts'     => 0,
+        ], $invoiceUuids));
+        $invoices = PendingSync::query()
+            ->where('company_uuid', $companyUuid)
+            ->where('local_type', 'invoice')
+            ->whereIn('local_uuid', $invoiceUuids);
+        (clone $invoices)->where('status', 'failed')->delete();
+        $waiting = (clone $invoices)->where('status', 'pending')->whereNotNull('next_attempt_at');
+        if ($this->claimsSupported() === true) {
+            $waiting->whereNull('claimed_by');
+        }
+        $waiting->update(['attempts' => 0, 'next_attempt_at' => null, 'updated_at' => now()]);
     }
 
     /**
