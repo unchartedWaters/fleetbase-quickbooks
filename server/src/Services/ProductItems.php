@@ -3,7 +3,6 @@
 namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Support\ProductMapper;
-use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\Translation;
 
 /**
@@ -26,10 +25,7 @@ use Fleetbase\Quickbooks\Support\Translation;
  * @phpstan-type Operation array{bId: string, operation: string, entity: string, payload: array<string, mixed>}
  * @phpstan-type Write array{write: Operation, link: array<string, mixed>, name: string}
  * @phpstan-type Found array{rows: array<string, array<string, mixed>>, failed: string|null}
- * @phpstan-type Answer array{
- *     ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null,
- *     status: int, halt: bool, code?: string
- * }
+ * @phpstan-type Decision array{result: Result}|Write
  */
 class ProductItems
 {
@@ -37,12 +33,26 @@ class ProductItems
 
     public const DEACTIVATED = 'deactivated';
 
-    private const DUPLICATE_NAME_FAULT = '6240';
+    private ProductItemCalls $calls;
 
-    private const QUERY_LIMIT = 1000;
+    private SyncLedger $ledger;
 
-    public function __construct(private QuickBooksClient $client, private ProductMapper $mapper = new ProductMapper())
+    /** @var array<string, mixed> */
+    private array $connection = [];
+
+    private string $serviceItemId = '';
+
+    /** @var array<string, mixed> */
+    private array $serviceItem = [];
+
+    private string $home = '';
+
+    /** @var Found */
+    private array $byName = ['rows' => [], 'failed' => null];
+
+    public function __construct(QuickBooksClient $client, private ProductMapper $mapper = new ProductMapper())
     {
+        $this->calls = new ProductItemCalls($client);
     }
 
     /**
@@ -62,63 +72,36 @@ class ProductItems
         string $serviceItemId,
         array $serviceItem,
     ): array {
-        $company = (string) $connection['company_uuid'];
-        $realm   = (string) $connection['realm_id'];
-        $home    = strtoupper(trim((string) ($connection['home_currency'] ?? '')));
-        $plans   = [];
-        foreach (array_values(array_unique($keys)) as $key) {
-            if ($key === '') {
-                continue;
-            }
-            $plans[$key] = $this->startPlan($ledger, $company, $realm, $key);
-        }
-        $results = [];
-        foreach ($plans as $key => $plan) {
-            if ($key === ProductMapper::key(ProductMapper::SERVICE_ITEM_NAME)) {
-                $results[$key] = self::result($serviceItemId, $serviceItem, 'aligned');
-                unset($plans[$key]);
-            } elseif ($plan['fee'] === false && $ledger->productsUnavailable === true) {
-                // Storefront could not be read, or only in part: a name's products are not known.
-                $results[$key] = self::failed(Translation::encode('quickbooks.messages.products-unavailable'), true);
-                unset($plans[$key]);
-            } elseif ($plan['wanted'] === false && $plan['link'] === null) {
-                $results[$key] = self::result(null, null, 'aligned');
-                unset($plans[$key]);
-            }
-        }
+        $this->ledger        = $ledger;
+        $this->connection    = $connection;
+        $this->serviceItemId = $serviceItemId;
+        $this->serviceItem   = $serviceItem;
+        $this->home          = strtoupper(trim((string) ($connection['home_currency'] ?? '')));
+        $results             = [];
+        $plans               = $this->plans($keys, $results);
         if ($plans === []) {
             return $results;
         }
 
-        $byId   = $this->readItems($connection, 'Id', array_values(array_filter(array_map(
+        $byId         = $this->calls->read($connection, 'Id', array_values(array_filter(array_map(
             static fn (array $plan): string => (string) ($plan['link']['qbo_id'] ?? ''),
             $plans
         ))));
-        $names  = [];
-        foreach ($plans as $plan) {
-            if ($plan['wanted'] === true) {
-                $names[] = $plan['name'];
-                $names[] = ProductMapper::suffixed($plan['name']);
-            }
-        }
-        $byName = $this->readItems($connection, 'Name', $names);
+        $this->byName = $this->calls->read($connection, 'Name', $this->wantedNames($plans));
 
         /** @var array<string, Write> $writes */
         $writes = [];
         foreach ($plans as $key => $plan) {
-            $decided = $this->decide($ledger, $connection, $plan, $byId, $byName, $serviceItemId, $serviceItem, $home);
+            $decided = $this->decide($plan, $byId);
             if (array_key_exists('write', $decided) === true) {
                 $writes[$key] = $decided;
                 continue;
             }
             $results[$key] = $decided['result'];
         }
-
-        foreach ($this->write($connection, $writes) as $key => $result) {
+        foreach ($this->calls->write($connection, $writes) as $key => $result) {
             $results[$key] = $result;
-        }
-        foreach ($results as $key => $result) {
-            if (isset($writes[$key]) === true && $result['outcome'] !== 'failed') {
+            if ($result['outcome'] !== 'failed') {
                 $ledger->putLink(array_merge($writes[$key]['link'], [
                     'qbo_id'     => (string) ($result['item']['Id'] ?? ''),
                     'sync_token' => (string) ($result['item']['SyncToken'] ?? '0'),
@@ -186,91 +169,162 @@ class ProductItems
     }
 
     /**
+     * The plan of each name to read QuickBooks for. A name settled without QuickBooks gets its
+     * result: the service item's name, a name whose products could not be read, and a name no
+     * product uses that has no QuickBooks product.
+     *
+     * @param array<int, string>    $keys
+     * @param array<string, Result> $results
+     *
+     * @return array<string, Plan> by key
+     */
+    private function plans(array $keys, array &$results): array
+    {
+        $company = (string) $this->connection['company_uuid'];
+        $realm   = (string) $this->connection['realm_id'];
+        $plans   = [];
+        foreach (array_values(array_unique($keys)) as $key) {
+            if ($key === '') {
+                continue;
+            }
+            $plan = $this->startPlan($this->ledger, $company, $realm, $key);
+            if ($key === ProductMapper::key(ProductMapper::SERVICE_ITEM_NAME)) {
+                $results[$key] = self::result($this->serviceItemId, $this->serviceItem, 'aligned');
+            } elseif ($plan['fee'] === false && $this->ledger->productsUnavailable === true) {
+                // Storefront could not be read, or only in part: a name's products are not known.
+                $results[$key] = self::failed(Translation::encode('quickbooks.messages.products-unavailable'), true);
+            } elseif ($plan['wanted'] === false && $plan['link'] === null) {
+                $results[$key] = self::result(null, null, 'aligned');
+            } else {
+                $plans[$key] = $plan;
+            }
+        }
+
+        return $plans;
+    }
+
+    /**
+     * Each name in use, and its suffixed form, to look up by name.
+     *
+     * @param array<string, Plan> $plans
+     *
+     * @return array<int, string>
+     */
+    private function wantedNames(array $plans): array
+    {
+        $names = [];
+        foreach ($plans as $plan) {
+            if ($plan['wanted'] === true) {
+                $names[] = $plan['name'];
+                $names[] = ProductMapper::suffixed($plan['name']);
+            }
+        }
+
+        return $names;
+    }
+
+    /**
      * What to do for one name: a result, or a write.
      *
-     * @param array<string, mixed> $connection
-     * @param Plan                 $plan
-     * @param Found                $byId
-     * @param Found                $byName
-     * @param array<string, mixed> $serviceItem
+     * @param Plan  $plan
+     * @param Found $byId
      *
-     * @return array{result: Result}|Write
+     * @return Decision
      */
-    private function decide(
-        SyncLedger $ledger,
-        array $connection,
-        array $plan,
-        array $byId,
-        array $byName,
-        string $serviceItemId,
-        array $serviceItem,
-        string $home,
-    ): array {
-        $link   = $plan['link'];
-        $remote = null;
+    private function decide(array $plan, array $byId): array
+    {
+        $link = $plan['link'];
         if ($link !== null) {
             if ($byId['failed'] !== null) {
                 return ['result' => self::failed($byId['failed'], true)];
             }
-            $remote = $byId['rows'][(string) $link['qbo_id']] ?? null;
-        }
-        $state = $link === null ? null : ($link['state'] ?? null);
-
-        if (is_array($remote) === true) {
-            $active = ($remote['Active'] ?? true) !== false;
-            if ($state === self::ADOPTED) {
-                return ['result' => $active === true
-                    ? self::result((string) $remote['Id'], $remote, 'aligned')
-                    : self::result(null, $remote, 'aligned', $this->inactiveNote($plan['name']))];
-            }
-            if ($active === false) {
-                if ($plan['wanted'] === false) {
-                    return ['result' => self::result(null, $remote, 'aligned')];
-                }
-                if ($state !== self::DEACTIVATED) {
-                    // Made inactive in QuickBooks: that choice stays, and lines use the service item.
-                    return ['result' => self::result(null, $remote, 'aligned', $this->inactiveNote($plan['name']))];
-                }
-                $holder = $this->activeNamed($byName, $plan['name'], (string) $remote['Id']);
-                if ($holder === null) {
-                    $name = $this->keepsSuffix($remote) === true
-                        ? ProductMapper::suffixed($plan['name'])
-                        : $plan['name'];
-
-                    return $this->update($connection, $plan, $remote, ['Active' => true, 'Name' => $name], null);
-                }
-                // The name went to another QuickBooks product while ours was inactive.
-                $remote = null;
-                $link   = null;
-            } elseif ($plan['wanted'] === false) {
-                // Without Storefront tables no product is known gone, so none is made inactive.
-                $kept = $plan['fee'] === true || (string) $remote['Id'] === $serviceItemId;
-                if ($kept === true || $ledger->productsMissing === true) {
-                    return ['result' => self::result((string) $remote['Id'], $remote, 'aligned')];
-                }
-
-                return $this->update($connection, $plan, $remote, ['Active' => false], self::DEACTIVATED);
-            } else {
-                $changes = $this->mapper->changes($plan['name'], $plan['products'], $remote, $home);
-                if ($changes === []) {
-                    return ['result' => self::result((string) $remote['Id'], $remote, 'aligned')];
-                }
-
-                return $this->update($connection, $plan, $remote, $changes, null);
+            $remote  = $byId['rows'][(string) $link['qbo_id']] ?? null;
+            $state   = is_string($link['state'] ?? null) === true ? $link['state'] : null;
+            $decided = is_array($remote) === true ? $this->decideLinked($plan, $remote, $state) : null;
+            if ($decided !== null) {
+                return $decided;
             }
         }
 
+        return $this->decideUnlinked($plan);
+    }
+
+    /**
+     * A name whose QuickBooks product was found. Null when the name has to be placed again: its
+     * product, made inactive by Fleetbase, lost the name to another product meanwhile.
+     *
+     * @param Plan                 $plan
+     * @param array<string, mixed> $remote
+     *
+     * @return Decision|null
+     */
+    private function decideLinked(array $plan, array $remote, ?string $state): ?array
+    {
+        $active = ($remote['Active'] ?? true) !== false;
+        if ($state === self::ADOPTED) {
+            return ['result' => $active === true
+                ? self::result((string) $remote['Id'], $remote, 'aligned')
+                : self::result(null, $remote, 'aligned', $this->inactiveNote($plan['name']))];
+        }
+        if ($active === false) {
+            return $this->decideInactive($plan, $remote, $state);
+        }
+        if ($plan['wanted'] === false) {
+            // Without Storefront tables no product is known gone, so none is made inactive.
+            $kept = $plan['fee'] === true || (string) $remote['Id'] === $this->serviceItemId;
+            if ($kept === true || $this->ledger->productsMissing === true) {
+                return ['result' => self::result((string) $remote['Id'], $remote, 'aligned')];
+            }
+
+            return $this->update($plan, $remote, ['Active' => false], self::DEACTIVATED);
+        }
+
+        return $this->updated($plan, $remote);
+    }
+
+    /**
+     * @param Plan                 $plan
+     * @param array<string, mixed> $remote
+     *
+     * @return Decision|null
+     */
+    private function decideInactive(array $plan, array $remote, ?string $state): ?array
+    {
+        if ($plan['wanted'] === false) {
+            return ['result' => self::result(null, $remote, 'aligned')];
+        }
+        if ($state !== self::DEACTIVATED) {
+            // Made inactive in QuickBooks: that choice stays, and lines use the service item.
+            return ['result' => self::result(null, $remote, 'aligned', $this->inactiveNote($plan['name']))];
+        }
+        if ($this->activeNamed($plan['name'], (string) $remote['Id']) !== null) {
+            return null;
+        }
+        $name = $this->keepsSuffix($remote) === true ? ProductMapper::suffixed($plan['name']) : $plan['name'];
+
+        return $this->update($plan, $remote, ['Active' => true, 'Name' => $name], null);
+    }
+
+    /**
+     * A name in use with no QuickBooks product of its own: adopt the product QuickBooks has
+     * under the name, else take back one Fleetbase made under the suffixed name, else create.
+     *
+     * @param Plan $plan
+     *
+     * @return Decision
+     */
+    private function decideUnlinked(array $plan): array
+    {
         if ($plan['wanted'] === false) {
             return ['result' => self::result(null, null, 'aligned')];
         }
-        if ($byName['failed'] !== null) {
-            return ['result' => self::failed($byName['failed'], true)];
+        if ($this->byName['failed'] !== null) {
+            return ['result' => self::failed($this->byName['failed'], true)];
         }
 
-        $realm = (string) $connection['realm_id'];
-        $found = $this->named($byName, $plan['name']);
-        if ($found !== null && $this->adoptable($ledger, $realm, $plan, $found, $serviceItemId) === true) {
-            $ledger->putLink($this->link($connection, $plan, $found, self::ADOPTED));
+        $found = $this->named($plan['name']);
+        if ($found !== null && $this->adoptable($plan, $found) === true) {
+            $this->ledger->putLink($this->link($plan, $found, self::ADOPTED));
             $note = Translation::encode(
                 'quickbooks.messages.product-adopted',
                 ['name' => (string) ($found['Name'] ?? '')]
@@ -278,50 +332,69 @@ class ProductItems
 
             return ['result' => self::result((string) $found['Id'], $found, 'aligned', $note)];
         }
-        $name = $plan['name'];
-        if ($found !== null) {
-            $name    = ProductMapper::suffixed($plan['name']);
-            $ours    = $this->named($byName, $name);
-            $usable  = $ours !== null
-                && ($ours['Active'] ?? true) !== false
-                && $this->linkedElsewhere($ledger, $realm, $plan, (string) $ours['Id']) === false;
-            if ($usable === true) {
-                // A product Fleetbase made under the suffixed name before its link was lost.
-                $ledger->putLink($this->link($connection, $plan, $ours, null));
-                $changes = $this->mapper->changes($plan['name'], $plan['products'], $ours, $home);
-                if ($changes === []) {
-                    return ['result' => self::result((string) $ours['Id'], $ours, 'aligned')];
-                }
-
-                return $this->update($connection, $plan, $ours, $changes, null);
-            }
-            if ($ours !== null) {
-                return ['result' => self::failed($this->nameTaken($name), false)];
-            }
+        if ($found === null) {
+            return $this->create($plan, $plan['name']);
         }
-        $payload = $this->mapper->create($name, $plan['products'], $home, $serviceItem);
+        $name = ProductMapper::suffixed($plan['name']);
+        $ours = $this->named($name);
+        if ($ours === null) {
+            return $this->create($plan, $name);
+        }
+        $usable = ($ours['Active'] ?? true) !== false && $this->linkedElsewhere($plan, (string) $ours['Id']) === false;
+        if ($usable === false) {
+            return ['result' => self::failed(self::nameTaken($name), false)];
+        }
+        // A product Fleetbase made under the suffixed name before its link was lost.
+        $this->ledger->putLink($this->link($plan, $ours, null));
 
+        return $this->updated($plan, $ours);
+    }
+
+    /**
+     * The update that makes a product show the Fleetbase products, or aligned when it does.
+     *
+     * @param Plan                 $plan
+     * @param array<string, mixed> $remote
+     *
+     * @return Decision
+     */
+    private function updated(array $plan, array $remote): array
+    {
+        $changes = $this->mapper->changes($plan['name'], $plan['products'], $remote, $this->home);
+        if ($changes === []) {
+            return ['result' => self::result((string) $remote['Id'], $remote, 'aligned')];
+        }
+
+        return $this->update($plan, $remote, $changes, null);
+    }
+
+    /**
+     * @param Plan $plan
+     *
+     * @return Write
+     */
+    private function create(array $plan, string $name): array
+    {
         return [
             'write' => [
                 'bId'       => 'item:' . $plan['uuid'],
                 'operation' => 'create',
                 'entity'    => 'Item',
-                'payload'   => $payload,
+                'payload'   => $this->mapper->create($name, $plan['products'], $this->home, $this->serviceItem),
             ],
-            'link'  => $this->link($connection, $plan, null, null),
+            'link'  => $this->link($plan, null, null),
             'name'  => $name,
         ];
     }
 
     /**
-     * @param array<string, mixed> $connection
      * @param Plan                 $plan
      * @param array<string, mixed> $remote
      * @param array<string, mixed> $changes
      *
      * @return Write
      */
-    private function update(array $connection, array $plan, array $remote, array $changes, ?string $state): array
+    private function update(array $plan, array $remote, array $changes, ?string $state): array
     {
         $payload = $changes + [
             'Id'        => (string) $remote['Id'],
@@ -336,155 +409,18 @@ class ProductItems
                 'entity'    => 'Item',
                 'payload'   => $payload,
             ],
-            'link'  => $this->link($connection, $plan, $remote, $state),
+            'link'  => $this->link($plan, $remote, $state),
             'name'  => (string) ($changes['Name'] ?? $remote['Name'] ?? $plan['name']),
         ];
     }
 
     /**
-     * Send the writes, one call for one write, else the Batch API.
-     *
-     * @param array<string, mixed> $connection
-     * @param array<string, Write> $writes     by key
-     *
-     * @return array<string, Result> by key
-     */
-    private function write(array $connection, array $writes): array
-    {
-        if ($writes === []) {
-            return [];
-        }
-        $operations = array_values(array_map(static fn (array $write): array => $write['write'], $writes));
-        $answers    = count($operations) === 1
-            ? [$operations[0]['bId'] => $this->writeOne($connection, $operations[0])]
-            : $this->client->batch($connection, $operations);
-
-        $results = [];
-        foreach ($writes as $key => $write) {
-            $answer = $answers[$write['write']['bId']] ?? null;
-            if ($answer !== null && $answer['halt'] === true) {
-                throw new QuickBooksException($answer['status'], (string) $answer['error']);
-            }
-            $body = $answer['body'] ?? [];
-            if ($answer === null || $answer['ok'] === false || trim((string) ($body['Id'] ?? '')) === '') {
-                $status        = $answer['status'] ?? 400;
-                $error         = ($answer['code'] ?? '') === self::DUPLICATE_NAME_FAULT
-                    ? $this->nameTaken($write['name'])
-                    : (string) ($answer['error'] ?? 'quickbooks.messages.batch-item-missing');
-                $results[$key] = self::failed($error, (new QuickBooksException($status, $error))->isTransient());
-                continue;
-            }
-            $outcome       = $write['write']['operation'] === 'create' ? 'created' : 'updated';
-            $active        = ($body['Active'] ?? true) !== false;
-            $results[$key] = self::result($active === true ? (string) $body['Id'] : null, $body, $outcome);
-        }
-
-        return $results;
-    }
-
-    /**
-     * One write as a batch answer. A 401 or a rate limit is thrown.
-     *
-     * @param array<string, mixed> $connection
-     * @param Operation            $operation
-     *
-     * @return Answer
-     */
-    private function writeOne(array $connection, array $operation): array
-    {
-        $payload = $operation['payload'];
-        try {
-            $body = $operation['operation'] === 'create'
-                ? $this->client->createItem($connection, $payload)
-                : $this->client->updateItem(
-                    $connection,
-                    (string) ($payload['Id'] ?? ''),
-                    (string) ($payload['SyncToken'] ?? '0'),
-                    $payload
-                );
-
-            return ['ok' => true, 'body' => $body, 'rows' => [], 'error' => null, 'status' => 200, 'halt' => false];
-        } catch (QuickBooksException $exception) {
-            if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
-                throw $exception;
-            }
-
-            // A stale SyncToken only means the product changed meanwhile, as in a batch answer.
-            return [
-                'ok'     => false,
-                'body'   => [],
-                'rows'   => [],
-                'error'  => $exception->getMessage(),
-                'status' => $exception->faultCode === '5010' ? 409 : $exception->status,
-                'halt'   => false,
-                'code'   => (string) $exception->faultCode,
-            ];
-        }
-    }
-
-    /**
-     * Read QuickBooks products by Id or Name, active and inactive, in one batch of queries.
-     *
-     * @param array<string, mixed> $connection
-     * @param array<int, string>   $values
-     *
-     * @return Found rows by Id
-     */
-    private function readItems(array $connection, string $field, array $values): array
-    {
-        $values = array_values(array_unique(array_filter(
-            array_map('trim', $values),
-            static fn (string $value): bool => $value !== ''
-        )));
-        if ($values === []) {
-            return ['rows' => [], 'failed' => null];
-        }
-        $queries = [];
-        foreach (array_chunk($values, QuickBooksClient::BATCH_LIMIT) as $index => $chunk) {
-            $queries[] = [
-                'bId'   => 'items-' . $field . '-' . $index,
-                'query' => 'select * from Item where Active IN (true, false) and ' . $field . ' IN ('
-                    . QuickBooksClient::quotedList($chunk) . ') maxresults ' . self::QUERY_LIMIT,
-            ];
-        }
-        try {
-            $answers = $this->client->batch($connection, $queries);
-        } catch (QuickBooksException $exception) {
-            if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
-                throw $exception;
-            }
-
-            return ['rows' => [], 'failed' => $exception->getMessage()];
-        }
-        $rows = [];
-        foreach ($queries as $query) {
-            $answer = $answers[$query['bId']] ?? null;
-            if ($answer !== null && $answer['halt'] === true) {
-                throw new QuickBooksException($answer['status'], (string) $answer['error']);
-            }
-            if ($answer === null || $answer['ok'] === false) {
-                return ['rows' => [], 'failed' => (string) ($answer['error'] ?? 'quickbooks.messages.query-failed')];
-            }
-            foreach ($answer['rows'] as $row) {
-                $id = trim((string) ($row['Id'] ?? ''));
-                if ($id !== '') {
-                    $rows[$id] = $row;
-                }
-            }
-        }
-
-        return ['rows' => $rows, 'failed' => null];
-    }
-
-    /**
-     * @param Found $byName
-     *
      * @return array<string, mixed>|null
      */
-    private function named(array $byName, string $name): ?array
+    private function named(string $name): ?array
     {
         $key = mb_strtolower(trim($name));
-        foreach ($byName['rows'] as $row) {
+        foreach ($this->byName['rows'] as $row) {
             if (mb_strtolower(trim((string) ($row['Name'] ?? ''))) === $key) {
                 return $row;
             }
@@ -494,13 +430,11 @@ class ProductItems
     }
 
     /**
-     * @param Found $byName
-     *
      * @return array<string, mixed>|null
      */
-    private function activeNamed(array $byName, string $name, string $exceptId): ?array
+    private function activeNamed(string $name, string $exceptId): ?array
     {
-        $found = $this->named($byName, $name);
+        $found = $this->named($name);
 
         return is_array($found) === true
             && (string) ($found['Id'] ?? '') !== $exceptId
@@ -517,15 +451,10 @@ class ProductItems
      * @param Plan                 $plan
      * @param array<string, mixed> $remote
      */
-    private function adoptable(
-        SyncLedger $ledger,
-        string $realm,
-        array $plan,
-        array $remote,
-        string $serviceItemId,
-    ): bool {
-        $id = (string) ($remote['Id'] ?? '');
-        if ($id === '' || $id === $serviceItemId || ($remote['Active'] ?? true) === false) {
+    private function adoptable(array $plan, array $remote): bool
+    {
+        $itemId = (string) ($remote['Id'] ?? '');
+        if ($itemId === '' || $itemId === $this->serviceItemId || ($remote['Active'] ?? true) === false) {
             return false;
         }
         if (in_array((string) ($remote['Type'] ?? ''), ['Service', 'NonInventory'], true) === false) {
@@ -535,15 +464,17 @@ class ProductItems
             return false;
         }
 
-        return $plan['fee'] === true || $this->linkedElsewhere($ledger, $realm, $plan, $id) === false;
+        return $plan['fee'] === true || $this->linkedElsewhere($plan, $itemId) === false;
     }
 
     /**
      * @param Plan $plan
      */
-    private function linkedElsewhere(SyncLedger $ledger, string $realm, array $plan, string $id): bool
+    private function linkedElsewhere(array $plan, string $itemId): bool
     {
-        return $ledger->remoteIdsLinked($realm, 'Item', [$id], (string) $plan['uuid']) !== [];
+        $realm = (string) $this->connection['realm_id'];
+
+        return $this->ledger->remoteIdsLinked($realm, 'Item', [$itemId], (string) $plan['uuid']) !== [];
     }
 
     /**
@@ -557,17 +488,16 @@ class ProductItems
     }
 
     /**
-     * @param array<string, mixed>      $connection
      * @param Plan                      $plan
      * @param array<string, mixed>|null $remote
      *
      * @return array<string, mixed>
      */
-    private function link(array $connection, array $plan, ?array $remote, ?string $state): array
+    private function link(array $plan, ?array $remote, ?string $state): array
     {
         $link = [
-            'company_uuid' => (string) $connection['company_uuid'],
-            'realm_id'     => (string) $connection['realm_id'],
+            'company_uuid' => (string) $this->connection['company_uuid'],
+            'realm_id'     => (string) $this->connection['realm_id'],
             'local_type'   => 'item',
             'local_uuid'   => (string) $plan['uuid'],
             'qbo_entity'   => 'Item',
@@ -587,7 +517,7 @@ class ProductItems
         return Translation::encode('quickbooks.messages.product-inactive', ['name' => $name]);
     }
 
-    private function nameTaken(string $name): string
+    public static function nameTaken(string $name): string
     {
         return Translation::encode('quickbooks.messages.product-name-taken', ['name' => $name]);
     }
@@ -597,10 +527,10 @@ class ProductItems
      *
      * @return Result
      */
-    private static function result(?string $id, ?array $item, string $outcome, ?string $note = null): array
+    public static function result(?string $itemId, ?array $item, string $outcome, ?string $note = null): array
     {
         return [
-            'id'        => $id,
+            'id'        => $itemId,
             'item'      => $item,
             'outcome'   => $outcome,
             'error'     => null,
@@ -612,7 +542,7 @@ class ProductItems
     /**
      * @return Result
      */
-    private static function failed(string $error, bool $transient): array
+    public static function failed(string $error, bool $transient): array
     {
         return [
             'id'        => null,
