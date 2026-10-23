@@ -1096,9 +1096,10 @@ test('oauth start twice in a row answers 429 the second time', function () {
         $store,
         new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
     );
-    $previous = [Cache::getFacadeRoot(), config('quickbooks.manual_cooldown_seconds')];
+    $previous = [Cache::getFacadeRoot(), config('quickbooks.manual_cooldown_seconds'), config('quickbooks.console_host')];
     Cache::swap(new Repository(new ArrayStore()));
     config()->set('quickbooks.manual_cooldown_seconds', 30);
+    config()->set('quickbooks.console_host', 'https://console.example.com');
 
     try {
         $first  = $controller->start(Request::create('/oauth/start', 'POST'));
@@ -1106,6 +1107,7 @@ test('oauth start twice in a row answers 429 the second time', function () {
     } finally {
         Cache::swap($previous[0]);
         config()->set('quickbooks.manual_cooldown_seconds', $previous[1]);
+        config()->set('quickbooks.console_host', $previous[2]);
         session(['company' => null]);
     }
 
