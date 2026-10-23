@@ -757,6 +757,77 @@ test('a fleetbase primary customer does not link a quickbooks customer that has 
         ->and($batch['created'])->toBe(1);
 });
 
+test('a customer is not linked to a quickbooks customer another fleetbase customer already uses', function (
+    string $variant,
+) {
+    [$engine, $client]           = qbEngine();
+    $ledger                      = engineLedger();
+    $ledger->customers['cust-2'] = engineCustomer('cust-2', ['name' => 'Acme West', 'email' => 'ap@acme.test']);
+    $client->customers['58']     = [
+        'Id'               => '58',
+        'SyncToken'        => '0',
+        'DisplayName'      => 'Acme East',
+        'PrimaryEmailAddr' => ['Address' => 'ap@acme.test'],
+    ];
+    if ($variant === 'another organization') {
+        $ledger->remoteLinkReader = static function (string $realm, string $entity, array $ids): array {
+            return $entity === 'Customer' ? array_values(array_intersect($ids, ['58'])) : [];
+        };
+    } else {
+        $ledger->customers['cust-1'] = engineCustomer('cust-1', ['name' => 'Acme East', 'email' => 'ap@acme.test']);
+        $ledger->links[]             = engineLink('customer', 'cust-1', '58');
+    }
+    $ledger->pending[] = enginePending('customer', 'cust-2');
+    if ($variant === 'block') {
+        $ledger->pending[] = enginePending('customer', 'cust-1');
+    }
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings([
+        'interval_minutes'   => 1,
+        'customer_reference' => 'quickbooks',
+        'customer_conflict'  => 'quickbooks',
+    ]), time());
+
+    expect($ledger->customers['cust-2']['name'])->toBe('Acme West')
+        ->and($client->calls)->toContain('createCustomer')
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-2')['qbo_id'])->not->toBe('58')
+        ->and($client->customers['58']['DisplayName'])->toBe('Acme East');
+})->with(['one row' => ['single'], 'block' => ['block'], 'another organization' => ['another organization']]);
+
+test(
+    'a customer whose email matches a quickbooks customer another fleetbase customer syncs with gets its own customer',
+    function (string $variant) {
+        [$engine, $client]           = qbEngine();
+        $ledger                      = engineLedger();
+        $ledger->customers['cust-2'] = engineCustomer('cust-2', ['email' => 'acme@x.test', 'name' => 'Other']);
+        $client->customers['qbo-58'] = [
+            'Id'               => 'qbo-58',
+            'SyncToken'        => '0',
+            'DisplayName'      => 'Acme',
+            'PrimaryEmailAddr' => ['Address' => 'acme@x.test'],
+        ];
+        if ($variant === 'same organization') {
+            $ledger->customers['cust-1'] = engineCustomer('cust-1', ['email' => 'acme@x.test', 'name' => 'Acme']);
+            $ledger->links[]             = engineLink('customer', 'cust-1', 'qbo-58');
+        } else {
+            $ledger->remoteLinkReader = static function (string $realm, string $entity, array $ids): array {
+                return $entity === 'Customer' ? array_values(array_intersect($ids, ['qbo-58'])) : [];
+            };
+        }
+        $ledger->pending[] = enginePending('customer', 'cust-2');
+        if ($variant === 'block') {
+            $ledger->customers['cust-3'] = engineCustomer('cust-3', ['email' => 'third@x.test', 'name' => 'Third']);
+            $ledger->pending[]           = enginePending('customer', 'cust-3');
+        }
+
+        $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+        expect($ledger->link('company-uuid', 'realm-1', 'customer', 'cust-2')['qbo_id'])->not->toBe('qbo-58')
+            ->and($client->calls)->toContain('createCustomer')
+            ->and($client->customers['qbo-58']['DisplayName'])->toBe('Acme');
+    }
+)->with(['another organization' => ['cross'], 'same organization' => ['same organization'], 'block' => ['block']]);
+
 test('rows that fail without a quickbooks error record why and stop retrying', function () {
     [$engine, $client]         = qbEngine();
     $ledger                    = engineLedger();

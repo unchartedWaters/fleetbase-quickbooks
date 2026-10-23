@@ -1451,11 +1451,12 @@ class SyncEngine
         $remote    = null;
         $cacheHit  = $this->customerRemoteCache !== null && array_key_exists($uuid, $this->customerRemoteCache) === true;
         if ($cacheHit === true && is_array($this->customerRemoteCache[$uuid]) === true) {
-            $remote = $this->customerRemoteCache[$uuid];
-            $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote));
-            $link = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $uuid);
+            $cached = $this->customerRemoteCache[$uuid];
+            $remote = $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $cached, $link);
+            $link   = $this->adoptRemoteCustomer($ledger, $connection, $uuid, $remote, $link);
         } elseif ($cacheHit === false && $link === null) {
             $remote = $this->findRemoteCustomer($connection, $email, (string) ($payload['DisplayName'] ?? ''), $reference !== 'fleetbase');
+            $remote = $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $remote, null);
             if ($remote !== null) {
                 $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote));
                 if ($reference === 'quickbooks' && $copy === true) {
@@ -3694,6 +3695,57 @@ class SyncEngine
         }
 
         $ledger->wallets[$uuid]['currency'] = $currency;
+    }
+
+    /**
+     * The QuickBooks customer a lookup found, or null when another Fleetbase customer, of this
+     * organization or of another one on the same QuickBooks company, already syncs with it.
+     * The customer's own link always counts as its own.
+     *
+     * @param array<string, mixed>      $connection
+     * @param array<string, mixed>|null $remote
+     * @param array<string, mixed>|null $link
+     *
+     * @return array<string, mixed>|null
+     */
+    private function unclaimedRemoteCustomer(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        ?array $remote,
+        ?array $link,
+    ): ?array {
+        $remoteId = (string) ($remote['Id'] ?? '');
+        if ($remote === null || $remoteId === '' || $remoteId === (string) ($link['qbo_id'] ?? '')) {
+            return $remote;
+        }
+        $taken = $ledger->remoteIdsLinked((string) $connection['realm_id'], 'Customer', [$remoteId], $uuid);
+
+        return $taken === [] ? $remote : null;
+    }
+
+    /**
+     * Link the customer to the QuickBooks customer the block lookup found, and return its link.
+     *
+     * @param array<string, mixed>      $connection
+     * @param array<string, mixed>|null $remote
+     * @param array<string, mixed>|null $link
+     *
+     * @return array<string, mixed>|null
+     */
+    private function adoptRemoteCustomer(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        ?array $remote,
+        ?array $link,
+    ): ?array {
+        if ($remote === null) {
+            return $link;
+        }
+        $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote));
+
+        return $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $uuid);
     }
 
     /**
