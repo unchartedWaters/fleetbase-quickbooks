@@ -2,6 +2,7 @@
 
 use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
@@ -176,7 +177,7 @@ test('a timeout or http 500 uses the default backoff and does not set a rate lim
 test('retry delay doubles on each retry and the row fails only after those retries', function () {
     [$engine, $client]           = qbEngine();
     $client->failOnCreate        = 1;
-    $client->failWith            = new QuickBooksException(500, 'unavailable');
+    $client->failWith            = new QuickBooksException(400, 'refused');
     $ledger                      = batchLedger();
     $ledger->customers['cust-1'] = customerRow('cust-1');
     $ledger->pending[]           = pendingRow('customer', 'cust-1');
@@ -243,7 +244,7 @@ test('one retry attempt schedules a retry after the first failure', function () 
 test('a row past the retry limit is marked failed and skipped later', function () {
     [$engine, $client]              = qbEngine();
     $client->failOnCreate           = 1;
-    $client->failWith               = new QuickBooksException(0, 'timeout');
+    $client->failWith               = new QuickBooksException(400, 'refused');
     $ledger                         = batchLedger();
     $ledger->customers['cust-1']    = customerRow('cust-1');
     $ledger->pending[]              = pendingRow('customer', 'cust-1');
@@ -258,6 +259,123 @@ test('a row past the retry limit is marked failed and skipped later', function (
     $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'retry_limit' => 3]), time() + 10);
 
     expect(count($client->calls))->toBe($calls);
+});
+
+test('a QuickBooks outage keeps the row pending past the retry limit', function () {
+    [$engine, $client]           = qbEngine();
+    $client->failOnCreate        = 1;
+    $client->failWith            = new QuickBooksException(503, 'unavailable');
+    $ledger                      = batchLedger();
+    $ledger->customers['cust-1'] = customerRow('cust-1');
+    $ledger->pending[]           = pendingRow('customer', 'cust-1');
+    $settings                    = qbSettings(['interval_minutes' => 1, 'retry_limit' => 3]);
+    $now                         = time();
+
+    for ($run = 0; $run < 6; $run++) {
+        $ledger->pending[0]['next_attempt_at']                = null;
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $client->creates                                      = 0;
+        $engine->runScheduled($ledger, 'company-uuid', $settings, $now + $run * 60);
+    }
+
+    expect($ledger->pending[0]['status'])->toBe('pending')
+        ->and($ledger->pending[0]['attempts'])->toBe(6);
+});
+
+test('outage retries wait longer each time up to the outage cap', function () {
+    $backoff = new BackoffPolicy(static fn (int $wait): int => $wait);
+
+    expect($backoff->outageWait(30, 1, 3600))->toBe(30)
+        ->and($backoff->outageWait(30, 7, 3600))->toBe(1920)
+        ->and($backoff->outageWait(30, 20, 3600))->toBe(3600)
+        // A cap below the normal one never shortens the wait.
+        ->and($backoff->outageWait(30, 20, 60))->toBe(BackoffPolicy::CAP_SECONDS);
+});
+
+test('outage jitter never passes the outage cap', function () {
+    $backoff = new BackoffPolicy(static fn (int $wait): int => $wait + 500);
+
+    expect($backoff->outageWait(30, 1, 3600))->toBe(530)
+        ->and($backoff->outageWait(30, 20, 3600))->toBe(3600);
+});
+
+test('an outage row fails once it is older than the outage window', function () {
+    [$engine, $client]           = qbEngine();
+    $client->failOnCreate        = 1;
+    $client->failWith            = new QuickBooksException(503, 'unavailable');
+    $ledger                      = batchLedger();
+    $ledger->customers['cust-1'] = customerRow('cust-1');
+    $ledger->pending[]           = pendingRow('customer', 'cust-1') + ['created_at' => gmdate('c', time() - 73 * 3600)];
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'retry_limit' => 3]), time());
+
+    expect($ledger->pending[0]['status'])->toBe('failed')
+        ->and($ledger->pending[0]['attempts'])->toBe(1);
+});
+
+test('a customer create every invoice of a block waits on keeps the status QuickBooks gave', function (
+    int $invoices,
+    int $status,
+    string $expected,
+) {
+    [$engine, $client]           = qbEngine();
+    $client->failWith            = new QuickBooksException($status, 'Duplicate Name Exists Error', null, '6240');
+    $ledger                      = batchLedger();
+    $ledger->customers['cust-1'] = customerRow('cust-1');
+    $created                     = gmdate('c', time() - 3600);
+    for ($index = 1; $index <= $invoices; $index++) {
+        $ledger->invoices['inv-' . $index] = invoiceFixture('inv-' . $index, 1000, 'sent', 'INV-' . $index);
+        $ledger->pending[]                 = pendingRow('invoice', 'inv-' . $index) + ['created_at' => $created];
+    }
+    $settings = qbSettings(['interval_minutes' => 1, 'retry_limit' => 3]);
+    $now      = time();
+
+    for ($run = 0; $run < 6; $run++) {
+        foreach (array_keys($ledger->pending) as $key) {
+            $ledger->pending[$key]['next_attempt_at'] = null;
+        }
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $client->creates                                      = 0;
+        $client->failOnCreate                                 = 1;
+        $engine->runScheduled($ledger, 'company-uuid', $settings, $now + $run * 60);
+    }
+
+    expect(array_column($ledger->pending, 'status'))->toBe(array_fill(0, $invoices, $expected));
+})->with([
+    'a refused create for one invoice'         => [1, 400, 'failed'],
+    'a refused create for a block of two'      => [2, 400, 'failed'],
+    'an outage on a create for a block of two' => [2, 503, 'pending'],
+]);
+
+test('the outage window and wait cap come from config', function () {
+    [$engine, $client]              = qbEngine();
+    $client->failOnCreate           = 1;
+    $client->failWith               = new QuickBooksException(0, 'timeout');
+    $ledger                         = batchLedger();
+    $ledger->customers['cust-1']    = customerRow('cust-1');
+    $ledger->pending[]              = pendingRow('customer', 'cust-1') + ['created_at' => gmdate('c', time() - 7200)];
+    $ledger->pending[0]['attempts'] = 9;
+    $hours                          = config('quickbooks.sync.outage_retry_hours');
+    $cap                            = config('quickbooks.sync.outage_backoff_cap_seconds');
+    $now                            = time();
+    try {
+        config()->set('quickbooks.sync.outage_retry_hours', 72);
+        config()->set('quickbooks.sync.outage_backoff_cap_seconds', 1200);
+        $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'retry_limit' => 3]), $now);
+        $pending = $ledger->pending[0];
+        config()->set('quickbooks.sync.outage_retry_hours', 1);
+        $ledger->pending[0]['next_attempt_at']                = null;
+        $ledger->connections['company-uuid']['last_batch_at'] = null;
+        $client->creates                                      = 0;
+        $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'retry_limit' => 3]), $now);
+    } finally {
+        config()->set('quickbooks.sync.outage_retry_hours', $hours);
+        config()->set('quickbooks.sync.outage_backoff_cap_seconds', $cap);
+    }
+
+    expect($pending['status'])->toBe('pending')
+        ->and($pending['next_attempt_at'])->toBe($now + 1200)
+        ->and($ledger->pending[0]['status'])->toBe('failed');
 });
 
 test('a batch creates updates voids and skips a matching invoice', function () {

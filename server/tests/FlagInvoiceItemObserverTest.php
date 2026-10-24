@@ -6,6 +6,7 @@ use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
+use Fleetbase\Quickbooks\Tests\Support\CountingDirectory;
 use Illuminate\Container\Container;
 use Illuminate\Queue\Events\JobProcessed;
 
@@ -132,6 +133,29 @@ test('a line carrying its own company uuid is checked without a lookup', functio
 
     expect($observer->companyLookups)->toBe(0)
         ->and($observer->loads)->toBe(0);
+});
+
+test('lines of an untracked organization cost one lookup per invoice', function () {
+    [$observer]                         = itemObserverHarness();
+    $container                          = Container::getInstance();
+    CountingDirectory::$connectionReads = 0;
+    CountingDirectory::$connections     = [];
+    $container->forgetInstance(FleetbaseDirectory::class);
+    $container->forgetInstance(FlagInvoiceListener::class);
+    $container->bind(FleetbaseDirectory::class, fn () => new CountingDirectory());
+    $container->singleton(FlagInvoiceListener::class);
+
+    try {
+        for ($line = 0; $line < 5; $line++) {
+            $observer->created(invoiceLine('inv-1'));
+        }
+
+        expect(CountingDirectory::$connectionReads)->toBe(1)
+            ->and($observer->companyLookups)->toBe(1)
+            ->and($observer->loads)->toBe(0);
+    } finally {
+        unset($container[FleetbaseDirectory::class], $container[FlagInvoiceListener::class]);
+    }
 });
 
 function resetFlaggedInvoices(): void

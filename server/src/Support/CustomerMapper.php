@@ -7,6 +7,9 @@ namespace Fleetbase\Quickbooks\Support;
  */
 class CustomerMapper
 {
+    /** QuickBooks keeps at most this many characters of a customer's Notes. */
+    public const NOTES_MAX_LENGTH = 4000;
+
     /**
      * The customer name in a form QuickBooks accepts as a DisplayName. QuickBooks rejects a
      * colon (it separates a sub-customer from its parent) and tabs or line breaks. A colon
@@ -47,7 +50,7 @@ class CustomerMapper
             $payload['PrimaryPhone'] = ['FreeFormNumber' => ''];
         }
         if (empty($customer['notes']) === false) {
-            $payload['Notes'] = $customer['notes'];
+            $payload['Notes'] = mb_substr((string) $customer['notes'], 0, self::NOTES_MAX_LENGTH);
         } elseif ($pushClears === true) {
             $payload['Notes'] = '';
         }
@@ -87,11 +90,14 @@ class CustomerMapper
     }
 
     /**
+     * The address, or null when it has no content. With $empty, an address with no content is
+     * returned too, every field null: a billing address QuickBooks emptied.
+     *
      * @param array<string, mixed> $bill QuickBooks BillAddr
      *
      * @return array{line1: ?string, line2: ?string, city: ?string, state: ?string, postal_code: ?string, country: ?string}|null
      */
-    public function addressFromBillAddr(array $bill): ?array
+    public function addressFromBillAddr(array $bill, bool $empty = false): ?array
     {
         $address = [
             'line1'       => $this->textOrNull($bill['Line1'] ?? null),
@@ -102,7 +108,17 @@ class CustomerMapper
             'country'     => $this->textOrNull($bill['Country'] ?? null),
         ];
 
-        return $this->addressHasContent($address) === true ? $address : null;
+        return ($empty === true || $this->addressHasContent($address) === true) ? $address : null;
+    }
+
+    /**
+     * Whether a Fleetbase billing address has any content.
+     *
+     * @param array<string, mixed> $address
+     */
+    public function hasAddress(array $address): bool
+    {
+        return $this->addressHasContent($address);
     }
 
     /**

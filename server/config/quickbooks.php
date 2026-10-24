@@ -14,7 +14,10 @@ return [
         // host does not trust, all users share the proxy IP and this one limit. 0 turns it off.
         'callback_per_minute' => 30,
     ],
-    'webhook'       => [
+    // Seconds before an organization can start the same manual action again (Sync now,
+    // reconcile, customer import, Connect). A repeat inside it answers HTTP 429. 0 turns it off.
+    'manual_cooldown_seconds' => env('QUICKBOOKS_MANUAL_COOLDOWN_SECONDS', 30),
+    'webhook'                 => [
         // The oldest signed webhook delivery that is applied in full, in seconds. A delivery
         // whose entity timestamps are older than this is stale (see stale_replay_seconds).
         'max_age_seconds' => 600,
@@ -53,6 +56,11 @@ return [
         // How long a running sync leases the pending rows it loaded. A lease left by a
         // killed worker expires after this many seconds. Keep it above the job timeout.
         'claim_seconds'           => 900,
+        // QuickBooks could not be reached (timeout, network error, HTTP 408, 409 or 5xx):
+        // such rows do not use up retry_limit. They wait up to this many seconds between
+        // tries, and keep trying for this many hours before they are marked failed.
+        'outage_backoff_cap_seconds' => 3600,
+        'outage_retry_hours'         => 72,
     ],
     // Days to keep sync history. quickbooks:prune runs daily; 0 keeps that history forever.
     'retention' => [

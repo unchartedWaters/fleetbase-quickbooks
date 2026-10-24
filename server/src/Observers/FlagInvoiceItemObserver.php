@@ -3,7 +3,6 @@
 namespace Fleetbase\Quickbooks\Observers;
 
 use Fleetbase\Quickbooks\Listeners\FlagInvoiceListener;
-use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Support\FlagGuard;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Container\Container;
@@ -26,6 +25,14 @@ class FlagInvoiceItemObserver
      */
     private static array $flaggedInvoices = [];
 
+    /**
+     * Invoice uuids already checked in this HTTP request or queue job, mapped to their
+     * organization, or to '' when that organization does not use QuickBooks.
+     *
+     * @var array<string, string>
+     */
+    private static array $checkedInvoices = [];
+
     private static bool $requestHooked = false;
 
     private static bool $jobHooked = false;
@@ -37,6 +44,7 @@ class FlagInvoiceItemObserver
     public static function forget(): void
     {
         self::$flaggedInvoices = [];
+        self::$checkedInvoices = [];
     }
 
     public function created(object $item): void
@@ -74,12 +82,12 @@ class FlagInvoiceItemObserver
             }
 
             // Untracked organizations stop here, before the full invoice and its relations are read.
-            $companyUuid = (string) ($item->company_uuid ?? '');
-            if ($companyUuid === '') {
-                $companyUuid = $this->companyOf($invoiceUuid);
-            }
-            $directory = Container::getInstance()->make(FleetbaseDirectory::class);
-            if ($companyUuid === '' || $directory instanceof FleetbaseDirectory === false || $directory->tracks($companyUuid) === false) {
+            // The listener is a singleton, so its directory remembers untracked organizations.
+            $listener = Container::getInstance()->make(FlagInvoiceListener::class);
+            if (
+                $listener instanceof FlagInvoiceListener === false
+                || $this->tracked($item, $invoiceUuid, $listener) === false
+            ) {
                 return;
             }
 
@@ -89,11 +97,7 @@ class FlagInvoiceItemObserver
             }
 
             self::$flaggedInvoices[$invoiceUuid] = true;
-
-            $listener = Container::getInstance()->make(FlagInvoiceListener::class);
-            if ($listener instanceof FlagInvoiceListener === true) {
-                $listener->handle((object) ['invoice' => $invoice]);
-            }
+            $listener->handle((object) ['invoice' => $invoice]);
         }, 'invoice line item', ['invoice_uuid' => (string) ($item->invoice_uuid ?? '')]);
     }
 
@@ -136,6 +140,25 @@ class FlagInvoiceItemObserver
         // Octane keeps this dispatcher across requests, but the terminating hook above reaches only the first one.
         $events->listen('Illuminate\\Foundation\\Http\\Events\\RequestHandled', $forget);
         self::$jobHooked = true;
+    }
+
+    /**
+     * Whether the line's organization uses QuickBooks. Lines of one invoice are looked up once.
+     */
+    private function tracked(object $item, string $invoiceUuid, FlagInvoiceListener $listener): bool
+    {
+        if (isset(self::$checkedInvoices[$invoiceUuid]) === true) {
+            return self::$checkedInvoices[$invoiceUuid] !== '';
+        }
+
+        $companyUuid = (string) ($item->company_uuid ?? '');
+        if ($companyUuid === '') {
+            $companyUuid = $this->companyOf($invoiceUuid);
+        }
+        $tracked                              = $companyUuid !== '' && $listener->tracks($companyUuid) === true;
+        self::$checkedInvoices[$invoiceUuid]  = $tracked === true ? $companyUuid : '';
+
+        return $tracked;
     }
 
     protected function companyOf(string $invoiceUuid): string

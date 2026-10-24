@@ -149,6 +149,9 @@ function claimSchema(bool $withClaims = true): void
         $table->string('sync_token')->default('0');
         $table->string('name')->nullable();
         $table->string('state')->nullable();
+        $table->text('invoice_tokens')->nullable();
+        $table->string('kept_customer')->nullable();
+        $table->string('kept_from')->nullable();
         $table->timestamps();
         $table->unique(['company_uuid', 'local_type', 'local_uuid'], 'quickbooks_links_local_unique');
     });

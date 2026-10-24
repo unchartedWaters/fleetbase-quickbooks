@@ -355,7 +355,8 @@ test('use the quickbooks invoice copies the total and understood line items', fu
     ];
     $ledger->links[]   = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-1',
-        'qbo_entity'   => 'Invoice', 'qbo_id' => 'qb-1', 'sync_token' => '2',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Invoice', 'qbo_id' => 'qb-1', 'sync_token' => '1',
     ];
     $ledger->pending[] = pending('invoice', 'inv-1');
 
@@ -432,7 +433,8 @@ test('use the quickbooks account copies wallet details and leaves the fleetbase 
     ];
     $ledger->links[] = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'wallet', 'local_uuid' => 'wal-1',
-        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '1',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '0',
     ];
     $ledger->pending[] = pending('wallet', 'wal-1');
     $settings          = qbSettings([
@@ -485,7 +487,8 @@ test('quickbooks primary copies the linked account currency onto the wallet', fu
     ];
     $ledger->links[] = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'wallet', 'local_uuid' => 'wal-1',
-        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '1',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '0',
     ];
     $ledger->pending[] = pending('wallet', 'wal-1');
 
@@ -522,7 +525,8 @@ test('quickbooks primary uses the home currency when the account has no currency
     ];
     $ledger->links[] = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'wallet', 'local_uuid' => 'wal-1',
-        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '1',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '0',
     ];
     $ledger->pending[] = pending('wallet', 'wal-1');
 
@@ -674,7 +678,8 @@ function inactiveAccountRun(int $balance): array
     $client->accounts['acct-9'] = ['Id' => 'acct-9', 'SyncToken' => '1', 'Name' => 'Operating', 'Description' => 'Float', 'Active' => false, 'CurrencyRef' => ['value' => 'USD']];
     $ledger->links[]            = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'wallet', 'local_uuid' => 'wal-1',
-        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '1',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Account', 'qbo_id' => 'acct-9', 'sync_token' => '0',
     ];
     $ledger->pending[] = pending('wallet', 'wal-1');
     $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'wallet_conflict' => 'quickbooks']), time());
@@ -693,4 +698,46 @@ test('an inactive quickbooks account closes a wallet whose balance is zero', fun
     [, , $ledger] = inactiveAccountRun(0);
 
     expect($ledger->wallets['wal-1']['status'])->toBe('closed');
+});
+
+test('a wallet name and description are cut to what QuickBooks accepts, and the compare stays stable', function () {
+    $mapper  = new WalletMapper();
+    $wallet  = [
+        'public_id'   => 'wallet_fuel01',
+        'name'        => 'Fuel: Region "North"',
+        'description' => str_repeat('d', 150),
+        'currency'    => 'USD',
+        'status'      => 'active',
+    ];
+    $payload = $mapper->toQuickBooks($wallet);
+    $remote  = [
+        'Name'        => $payload['Name'],
+        'Description' => $payload['Description'],
+        'CurrencyRef' => ['value' => 'USD'],
+        'Active'      => true,
+    ];
+    $long = $mapper->toQuickBooks(['name' => str_repeat('n', 120) . ':x']);
+
+    expect($payload['Name'])->toBe('Fuel Region North')
+        ->and(mb_strlen($payload['Description']))->toBe(100)
+        ->and($mapper->matches($wallet, $payload, $remote))->toBeTrue()
+        ->and($mapper->nameFromQuickBooks($wallet, 'Fuel Region North'))->toBe('Fuel: Region "North"')
+        ->and(mb_strlen($long['Name']))->toBe(WalletMapper::NAME_MAX_LENGTH);
+});
+
+test('invoice and customer notes are cut to the QuickBooks limits', function () {
+    $invoice  = (new InvoiceMapper())->toQuickBooks([
+        'uuid'     => 'inv-1',
+        'number'   => 'INV-1',
+        'currency' => 'USD',
+        'notes'    => str_repeat('i', 4001),
+        'items'    => [],
+    ], '7', 'item-1');
+    $customer = (new CustomerMapper())->toQuickBooks(['name' => 'Ada', 'notes' => str_repeat('c', 4001)]);
+    // QuickBooks stores a customer note of up to 4000 characters in full.
+    $kept = (new CustomerMapper())->toQuickBooks(['name' => 'Ada', 'notes' => str_repeat('k', 2500)]);
+
+    expect(mb_strlen($invoice['PrivateNote']))->toBe(4000)
+        ->and(mb_strlen($customer['Notes']))->toBe(4000)
+        ->and(mb_strlen($kept['Notes']))->toBe(2500);
 });

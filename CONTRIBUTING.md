@@ -1,6 +1,7 @@
 # Contributing
 
-This package syncs Fleetbase customers, invoices, payments, and wallets (QuickBooks accounts) with QuickBooks Online.
+This package syncs Fleetbase customers, invoices, payments, wallets (QuickBooks
+accounts), and products with QuickBooks Online.
 
 ## Setup
 

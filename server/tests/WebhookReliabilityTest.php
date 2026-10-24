@@ -14,6 +14,7 @@ use Fleetbase\Quickbooks\Tests\Support\CacheTtlRecorder;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 function whrSettings(): SettingsService
 {
@@ -221,9 +222,11 @@ test('a delete older than ten minutes is acknowledged but not applied, one insid
             $old     = $controller->handle(whrRequest($stale, whrSign($stale, 'verifier-token')));
             $current = $controller->handle(whrRequest($fresh, whrSign($fresh, 'verifier-token')));
 
+            // The stale delete is passed on only to be noted in Activity.
             expect($old->getStatusCode())->toBe(200)
                 ->and($current->getStatusCode())->toBe(200)
-                ->and($seen)->toHaveCount(1);
+                ->and(array_map(fn (QuickBooksEntityChanged $event) => $event->operation, $seen))
+                ->toBe(['stale-delete', 'delete']);
         });
     } finally {
         config()->set('quickbooks.webhook.max_age_seconds', $previous);
@@ -256,7 +259,8 @@ test('the maximum delivery age is configurable and drives the replay cache lifet
 
             expect($rejected->getStatusCode())->toBe(200)
                 ->and($accepted->getStatusCode())->toBe(200)
-                ->and($seen)->toHaveCount(1);
+                ->and(array_map(fn (QuickBooksEntityChanged $event) => $event->operation, $seen))
+                ->toBe(['stale-delete', 'delete']);
         });
     } finally {
         config()->set('quickbooks.webhook.max_age_seconds', $previous);
@@ -376,14 +380,14 @@ function whrCloudEvent(string $type, string $entityId, string $realmId, ?string 
 
 test('a cloudevents delivery dispatches one event per in-scope entity on each connected realm', function () {
     $body = json_encode([
-        whrCloudEvent('qbo.customer.created.v1', '55', 'realm-whr'),
-        whrCloudEvent('qbo.vendor.created.v1', '9', 'realm-whr'),
-        whrCloudEvent('qbo.invoice.updated.v1', '8', 'realm-whr'),
-        whrCloudEvent('qbo.invoice.emailed.v1', '8', 'realm-whr'),
-        whrCloudEvent('qbo.payment.created.v1', '3', 'realm-unknown'),
-        whrCloudEvent('qbo.account.merged.v1', '7', 'realm-whr'),
-        whrCloudEvent('qbo.payment.voided.v1', '4', 'realm-two'),
-        whrCloudEvent('qbo.invoice.deleted.v1', '6', 'realm-two'),
+        whrCloudEvent('qbo.customer.created.v1', '55', 'realm-whr', whrStamp(0)),
+        whrCloudEvent('qbo.vendor.created.v1', '9', 'realm-whr', whrStamp(0)),
+        whrCloudEvent('qbo.invoice.updated.v1', '8', 'realm-whr', whrStamp(0)),
+        whrCloudEvent('qbo.invoice.emailed.v1', '8', 'realm-whr', whrStamp(0)),
+        whrCloudEvent('qbo.payment.created.v1', '3', 'realm-unknown', whrStamp(0)),
+        whrCloudEvent('qbo.account.merged.v1', '7', 'realm-whr', whrStamp(0)),
+        whrCloudEvent('qbo.payment.voided.v1', '4', 'realm-two', whrStamp(0)),
+        whrCloudEvent('qbo.invoice.deleted.v1', '6', 'realm-two', whrStamp(0)),
     ]);
     $controller = whrController(whrSettings(), whrStore(), [
         'realm-whr' => 'company-a',
@@ -429,9 +433,11 @@ test('a stale cloudevents delete is acknowledged but not applied and a fresh one
             $old     = $controller->handle(whrRequest($stale, whrSign($stale, 'verifier-token')));
             $current = $controller->handle(whrRequest($fresh, whrSign($fresh, 'verifier-token')));
 
+            // The stale delete is passed on only to be noted in Activity.
             expect($old->getStatusCode())->toBe(200)
                 ->and($current->getStatusCode())->toBe(200)
-                ->and($seen)->toHaveCount(1);
+                ->and(array_map(fn (QuickBooksEntityChanged $event) => $event->operation, $seen))
+                ->toBe(['stale-delete', 'delete']);
         });
     } finally {
         config()->set('quickbooks.webhook.max_age_seconds', $previous);
@@ -461,7 +467,7 @@ test('a cloudevents delivery needs a valid signature and a signed body with no r
     });
 });
 
-test('a stale delivery applies its creates and updates as reads and skips its deletes and merges', function () {
+test('a stale delivery reads its updates, re-reads payment deletes, and applies no delete or merge', function () {
     $at     = whrStamp(700);
     $merged = whrCloudEvent('qbo.customer.merged.v1', '12', 'realm-whr', $at);
 
@@ -484,9 +490,13 @@ test('a stale delivery applies its creates and updates as reads and skips its de
         );
 
         expect($response->getStatusCode())->toBe(200)
+            // A stale payment void only re-reads its invoices' balances, and a stale customer
+            // delete is passed on only to be noted in Activity. The merge is still skipped.
             ->and($summary)->toBe([
                 ['customer', '55', 'create'],
                 ['invoice', '8', 'update'],
+                ['customer', '9', 'stale-delete'],
+                ['payment', '4', 'refresh'],
                 ['customer', '12', 'update'],
             ]);
     });
@@ -544,4 +554,64 @@ test('a delivery older than the stale replay window is acknowledged but not appl
     } finally {
         config()->set('quickbooks.webhook.stale_replay_seconds', $previous);
     }
+});
+
+test('a signed delete with no timestamp is not applied from the payload', function () {
+    $body       = whrBody('', 'Delete');
+    $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+
+    whrWithEvents(function (array &$seen) use ($controller, $body) {
+        $response = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+        Cache::flush();
+        $replayed = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+
+        expect($response->getStatusCode())->toBe(200)
+            ->and($replayed->getStatusCode())->toBe(200)
+            ->and(array_map(static fn (QuickBooksEntityChanged $event): string => $event->operation, $seen))
+            ->not->toContain('delete');
+    });
+});
+
+test('an undated delivery is logged as undated, not as older than the maximum age', function () {
+    $body       = whrBody('', 'Delete');
+    $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+    $logged     = new class {
+        /** @var array<int, string> */
+        public array $messages = [];
+
+        /**
+         * @param array<int, mixed> $arguments
+         */
+        public function __call(string $method, array $arguments): void
+        {
+            $this->messages[] = (string) ($arguments[0] ?? '');
+        }
+    };
+    $previousLog = Log::getFacadeRoot();
+    Log::swap($logged);
+
+    try {
+        whrWithEvents(function (array &$seen) use ($controller, $body) {
+            $response = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+            expect($response->getStatusCode())->toBe(200);
+        });
+    } finally {
+        Log::swap($previousLog);
+    }
+
+    expect(implode("\n", $logged->messages))->toContain('has a change with no time')
+        ->not->toContain('older than the maximum age');
+});
+
+test('an undated create is still read back from QuickBooks', function () {
+    $body       = whrBody();
+    $controller = whrController(whrSettings(), whrStore(), ['realm-whr' => 'company-a']);
+
+    whrWithEvents(function (array &$seen) use ($controller, $body) {
+        $response = $controller->handle(whrRequest($body, whrSign($body, 'verifier-token')));
+
+        expect($response->getStatusCode())->toBe(200)
+            ->and($seen)->toHaveCount(1)
+            ->and($seen[0]->operation)->toBe('create');
+    });
 });

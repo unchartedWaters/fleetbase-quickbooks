@@ -6,10 +6,22 @@ use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\NextDocNumber;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\Translation;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
+/**
+ * @phpstan-type BatchItem array{
+ *     bId: string,
+ *     operation?: string,
+ *     entity?: string,
+ *     payload?: array<string, mixed>,
+ *     query?: string,
+ *     key?: string
+ * }
+ */
 class QuickBooksClient
 {
     public const TRANSPORT_MESSAGE = 'quickbooks.messages.transport';
@@ -20,8 +32,27 @@ class QuickBooksClient
 
     public const UPDATE_BATCH_SIZE = 20;
 
+    /** Held per QuickBooks company while invoice numbers are chosen, so two runs never pick the same ones. */
+    private const DOC_NUMBER_LOCK = 'quickbooks.docnumber.';
+
+    /**
+     * Longer than the slowest choice, so the lock never lapses while numbers are chosen. The
+     * choice makes at most six requests (the latest-invoice query and five single checks; a
+     * block of up to 100 creates checks in one Batch call), each up to Laravel's default 30 s
+     * timeout. The lock is released at once when the choice ends.
+     */
+    private const DOC_NUMBER_LOCK_SECONDS = 240;
+
+    /** The last invoice number handed out per QuickBooks company, for creates that have not landed yet. */
+    private const DOC_NUMBER_FLOOR = 'quickbooks.docnumber-last.';
+
+    private const DOC_NUMBER_FLOOR_SECONDS = 3600;
+
     /** Intuit's limit for the requestid and a batch item's bId together. */
     private const REQUEST_ID_FIELD_LIMIT = 50;
+
+    /** Seconds a run waits while another run picks invoice numbers in the same QuickBooks company. */
+    protected int $docNumberLockWait = 10;
 
     /** @var array<string, array<string, mixed>> */
     private array $preferencesByRealm = [];
@@ -336,17 +367,56 @@ class QuickBooksClient
             return [];
         }
 
+        // Runs release the company lock during HTTP, so two of them can choose numbers at once. The
+        // realm lock and the floor keep a second run from picking numbers the first has not written.
+        $realmId = (string) ($connection['realm_id'] ?? '');
+        try {
+            $lock = Cache::lock(self::DOC_NUMBER_LOCK . $realmId, self::DOC_NUMBER_LOCK_SECONDS);
+            $lock->block($this->docNumberLockWait);
+        } catch (LockTimeoutException) {
+            // The creates fail with invoice-number-unconfirmed and are retried later.
+            return [];
+        } catch (\Throwable) {
+            // No cache store: choose without the lock, as a single run always could.
+            return $this->chooseInvoiceDocNumbers($connection, $count, null);
+        }
+
+        try {
+            return $this->chooseInvoiceDocNumbers($connection, $count, $realmId);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<int, string>
+     */
+    private function chooseInvoiceDocNumbers(array $connection, int $count, ?string $realmId): array
+    {
         $latest    = $this->latestInvoiceDocNumber($connection);
         $candidate = $latest === '' ? '1' : NextDocNumber::after($latest);
         if ($candidate === null) {
             return [];
         }
-
-        if ($count === 1) {
-            return $this->firstFreeInvoiceDocNumber($connection, $candidate);
+        $floor = $realmId === null ? null : Cache::get(self::DOC_NUMBER_FLOOR . $realmId);
+        if (is_string($floor) === true) {
+            $afterFloor = NextDocNumber::after($floor);
+            if ($afterFloor !== null && NextDocNumber::isLater($afterFloor, $candidate) === true) {
+                $candidate = $afterFloor;
+            }
         }
 
-        return $this->freeInvoiceDocNumbers($connection, $candidate, $count);
+        $numbers = $count === 1
+            ? $this->firstFreeInvoiceDocNumber($connection, $candidate)
+            : $this->freeInvoiceDocNumbers($connection, $candidate, $count);
+        if ($realmId !== null && $numbers !== []) {
+            $last = $numbers[count($numbers) - 1];
+            Cache::put(self::DOC_NUMBER_FLOOR . $realmId, $last, self::DOC_NUMBER_FLOOR_SECONDS);
+        }
+
+        return $numbers;
     }
 
     /**
@@ -714,8 +784,8 @@ class QuickBooksClient
     }
 
     /**
-     * @param array<string, mixed>                                                                                                $connection
-     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     * @param array<string, mixed>  $connection
+     * @param array<int, BatchItem> $items
      *
      * @return array<int, array<string, mixed>>
      */
@@ -903,9 +973,10 @@ class QuickBooksClient
      *   bId, operation (create|update|void|delete), entity (Customer|Invoice|Payment|Account|Item), payload
      * or a query:
      *   bId, query
+     * A write may also carry key, which goes into the requestid and is not sent.
      *
-     * @param array<string, mixed>                                                                                                $connection
-     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     * @param array<string, mixed>  $connection
+     * @param array<int, BatchItem> $items
      *
      * @return array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}>
      */
@@ -1155,7 +1226,10 @@ class QuickBooksClient
     private function tokenRequest(#[\SensitiveParameter] array $credentials, #[\SensitiveParameter] array $form): array
     {
         try {
+            // The company lock is held for this call, so it must not hang on Intuit.
             $response = Http::asForm()
+                ->timeout(15)
+                ->connectTimeout(5)
                 ->withBasicAuth($credentials['client_id'], $credentials['client_secret'])
                 ->post('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', $form);
         } catch (ConnectionException) {
@@ -1225,15 +1299,23 @@ class QuickBooksClient
     }
 
     /**
-     * @param array<string, mixed>                                                                                                $connection
-     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     * @param array<string, mixed>  $connection
+     * @param array<int, BatchItem> $items
      *
      * @return array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}>
      */
     private function postBatch(array $connection, array $items): array
     {
-        $requests  = self::batchRequests($items);
-        $keyed     = ['BatchItemRequest' => $requests];
+        $requests = self::batchRequests($items);
+        $keyed    = ['BatchItemRequest' => $requests];
+        // An item's key (the record and the pending row driving it) is part of the requestid, not sent.
+        $keys = array_filter(
+            array_column($items, 'key', 'bId'),
+            static fn (mixed $key): bool => is_string($key) === true && $key !== ''
+        );
+        if ($keys !== []) {
+            $keyed['keys'] = $keys;
+        }
         $requestId = $this->requestId((string) $connection['realm_id'], 'post', 'batch', $keyed);
         $wireIds   = self::wireBatchIds(array_column($requests, 'bId'), $requestId);
         foreach ($requests as $index => $request) {
@@ -1307,7 +1389,7 @@ class QuickBooksClient
     /**
      * BatchItemRequest entries: a query, or an entity write with its operation and payload.
      *
-     * @param array<int, array{bId: string, operation?: string, entity?: string, payload?: array<string, mixed>, query?: string}> $items
+     * @param array<int, BatchItem> $items
      *
      * @return array<int, array<string, mixed>>
      */
@@ -1566,9 +1648,12 @@ class QuickBooksClient
      * Intuit applies a write whose requestid it has already seen only once and answers with
      * the first result, so a create that timed out after QuickBooks saved it is not saved
      * again when the run retries it. The id hashes the realm, the request, the Fleetbase
-     * record (the bIds of a batch, or the key set by withWriteKey) and the UTC day: a retry
-     * of the same write reuses it, while a changed body, another record or a later day (a
-     * record deleted in QuickBooks and created again) gets a new one. Reads, a batch of
+     * record (the bIds and item keys of a batch, or the key set by withWriteKey; the engine
+     * adds the pending row that drives the write) and the body: a retry of the same write
+     * reuses it on any day, while a changed body (an update carries its SyncToken), another
+     * record or a new pending row (a record deleted in QuickBooks and created again) gets a
+     * new one. Intuit matches the id alone and remembers
+     * only successes. Reads, a batch of
      * queries only, and a single write with no record key carry none. The id is a UUID-shaped
      * 36 characters; Intuit counts it together with each batch bId (see wireBatchIds).
      *
@@ -1594,7 +1679,6 @@ class QuickBooksClient
             $path,
             $isBatch === true ? '' : (string) $this->writeKey,
             is_string($body) === true ? $body : '',
-            gmdate('Y-m-d'),
         ]));
 
         return implode('-', [
@@ -1623,7 +1707,8 @@ class QuickBooksClient
 
     private function throwIfFailed(Response $response): void
     {
-        if ($response->successful() === true) {
+        $status = self::failedStatus($response);
+        if ($status === null) {
             return;
         }
 
@@ -1643,20 +1728,42 @@ class QuickBooksClient
 
         // Intuit's detail is its own English text, so it is a param and is shown as given.
         $detail  = implode(': ', array_filter($details, static fn (string $part): bool => $part !== ''));
-        $status  = (string) $response->status();
         $message = $detail === ''
-            ? Translation::encode('quickbooks.messages.request-failed', ['status' => $status])
+            ? Translation::encode('quickbooks.messages.request-failed', ['status' => (string) $status])
             : Translation::encode(
                 'quickbooks.messages.request-failed-detail',
-                ['status' => $status, 'detail' => $detail]
+                ['status' => (string) $status, 'detail' => $detail]
             );
         // A 400 with Intuit's own explanation is a refusal of what was sent, not a failed call.
         $faultDetail = is_array($fault) === true ? trim((string) ($fault['Detail'] ?? $fault['Message'] ?? '')) : '';
-        if ($response->status() === 400 && $faultDetail !== '' && is_string($oauthError) === false) {
+        if ($status === 400 && $faultDetail !== '' && is_string($oauthError) === false) {
             $message = Translation::encode('quickbooks.messages.request-rejected', ['detail' => $faultDetail]);
         }
 
-        throw new QuickBooksException($response->status(), $message, $response->header('Retry-After'), $faultCode);
+        // A stale SyncToken only means the record changed in QuickBooks meanwhile: temporary,
+        // as batchFaultStatus() treats it inside a batch.
+        $thrown = $status === 400 && $faultCode === '5010' ? 409 : $status;
+
+        throw new QuickBooksException($thrown, $message, $response->header('Retry-After'), $faultCode);
+    }
+
+    /**
+     * The status to throw, or null for a success. Intuit can answer 200 with a top-level Fault
+     * and change nothing (seen on a Preferences update), so that answer is a refusal (400), or
+     * a refused access token (401) for an authentication fault. A batch keeps its items' faults
+     * inside BatchItemResponse, and postBatch() reads those.
+     */
+    private static function failedStatus(Response $response): ?int
+    {
+        if ($response->successful() === false) {
+            return $response->status();
+        }
+        $fault = $response->json('Fault');
+        if (is_array($fault) === false) {
+            return null;
+        }
+
+        return self::isAuthenticationFault(['Fault' => $fault]) === true ? 401 : 400;
     }
 
     /**

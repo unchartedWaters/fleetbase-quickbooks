@@ -30,6 +30,9 @@ class RemoteChangeEngine extends SyncEngine
 
     public ?QuickBooksException $failure = null;
 
+    /** Runs as the QuickBooks read, with the company lock released. */
+    public ?\Closure $duringRead = null;
+
     public static function failingWith(?QuickBooksException $failure): self
     {
         $engine          = new self(
@@ -52,6 +55,9 @@ class RemoteChangeEngine extends SyncEngine
         int $now,
     ): void {
         $this->calls[] = $entities;
+        if ($this->duringRead !== null) {
+            $this->runHttp($this->duringRead);
+        }
         if ($this->failure !== null) {
             throw $this->failure;
         }

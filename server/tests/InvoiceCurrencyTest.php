@@ -193,7 +193,8 @@ test('a quickbooks yen invoice is copied back in whole yen', function () {
     ];
     $ledger->links[] = [
         'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'invoice', 'local_uuid' => 'inv-1',
-        'qbo_entity'   => 'Invoice', 'qbo_id' => 'qb-1', 'sync_token' => '1',
+        // An older token: QuickBooks changed the record since the last sync.
+        'qbo_entity'   => 'Invoice', 'qbo_id' => 'qb-1', 'sync_token' => '0',
     ];
 
     $engine->runScheduled($ledger, 'company-uuid', qbSettings([
@@ -325,4 +326,72 @@ test('a quickbooks yen payment and balance are copied in whole yen', function ()
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
         ->and($ledger->invoices['inv-2']['amount_paid'])->toBe(3500)
         ->and($client->calls)->not->toContain('updateInvoice');
+});
+
+test('a customer created for a foreign currency invoice is created in that currency', function () {
+    [$engine, $client, $ledger] = currencyRun(['currency' => 'EUR'], true);
+    $ledger->links              = [];
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+    $made  = array_values($client->customers);
+
+    expect($batch['created'])->toBe(1)
+        ->and($made)->toHaveCount(1)
+        ->and($made[0]['CurrencyRef']['value'] ?? null)->toBe('EUR')
+        ->and($client->invoices['inv-1']['CurrencyRef']['value'])->toBe('EUR');
+});
+
+test('a customer created for a home currency invoice is created without a currency', function () {
+    [$engine, $client, $ledger] = currencyRun([], true);
+    $ledger->links              = [];
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+    $made = array_values($client->customers);
+
+    expect($made)->toHaveCount(1)
+        ->and($made[0])->not->toHaveKey('CurrencyRef');
+});
+
+test('an invoice whose currency differs from its linked quickbooks customer fails with a clear message', function () {
+    [$engine, $client, $ledger]        = currencyRun(['currency' => 'EUR'], true);
+    $client->customers['qbo-customer'] = [
+        'Id'          => 'qbo-customer',
+        'SyncToken'   => '0',
+        'DisplayName' => 'Ada',
+        'CurrencyRef' => ['value' => 'USD'],
+    ];
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['failed'])->toBe(1)
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and(qbText($ledger->attempts[0]['error']))->toBe(
+            'Invoice currency EUR does not match the currency of QuickBooks customer "Ada" (USD).'
+            . ' QuickBooks needs a separate customer for each currency.'
+        );
+});
+
+test('customers created in one block for foreign currency invoices are created in that currency', function () {
+    [$engine, $client, $ledger]  = currencyRun(['currency' => 'EUR'], true);
+    $ledger->links               = [];
+    $ledger->customers['cust-2'] = [
+        'uuid'         => 'cust-2',
+        'company_uuid' => 'company-uuid',
+        'name'         => 'Bea',
+        'email'        => 'bea@example.test',
+    ];
+    $ledger->invoices['inv-2']   = array_merge($ledger->invoices['inv-1'], [
+        'uuid'          => 'inv-2',
+        'number'        => 'INV-2',
+        'customer_uuid' => 'cust-2',
+    ]);
+    $ledger->pending[]           = array_merge($ledger->pending[0], ['local_uuid' => 'inv-2']);
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+    $currencies = array_map(
+        fn (array $customer): ?string => $customer['CurrencyRef']['value'] ?? null,
+        array_values($client->customers)
+    );
+
+    expect($currencies)->toBe(['EUR', 'EUR']);
 });

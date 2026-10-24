@@ -1,6 +1,6 @@
 import { module, test } from 'qunit';
 import { setupRenderingTest } from 'dummy/tests/helpers';
-import { click, fillIn, render, settled, waitUntil } from '@ember/test-helpers';
+import { click, fillIn, render, settled, triggerKeyEvent, waitUntil } from '@ember/test-helpers';
 import { hbs } from 'ember-cli-htmlbars';
 import Service from '@ember/service';
 import ModalsManagerStub from '../../helpers/modals-manager-stub';
@@ -225,7 +225,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-400');
+        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-500');
         assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
         assert.dom('[data-test-credential-save-step]').hasText('Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.');
         assert.dom("[data-test-field='redirect_uri']").doesNotExist();
@@ -414,7 +414,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-redirect-step]').hasText('Under Redirect URIs, paste the Public OAuth Redirect URL.');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-400');
+        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-500');
         assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
         assert.dom('[data-test-connection-state]').hasAttribute('data-test-connection-state', 'loading');
         assert.dom('[data-test-connect]').doesNotExist();
@@ -882,7 +882,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assertPublicUrl(assert, 'public_oauth_redirect_url', 'http://internal.example/oauth');
         assertSelectableUrl(assert, 'internal_oauth_redirect_url', 'http://internal.example/oauth');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-400');
+        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-500');
         assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
         assert.dom('[data-test-localhost-warning]').doesNotExist();
         assert.dom().doesNotIncludeText('{{fleetbase.url}}');
@@ -1099,6 +1099,128 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-error='payment_direction']").doesNotExist();
     });
 
+    test('turning wallets on asks before saving', async function (assert) {
+        const modals = this.owner.lookup('service:modals-manager');
+        modals.decline = true;
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: false });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @syncOnly={{true}} @sync={{this.sync}} @settingsLoaded={{true}} @onSave={{this.onSave}} />`);
+        await click("[data-test-sync='wallet_enabled']");
+        await click(saveButton());
+
+        assert.strictEqual(modals.last.title, 'Start syncing these records?');
+        assert.strictEqual(
+            modals.last.body,
+            'Saving sends every existing record of these types to QuickBooks in the background: Accounts / Wallets. Accounts / Wallets create one QuickBooks account per wallet.'
+        );
+        assert.strictEqual(modals.last.acceptButtonText, 'Save Changes');
+        assert.strictEqual(this.saved, null, 'nothing is saved until the confirmation is accepted');
+
+        await modals.last.confirm();
+        await settled();
+
+        assert.true(this.saved.sync.wallet_enabled);
+        assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
+    });
+
+    test('an organization save that turns nothing on does not ask', async function (assert) {
+        const modals = this.owner.lookup('service:modals-manager');
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: true, payment_enabled: false });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @syncOnly={{true}} @sync={{this.sync}} @settingsLoaded={{true}} @onSave={{this.onSave}} />`);
+        await click("[data-test-sync='wallet_enabled']");
+        await click(saveButton());
+
+        assert.strictEqual(modals.last, null);
+        assert.false(this.saved.sync.wallet_enabled);
+        assert.false(this.saved.sync.payment_enabled);
+    });
+
+    test('admin save with wallets turned on does not ask', async function (assert) {
+        const modals = this.owner.lookup('service:modals-manager');
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: false });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
+        await click("[data-test-sync='wallet_enabled']");
+        await click(saveButton());
+
+        assert.strictEqual(modals.last, null);
+        assert.true(this.saved.sync.wallet_enabled);
+    });
+
+    test('field help text uses the readable gray', async function (assert) {
+        this.set('settings', {
+            client_id: 'id',
+            environment: 'sandbox',
+            client_secret_set: true,
+            webhook_verifier_set: true,
+            internal_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
+            internal_oauth_redirect_url: 'http://internal.example/quickbooks/int/v1/oauth/callback',
+        });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
+
+        assert.dom('[data-test-secret-set]').exists();
+        assert.dom('[data-test-verifier-set]').exists();
+        const hints = [...this.element.querySelectorAll('[data-test-field-help], [data-test-secret-set], [data-test-verifier-set]')];
+        assert.ok(hints.length > 10, 'every hint is checked');
+        hints.forEach((hint) => {
+            assert.dom(hint).hasClass('text-gray-500');
+            assert.dom(hint).hasClass('dark:text-gray-400');
+        });
+    });
+
+    test('a Data Resolution switch toggles with Space and Enter', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: false });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @canEdit={{true}} @onSave={{this.onSave}} />`);
+
+        const wallet = "[data-test-sync='wallet_enabled']";
+        assert.dom(wallet).hasAttribute('aria-checked', 'false');
+        assert.dom(wallet).hasAttribute('tabindex', '0');
+        assert.dom(wallet).doesNotHaveAttribute('aria-disabled');
+
+        await triggerKeyEvent(wallet, 'keydown', ' ');
+        assert.dom(wallet).hasAttribute('aria-checked', 'true');
+
+        await triggerKeyEvent(wallet, 'keydown', 'Enter');
+        assert.dom(wallet).hasAttribute('aria-checked', 'false');
+
+        await triggerKeyEvent(wallet, 'keydown', 65);
+        assert.dom(wallet).hasAttribute('aria-checked', 'false', 'other keys do nothing');
+
+        await triggerKeyEvent(wallet, 'keydown', 'Enter');
+        await click(saveButton());
+        assert.true(this.saved.sync.wallet_enabled);
+    });
+
+    test('a read-only switch is announced as disabled and ignores keys', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: false });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @canEdit={{false}} @settingsLoaded={{true}} />`);
+
+        const wallet = "[data-test-sync='wallet_enabled']";
+        assert.dom(wallet).hasAttribute('aria-disabled', 'true');
+        assert.dom(wallet).hasAttribute('tabindex', '-1');
+        assert.dom(wallet).hasAttribute('aria-checked', 'false');
+
+        await triggerKeyEvent(wallet, 'keydown', ' ');
+        await triggerKeyEvent(wallet, 'keydown', 'Enter');
+        assert.dom(wallet).hasAttribute('aria-checked', 'false');
+    });
+
     test('connect does not send an import flag and customers stay on the Customers switch', async function (assert) {
         this.set('settings', {
             client_id: 'id',
@@ -1176,10 +1298,9 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             public_oauth_redirect_url: 'https://api.example.test/quickbooks/int/v1/oauth/callback',
         });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+        // The fetch service rejects with the server's JSON body when rawError is set.
         this.set('onSave', () => {
-            const error = new Error('save failed');
-            error.errors = { public_oauth_redirect_url: 'quickbooks.validation.public-oauth-url' };
-            throw error;
+            throw { message: 'save failed', errors: { public_oauth_redirect_url: 'quickbooks.validation.public-oauth-url' } };
         });
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);

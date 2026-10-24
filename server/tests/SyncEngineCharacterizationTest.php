@@ -218,24 +218,57 @@ test('sec a remote customer update copies name email phone notes and address and
         'address'      => ['line1' => '1 Main St', 'line2' => null, 'city' => 'Springfield', 'state' => 'IL', 'postal_code' => '62701', 'country' => 'US'],
     ])
         ->and($client->calls)->toBe(['getCustomer:qbo-1'])
-        ->and($ledger->links)->toBe($linksBefore)
+        // Only the stored SyncToken moves to the version just applied.
+        ->and($ledger->links)->toBe([array_merge($linksBefore[0], ['sync_token' => '4'])])
         ->and($ledger->pending)->toBe([])
         ->and(array_column($ledger->attempts, 'outcome', 'local_uuid'))->toBe(['cust-1' => 'updated'])
         ->and(array_column($ledger->batches, 'direction'))->toBe(['inbound']);
 });
 
-test('sec an empty remote customer field does not clear the fleetbase value', function () {
+test('sec an empty remote customer field keeps fleetbase without a baseline or a quickbooks change', function () {
+    // No stored token (a first link), or the token stored (QuickBooks did not change the customer).
+    $kept = secCustomer('cust-1', ['name' => 'Local Ada', 'phone' => '111', 'notes' => 'Keep']);
+    foreach (['', '1'] as $stored) {
+        [$engine, $client]           = qbEngine();
+        $ledger                      = secLedger();
+        $ledger->customers['cust-1'] = $kept;
+        $ledger->links[]             = secLink('customer', 'cust-1', 'qbo-1', ['sync_token' => $stored]);
+        $client->customers['qbo-1']  = [
+            'Id'               => 'qbo-1',
+            'SyncToken'        => '1',
+            'DisplayName'      => '   ',
+            'Notes'            => '',
+            'PrimaryEmailAddr' => ['Address' => ''],
+        ];
+
+        $engine->acceptRemoteChanges($ledger, 'company-uuid', [
+            ['entity' => 'Customer', 'id' => 'qbo-1', 'operation' => 'Update'],
+        ], secQuickBooksPrimary(), 1_000);
+
+        expect($ledger->customers['cust-1'])->toBe($kept);
+    }
+});
+
+test('sec an empty remote customer field clears fleetbase when quickbooks changed it since a baseline', function () {
     [$engine, $client]           = qbEngine();
     $ledger                      = secLedger();
     $ledger->customers['cust-1'] = secCustomer('cust-1', ['name' => 'Local Ada', 'phone' => '111', 'notes' => 'Keep']);
     $ledger->links[]             = secLink('customer', 'cust-1', 'qbo-1');
-    $client->customers['qbo-1']  = ['Id' => 'qbo-1', 'SyncToken' => '1', 'DisplayName' => '   ', 'Notes' => '', 'PrimaryEmailAddr' => ['Address' => '']];
+    $client->customers['qbo-1']  = [
+        'Id'               => 'qbo-1',
+        'SyncToken'        => '1',
+        'DisplayName'      => '   ',
+        'Notes'            => '',
+        'PrimaryEmailAddr' => ['Address' => ''],
+    ];
 
     $engine->acceptRemoteChanges($ledger, 'company-uuid', [
         ['entity' => 'Customer', 'id' => 'qbo-1', 'operation' => 'Update'],
     ], secQuickBooksPrimary(), 1_000);
 
-    expect($ledger->customers['cust-1'])->toBe(secCustomer('cust-1', ['name' => 'Local Ada', 'phone' => '111', 'notes' => 'Keep']));
+    // A blank QuickBooks name is never copied; the emptied email, phone and notes are.
+    $cleared = ['name' => 'Local Ada', 'email' => null, 'phone' => null, 'notes' => null];
+    expect($ledger->customers['cust-1'])->toBe(secCustomer('cust-1', $cleared));
 });
 
 test('sec deletes unknown entities empty ids unlinked ids and kinds quickbooks does not supply are not read', function () {
@@ -385,7 +418,7 @@ test('sec a remote invoice update copies dates note lines and totals and marks i
         ->and(array_key_exists('amount_paid', $invoice))->toBeFalse();
 });
 
-test('sec a remote invoice number wins under a quickbooks reference and then the customer is not copied in the same pass', function () {
+test('sec a remote invoice number and customer are both copied under a quickbooks reference', function () {
     [$engine, $client]           = qbEngine();
     $ledger                      = secLedger();
     $ledger->customers['cust-1'] = secCustomer('cust-1');
@@ -406,7 +439,7 @@ test('sec a remote invoice number wins under a quickbooks reference and then the
 
     expect($client->calls)->toBe(['batch'])
         ->and($ledger->invoices['inv-1']['number'])->toBe('QB-1')
-        ->and($ledger->invoices['inv-1']['customer_uuid'])->toBe('cust-1')
+        ->and($ledger->invoices['inv-1']['customer_uuid'])->toBe('cust-2')
         ->and($ledger->invoices['inv-1']['replace_from_quickbooks'])->toBeTrue()
         ->and($ledger->invoices['inv-2']['number'])->toBe('INV-2')
         ->and($ledger->invoices['inv-2']['customer_uuid'])->toBe('cust-2')
@@ -460,7 +493,12 @@ test('sec a remote payment on a legacy invoice keyed link copies amount date and
         ->and($ledger->invoices['inv-1']['paid_at'])->toBe('')
         ->and($ledger->invoices['inv-1']['payment_from_quickbooks'])->toBeTrue()
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
-        ->and($ledger->links)->toBe($linksBefore)
+        // The link stays keyed by the invoice; only its SyncToken moves to the payment just applied.
+        ->and($ledger->links)->toBe([
+            $linksBefore[0],
+            $linksBefore[1],
+            array_merge($linksBefore[2], ['invoice_tokens' => '{"inv-1":"1"}', 'sync_token' => '1']),
+        ])
         ->and($ledger->pending)->toBe([]);
 });
 
@@ -563,13 +601,13 @@ test('sec two payments in one delivery are read together and both count toward t
         ->and($ledger->invoices['inv-1']['status'])->toBe('paid');
 });
 
-test('sec a remote account update copies name currency and status and keeps an empty description out', function () {
+test('sec an account update without a baseline copies name currency and status, not an empty description', function () {
     [$engine, $client]          = qbEngine();
     $ledger                     = secLedger();
     $ledger->wallets['wal-1']   = secWallet('wal-1');
     $ledger->wallets['wal-2']   = secWallet('wal-2', ['balance' => 500]);
-    $ledger->links[]            = secLink('wallet', 'wal-1', 'acct-1');
-    $ledger->links[]            = secLink('wallet', 'wal-2', 'acct-2');
+    $ledger->links[]            = secLink('wallet', 'wal-1', 'acct-1', ['sync_token' => '']);
+    $ledger->links[]            = secLink('wallet', 'wal-2', 'acct-2', ['sync_token' => '']);
     $client->accounts['acct-1'] = ['Id' => 'acct-1', 'SyncToken' => '1', 'Name' => ' Ops Float ', 'Description' => '  ', 'CurrencyRef' => ['value' => 'cad'], 'Active' => false, 'AcctNum' => '4100'];
     $client->accounts['acct-2'] = ['Id' => 'acct-2', 'SyncToken' => '1', 'Name' => 'Reserve', 'Description' => 'Remote text', 'Active' => false, 'AcctNum' => '4200'];
 
@@ -851,6 +889,8 @@ test('sec a new payment is stored under its quickbooks id with the invoice kept 
             'qbo_id'       => 'pay-1',
             'sync_token'   => '0',
             'invoice_uuid' => 'inv-1',
+            // The payment token inv-1 synced, see PaymentTokens.
+            'invoice_tokens' => '{"inv-1":"0"}',
         ]])
         ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'inv-1'))->toBeNull();
 });
@@ -871,13 +911,14 @@ test('sec a new payment that does not list the invoice stays keyed by the invoic
     $engine->runScheduled($ledger, 'company-uuid', qbSettings(), 1_000);
 
     expect(secLinksOfType($ledger, 'payment'))->toBe([[
-        'company_uuid' => 'company-uuid',
-        'realm_id'     => 'realm-1',
-        'local_type'   => 'payment',
-        'local_uuid'   => 'inv-1',
-        'qbo_entity'   => 'Payment',
-        'qbo_id'       => 'pay-1',
-        'sync_token'   => '0',
+        'company_uuid'   => 'company-uuid',
+        'realm_id'       => 'realm-1',
+        'local_type'     => 'payment',
+        'local_uuid'     => 'inv-1',
+        'qbo_entity'     => 'Payment',
+        'qbo_id'         => 'pay-1',
+        'sync_token'     => '0',
+        'invoice_tokens' => '{"inv-1":"0"}',
     ]]);
 });
 
@@ -894,15 +935,16 @@ test('sec a legacy invoice keyed payment link is rekeyed in place to the payment
         ->and($client->calls)->not->toContain('updatePayment')
         ->and(secLinksOfType($ledger, 'payment'))->toHaveCount(1)
         ->and($ledger->links[$index])->toBe([
-            'company_uuid' => 'company-uuid',
-            'realm_id'     => 'realm-1',
-            'local_type'   => 'payment',
-            'local_uuid'   => 'pay-9',
-            'qbo_entity'   => 'Payment',
-            'qbo_id'       => 'pay-9',
-            'sync_token'   => '1',
-            'extra'        => 'kept',
-            'invoice_uuid' => 'inv-1',
+            'company_uuid'   => 'company-uuid',
+            'realm_id'       => 'realm-1',
+            'local_type'     => 'payment',
+            'local_uuid'     => 'pay-9',
+            'qbo_entity'     => 'Payment',
+            'qbo_id'         => 'pay-9',
+            'sync_token'     => '1',
+            'extra'          => 'kept',
+            'invoice_uuid'   => 'inv-1',
+            'invoice_tokens' => '{"inv-1":"1"}',
         ])
         ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'inv-1'))->toBeNull()
         ->and($ledger->linkForRemote('realm-1', 'Payment', 'pay-9')['local_uuid'])->toBe('pay-9');
@@ -973,6 +1015,7 @@ function secDocNumberClient(string $latest): FakeQuickBooks
     return $client;
 }
 
+// Each case is its own QuickBooks company: numbers handed out in one realm are a floor for the next run there.
 test('sec invoice numbers for a block skip taken numbers and stop at the check budget', function () {
     $client = secDocNumberClient('INV-009');
     foreach (['INV-010', 'INV-012'] as $doc) {
@@ -986,16 +1029,16 @@ test('sec invoice numbers for a block skip taken numbers and stop at the check b
         $doc                    = sprintf('INV-%03d', $i);
         $client->invoices[$doc] = ['Id' => $doc, 'DocNumber' => $doc];
     }
-    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-1'], 2))->toBe(['INV-016'])
+    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-2'], 2))->toBe(['INV-016'])
         ->and($client->calls)->toBe(['latestInvoiceDocNumber', 'batch']);
 
     $client = secDocNumberClient('');
-    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-1'], 2))->toBe(['1', '2'])
-        ->and($client->nextInvoiceDocNumbers(['realm_id' => 'realm-1'], 0))->toBe([]);
+    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-3'], 2))->toBe(['1', '2'])
+        ->and($client->nextInvoiceDocNumbers(['realm_id' => 'realm-3'], 0))->toBe([]);
 
     $client                      = secDocNumberClient('INV-009');
     $client->invoices['INV-010'] = ['Id' => 'INV-010', 'DocNumber' => 'INV-010'];
-    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-1'], 1))->toBe(['INV-011'])
+    expect($client->nextInvoiceDocNumbers(['realm_id' => 'realm-4'], 1))->toBe(['INV-011'])
         ->and($client->calls)->toBe(['latestInvoiceDocNumber', 'findInvoiceByDocNumber', 'findInvoiceByDocNumber']);
 });
 

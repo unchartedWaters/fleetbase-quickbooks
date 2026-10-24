@@ -46,6 +46,17 @@ class FakeQuickBooks extends QuickBooksClient
     /** @var array<int, array<string, mixed>> */
     public array $paymentPayloads = [];
 
+    /** Applying a payment raises the SyncToken of each invoice it pays, as QuickBooks does. */
+    public bool $paymentsBumpInvoices = false;
+
+    /**
+     * Runs before each payment create, with the fake and the payload: a test can edit an invoice
+     * meanwhile, as a QuickBooks user would, or throw to refuse the payment.
+     *
+     * @var (\Closure(FakeQuickBooks, array<string, mixed>): void)|null
+     */
+    public ?\Closure $beforeCreatePayment = null;
+
     public ?string $homeCurrency = null;
 
     public bool $customTxnNumbers = false;
@@ -153,8 +164,12 @@ class FakeQuickBooks extends QuickBooksClient
      */
     public function updateCustomer(array $connection, string $id, string $syncToken, array $payload): array
     {
-        $this->calls[]        = 'updateCustomer';
-        $record               = array_merge($payload, ['Id' => $id, 'SyncToken' => (string) ((int) $syncToken + 1)]);
+        $this->calls[] = 'updateCustomer';
+        // QuickBooksClient sends every customer update sparse: a field the payload leaves out keeps its value.
+        $record               = array_merge($this->customers[$id] ?? [], $payload, [
+            'Id'        => $id,
+            'SyncToken' => (string) ((int) $syncToken + 1),
+        ]);
         $this->customers[$id] = $record;
 
         return $record;
@@ -342,11 +357,15 @@ class FakeQuickBooks extends QuickBooksClient
      */
     public function createPayment(array $connection, array $payload): array
     {
-        $this->calls[]            = 'createPayment';
+        $this->calls[] = 'createPayment';
+        if ($this->beforeCreatePayment !== null) {
+            ($this->beforeCreatePayment)($this, $payload);
+        }
         $this->paymentPayloads[]  = $payload;
         $id                       = 'pay-' . (count($this->payments) + 1);
         $record                   = array_merge($this->appliedPayment($payload), ['Id' => $id, 'SyncToken' => '0']);
         $this->payments[$id]      = $record;
+        $this->bumpPaidInvoices($payload);
 
         return $record;
     }
@@ -392,8 +411,26 @@ class FakeQuickBooks extends QuickBooksClient
             'SyncToken' => (string) ((int) $syncToken + 1),
         ]);
         $this->payments[$id] = $record;
+        $this->bumpPaidInvoices($payload);
 
         return $record;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function bumpPaidInvoices(array $payload): void
+    {
+        if ($this->paymentsBumpInvoices === false) {
+            return;
+        }
+        foreach (is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [] as $line) {
+            $invoiceId = (string) ($line['LinkedTxn'][0]['TxnId'] ?? '');
+            if (isset($this->invoices[$invoiceId]) === true) {
+                $token                                    = (int) ($this->invoices[$invoiceId]['SyncToken'] ?? 0);
+                $this->invoices[$invoiceId]['SyncToken']  = (string) ($token + 1);
+            }
+        }
     }
 
     /**

@@ -122,6 +122,11 @@ function isBlank(value) {
     return value === '' || value === null || value === undefined;
 }
 
+// A missing enabled flag is on; only an explicit false (in any stored form) is off.
+function isOn(stored) {
+    return !(stored === false || stored === 'false' || stored === 0 || stored === '0');
+}
+
 function primaryEntity(key) {
     return PRIMARY_ENTITIES.find((entity) => key === `${entity}_conflict` || key === `${entity}_reference`) ?? null;
 }
@@ -216,10 +221,32 @@ export default class QuickbooksSettingsComponent extends Component {
             this.draft = {};
             this.errors = {};
         } catch (error) {
-            this.notifications.serverError(error);
+            this.showServerError(error);
         } finally {
             this.saving = false;
         }
+    }
+
+    // Saves and resets reject with the server's JSON body (rawError), or with an Error when the request itself failed.
+    showServerError(error) {
+        if (error instanceof Error) {
+            this.notifications.serverError(error);
+            return;
+        }
+
+        const message = (typeof error?.message === 'string' && error.message) || (Array.isArray(error?.errors) && error.errors[0]);
+        this.notifications.error(message || this.intl.t('quickbooks.messages.settings-invalid'));
+    }
+
+    // A server error for a key no field renders (such as settings) would otherwise be silent.
+    showFieldlessError(error, serverErrors) {
+        const rendered = Object.keys(serverErrors).some((key) => ERROR_FIELD_ORDER.includes(key) || PUBLIC_URL_FIELDS.includes(key) || key.endsWith('_enabled'));
+        if (rendered) {
+            return;
+        }
+
+        const message = typeof error?.message === 'string' && error.message;
+        this.notifications.error(message || this.intl.t('quickbooks.messages.settings-invalid'));
     }
 
     // Saving is for installation administrators, so the server's can_edit is the only answer.
@@ -431,6 +458,17 @@ export default class QuickbooksSettingsComponent extends Component {
         }
     }
 
+    // The host Toggle is a focusable span that only reacts to clicks, so Space and Enter click it.
+    @action
+    toggleKey(event) {
+        if (this.readOnly || (event.key !== ' ' && event.key !== 'Enter')) {
+            return;
+        }
+
+        event.preventDefault();
+        event.currentTarget.click();
+    }
+
     revealFirstError(errors) {
         const key = firstErrorKey(errors);
         // ember-lifeline rejects the afterRender queue. The render queue is
@@ -460,7 +498,31 @@ export default class QuickbooksSettingsComponent extends Component {
         }
 
         const auth = this.syncOnly ? null : this.buildAuth();
+        const sync = this.buildSync();
+        const errors = validateSettings({
+            auth: auth && { ...auth, client_secret: this.draft.client_secret || '', webhook_verifier: this.draft.webhook_verifier || '' },
+            sync,
+            secretSet: Boolean(this.args.settings?.client_secret_set),
+            verifierSet: Boolean(this.args.settings?.webhook_verifier_set),
+            savedClientId: this.args.settings?.client_id ?? '',
+            syncOnly: this.syncOnly,
+        });
+        this.errors = this.localizeErrors(errors);
+        if (Object.keys(errors).length) {
+            this.revealFirstError(errors);
+            return;
+        }
 
+        const turnedOn = this.turnedOnEntities();
+        if (turnedOn.length) {
+            this.confirmTurnOn(turnedOn, auth, sync);
+            return;
+        }
+
+        await this.performSave(auth, sync);
+    }
+
+    buildSync() {
         const sync = {};
         SYNC_FIELDS.forEach((key) => {
             sync[key] = this.numeric(key);
@@ -477,20 +539,31 @@ export default class QuickbooksSettingsComponent extends Component {
             sync[`${entity}_enabled`] = this.entityEnabled(entity);
         });
 
-        const errors = validateSettings({
-            auth: auth && { ...auth, client_secret: this.draft.client_secret || '', webhook_verifier: this.draft.webhook_verifier || '' },
-            sync,
-            secretSet: Boolean(this.args.settings?.client_secret_set),
-            verifierSet: Boolean(this.args.settings?.webhook_verifier_set),
-            savedClientId: this.args.settings?.client_id ?? '',
-            syncOnly: this.syncOnly,
-        });
-        this.errors = this.localizeErrors(errors);
-        if (Object.keys(errors).length) {
-            this.revealFirstError(errors);
-            return;
+        return sync;
+    }
+
+    // Only an organization save queues records: one turned on sends every existing record of that type.
+    // The global settings are a template and queue nothing, so they never ask.
+    turnedOnEntities() {
+        if (!this.syncOnly) {
+            return [];
         }
 
+        return PRIMARY_ENTITIES.filter((entity) => !isOn(this.syncSource?.[`${entity}_enabled`]) && this.entityEnabled(entity));
+    }
+
+    confirmTurnOn(entities, auth, sync) {
+        const labels = entities.map((entity) => this.intl.t(`quickbooks.settings.entities.${entity}`)).join(', ');
+
+        this.modalsManager.confirm({
+            title: this.intl.t('quickbooks.settings.turn-on-confirm-title'),
+            body: this.intl.t('quickbooks.settings.turn-on-confirm', { entities: labels }),
+            acceptButtonText: this.intl.t('quickbooks.settings.save'),
+            confirm: () => this.performSave(auth, sync),
+        });
+    }
+
+    async performSave(auth, sync) {
         this.saving = true;
         try {
             if (this.syncOnly) {
@@ -508,8 +581,9 @@ export default class QuickbooksSettingsComponent extends Component {
             if (serverErrors && typeof serverErrors === 'object' && !Array.isArray(serverErrors)) {
                 this.errors = this.localizeErrors(serverErrors);
                 this.revealFirstError(serverErrors);
+                this.showFieldlessError(error, serverErrors);
             } else {
-                this.notifications.serverError(error);
+                this.showServerError(error);
             }
         } finally {
             this.saving = false;
@@ -545,12 +619,8 @@ export default class QuickbooksSettingsComponent extends Component {
 
     entityEnabled(entity) {
         const key = `${entity}_enabled`;
-        const stored = Object.hasOwn(this.draft, key) ? this.draft[key] : this.syncSource?.[key];
-        if (stored === false || stored === 'false' || stored === 0 || stored === '0') {
-            return false;
-        }
 
-        return true;
+        return isOn(Object.hasOwn(this.draft, key) ? this.draft[key] : this.syncSource?.[key]);
     }
 
     entityDirection(entity) {

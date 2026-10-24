@@ -34,11 +34,16 @@ export default class WidgetQuickbooksSyncComponent extends Component {
             return finished;
         }
 
-        return when.toLocaleString();
+        return this.intl.formatDate(when, { dateStyle: 'medium', timeStyle: 'short' });
     }
 
     get queueCount() {
         return this.summary?.queue ?? 0;
+    }
+
+    // Records that stopped retrying. They stay out of the waiting count, so say so here.
+    get failedCount() {
+        return this.summary?.failed ?? 0;
     }
 
     get isConnected() {

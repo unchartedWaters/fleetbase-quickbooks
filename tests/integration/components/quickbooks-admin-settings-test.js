@@ -42,10 +42,27 @@ class FetchStubService extends Service {
         };
     }
 
-    async post(path, body) {
-        this.posts.push({ path, body });
+    async post(path, body, options) {
+        this.posts.push({ path, body, options });
 
         return { auth: { client_id: body.auth.client_id, client_secret_set: true }, sync: body.sync };
+    }
+}
+
+const REFUSED_URL = 'Public OAuth Redirect URL must be an https:// address that resolves to a public IP address.';
+
+// Rejects the way ember-core's fetch does: with an Error that keeps only the message, unless rawError is set.
+class RefusingFetchStubService extends FetchStubService {
+    async post(path, body, options) {
+        this.posts.push({ path, body, options });
+        if (options?.rawError !== true) {
+            throw new Error('Some QuickBooks settings are missing or invalid.');
+        }
+
+        throw {
+            message: 'Some QuickBooks settings are missing or invalid.',
+            errors: { public_oauth_redirect_url: REFUSED_URL },
+        };
     }
 }
 
@@ -114,5 +131,20 @@ module('Integration | Component | quickbooks-admin-settings', function (hooks) {
         assert.strictEqual(post.body.sync.interval_minutes, 5);
         assert.false(Object.hasOwn(post.body, 'override'));
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
+    });
+
+    test('a refused public URL from the server is shown under that field', async function (assert) {
+        this.owner.register('service:fetch', RefusingFetchStubService);
+        const fetch = this.owner.lookup('service:fetch');
+
+        await render(hbs`<QuickbooksAdminSettings />`);
+        await fillIn('[data-test-field="public_oauth_redirect_url"]', 'https://intranet.local/quickbooks/int/v1/oauth/callback');
+        await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
+
+        assert.true(fetch.posts.at(-1).options.rawError);
+        assert.dom('[data-test-error="public_oauth_redirect_url"]').exists();
+        assert.dom('[data-test-error="public_oauth_redirect_url"]').hasText(REFUSED_URL);
+        assert.dom('[data-test-field="public_oauth_redirect_url"]').hasValue('https://intranet.local/quickbooks/int/v1/oauth/callback');
+        assert.false(this.notifications.messages.some((entry) => entry[0] === 'success'));
     });
 });

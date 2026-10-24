@@ -2,6 +2,8 @@
 
 namespace Fleetbase\Quickbooks\Services;
 
+use Fleetbase\Quickbooks\Support\CustomerMapper;
+
 /**
  * In-memory snapshot the sync engine mutates. Production loads and saves it through Eloquent.
  *
@@ -68,6 +70,14 @@ class SyncLedger
      */
     public ?\Closure $remoteLinkReader = null;
 
+    /**
+     * Reads the customer link of a QuickBooks customer this run did not load:
+     * (realm, QuickBooks id) => link, or null when it has none or its customer is gone.
+     *
+     * @var (\Closure(string, string): (array<string, mixed>|null))|null
+     */
+    public ?\Closure $customerLinkReader = null;
+
     private bool $indexed = false;
 
     /** @var array<string, int> */
@@ -83,12 +93,9 @@ class SyncLedger
     private array $customersByEmail = [];
 
     /** @var array<string, string> */
-    private array $customersByPhone = [];
-
-    /** @var array<string, string> */
     private array $customersByName = [];
 
-    /** @var array<string, array{email: string, phone: string, name: string}> */
+    /** @var array<string, array{email: string, name: string}> */
     private array $customerKeys = [];
 
     /** @var array<string, array<string, mixed>> */
@@ -144,7 +151,10 @@ class SyncLedger
         $linked = [];
         foreach ($ids as $id) {
             $link = $this->linkForRemote($realmId, $entity, $id);
-            if ($link !== null && (string) ($link['local_uuid'] ?? '') !== $localUuid) {
+            if ($link === null || (string) ($link['local_uuid'] ?? '') === $localUuid) {
+                continue;
+            }
+            if ($this->linkHolds($link) === true) {
                 $linked[] = $id;
             }
         }
@@ -154,6 +164,26 @@ class SyncLedger
         }
 
         return array_values(array_unique(array_map('strval', $linked)));
+    }
+
+    /**
+     * Whether a loaded link still holds its QuickBooks record. A link of a deleted Fleetbase
+     * customer does not. A customer link whose customer this run did not load is left to the
+     * reader, which checks the stored customer; with no reader it holds.
+     *
+     * @param Link $link
+     */
+    private function linkHolds(array $link): bool
+    {
+        if (($link['local_type'] ?? null) !== 'customer') {
+            return true;
+        }
+        $customer = $this->customerRow((string) ($link['local_uuid'] ?? ''));
+        if ($customer === null) {
+            return $this->remoteLinkReader === null;
+        }
+
+        return empty($customer['deleted_at']) === true;
     }
 
     /**
@@ -181,7 +211,6 @@ class SyncLedger
         $this->linksByRemote    = [];
         $this->remoteKeyByIndex = [];
         $this->customersByEmail = [];
-        $this->customersByPhone = [];
         $this->customersByName  = [];
         $this->customerKeys     = [];
         $this->customerRows     = [];
@@ -216,23 +245,18 @@ class SyncLedger
         $previous = $this->customerKeys[$uuid] ?? null;
         if ($previous !== null) {
             $this->forgetCustomerKey($this->customersByEmail, $previous['email'], $uuid);
-            $this->forgetCustomerKey($this->customersByPhone, $previous['phone'], $uuid);
             $this->forgetCustomerKey($this->customersByName, $previous['name'], $uuid);
         }
 
         $email = strtolower(trim((string) ($customer['email'] ?? '')));
-        $phone = preg_replace('/\D+/', '', (string) ($customer['phone'] ?? '')) ?? '';
-        $name  = (string) ($customer['name'] ?? '');
+        $name  = CustomerMapper::displayName((string) ($customer['name'] ?? ''));
         if ($email !== '' && isset($this->customersByEmail[$email]) === false) {
             $this->customersByEmail[$email] = $uuid;
-        }
-        if ($phone !== '' && isset($this->customersByPhone[$phone]) === false) {
-            $this->customersByPhone[$phone] = $uuid;
         }
         if ($name !== '' && isset($this->customersByName[$name]) === false) {
             $this->customersByName[$name] = $uuid;
         }
-        $this->customerKeys[$uuid] = ['email' => $email, 'phone' => $phone, 'name' => $name];
+        $this->customerKeys[$uuid] = ['email' => $email, 'name' => $name];
         $this->customerRows[$uuid] = $customer;
     }
 
@@ -262,25 +286,34 @@ class SyncLedger
     }
 
     /**
-     * Email, then phone, then display name. Empty keys are skipped.
+     * The customer with this email, then the one with this display name, each at most once.
+     * The caller takes the first one free to link. Empty keys are skipped. A phone number
+     * alone never matches. Names are compared the way QuickBooks stores them (a colon becomes
+     * a dash).
      *
-     * @return array<string, mixed>|null
+     * @return array<int, array<string, mixed>>
      */
-    public function matchCustomer(string $email, string $phone, string $name): ?array
+    public function matchCustomers(string $email, string $name): array
     {
         $this->ensureIndex();
         $email = strtolower(trim($email));
+        $name  = CustomerMapper::displayName($name);
+        $uuids = [];
         if ($email !== '' && isset($this->customersByEmail[$email]) === true) {
-            return $this->customerRow($this->customersByEmail[$email]);
-        }
-        if ($phone !== '' && isset($this->customersByPhone[$phone]) === true) {
-            return $this->customerRow($this->customersByPhone[$phone]);
+            $uuids[] = $this->customersByEmail[$email];
         }
         if ($name !== '' && isset($this->customersByName[$name]) === true) {
-            return $this->customerRow($this->customersByName[$name]);
+            $uuids[] = $this->customersByName[$name];
+        }
+        $matches = [];
+        foreach (array_unique($uuids) as $uuid) {
+            $row = $this->customerRow($uuid);
+            if ($row !== null) {
+                $matches[] = $row;
+            }
         }
 
-        return null;
+        return $matches;
     }
 
     /**
@@ -382,6 +415,9 @@ class SyncLedger
     }
 
     /**
+     * Due rows in the order FleetbaseDirectory loads them: edits before the reconcile backlog,
+     * then rows never tried before rows waiting out a backoff, then by due time.
+     *
      * @return array<int, Pending>
      */
     public function duePending(string $companyUuid, int $limit, int $now): array
@@ -396,12 +432,36 @@ class SyncLedger
                 continue;
             }
             $rows[] = $row;
-            if (count($rows) >= $limit) {
-                break;
-            }
+        }
+        usort($rows, static fn (array $left, array $right): int => self::dueOrder($left) <=> self::dueOrder($right));
+
+        return array_slice($rows, 0, max(1, $limit));
+    }
+
+    /**
+     * 0 for an edit made in Fleetbase or QuickBooks, 1 for a reconcile or catalog row.
+     *
+     * @param Pending $row
+     */
+    public static function pendingPriority(array $row): int
+    {
+        if (isset($row['priority']) === true && is_numeric($row['priority']) === true) {
+            return (int) $row['priority'];
         }
 
-        return $rows;
+        return ($row['reason'] ?? null) === 'reconcile' ? 1 : 0;
+    }
+
+    /**
+     * @param Pending $row
+     *
+     * @return array{0: int, 1: int, 2: int}
+     */
+    private static function dueOrder(array $row): array
+    {
+        $next = $row['next_attempt_at'] ?? null;
+
+        return [self::pendingPriority($row), $next === null ? 0 : 1, $next === null ? 0 : (int) $next];
     }
 
     /**

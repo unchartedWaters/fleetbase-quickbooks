@@ -24,6 +24,7 @@ use Fleetbase\Quickbooks\Support\WebhookSignature;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
+use Fleetbase\Quickbooks\Tests\Support\WebhookBodies;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
 use Illuminate\Container\Container;
@@ -313,6 +314,8 @@ test('a valid signature returns 200 and enqueues one job per known realm', funct
   ] } }
 ] }
 JSON;
+    // The Void is applied only from a dated body.
+    $body = WebhookBodies::dated($body);
 
     withoutWebhookVerifier(function () use ($settings, $body) {
         $store = webhookAdminStore($settings, 'verifier-token');
@@ -929,20 +932,60 @@ test('a busy lock is retried and an unavailable lock does not call the engine', 
         });
         $job->handle($engine, $directory, $settings, $store);
 
+        // A busy lock that will be retried leaves no Activity row; only the give-up does.
         expect($engine->calls)->toBe([])
-            ->and($directory->skipped)->toHaveCount(3)
+            ->and($directory->skipped)->toHaveCount(2)
             ->and(qbText($directory->skipped[0]['message']))->toBe('Another QuickBooks sync is already running.')
-            ->and(qbText($directory->skipped[1]['message']))->toBe('Another QuickBooks sync is already running.')
-            ->and($directory->skipped[2]['message'])->toBe(BatchRunner::LOCK_UNAVAILABLE)
+            ->and($directory->skipped[1]['message'])->toBe(BatchRunner::LOCK_UNAVAILABLE)
             ->and($directory->saved)->toBeNull()
             ->and($dispatcher->jobs)->toHaveCount(1)
             ->and($dispatcher->jobs[0])->toBeInstanceOf(ApplyRemoteChange::class)
             ->and($dispatcher->jobs[0]->lockAttempt)->toBe(1)
-            ->and($dispatcher->jobs[0]->delay)->toBe(ApplyRemoteChange::LOCK_RETRY_DELAY_SECONDS)
+            ->and($dispatcher->jobs[0]->delay)->toBeGreaterThanOrEqual(5)
+            ->and($dispatcher->jobs[0]->delay)->toBeLessThanOrEqual(6)
             ->and($dispatcher->jobs[0]->entities)->toBe($job->entities);
     });
 
     Cache::swap($previous);
+});
+
+test('a webhook change waits out a lock held for the lock lifetime', function () {
+    [$engine]   = webhookEngine();
+    $directory  = webhookDirectory();
+    $settings   = webhookSettings();
+    $store      = new MemorySettingsStore();
+    $previous   = Cache::getFacadeRoot();
+    $repository = new Repository(new ArrayStore());
+    Cache::swap($repository);
+
+    try {
+        $parts  = [$engine, $directory, $settings, $store];
+        $delays = withWebhookDispatcher(function ($dispatcher) use ($parts, $repository) {
+            [$engine, $directory, $settings, $store] = $parts;
+
+            $held = $repository->getStore()->lock('quickbooks.batch.company-uuid', BatchRunner::LOCK_SECONDS);
+            expect($held->get())->toBeTrue();
+            $change = ['entity' => 'Customer', 'id' => '1', 'operation' => 'Update'];
+            $job    = new ApplyRemoteChange('company-uuid', [$change]);
+            for ($run = 0; $run <= ApplyRemoteChange::LOCK_RETRY_LIMIT; $run++) {
+                $job->handle($engine, $directory, $settings, $store);
+                $job = end($dispatcher->jobs);
+            }
+            $held->release();
+
+            return array_map(static fn (ApplyRemoteChange $retry): int => (int) $retry->delay, $dispatcher->jobs);
+        });
+    } finally {
+        Cache::swap($previous);
+    }
+
+    expect($delays)->toHaveCount(ApplyRemoteChange::LOCK_RETRY_LIMIT)
+        ->and(array_sum($delays))->toBeGreaterThanOrEqual(BatchRunner::LOCK_SECONDS - 120)
+        ->and($delays[1])->toBeGreaterThan($delays[0])
+        ->and(max($delays))->toBeLessThanOrEqual(132)
+        ->and($engine->calls)->toBe([])
+        ->and($directory->skipped)->toHaveCount(1)
+        ->and(qbText($directory->skipped[0]['message']))->toBe('Another QuickBooks sync is already running.');
 });
 
 test('quickbooks http in a remote change releases the company lock', function () {

@@ -45,6 +45,8 @@
                 <p class="text-sm text-gray-500 mb-4" data-test-disconnected>
                     {{#if this.connectPermissionDenied}}
                         {{t "quickbooks.connection.disconnected-no-permission"}}
+                    {{else if this.firstConnectDenied}}
+                        <span data-test-first-connect-denied>{{t "quickbooks.connection.disconnected-first-connect"}}</span>
                     {{else if this.isConfigured}}
                         {{t "quickbooks.connection.disconnected-status"}}
                     {{else if this.isUnconfigured}}

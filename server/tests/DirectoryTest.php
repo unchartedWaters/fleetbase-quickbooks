@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Observers\FlagInvoiceObserver;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Container\Container;
@@ -828,6 +829,85 @@ test('a first payment link stored under the quickbooks id remembers that invoice
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
+test('a payment link keeps the payment token of each invoice it pays', function () {
+    [$restore] = directorySqlite();
+    try {
+        directoryWebhookSchema(DB::connection('sqlite')->getSchemaBuilder());
+        DB::table('quickbooks_connections')->insert([
+            'uuid'         => 'conn-1',
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'environment'  => 'sandbox',
+            'needs_reauth' => 0,
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ]);
+        $directory       = new FleetbaseDirectory();
+        $ledger          = $directory->load('company-uuid')['ledger'];
+        $ledger->links[] = directoryWebhookLink('company-uuid', 'realm-1', 'payment', '4', 'Payment', '4')
+            + ['invoice_tokens' => '{"inv-1":"2"}'];
+        $directory->save($ledger);
+        $stored = static fn (): string => (string) Link::query()
+            ->where('local_type', 'payment')
+            ->where('local_uuid', '4')
+            ->value('invoice_tokens');
+
+        expect($stored())->toBe('{"inv-1":"2"}');
+
+        $ledger = $directory->load('company-uuid')['ledger'];
+        $ledger->rebuildIndex();
+        $ledger->putLink([
+            'company_uuid'   => 'company-uuid',
+            'local_type'     => 'payment',
+            'local_uuid'     => '4',
+            'invoice_tokens' => '{"inv-1":"2","inv-2":"2"}',
+        ]);
+        $directory->save($ledger);
+
+        expect($stored())->toBe('{"inv-1":"2","inv-2":"2"}');
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('a payment link save keeps an invoice token another run stored meanwhile', function () {
+    [$restore] = directorySqlite();
+    try {
+        directoryWebhookSchema(DB::connection('sqlite')->getSchemaBuilder());
+        DB::table('quickbooks_connections')->insert([
+            'uuid'         => 'conn-1',
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'environment'  => 'sandbox',
+            'needs_reauth' => 0,
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ]);
+        $directory       = new FleetbaseDirectory();
+        $ledger          = $directory->load('company-uuid')['ledger'];
+        $ledger->links[] = directoryWebhookLink('company-uuid', 'realm-1', 'payment', '4', 'Payment', '4')
+            + ['invoice_tokens' => '{"inv-1":"1","inv-3":"1"}'];
+        $directory->save($ledger);
+        $payment = static fn () => Link::query()->where('local_type', 'payment')->where('local_uuid', '4');
+
+        $ledger = $directory->load('company-uuid')['ledger'];
+        // Another run stores the token of inv-2 after this run loaded the link.
+        $payment()->update(['invoice_tokens' => '{"inv-1":"1","inv-2":"3","inv-3":"1"}']);
+        $ledger->rebuildIndex();
+        $ledger->putLink([
+            'company_uuid'   => 'company-uuid',
+            'local_type'     => 'payment',
+            'local_uuid'     => '4',
+            'invoice_tokens' => '{"inv-1":"2"}',
+        ]);
+        $directory->save($ledger);
+
+        expect((string) $payment()->value('invoice_tokens'))->toBe('{"inv-1":"2","inv-2":"3"}');
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
 test('a pending invoice load includes a payment stored under its quickbooks id and the line items', function () {
     [$restore] = directorySqlite();
     try {
@@ -1041,9 +1121,11 @@ test('reconcile pending inserts use one bulk insert', function () {
         $connection->enableQueryLog();
 
         $cursor = (new FleetbaseDirectory())->claimInScopeInvoices('company-uuid', 10);
+        // The one-off schema check for the priority column is not a write.
         $writes = array_values(array_filter(
             array_column($connection->getQueryLog(), 'query'),
             static fn (string $sql): bool => str_contains($sql, 'quickbooks_pending_syncs')
+                && str_contains($sql, 'pragma_table_info') === false
         ));
         $inserts = array_values(array_filter(
             $writes,
@@ -1252,6 +1334,66 @@ test('customer billing address and notes round-trip through the directory', func
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
+test('a billing address emptied in quickbooks clears the customer place, and no place is made for none', function () {
+    [$restore] = directorySqlite();
+    try {
+        $schema = DB::connection('sqlite')->getSchemaBuilder();
+        directoryWebhookSchema($schema);
+        $schema->table('contacts', function (Blueprint $table): void {
+            $table->string('public_id')->nullable();
+            $table->string('internal_id')->nullable();
+            $table->char('place_uuid', 36)->nullable();
+            $table->text('meta')->nullable();
+            $table->string('slug')->nullable();
+        });
+        $schema->create('places', function (Blueprint $table): void {
+            $table->char('uuid', 36)->primary();
+            $table->string('public_id')->nullable();
+            $table->char('company_uuid', 36)->nullable();
+            $table->char('owner_uuid', 36)->nullable();
+            $table->string('owner_type')->nullable();
+            $table->string('street1')->nullable();
+            $table->string('street2')->nullable();
+            $table->string('city')->nullable();
+            $table->string('province')->nullable();
+            $table->string('postal_code')->nullable();
+            $table->string('country')->nullable();
+            $table->timestamps();
+        });
+        directoryWebhookRows();
+        DB::table('places')->insert([
+            'uuid'         => 'place-1',
+            'company_uuid' => 'company-uuid',
+            'owner_uuid'   => 'cust-9',
+            'street1'      => '1 Analytical Engine',
+            'city'         => 'London',
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ]);
+        DB::table('contacts')->where('uuid', 'cust-9')->update(['place_uuid' => 'place-1']);
+        $empty = (new CustomerMapper())->addressFromBillAddr([], true);
+
+        $directory                              = new FleetbaseDirectory();
+        $ledger                                 = $directory->load('company-uuid')['ledger'];
+        $ledger->customers['cust-9']['address'] = $empty;
+        $directory->save($ledger);
+        $place  = DB::table('places')->where('uuid', 'place-1')->first();
+        $reload = (new FleetbaseDirectory())->load('company-uuid')['ledger'];
+
+        expect($place->street1)->toBeNull()
+            ->and($place->city)->toBeNull()
+            ->and($reload->customers['cust-9'])->not->toHaveKey('address');
+
+        $reload->customers['cust-9']['address'] = $empty;
+        DB::table('contacts')->where('uuid', 'cust-9')->update(['place_uuid' => null]);
+        (new FleetbaseDirectory())->save($reload);
+
+        expect(DB::table('places')->count())->toBe(1);
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
 function directorySqlite(): array
 {
     $defaultConnection   = config('database.default');
@@ -1445,6 +1587,9 @@ function directoryWebhookSchema(Illuminate\Database\Schema\Builder $schema): voi
         $table->string('sync_token')->default('0');
         $table->string('name')->nullable();
         $table->string('state')->nullable();
+        $table->text('invoice_tokens')->nullable();
+        $table->string('kept_customer')->nullable();
+        $table->string('kept_from')->nullable();
         $table->timestamps();
     });
     $schema->create('quickbooks_sync_attempts', function (Blueprint $table) {

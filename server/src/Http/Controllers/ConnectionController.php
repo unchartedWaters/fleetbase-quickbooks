@@ -31,6 +31,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class ConnectionController extends QuickbooksController
@@ -51,10 +52,12 @@ class ConnectionController extends QuickbooksController
     public function show(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks view connection', $request);
-        $connection = $this->latestConnection($this->companyUuid($request));
+        $companyUuid = $this->companyUuid($request);
+        $connection  = $this->latestConnection($companyUuid);
 
         return response()->json([
-            'connection' => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
+            'connection'      => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
+            'can_connect_new' => $this->mayConnectFirst($request, $companyUuid),
         ]);
     }
 
@@ -219,6 +222,9 @@ class ConnectionController extends QuickbooksController
     {
         $this->authorizeQuickbooks('quickbooks connect connection', $request);
         $companyUuid = $this->companyUuid($request);
+        if ($this->mayConnectFirst($request, $companyUuid) === false) {
+            return response()->json(['message' => Translation::get(OAuthFlow::CHANGE_COMPANY_MESSAGE)], 403);
+        }
         $credentials = $this->credentials($companyUuid);
         if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '') {
             return response()->json([
@@ -229,6 +235,14 @@ class ConnectionController extends QuickbooksController
             return response()->json([
                 'message' => Translation::get('quickbooks.messages.redirect-not-public'),
             ], 422);
+        }
+        // Without it the callback could not hand the code back to the console after the Intuit sign-in.
+        if ($this->consoleHost() === '') {
+            return response()->json(['message' => Translation::get('quickbooks.messages.console-host-connect')], 422);
+        }
+        $cooling = $this->cooldown($companyUuid, 'start');
+        if ($cooling !== null) {
+            return $cooling;
         }
         $begun       = $this->oauth->begin(
             $companyUuid,
@@ -250,7 +264,11 @@ class ConnectionController extends QuickbooksController
 
         // Only fixed codes go back to the console; the console maps them to its own messages.
         if ($request->filled('error') === true) {
-            $this->oauth->forget($state);
+            $companyUuid = $this->oauth->forget($state);
+            // Nothing was connected, so Connect can be tried again at once.
+            if ($companyUuid !== null) {
+                $this->releaseCooldown($companyUuid, 'start');
+            }
 
             return $this->redirectToConsole(['error' => $request->input('error') === 'access_denied' ? 'cancelled' : 'failed']);
         }
@@ -282,12 +300,14 @@ class ConnectionController extends QuickbooksController
                 fn (string $realmId): bool => $this->mayConnectRealm($request, $companyUuid, $realmId)
             );
         } catch (QuickBooksException $exception) {
+            $this->releaseCooldown($companyUuid, 'start');
             $status = $exception->getMessage() === OAuthFlow::CHANGE_COMPANY_MESSAGE ? 403 : 422;
 
             return response()->json(['message' => Translation::render($exception->getMessage())], $status);
         }
         if ($connection === null) {
             if ($this->connectionIsStored($companyUuid) === false) {
+                $this->releaseCooldown($companyUuid, 'start');
                 $message = Translation::get('quickbooks.messages.not-connected-reconnect');
 
                 return response()->json(['message' => $message], 422);
@@ -330,39 +350,43 @@ class ConnectionController extends QuickbooksController
     {
         $this->authorizeQuickbooks('quickbooks import-customers connection', $request);
         $companyUuid = $this->companyUuid($request);
-        $blocked     = $this->blockedConnection($companyUuid, 'import', 'inbound');
+        $blocked     = $this->blockedConnection($companyUuid, 'import', 'inbound')
+            ?? $this->cooldown($companyUuid, 'import');
         if ($blocked !== null) {
             return $blocked;
         }
-        ImportCustomers::dispatch($companyUuid);
 
-        return response()->json(['queued' => true]);
+        return $this->queueManual($companyUuid, 'import', static function () use ($companyUuid): void {
+            ImportCustomers::dispatch($companyUuid);
+        });
     }
 
     public function reconcile(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks reconcile sync', $request);
         $companyUuid = $this->companyUuid($request);
-        $blocked     = $this->blockedConnection($companyUuid, 'manual');
+        $blocked     = $this->blockedConnection($companyUuid, 'manual') ?? $this->cooldown($companyUuid, 'manual');
         if ($blocked !== null) {
             return $blocked;
         }
-        SyncCompanyBatch::dispatch($companyUuid, 'manual');
 
-        return response()->json(['queued' => true]);
+        return $this->queueManual($companyUuid, 'manual', static function () use ($companyUuid): void {
+            SyncCompanyBatch::dispatch($companyUuid, 'manual');
+        });
     }
 
     public function sync(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks reconcile sync', $request);
         $companyUuid = $this->companyUuid($request);
-        $blocked     = $this->blockedConnection($companyUuid, 'now');
+        $blocked     = $this->blockedConnection($companyUuid, 'now') ?? $this->cooldown($companyUuid, 'now');
         if ($blocked !== null) {
             return $blocked;
         }
-        SyncCompanyBatch::dispatch($companyUuid, 'now');
 
-        return response()->json(['queued' => true]);
+        return $this->queueManual($companyUuid, 'now', static function () use ($companyUuid): void {
+            SyncCompanyBatch::dispatch($companyUuid, 'now');
+        });
     }
 
     public function test(Request $request): JsonResponse
@@ -393,6 +417,7 @@ class ConnectionController extends QuickbooksController
             'connection'             => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
             'credentials_configured' => $savedKeys,
             'queue'                  => PendingSync::query()->where('company_uuid', $companyUuid)->where('status', 'pending')->count(),
+            'failed'                 => PendingSync::failedRecordCount($companyUuid),
             'last_sync'              => $last instanceof SyncBatch === true ? [
                 'finished_at'   => $last->finished_at?->toIso8601String(),
                 'status'        => $last->status,
@@ -417,8 +442,11 @@ class ConnectionController extends QuickbooksController
             }
 
             foreach (Connection::query()->where('company_uuid', $companyUuid)->get() as $row) {
-                $token = $row instanceof Connection === true ? trim((string) $row->refresh_token) : '';
-                if ($token === '') {
+                if ($row instanceof Connection === false) {
+                    continue;
+                }
+                $token = trim((string) $row->refresh_token);
+                if ($token === '' || $this->realmSharedWithOthers($row, $companyUuid) === true) {
                     continue;
                 }
 
@@ -437,6 +465,31 @@ class ConnectionController extends QuickbooksController
                 'exception'    => $exception::class,
             ]);
         }
+    }
+
+    /**
+     * Intuit may end the app's connection to the whole QuickBooks company on revoke, which would disconnect
+     * every other organization on it. While another one uses the realm, the revoke is skipped; this
+     * organization's row is still deleted, so Fleetbase no longer uses the token.
+     */
+    private function realmSharedWithOthers(Connection $row, string $companyUuid): bool
+    {
+        $realm = trim((string) $row->realm_id);
+        if ($realm === '') {
+            return false;
+        }
+        $shared = Connection::query()
+            ->where('realm_id', $realm)
+            ->where('company_uuid', '!=', $companyUuid)
+            ->exists();
+        if ($shared === true) {
+            Log::info('QuickBooks token not revoked: another organization uses this QuickBooks company.', [
+                'company_uuid' => $companyUuid,
+                'realm_id'     => $realm,
+            ]);
+        }
+
+        return $shared;
     }
 
     /**
@@ -498,6 +551,16 @@ class ConnectionController extends QuickbooksController
     }
 
     /**
+     * An organization that never connected can only connect a new company, which needs change-company.
+     * complete() still checks the company picked at Intuit.
+     */
+    private function mayConnectFirst(Request $request, string $companyUuid): bool
+    {
+        return $this->authorizer->can('quickbooks change-company connection', $request) === true
+            || $this->lastRealm($companyUuid) !== null;
+    }
+
+    /**
      * The realm of the current connection. After a disconnect, the realm the organization last
      * connected, or for a connection made before that was remembered, the realm of its links.
      */
@@ -552,12 +615,7 @@ class ConnectionController extends QuickbooksController
      */
     protected function redirectToConsole(array $query): RedirectResponse|JsonResponse
     {
-        // fleetbase.console.host falls back to 'fleetbase.io' when CONSOLE_HOST is unset.
-        $host = trim((string) config('quickbooks.console_host', ''));
-        if ($host === '') {
-            $fleetbaseHost = trim((string) config('fleetbase.console.host', ''));
-            $host          = $fleetbaseHost === 'fleetbase.io' ? '' : $fleetbaseHost;
-        }
+        $host = $this->consoleHost();
         if ($host === '') {
             return response()->json(['message' => Translation::get('quickbooks.messages.console-host')], 500);
         }
@@ -566,6 +624,21 @@ class ConnectionController extends QuickbooksController
         }
 
         return new RedirectResponse(rtrim($host, '/') . '/quickbooks?' . http_build_query($query));
+    }
+
+    /**
+     * The console origin the OAuth callback returns to, or '' when it is not known.
+     */
+    protected function consoleHost(): string
+    {
+        $host = trim((string) config('quickbooks.console_host', ''));
+        if ($host === '') {
+            // fleetbase.console.host falls back to 'fleetbase.io' when CONSOLE_HOST is unset.
+            $fleetbaseHost = trim((string) config('fleetbase.console.host', ''));
+            $host          = $fleetbaseHost === 'fleetbase.io' ? '' : $fleetbaseHost;
+        }
+
+        return $host;
     }
 
     /**
@@ -687,7 +760,11 @@ class ConnectionController extends QuickbooksController
             $message = 'quickbooks.messages.not-connected-connect';
         }
 
-        if (ConnectionGate::hasRealm($row) === false) {
+        // A blocked connection is recorded in Activity at most once per cooldown.
+        if (
+            ConnectionGate::hasRealm($row) === false
+            || $this->firstInCooldown('quickbooks.blocked.' . $companyUuid . '.' . $trigger) === false
+        ) {
             return response()->json(['message' => Translation::render($message)], 422);
         }
 
@@ -714,6 +791,61 @@ class ConnectionController extends QuickbooksController
         $attempt->save();
 
         return response()->json(['message' => Translation::render($message)], 422);
+    }
+
+    /**
+     * One manual action per organization per cooldown (quickbooks.manual_cooldown_seconds),
+     * so repeated clicks or a script cannot flood the shared queue and Activity.
+     */
+    private function cooldown(string $companyUuid, string $action): ?JsonResponse
+    {
+        if ($this->firstInCooldown('quickbooks.action.' . $companyUuid . '.' . $action) === true) {
+            return null;
+        }
+
+        return response()->json(['message' => Translation::get('quickbooks.messages.action-cooldown')], 429);
+    }
+
+    /**
+     * Queue a manual action. When queueing fails nothing runs, so its cooldown is released.
+     */
+    private function queueManual(string $companyUuid, string $action, \Closure $dispatch): JsonResponse
+    {
+        try {
+            $dispatch();
+        } catch (\Throwable $exception) {
+            $this->releaseCooldown($companyUuid, $action);
+
+            throw $exception;
+        }
+
+        return response()->json(['queued' => true]);
+    }
+
+    private function releaseCooldown(string $companyUuid, string $action): void
+    {
+        try {
+            Cache::forget('quickbooks.action.' . $companyUuid . '.' . $action);
+        } catch (\Throwable) {
+            // The cooldown then ends on its own.
+        }
+    }
+
+    /**
+     * True the first time $key is seen within the cooldown. A cooldown of 0 turns it off,
+     * and a cache that cannot be reached never blocks a sync.
+     */
+    private function firstInCooldown(string $key): bool
+    {
+        $seconds = (int) config('quickbooks.manual_cooldown_seconds', 30);
+        if ($seconds <= 0) {
+            return true;
+        }
+        try {
+            return Cache::add($key, true, $seconds) === true;
+        } catch (\Throwable) {
+            return true;
+        }
     }
 
     /**

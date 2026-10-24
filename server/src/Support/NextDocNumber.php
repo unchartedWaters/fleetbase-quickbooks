@@ -23,4 +23,29 @@ class NextDocNumber
 
         return $prefix . $next;
     }
+
+    /**
+     * Whether $number comes after $other in the same sequence: the same prefix and a larger
+     * trailing number. Numbers from different sequences are never later.
+     */
+    public static function isLater(string $number, string $other): bool
+    {
+        if (
+            preg_match('/^(.*?)(\d+)$/', $number, $first) !== 1
+            || preg_match('/^(.*?)(\d+)$/', $other, $second) !== 1
+        ) {
+            return false;
+        }
+        if ($first[1] !== $second[1]) {
+            return false;
+        }
+        $a = ltrim($first[2], '0');
+        $b = ltrim($second[2], '0');
+
+        if (strlen($a) !== strlen($b)) {
+            return strlen($a) > strlen($b);
+        }
+
+        return strcmp($a, $b) > 0;
+    }
 }

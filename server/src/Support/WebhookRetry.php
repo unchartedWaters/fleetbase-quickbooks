@@ -25,6 +25,15 @@ class WebhookRetry
     public const MESSAGE = 'quickbooks.messages.webhook-read-failed';
 
     /**
+     * The first wait after the company lock was busy (or a token refresh could not run). It
+     * doubles per retry up to BUSY_MAX_DELAY_SECONDS, so eight retries wait about 515 seconds:
+     * close to the lock lifetime, the longest a held or orphaned lock can block.
+     */
+    public const BUSY_BASE_DELAY_SECONDS = 5;
+
+    public const BUSY_MAX_DELAY_SECONDS = 120;
+
+    /**
      * Seconds until a stored rate limit ends, or 0 when QuickBooks may be called now.
      *
      * @param array<string, mixed>|null $connection
@@ -57,6 +66,19 @@ class WebhookRetry
         $wait = $policy->defaultWait(self::BASE_DELAY_SECONDS, $retries + 1);
 
         return max($wait, self::rateLimitedFor($connection, $now));
+    }
+
+    /**
+     * The queue delay after $retries busy-lock retries already made, with jitter.
+     */
+    public static function busyDelay(int $retries): int
+    {
+        $wait = self::BUSY_BASE_DELAY_SECONDS;
+        for ($step = 0; $step < $retries && $wait < self::BUSY_MAX_DELAY_SECONDS; $step++) {
+            $wait *= 2;
+        }
+
+        return self::spread(min($wait, self::BUSY_MAX_DELAY_SECONDS));
     }
 
     /**

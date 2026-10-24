@@ -5,6 +5,7 @@ use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 test('voiding an invoice keeps money fields as strings', function () {
@@ -319,6 +320,24 @@ test('any other 400 on a read still throws', function () {
     }
 });
 
+test('a single write stale object fault is transient', function () {
+    Http::fake([
+        'sandbox-quickbooks.api.intuit.com/*' => Http::response([
+            'Fault' => ['Error' => [['code' => '5010', 'Detail' => 'Stale Object Error']], 'type' => 'ValidationFault'],
+        ], 400),
+    ]);
+
+    try {
+        (new QuickBooksClient())->updateCustomer(clientConnection(), '58', '3', ['DisplayName' => 'Ada']);
+        expect(false)->toBeTrue();
+    } catch (QuickBooksException $exception) {
+        // The same rule as a 5010 inside a batch: the record changed in QuickBooks, so a retry reads it again.
+        expect($exception->faultCode)->toBe('5010')
+            ->and($exception->status)->toBe(409)
+            ->and($exception->isTransient())->toBeTrue();
+    }
+});
+
 test('one new invoice number is a latest query and one existence query', function () {
     Http::fake(function (Request $request) {
         $url = urldecode($request->url());
@@ -453,6 +472,77 @@ test('a block does not issue invoice numbers after the check budget is exhausted
 
     expect((new QuickBooksClient())->nextInvoiceDocNumbers(clientConnection(), 2))->toBe([]);
     Http::assertSentCount(2);
+});
+
+test('two reservations before any write get different invoice numbers', function () {
+    Http::fake(function (Request $request) {
+        $url = urldecode($request->url());
+        if ($request->method() === 'GET' && str_contains($url, 'orderby MetaData.CreateTime') === true) {
+            return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1041']]]], 200);
+        }
+        $responses = [];
+        foreach ($request->data()['BatchItemRequest'] ?? [] as $item) {
+            $responses[] = ['bId' => $item['bId'], 'QueryResponse' => ['Invoice' => []]];
+        }
+
+        return Http::response(['BatchItemResponse' => $responses, 'QueryResponse' => ['Invoice' => []]], 200);
+    });
+    $client = new QuickBooksClient();
+
+    $first  = $client->nextInvoiceDocNumbers(clientConnection(), 3);
+    $second = $client->nextInvoiceDocNumbers(clientConnection(), 3);
+    $single = (new QuickBooksClient())->nextInvoiceDocNumber(clientConnection());
+
+    expect($first)->toBe(['1042', '1043', '1044'])
+        ->and($second)->toBe(['1045', '1046', '1047'])
+        ->and($single)->toBe('1048');
+});
+
+test('invoice numbers are not reserved while another run holds the realm number lock', function () {
+    Http::fake(fn () => Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1041']]]], 200));
+    $held = Cache::lock('quickbooks.docnumber.realm-1', 30);
+    $held->get();
+    try {
+        $client  = new class extends QuickBooksClient {
+            protected int $docNumberLockWait = 0;
+        };
+        $numbers = $client->nextInvoiceDocNumbers(clientConnection(), 2);
+    } finally {
+        $held->release();
+    }
+
+    expect($numbers)->toBe([]);
+    Http::assertNothingSent();
+});
+
+test('the realm number lock outlives the slowest choice of an invoice number', function () {
+    // Each request takes Laravel's default 30 s timeout, and every candidate is taken: the
+    // latest-invoice query plus five checks. Another run must not take the lock meanwhile.
+    $lockFree = [];
+    Http::fake(function (Request $request) use (&$lockFree) {
+        Illuminate\Support\Carbon::setTestNow(Illuminate\Support\Carbon::now()->addSeconds(30));
+        $probe      = Cache::lock('quickbooks.docnumber.realm-1', 30);
+        $lockFree[] = $probe->get();
+        if (end($lockFree) === true) {
+            $probe->release();
+        }
+        $url = urldecode($request->url());
+        if (str_contains($url, 'orderby MetaData.CreateTime') === true) {
+            return Http::response(['QueryResponse' => ['Invoice' => [['DocNumber' => '1000']]]], 200);
+        }
+        preg_match("/DocNumber = '([^']+)'/", $url, $match);
+
+        return Http::response(['QueryResponse' => ['Invoice' => [['Id' => 'taken', 'DocNumber' => $match[1]]]]], 200);
+    });
+
+    try {
+        $numbers = (new QuickBooksClient())->nextInvoiceDocNumbers(clientConnection(), 1);
+    } finally {
+        Illuminate\Support\Carbon::setTestNow();
+    }
+
+    expect($numbers)->toBe([])
+        ->and($lockFree)->toBe([false, false, false, false, false, false]);
 });
 
 test('update writes are chunked at 20 and other batch calls stay at 30', function () {
@@ -660,4 +750,57 @@ test('an item is read by id, inactive or not', function () {
 
     expect((new QuickBooksClient())->item(clientConnection(), '20'))->toBe($item);
     Http::assertSent(fn (Request $request): bool => str_contains($request->url(), '/item/20'));
+});
+
+test('an answer of 200 with a fault is a refusal, not an empty success', function () {
+    $validation = ['Fault' => ['Error' => [[
+        'Message' => 'A business validation error has occurred while processing your request',
+        'Detail'  => 'Business Validation Error: Preferences cannot be changed.',
+        'code'    => '6000',
+    ]], 'type' => 'ValidationFault']];
+    $authentication = ['Fault' => [
+        'Error' => [['Message' => 'AuthenticationFailed', 'code' => '3200']],
+        'type'  => 'AUTHENTICATION',
+    ]];
+    $answers        = [$validation, $validation, $authentication];
+    Http::fake(function () use (&$answers) {
+        return Http::response(array_shift($answers), 200);
+    });
+    $client = new QuickBooksClient();
+    $caught = [];
+    foreach ([
+        fn () => $client->createCustomer(clientConnection(), ['DisplayName' => 'Ada']),
+        fn () => $client->findCustomerByEmail(clientConnection(), 'ada@example.test'),
+        fn () => $client->companyInfo(clientConnection()),
+    ] as $call) {
+        try {
+            $call();
+            $caught[] = null;
+        } catch (QuickBooksException $exception) {
+            $caught[] = [$exception->status, $exception->faultCode, $exception->getMessage()];
+        }
+    }
+
+    expect($caught[0][0])->toBe(400)
+        ->and($caught[0][1])->toBe('6000')
+        ->and(qbText($caught[0][2]))->toContain('Preferences cannot be changed.')
+        ->and($caught[1][0])->toBe(400)
+        ->and($caught[2][0])->toBe(401)
+        ->and($caught[2][1])->toBe('3200');
+});
+
+test('item faults inside a batch answered with 200 stay with the batch handling', function () {
+    Http::fake(fn () => Http::response(['BatchItemResponse' => [
+        ['bId' => 'a', 'Customer' => ['Id' => '5', 'SyncToken' => '0']],
+        ['bId' => 'b', 'Fault' => ['Error' => [['Detail' => 'Duplicate Name Exists Error', 'code' => '6240']]]],
+    ]], 200));
+
+    $results = (new QuickBooksClient())->batch(clientConnection(), [
+        ['bId' => 'a', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Ada']],
+        ['bId' => 'b', 'operation' => 'create', 'entity' => 'Customer', 'payload' => ['DisplayName' => 'Bea']],
+    ]);
+
+    expect($results['a']['ok'])->toBeTrue()
+        ->and($results['b']['ok'])->toBeFalse()
+        ->and($results['b']['code'] ?? null)->toBe('6240');
 });

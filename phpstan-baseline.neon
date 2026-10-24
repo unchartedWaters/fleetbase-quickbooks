@@ -1,16 +1,6 @@
 parameters:
 	ignoreErrors:
 		-
-			message: "#^Cannot access property \\$company_uuid on mixed\\.$#"
-			count: 1
-			path: server/src/Console/Commands/SyncQuickbooks.php
-
-		-
-			message: "#^Cannot access property \\$realm_id on mixed\\.$#"
-			count: 1
-			path: server/src/Console/Commands/SyncQuickbooks.php
-
-		-
 			message: "#^Cannot call method apply\\(\\) on mixed\\.$#"
 			count: 2
 			path: server/src/Http/Controllers/ConnectionController.php
@@ -54,16 +44,6 @@ parameters:
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
 			count: 5
 			path: server/src/Jobs/ApplyRemoteChange.php
-
-		-
-			message: "#^Cannot access property \\$local_type on mixed\\.$#"
-			count: 1
-			path: server/src/Jobs/SyncWebhookBatch.php
-
-		-
-			message: "#^Cannot access property \\$local_uuid on mixed\\.$#"
-			count: 1
-			path: server/src/Jobs/SyncWebhookBatch.php
 
 		-
 			message: "#^Offset 'local_type' on array\\{local_type\\: string, local_uuid\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
@@ -301,7 +281,7 @@ parameters:
 			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Parameter \\#2 \\$items of method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksClient\\:\\:postBatch\\(\\) expects array\\<int, array\\{bId\\: string, operation\\?\\: string, entity\\?\\: string, payload\\?\\: array\\<string, mixed\\>, query\\?\\: string\\}\\>, array\\<int, array\\{bId\\?\\: string, operation\\?\\: string, entity\\?\\: string, payload\\?\\: array\\<string, mixed\\>, query\\?\\: string\\}\\> given\\.$#"
+			message: "#^Parameter \\#2 \\$items of method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksClient\\:\\:postBatch\\(\\) expects array\\<int, array\\{bId\\: string, operation\\?\\: string, entity\\?\\: string, payload\\?\\: array\\<string, mixed\\>, query\\?\\: string, key\\?\\: string\\}\\>, array\\<int, array\\{bId\\?\\: string, operation\\?\\: string, entity\\?\\: string, payload\\?\\: array\\<string, mixed\\>, query\\?\\: string\\}\\> given\\.$#"
 			count: 1
 			path: server/src/Services/QuickBooksClient.php
 
@@ -476,11 +456,6 @@ parameters:
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:prefetchCustomers\\(\\) has parameter \\$settings with no value type specified in iterable type array\\.$#"
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
 			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:prefetchInvoices\\(\\) has parameter \\$connection with no value type specified in iterable type array\\.$#"
 			count: 1
 			path: server/src/Services/SyncEngine.php
@@ -497,11 +472,6 @@ parameters:
 
 		-
 			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:settlePaymentBuffer\\(\\) has parameter \\$connection with no value type specified in iterable type array\\.$#"
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: "#^Offset 'bId' on array\\{bId\\: string, operation\\: string, entity\\: string, payload\\: array\\<string, mixed\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
 			count: 1
 			path: server/src/Services/SyncEngine.php
 

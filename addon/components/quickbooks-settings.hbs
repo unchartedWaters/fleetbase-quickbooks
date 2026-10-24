@@ -13,6 +13,7 @@
             @variant="status"
             @connection={{@connection}}
             @configured={{@configured}}
+            @canConnectNew={{@canConnectNew}}
             @loadFailed={{@loadFailed}}
             @busy={{@busy}}
             @onConnect={{@onConnect}}
@@ -48,5 +49,6 @@
         @onUpdate={{this.update}}
         @onToggleVisibility={{this.toggleVisibility}}
         @onSetEntityEnabled={{this.setEntityEnabled}}
+        @onToggleKey={{this.toggleKey}}
     />
 </div>

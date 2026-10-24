@@ -191,6 +191,9 @@ function wplWithTables(array $links, array $invoiceUuids, callable $callback): m
             $table->string('sync_token')->default('0');
             $table->string('name')->nullable();
             $table->string('state')->nullable();
+            $table->text('invoice_tokens')->nullable();
+            $table->string('kept_customer')->nullable();
+            $table->string('kept_from')->nullable();
             $table->timestamps();
         });
         $schema->create('ledger_invoices', function (Blueprint $table) {
@@ -400,7 +403,9 @@ function wplJobs(array $jobs): array
 
 $wplNoSqlite = in_array('sqlite', PDO::getAvailableDrivers(), true) === false;
 
-test('a payment linked straight to invoices queues every linked or on-file invoice without reading quickbooks', function () {
+// QuickBooks may have moved a payment linked straight to invoices to another invoice, so with
+// payments from QuickBooks the request leaves it to the job, which reads its current lines.
+test('a payment linked straight to invoices is left to the job when payments come from quickbooks', function () {
     $client    = new WplClient();
     $directory = wplDirectory();
     $links     = [
@@ -419,6 +424,30 @@ test('a payment linked straight to invoices queues every linked or on-file invoi
     expect($client->calls)->toBe([])
         ->and($directory->released)->toBe([])
         ->and(wplJobs($jobs))->toBe([
+            ['resolve', [wplPayload('4', 'update', null)]],
+        ]);
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a payment linked straight to invoices that quickbooks no longer returns queues its linked invoices', function () {
+    $client    = new WplClient();
+    $directory = wplDirectory();
+    $tokens    = wplTokens($client, $directory);
+    $links     = [
+        wplLink('pay-a', 'payment', 'inv-a', 'Payment', '4'),
+        wplLink('pay-b', 'payment', 'inv-b', 'Payment', '4'),
+        wplLink('pay-c', 'payment', 'inv-c', 'Payment', '4'),
+        wplLink('link-inv-a', 'invoice', 'inv-a', 'Invoice', '10'),
+    ];
+
+    $run  = function ($dispatcher) use ($directory, $tokens) {
+        wplRunJob([wplPayload('4', 'update', null)], wplStore(), $directory, $tokens);
+
+        return $dispatcher->jobs;
+    };
+    $jobs = wplWithTables($links, ['inv-b'], fn () => wplWithServices($client, $directory, $tokens, $run));
+
+    expect($client->calls)->toBe(['getPayment:4'])
+        ->and(wplJobs($jobs))->toBe([
             ['apply', [['entity' => 'Payment', 'id' => '4', 'operation' => 'update']]],
             ['sync', [
                 ['local_type' => 'invoice', 'local_uuid' => 'inv-a'],
@@ -427,7 +456,7 @@ test('a payment linked straight to invoices queues every linked or on-file invoi
         ]);
 })->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
 
-test('the request resolves direct payments and defers keyed and new unlinked ones in order', function () {
+test('the request defers direct, keyed and new unlinked payments in order with payments from quickbooks', function () {
     $client    = new WplClient();
     $directory = wplDirectory();
     $links     = [
@@ -455,14 +484,13 @@ test('the request resolves direct payments and defers keyed and new unlinked one
         ->and($directory->released)->toBe([[]])
         ->and(wplJobs($jobs))->toBe([
             ['resolve', [
+                wplPayload('4', 'update', null),
                 wplPayload('5', 'create', null),
                 wplPayload('6', 'create', null),
                 wplPayload('7', 'update', 'pay-local-7', 'realm-2'),
                 wplPayload('5', 'update', null),
                 wplPayload('8', 'delete', '8'),
             ]],
-            ['apply', [['entity' => 'Payment', 'id' => '4', 'operation' => 'update']]],
-            ['sync', [['local_type' => 'invoice', 'local_uuid' => 'inv-a']]],
         ]);
 })->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
 
@@ -617,6 +645,163 @@ test('the job reads one keyed payment on its own and skips a payment quickbooks 
                 ['entity' => 'Invoice', 'id' => '10', 'operation' => 'update'],
             ]],
             ['sync', [['local_type' => 'invoice', 'local_uuid' => 'inv-a']]],
+        ]);
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a payment moved to another invoice in quickbooks re-reads the invoice it no longer pays', function () {
+    $client                = new WplClient();
+    $client->payments['6'] = wplPayment('6', ['11']);
+    $directory             = wplDirectory();
+    $tokens                = wplTokens($client, $directory);
+    $links                 = [
+        wplLink('pay-6', 'payment', '6', 'Payment', '6'),
+        wplLink('map-6', 'payment-invoice', '6', 'PaymentInvoice', 'inv-a'),
+        wplLink('link-inv-a', 'invoice', 'inv-a', 'Invoice', '10'),
+        wplLink('link-inv-b', 'invoice', 'inv-b', 'Invoice', '11'),
+    ];
+
+    $run           = function ($dispatcher) use ($directory, $tokens) {
+        wplRunJob([wplPayload('6', 'update', '6')], wplStore(), $directory, $tokens);
+
+        return [$dispatcher->jobs, DB::table('quickbooks_links')->where('uuid', 'map-6')->value('qbo_id')];
+    };
+    [$jobs, $map] = wplWithTables($links, [], fn () => wplWithServices($client, $directory, $tokens, $run));
+
+    // The stored invoice of the payment now names the invoice it pays.
+    expect($map)->toBe('inv-b')
+        ->and(wplJobs($jobs))->toBe([
+            ['apply', [
+                ['entity' => 'Payment', 'id' => '6', 'operation' => 'update'],
+                ['entity' => 'Invoice', 'id' => '11', 'operation' => 'update'],
+                ['entity' => 'InvoicePayments', 'id' => '10', 'operation' => 'update'],
+            ]],
+            ['sync', [
+                ['local_type' => 'invoice', 'local_uuid' => 'inv-b'],
+                ['local_type' => 'invoice', 'local_uuid' => 'inv-a'],
+            ]],
+        ]);
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a payment linked straight to an invoice and moved in quickbooks re-reads the old invoice', function () {
+    $client                = new WplClient();
+    $client->payments['4'] = wplPayment('4', ['11']);
+    $directory             = wplDirectory();
+    $tokens                = wplTokens($client, $directory);
+    $links                 = [
+        wplLink('pay-4', 'payment', 'inv-a', 'Payment', '4'),
+        wplLink('link-inv-a', 'invoice', 'inv-a', 'Invoice', '10'),
+        wplLink('link-inv-b', 'invoice', 'inv-b', 'Invoice', '11'),
+    ];
+
+    $run  = function ($dispatcher) use ($directory, $tokens) {
+        wplRunJob([wplPayload('4', 'update', null)], wplStore(), $directory, $tokens);
+
+        return $dispatcher->jobs;
+    };
+    $jobs = wplWithTables($links, [], fn () => wplWithServices($client, $directory, $tokens, $run));
+
+    expect($client->calls)->toBe(['getPayment:4'])
+        ->and(wplJobs($jobs))->toBe([
+            ['apply', [
+                ['entity' => 'Payment', 'id' => '4', 'operation' => 'update'],
+                ['entity' => 'Invoice', 'id' => '11', 'operation' => 'update'],
+                ['entity' => 'InvoicePayments', 'id' => '10', 'operation' => 'update'],
+            ]],
+            ['sync', [
+                ['local_type' => 'invoice', 'local_uuid' => 'inv-b'],
+                ['local_type' => 'invoice', 'local_uuid' => 'inv-a'],
+            ]],
+        ]);
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a payment moved off its stored invoice keeps that row while fleetbase holds payments', function () {
+    $client                = new WplClient();
+    $client->payments['6'] = wplPayment('6', ['11']);
+    $directory             = wplDirectory();
+    $tokens                = wplTokens($client, $directory);
+    $links                 = [
+        wplLink('pay-6', 'payment', '6', 'Payment', '6'),
+        wplLink('map-6', 'payment-invoice', '6', 'PaymentInvoice', 'inv-a'),
+        wplLink('link-inv-a', 'invoice', 'inv-a', 'Invoice', '10'),
+        wplLink('link-inv-b', 'invoice', 'inv-b', 'Invoice', '11'),
+    ];
+
+    $run          = function ($dispatcher) use ($directory, $tokens) {
+        wplRunJob([wplPayload('6', 'update', '6')], wplStore(['payment_conflict' => 'fleetbase']), $directory, $tokens);
+
+        return [$dispatcher->jobs, DB::table('quickbooks_links')->where('uuid', 'map-6')->value('qbo_id')];
+    };
+    [$jobs, $map] = wplWithTables($links, [], fn () => wplWithServices($client, $directory, $tokens, $run));
+
+    expect($map)->toBe('inv-a')
+        ->and(wplJobs($jobs))->toBe([
+            ['sync', [
+                ['local_type' => 'invoice', 'local_uuid' => 'inv-b'],
+                ['local_type' => 'invoice', 'local_uuid' => 'inv-a'],
+            ]],
+        ]);
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a stale payment delete re-reads the balance of the invoice it paid', function () {
+    $client    = new WplClient();
+    $directory = wplDirectory();
+    $links     = [
+        wplLink('pay-4', 'payment', '4', 'Payment', '4'),
+        wplLink('map-4', 'payment-invoice', '4', 'PaymentInvoice', 'inv-a'),
+        wplLink('pay-5', 'payment', 'inv-b', 'Payment', '5'),
+        wplLink('link-inv-a', 'invoice', 'inv-a', 'Invoice', '10'),
+        wplLink('link-inv-b', 'invoice', 'inv-b', 'Invoice', '11'),
+    ];
+
+    $jobs = wplWithTables($links, [], fn () => wplWithServices($client, $directory, null, function ($dispatcher) {
+        wplRequest([
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'refresh', '4'),
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '5', 'refresh', 'inv-b'),
+        ], wplStore());
+
+        return $dispatcher->jobs;
+    }));
+
+    // Nothing is deleted from the late payload, and QuickBooks is not called in the request.
+    expect($client->calls)->toBe([])
+        ->and($directory->released)->toBe([])
+        ->and(wplJobs($jobs))->toBe([
+            ['apply', [
+                ['entity' => 'InvoicePayments', 'id' => '10', 'operation' => 'update'],
+                ['entity' => 'InvoicePayments', 'id' => '11', 'operation' => 'update'],
+            ]],
+        ]);
+})->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
+
+test('a stale delete that is not applied is noted in activity', function () {
+    $client    = new WplClient();
+    $directory = wplDirectory();
+    $links     = [
+        wplLink('cust-9', 'customer', 'cust-9', 'Customer', '9'),
+        wplLink('pay-4', 'payment', '4', 'Payment', '4'),
+    ];
+
+    $jobs = wplWithTables($links, [], fn () => wplWithServices($client, $directory, null, function ($dispatcher) {
+        wplRequest([
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'customer', '9', 'stale-delete', 'cust-9'),
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'invoice', '12', 'stale-delete', null),
+            new QuickBooksEntityChanged('company-a', 'realm-1', 'payment', '4', 'refresh', '4'),
+        ], wplStore(['payment_conflict' => 'fleetbase']));
+
+        return $dispatcher->jobs;
+    }));
+    $notes = array_map(
+        static fn (array $row): array => [$row['local_type'], $row['local_uuid'], qbText($row['error'])],
+        $directory->memory->attempts
+    );
+
+    expect($jobs)->toBe([])
+        ->and($directory->released)->toBe([])
+        ->and($notes)->toBe([
+            ['customer', 'cust-9', 'QuickBooks reported a delete too late to apply it safely.'
+                . ' Check this record in QuickBooks and Fleetbase.'],
+            ['payment', '4', 'A payment deleted or voided in QuickBooks (ID 4) is still counted in Fleetbase.'
+                . ' The payment sync settings do not let QuickBooks remove Fleetbase records.'],
         ]);
 })->skip($wplNoSqlite, 'PDO SQLite is unavailable.');
 

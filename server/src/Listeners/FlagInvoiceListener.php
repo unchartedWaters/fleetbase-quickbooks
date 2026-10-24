@@ -13,6 +13,14 @@ class FlagInvoiceListener
     {
     }
 
+    /**
+     * Whether this organization has a QuickBooks connection worth flagging for.
+     */
+    public function tracks(string $companyUuid): bool
+    {
+        return $this->directory->tracks($companyUuid);
+    }
+
     public function handle(object $event): void
     {
         if (SyncSuppressor::paused() === true) {

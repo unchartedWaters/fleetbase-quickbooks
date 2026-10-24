@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\WebhookRetry;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
+use Fleetbase\Quickbooks\Tests\Support\ImportDatabase;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
 use Illuminate\Container\Container;
@@ -66,14 +67,10 @@ test('a quickbooks customer with no fleetbase match creates a contact', function
         ->and(array_values($batch['ledger']->customers)[0]['company_uuid'])->toBe('company-uuid');
 });
 
-test('email phone and name matches link instead of creating', function () {
+test('email and name matches link instead of creating', function () {
     $email = importWith(
         [remoteCustomer('1', 'Other', 'Ada@Example.test', '000')],
         [['uuid' => 'local-1', 'company_uuid' => 'company-uuid', 'name' => 'Kept', 'email' => 'ada@example.test', 'phone' => '111']]
-    );
-    $phone = importWith(
-        [remoteCustomer('2', 'Other', 'nope@example.test', '(555) 010-0')],
-        [['uuid' => 'local-2', 'company_uuid' => 'company-uuid', 'name' => 'Kept', 'email' => null, 'phone' => '5550100']]
     );
     $name = importWith(
         [remoteCustomer('3', 'Exact Name', null, null)],
@@ -81,8 +78,60 @@ test('email phone and name matches link instead of creating', function () {
     );
 
     expect($email['created'])->toBe(0)->and($email['linked'])->toBe(1)
-        ->and($phone['linked'])->toBe(1)
         ->and($name['linked'])->toBe(1);
+});
+
+test('a phone-only match creates a new customer', function () {
+    $phone = importWith(
+        [remoteCustomer('2', 'Other', 'nope@example.test', '(555) 010-0')],
+        [['uuid' => 'local-2', 'company_uuid' => 'company-uuid', 'name' => 'Kept', 'phone' => '5550100']]
+    );
+
+    expect($phone['created'])->toBe(1)
+        ->and($phone['linked'])->toBe(0)
+        ->and($phone['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-2'))->toBeNull();
+});
+
+test('a name match links even when the emails differ', function () {
+    $batch = importWith([remoteCustomer('41', 'John Smith', 'john@acme.test', null)], [[
+        'uuid'         => 'local-7',
+        'company_uuid' => 'company-uuid',
+        'name'         => 'John Smith',
+        'email'        => 'jsmith@other.test',
+        'phone'        => null,
+    ]]);
+
+    expect($batch['linked'])->toBe(1)
+        ->and($batch['created'])->toBe(0)
+        ->and($batch['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-7')['qbo_id'])->toBe('41');
+});
+
+test('a phone and name match links by name', function () {
+    $batch = importWith([remoteCustomer('42', 'Jane Doe', 'jane@acme.test', '555-0100')], [[
+        'uuid'         => 'local-8',
+        'company_uuid' => 'company-uuid',
+        'name'         => 'Jane Doe',
+        'email'        => 'jdoe@other.test',
+        'phone'        => '5550100',
+    ]]);
+
+    expect($batch['linked'])->toBe(1)
+        ->and($batch['created'])->toBe(0)
+        ->and($batch['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-8')['qbo_id'])->toBe('42');
+});
+
+test('a fleetbase name with a colon matches the name quickbooks stores with a dash', function () {
+    $batch = importWith([remoteCustomer('58', 'Harbor- West', null, null)], [[
+        'uuid'         => 'local-9',
+        'company_uuid' => 'company-uuid',
+        'name'         => 'Harbor: West',
+        'email'        => null,
+        'phone'        => null,
+    ]]);
+
+    expect($batch['linked'])->toBe(1)
+        ->and($batch['created'])->toBe(0)
+        ->and($batch['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-9')['qbo_id'])->toBe('58');
 });
 
 test('existing fleetbase field values are not overwritten', function () {
@@ -501,7 +550,7 @@ test('a failed candidate lookup does not create the page', function () {
     }
 });
 
-test('imported customers match stored email case and digits-only phone', function () {
+test('imported customers match stored email case, and a stored phone alone does not match', function () {
     qbEnsureCustomerTable();
     DB::connection('sqlite')->table('contacts')->insert([
         [
@@ -534,10 +583,10 @@ test('imported customers match stored email case and digits-only phone', functio
     $ledger = importLedger();
     $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true);
 
-    expect($batch['created'])->toBe(0)
-        ->and($batch['linked'])->toBe(2)
+    expect($batch['created'])->toBe(1)
+        ->and($batch['linked'])->toBe(1)
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-email')['qbo_id'])->toBe('1')
-        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-phone')['qbo_id'])->toBe('2');
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-phone'))->toBeNull();
 });
 
 test('customer matching compares normalized email and phone in php', function () {
@@ -824,6 +873,161 @@ test('importing named customers that are all linked already records nothing', fu
 
     expect($client->calls)->toBe([])
         ->and($ledger->batches)->toBe([]);
+});
+
+test('a full import with a real directory does not duplicate a customer it already links', function () {
+    $restore  = ImportDatabase::open();
+    $previous = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+    try {
+        ImportDatabase::connection();
+        ImportDatabase::contact('cust-a', 'Harbor: West');
+        ImportDatabase::link('l-a', 'cust-a', '58');
+        $client                = new FakeQuickBooks();
+        $client->customerPages = [1 => [remoteCustomer('58', 'Harbor- West', null, null)]];
+
+        (new ImportCustomers('company-uuid'))->handle(new CustomerImporter($client), new FleetbaseDirectory());
+
+        expect(DB::table('contacts')->count())->toBe(1)
+            ->and(ImportDatabase::linkedTo('58'))->toBe(['cust-a']);
+    } finally {
+        Cache::swap($previous);
+        $restore();
+    }
+});
+
+test('an import does not drop a quickbooks customer whose email matches a customer linked elsewhere', function (
+    array $ids,
+) {
+    $restore  = ImportDatabase::open();
+    $previous = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+    try {
+        ImportDatabase::connection();
+        ImportDatabase::contact('acme-west', 'Acme West', ['email' => 'ap@acme.test']);
+        ImportDatabase::link('l-west', 'acme-west', '58');
+        $client                  = new FakeQuickBooks();
+        $client->customerPages   = [1 => [remoteCustomer('95', 'Acme East', 'ap@acme.test', null)]];
+        $client->customers['95'] = remoteCustomer('95', 'Acme East', 'ap@acme.test', null);
+
+        (new ImportCustomers('company-uuid', null, true, 0, $ids, $ids === [] ? '' : 'realm-1'))
+            ->handle(new CustomerImporter($client), new FleetbaseDirectory());
+
+        $east = ImportDatabase::linkedTo('95');
+        expect(DB::table('contacts')->count())->toBe(2)
+            ->and($east)->toHaveCount(1)
+            ->and($east[0])->not->toBe('acme-west')
+            ->and(ImportDatabase::linkedTo('58'))->toBe(['acme-west']);
+    } finally {
+        Cache::swap($previous);
+        $restore();
+    }
+})->with(['the catalog' => [[]], 'a named import' => [['95']]]);
+
+test('an import links the free customer with the name when the email match is linked elsewhere', function (
+    array $ids,
+) {
+    $restore  = ImportDatabase::open();
+    $previous = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+    try {
+        ImportDatabase::connection();
+        ImportDatabase::contact('acme-east', 'Acme East', ['email' => 'ap@acme.test']);
+        ImportDatabase::contact('acme-west', 'Acme West');
+        ImportDatabase::link('l-east', 'acme-east', '58');
+        $client                  = new FakeQuickBooks();
+        $client->customerPages   = [1 => [remoteCustomer('77', 'Acme West', 'ap@acme.test', null)]];
+        $client->customers['77'] = remoteCustomer('77', 'Acme West', 'ap@acme.test', null);
+
+        (new ImportCustomers('company-uuid', null, true, 0, $ids, $ids === [] ? '' : 'realm-1'))
+            ->handle(new CustomerImporter($client), new FleetbaseDirectory());
+
+        expect(DB::table('contacts')->count())->toBe(2)
+            ->and(ImportDatabase::linkedTo('77'))->toBe(['acme-west'])
+            ->and(ImportDatabase::linkedTo('58'))->toBe(['acme-east']);
+    } finally {
+        Cache::swap($previous);
+        $restore();
+    }
+})->with(['the catalog' => [[]], 'a named import' => [['77']]]);
+
+test('a named import skips a customer linked while it read quickbooks', function () {
+    $directory         = new FleetbaseDirectory();
+    $directory->memory = importLedger();
+    $client            = new class extends FakeQuickBooks {
+        public ?Closure $onRead = null;
+
+        public function getCustomer(array $connection, string $id): ?array
+        {
+            if ($this->onRead !== null) {
+                ($this->onRead)();
+            }
+
+            return parent::getCustomer($connection, $id);
+        }
+    };
+    $client->customers['95'] = remoteCustomer('95', 'Seaside Haulers', 'dispatch@seaside.test', null);
+    $client->onRead          = static function () use ($directory): void {
+        $directory->memory->links[] = [
+            'company_uuid' => 'company-uuid',
+            'realm_id'     => 'realm-1',
+            'local_type'   => 'customer',
+            'local_uuid'   => 'contact-x',
+            'qbo_entity'   => 'Customer',
+            'qbo_id'       => '95',
+            'sync_token'   => '0',
+        ];
+        $directory->memory->rebuildIndex();
+    };
+    $previous = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+
+    try {
+        (new ImportCustomers('company-uuid', null, true, 0, ['95'], 'realm-1'))
+            ->handle(new CustomerImporter($client), $directory);
+    } finally {
+        Cache::swap($previous);
+    }
+
+    $linked = array_filter($directory->memory->links, static fn (array $link): bool => $link['qbo_id'] === '95');
+    expect(array_column($linked, 'local_uuid'))->toBe(['contact-x']);
+});
+
+test('a named import does not save a customer another import linked before it saved', function () {
+    $restore  = ImportDatabase::open();
+    $previous = Cache::getFacadeRoot();
+    Cache::swap(new Repository(new ArrayStore()));
+    try {
+        ImportDatabase::connection();
+        $client                  = new FakeQuickBooks();
+        $client->customers['95'] = remoteCustomer('95', 'Seaside Haulers', 'dispatch@seaside.test', null);
+        $directory               = new class extends FleetbaseDirectory {
+            public function rememberCustomerLinks(
+                SyncLedger $ledger,
+                string $companyUuid,
+                string $realm,
+                array $qboIds,
+                array $localUuids,
+            ): void {
+                parent::rememberCustomerLinks($ledger, $companyUuid, $realm, $qboIds, $localUuids);
+                // Another job for the same webhook saves its customer while this one still runs.
+                ImportDatabase::contact('contact-x', 'Seaside Haulers', ['email' => 'dispatch@seaside.test']);
+                ImportDatabase::link('l-x', 'contact-x', '95');
+            }
+        };
+
+        (new ImportCustomers('company-uuid', null, true, 0, ['95'], 'realm-1'))
+            ->handle(new CustomerImporter($client), $directory);
+
+        $batch = DB::table('quickbooks_sync_batches')->first();
+        expect(ImportDatabase::linkedTo('95'))->toBe(['contact-x'])
+            ->and(DB::table('contacts')->count())->toBe(1)
+            ->and((int) $batch->created_count)->toBe(0)
+            ->and((int) $batch->linked_count)->toBe(1);
+    } finally {
+        Cache::swap($previous);
+        $restore();
+    }
 });
 
 function importWith(array $remote, array $local): array

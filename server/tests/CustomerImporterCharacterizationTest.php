@@ -495,7 +495,7 @@ test('a remote id already linked is counted as linked without calling the creato
         ->and($ledger->links)->toHaveCount(1);
 });
 
-test('a fleetbase match links with the remote sync token unless it is already linked to another quickbooks id', function () {
+test('a fleetbase match links without a sync token unless it is already linked to another quickbooks id', function () {
     $client                = new CicQuickBooks();
     $client->customerPages = [1 => [
         cicRemote('31', 'Same', 'same@example.test'),
@@ -523,14 +523,15 @@ test('a fleetbase match links with the remote sync token unless it is already li
     expect($batch['linked'])->toBe(2)
         ->and($batch['created'])->toBe(1)
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-same')['qbo_id'])->toBe('31')
-        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-same')['sync_token'])->toBe('3')
+        // No baseline: the first sync lets QuickBooks, as Primary, win the differences.
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-same')['sync_token'])->toBe('')
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-taken')['qbo_id'])->toBe('99')
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'contact-32')['qbo_id'])->toBe('32')
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-noid'))->toBeNull()
         ->and($ledger->links)->toHaveCount(3);
 });
 
-test('local contacts that match a page key are remembered on the ledger and linked, others are not loaded', function () {
+test('local contacts matching a page email or name are remembered and linked, others are not loaded', function () {
     cicContact('db-email', 'Stored A', '  ADA@example.test ', null);
     cicContact('db-phone', 'Stored B', null, '+1 (555) 222-3333');
     cicContact('db-name', 'Grace Hopper', null, null);
@@ -548,9 +549,9 @@ test('local contacts that match a page key are remembered on the ledger and link
 
     $batch = (new CustomerImporter($client, cicCreator()))->import($ledger, $ledger->connections['company-uuid'], [], true);
 
-    expect($batch['linked'])->toBe(3)
-        ->and($batch['created'])->toBe(0)
-        ->and(array_keys($ledger->customers))->toEqualCanonicalizing(['db-email', 'db-phone', 'db-name'])
+    expect($batch['linked'])->toBe(2)
+        ->and($batch['created'])->toBe(1)
+        ->and(array_keys($ledger->customers))->toEqualCanonicalizing(['db-email', 'db-name', 'contact-42'])
         ->and($ledger->customers['db-email'])->toBe([
             'uuid'         => 'db-email',
             'company_uuid' => 'company-uuid',
@@ -560,7 +561,8 @@ test('local contacts that match a page key are remembered on the ledger and link
             'phone'        => null,
         ])
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'db-email')['qbo_id'])->toBe('41')
-        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'db-phone')['qbo_id'])->toBe('42')
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'db-phone'))->toBeNull()
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'contact-42')['qbo_id'])->toBe('42')
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'db-name')['qbo_id'])->toBe('43');
 });
 

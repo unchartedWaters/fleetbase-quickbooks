@@ -26,6 +26,7 @@ use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Support\WalletMapper;
+use Fleetbase\Quickbooks\Tests\Support\ControllerDatabase;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Illuminate\Cache\ArrayStore;
@@ -290,6 +291,122 @@ test('sync now reconcile and import are rejected without an activity row when qu
     }
 });
 
+test('sync now twice in a row queues one batch and answers 429 the second time', function () {
+    $database = new ControllerDatabase(ControllerDatabase::connected());
+    $previous = [Cache::getFacadeRoot(), config('quickbooks.manual_cooldown_seconds')];
+    Cache::swap(new Repository(new ArrayStore()));
+    config()->set('quickbooks.manual_cooldown_seconds', 30);
+    session(['company' => 'company-uuid']);
+
+    try {
+        $database->serve(fn () => gateDispatch(function ($dispatcher) {
+            $controller = ControllerDatabase::controller();
+            foreach (['sync', 'reconcile', 'import'] as $action) {
+                $first  = $controller->{$action}(Request::create('/' . $action, 'POST'));
+                $second = $controller->{$action}(Request::create('/' . $action, 'POST'));
+                expect($first->getStatusCode())->toBe(200)
+                    ->and($second->getStatusCode())->toBe(429)
+                    ->and($second->getData(true)['message'])
+                    ->toBe('This was started a moment ago. Try again shortly.');
+            }
+
+            expect(array_map(static fn (object $job): string => $job::class, $dispatcher->jobs))->toBe([
+                SyncCompanyBatch::class, SyncCompanyBatch::class, ImportCustomers::class,
+            ])->and($dispatcher->jobs[0]->trigger)->toBe('now')
+                ->and($dispatcher->jobs[1]->trigger)->toBe('manual');
+        }));
+    } finally {
+        Cache::swap($previous[0]);
+        config()->set('quickbooks.manual_cooldown_seconds', $previous[1]);
+        session(['company' => null]);
+    }
+});
+
+test('sync now can be clicked again at once when the job could not be queued', function () {
+    $database = new ControllerDatabase(ControllerDatabase::connected());
+    $previous = config('quickbooks.manual_cooldown_seconds');
+    config()->set('quickbooks.manual_cooldown_seconds', 30);
+    session(['company' => 'company-uuid']);
+
+    try {
+        $database->serve(fn () => gateDispatch(function ($dispatcher) {
+            $controller        = ControllerDatabase::controller();
+            $dispatcher->throw = new RuntimeException('queue down');
+            foreach (['sync', 'reconcile', 'import'] as $action) {
+                expect(fn () => $controller->{$action}(Request::create('/' . $action, 'POST')))
+                    ->toThrow(RuntimeException::class, 'queue down');
+            }
+            $dispatcher->throw = null;
+            foreach (['sync', 'reconcile', 'import'] as $action) {
+                expect($controller->{$action}(Request::create('/' . $action, 'POST'))->getStatusCode())->toBe(200);
+            }
+        }));
+    } finally {
+        config()->set('quickbooks.manual_cooldown_seconds', $previous);
+        session(['company' => null]);
+    }
+});
+
+test('a cooldown of 0 or a cache that cannot be reached never refuses sync now', function () {
+    $database = new ControllerDatabase(ControllerDatabase::connected());
+    $previous = [Cache::getFacadeRoot(), config('quickbooks.manual_cooldown_seconds')];
+    session(['company' => 'company-uuid']);
+
+    try {
+        $statuses = $database->serve(fn () => gateDispatch(function ($dispatcher) {
+            $controller = ControllerDatabase::controller();
+            Cache::swap(new Repository(new ArrayStore()));
+            config()->set('quickbooks.manual_cooldown_seconds', 0);
+            $sync = static fn () => $controller->sync(Request::create('/sync', 'POST'));
+            $off  = [$sync(), $sync()];
+
+            // No add() on this cache: every call throws.
+            Cache::swap(new class {
+            });
+            config()->set('quickbooks.manual_cooldown_seconds', 30);
+            $down = [$sync(), $sync()];
+
+            expect(array_map(static fn ($response): int => $response->getStatusCode(), [...$off, ...$down]))
+                ->toBe([200, 200, 200, 200])
+                ->and($dispatcher->jobs)->toHaveCount(4);
+        }));
+    } finally {
+        Cache::swap($previous[0]);
+        config()->set('quickbooks.manual_cooldown_seconds', $previous[1]);
+        session(['company' => null]);
+    }
+});
+
+test('a connection that must be connected again records its skipped sync once per cooldown', function () {
+    $database = new ControllerDatabase(ControllerDatabase::connected(true));
+    $previous = [Cache::getFacadeRoot(), config('quickbooks.manual_cooldown_seconds')];
+    Cache::swap(new Repository(new ArrayStore()));
+    config()->set('quickbooks.manual_cooldown_seconds', 30);
+    session(['company' => 'company-uuid']);
+
+    try {
+        $database->serve(fn () => gateDispatch(function ($dispatcher) {
+            $controller = ControllerDatabase::controller();
+            $responses  = [
+                $controller->sync(Request::create('/sync', 'POST')),
+                $controller->sync(Request::create('/sync', 'POST')),
+                $controller->reconcile(Request::create('/reconcile', 'POST')),
+            ];
+
+            expect(array_map(static fn ($response): int => $response->getStatusCode(), $responses))
+                ->toBe([422, 422, 422])
+                ->and($dispatcher->jobs)->toBe([]);
+        }));
+    } finally {
+        Cache::swap($previous[0]);
+        config()->set('quickbooks.manual_cooldown_seconds', $previous[1]);
+        session(['company' => null]);
+    }
+
+    // One skipped batch and its attempt for sync now, and one pair for reconcile.
+    expect($database->inserts)->toHaveCount(4);
+});
+
 test('a webhook change is not applied when the organization has no connection', function () {
     $directory = new class extends FleetbaseDirectory {
         public int $loads = 0;
@@ -518,8 +635,13 @@ function gateDispatch(callable $callback): void
         /** @var array<int, object> */
         public array $jobs = [];
 
+        public ?Throwable $throw = null;
+
         public function dispatch($command)
         {
+            if ($this->throw !== null) {
+                throw $this->throw;
+            }
             $this->jobs[] = $command;
 
             return $command;

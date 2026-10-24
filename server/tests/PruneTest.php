@@ -1,10 +1,12 @@
 <?php
 
 use Fleetbase\Quickbooks\Console\Commands\PruneQuickbooks;
+use Fleetbase\Quickbooks\Models\PendingSync;
 use Illuminate\Console\OutputStyle;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
 
@@ -196,3 +198,76 @@ test('prune works through more rows than one chunk', function () {
         $restore();
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('prune reads attempts through the created_at index', function () {
+    [$restore, $output] = pruneSetup();
+    $originalSchema     = Schema::getFacadeRoot();
+    Schema::swap(DB::connection('sqlite')->getSchemaBuilder());
+    try {
+        $files = glob(dirname(__DIR__) . '/migrations/*_add_history_indexes_to_quickbooks_tables.php');
+        expect($files)->toHaveCount(1)
+            ->and(basename($files[0]) > '2026_10_23_120000')->toBeTrue();
+        $migration = require $files[0];
+        $migration->up();
+        $migration->up();
+
+        $plan = DB::select(
+            'EXPLAIN QUERY PLAN select uuid from quickbooks_sync_attempts where created_at < ? '
+            . 'order by created_at limit 1000',
+            [now()]
+        );
+        $connection = DB::connection('sqlite');
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+        pruneRun($output);
+        $reads = array_values(array_filter(
+            array_column($connection->getQueryLog(), 'query'),
+            static fn (string $sql): bool => str_starts_with($sql, 'select "uuid" from "quickbooks_sync_attempts"')
+        ));
+
+        expect(json_encode($plan))->toContain('qb_attempts_created_idx')
+            ->and($reads)->toHaveCount(1)
+            ->and($reads[0])->toContain('order by "created_at" asc')
+            ->and(Schema::hasIndex('quickbooks_sync_batches', 'qb_batches_company_status_finished_idx'))->toBeTrue();
+
+        $migration->down();
+        expect(Schema::hasIndex('quickbooks_sync_attempts', 'qb_attempts_created_idx'))->toBeFalse();
+    } finally {
+        Schema::swap($originalSchema);
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('the failed count names each record once and leaves out records flagged again after they failed', function () {
+    [$restore] = pruneSetup();
+    try {
+        $rows = [
+            // Failed twice: one record.
+            ['f-1a', 'inv-1', 'failed', 10, 9], ['f-1b', 'inv-1', 'failed', 8, 7],
+            // Failed, then edited and sent: no longer failed.
+            ['f-2', 'inv-2', 'failed', 10, 9], ['d-2', 'inv-2', 'done', 5, 4],
+            // Failed, then edited and waiting: counted as waiting instead.
+            ['f-3', 'inv-3', 'failed', 10, 9], ['p-3', 'inv-3', 'pending', 2, 2],
+            // Sent long ago, failed since: still failed.
+            ['d-4', 'inv-4', 'done', 30, 29], ['f-4', 'inv-4', 'failed', 10, 9],
+            // Failed before the 90 day Activity retention: its Activity row is gone, so it is not counted.
+            ['f-5', 'inv-5', 'failed', 120, 100],
+        ];
+        foreach ($rows as [$uuid, $record, $status, $created, $updated]) {
+            DB::table('quickbooks_pending_syncs')->insert([
+                'uuid'       => $uuid, 'company_uuid' => 'company-uuid', 'local_type' => 'invoice',
+                'local_uuid' => $record, 'status' => $status,
+                'created_at' => pruneDaysAgo($created), 'updated_at' => pruneDaysAgo($updated),
+            ]);
+        }
+        DB::table('quickbooks_pending_syncs')->insert([
+            'uuid'       => 'f-other', 'company_uuid' => 'other-company', 'local_type' => 'invoice',
+            'local_uuid' => 'inv-9', 'status' => 'failed',
+            'created_at' => pruneDaysAgo(1), 'updated_at' => pruneDaysAgo(1),
+        ]);
+
+        expect(PendingSync::failedRecordCount('company-uuid'))->toBe(2);
+    } finally {
+        $restore();
+    }
+});
