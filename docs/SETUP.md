@@ -795,10 +795,14 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   back to the invoice there, and the tax of each QuickBooks rate (for example
   GST and PST) is shared over the lines whose tax code holds that rate, read
   from the company's tax codes, so a Ledger edit, which adds up the line
-  taxes, keeps it. A line rate is the sum of its code's rates, to two
-  decimals. The tax stays whole on the invoice, with no line share, when the
+  taxes, keeps it. A line rate is the sum of the invoice's tax line percents
+  for its code's rates, to two decimals, so a combined rate with three
+  decimals (GST and QST, 14.975%) is stored as 14.98% and a Ledger edit can
+  move the line tax a few cents until the next sync copies QuickBooks' amount
+  again. The tax stays whole on the invoice, with no line share, when the
   amounts include tax, a line's code is not among the codes QuickBooks
-  returned, or a tax line is not a percent (`Support/InvoiceTax.php`,
+  returned (an inactive code may not be), a tax line is not a percent, or the
+  tax codes could not be read (`Support/InvoiceTax.php`,
   `InvoiceMapper::quickBooksTax`).
 - **Partial payments.** An invoice has at most one QuickBooks Payment from this
   package. Partial and later payments are not created as separate Payments. The

@@ -325,3 +325,17 @@ test('a tax-inclusive invoice keeps its tax on the invoice, since its lines alre
         ->and($copied['inclusive'])->toBeTrue()
         ->and($copied['items'][0]['tax_amount'])->toBe(0);
 });
+
+test('outside the US a line coded NON holds no rate and the other lines are still shared', function () {
+    $remote = ['Line' => [
+        InvoiceLines::coded('1', 'Delivery', '100.00', '5'),
+        InvoiceLines::coded('2', 'Exempt fee', '10.00', 'NON'),
+    ], 'TxnTaxDetail' => ['TotalTax' => '5.00', 'TaxLine' => [
+        InvoiceLines::rateTax('5.00', '5', 'gst', '100.00'),
+    ]]];
+
+    $mapped = (new InvoiceMapper())->fromQuickBooks($remote, [], ['5' => ['gst']]);
+
+    expect(array_column($mapped['items'], 'tax_amount'))->toBe([500, 0])
+        ->and(array_column($mapped['items'], 'tax_rate'))->toBe(['5.00', '0.00']);
+});

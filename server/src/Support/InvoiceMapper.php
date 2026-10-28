@@ -1024,7 +1024,7 @@ class InvoiceMapper
 
     /**
      * The QuickBooks rate ids of each sales line's tax code, by position; none for a line with no
-     * code. Null when a line's code is not in $codes.
+     * code or coded NON. Null when a line's code is not in $codes.
      *
      * @param array<int, array<string, mixed>>  $lines
      * @param array<string, array<int, string>> $codes
@@ -1036,10 +1036,10 @@ class InvoiceMapper
         $rates = [];
         foreach ($lines as $index => $line) {
             $code = trim((string) ($line['SalesItemLineDetail']['TaxCodeRef']['value'] ?? ''));
-            if ($code !== '' && array_key_exists($code, $codes) === false) {
+            if (in_array($code, ['', 'NON'], true) === false && array_key_exists($code, $codes) === false) {
                 return null;
             }
-            $rates[$index] = $code === '' ? [] : $codes[$code];
+            $rates[$index] = $codes[$code] ?? [];
         }
 
         return $rates;

@@ -2532,7 +2532,12 @@ class SyncEngine
             $customerRef,
             $pushClears === true && $currencyOk === true,
             $remoteSuppliesLines === false,
-            ['removed' => $removed, 'mapped' => $mapped, 'codes' => $this->taxCodesFor($connection, $remote)]
+            [
+                'removed' => $removed,
+                'mapped'  => $mapped,
+                // Tax is compared only when QuickBooks supplies the lines.
+                'codes'   => $remoteSuppliesLines === true ? $this->taxCodesFor($connection, $remote) : [],
+            ]
         );
         // A line moving to its own QuickBooks product (from the service item, or after a rename)
         // is a change to send even when the amounts and text match.

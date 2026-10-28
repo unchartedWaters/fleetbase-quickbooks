@@ -227,13 +227,40 @@ class QuickBooksClient
         }
         $settings = InvoiceTax::settings($this->preferences($connection), $this->countryByRealm[$realm]);
         if ($settings['mode'] === InvoiceTax::GLOBAL) {
-            $this->taxCodesByRealm[$realm] ??= InvoiceTax::codeRates(
-                $this->queryPages($connection, 'select * from TaxCode', 'TaxCode', false)
-            );
-            $settings['codes'] = $this->taxCodesByRealm[$realm];
+            $codes = $this->taxCodes($connection, $realm);
+            if ($codes !== null) {
+                $settings['codes'] = $codes;
+            }
         }
 
         return $settings;
+    }
+
+    /**
+     * The sales tax rates of each tax code (InvoiceTax::codeRates), read once per company. A failed
+     * read is null and is tried again next time: without codes the tax stays whole on the invoice,
+     * so it does not fail the invoice. An expired token or the rate limit still stops the run.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, array<int, string>>|null
+     */
+    private function taxCodes(array $connection, string $realm): ?array
+    {
+        if (isset($this->taxCodesByRealm[$realm]) === false) {
+            try {
+                $rows = $this->queryPages($connection, 'select * from TaxCode', 'TaxCode', false);
+            } catch (QuickBooksException $exception) {
+                if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
+                    throw $exception;
+                }
+
+                return null;
+            }
+            $this->taxCodesByRealm[$realm] = InvoiceTax::codeRates($rows);
+        }
+
+        return $this->taxCodesByRealm[$realm];
     }
 
     /**
