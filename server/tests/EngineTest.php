@@ -5118,6 +5118,46 @@ test('an invoice QuickBooks holds with tax included is aligned and its total sta
         ->and($ledger->invoices['inv-1']['total'])->toBe(1000);
 });
 
+test('outside the US the GST and PST QuickBooks worked out are shared over the Fleetbase lines', function () {
+    [$engine, $client, $ledger] = engineLinkedInvoice([
+        'items' => [
+            InvoiceLines::tracked('item-a', 'Delivery', 10000, '1'),
+            InvoiceLines::tracked('item-b', 'Fuel surcharge', 5000, '2'),
+        ],
+        'total' => 15000,
+    ], [
+        'CustomerRef'  => ['value' => 'qbo-customer'],
+        'TotalAmt'     => '164.50',
+        'Line'         => [
+            InvoiceLines::coded('1', 'Delivery', '100.00', '4'),
+            InvoiceLines::coded('2', 'Fuel surcharge', '50.00', '5'),
+        ],
+        'TxnTaxDetail' => ['TotalTax' => '14.50', 'TaxLine' => [
+            InvoiceLines::rateTax('7.50', '5', 'gst', '150.00'),
+            InvoiceLines::rateTax('7.00', '7', 'pst', '100.00'),
+        ]],
+    ]);
+    $client->salesTax = [
+        'mode'      => 'global',
+        'automated' => false,
+        'rate'      => null,
+        'codes'     => ['4' => ['gst', 'pst'], '5' => ['gst']],
+    ];
+    $settings = qbSettings(['interval_minutes' => 1]);
+
+    $first  = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+    $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
+    $items  = $ledger->invoices['inv-1']['items'];
+
+    expect($first['failed'])->toBe(0)
+        ->and($client->calls)->not->toContain('updateInvoice')
+        ->and(array_column($items, 'tax_rate'))->toBe(['12.00', '5.00'])
+        ->and(array_column($items, 'tax_amount'))->toBe([1200, 250])
+        ->and($ledger->invoices['inv-1']['tax'])->toBe(1450)
+        ->and($ledger->invoices['inv-1']['total'])->toBe(16450)
+        ->and($second['aligned'])->toBe(1);
+});
+
 test('an invoice that is not sent to QuickBooks does not read the QuickBooks tax settings', function () {
     $remote                     = ['CustomerRef' => ['value' => 'qbo-customer'], 'PrivateNote' => 'From QuickBooks'];
     [$engine, $client, $ledger] = engineLinkedInvoice([], $remote);

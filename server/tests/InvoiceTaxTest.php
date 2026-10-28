@@ -91,3 +91,17 @@ test('the tax plan holds each line code, the invoice rate, and the tax-exclusive
         'global' => null,
     ]);
 });
+
+test('the rates of each sales tax code are read from the QuickBooks tax codes', function () {
+    $codes = InvoiceTax::codeRates([
+        ['Id' => '4', 'Name' => 'GST/PST BC', 'SalesTaxRateList' => ['TaxRateDetail' => [
+            ['TaxRateRef' => ['value' => '1', 'name' => 'GST']],
+            ['TaxRateRef' => ['value' => '2', 'name' => 'PST (BC)']],
+        ]], 'PurchaseTaxRateList' => ['TaxRateDetail' => [['TaxRateRef' => ['value' => '8']]]]],
+        ['Id' => '6', 'Name' => 'Exempt', 'SalesTaxRateList' => ['TaxRateDetail' => []]],
+        ['Id' => '7', 'Name' => 'Purchases only'],
+        ['Name' => 'No id'],
+    ]);
+
+    expect($codes)->toBe(['4' => ['1', '2'], '6' => [], '7' => []]);
+});

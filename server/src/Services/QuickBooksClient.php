@@ -60,6 +60,9 @@ class QuickBooksClient
     /** @var array<string, string> */
     private array $countryByRealm = [];
 
+    /** @var array<string, array<string, array<int, string>>> */
+    private array $taxCodesByRealm = [];
+
     /**
      * The Fleetbase record a single write belongs to (for example invoice:<uuid>), set by
      * withWriteKey. A single write without one carries no requestid.
@@ -207,12 +210,14 @@ class QuickBooksClient
     }
 
     /**
-     * How QuickBooks taxes invoices for this company (see InvoiceTax::settings). The country is
-     * read once per company, like the preferences.
+     * How QuickBooks taxes invoices for this company (see InvoiceTax::settings). Outside the US it
+     * holds the sales tax rates of each tax code too (InvoiceTax::codeRates), so the tax of each
+     * rate can be shared over the lines. The country and tax codes are read once per company, like
+     * the preferences.
      *
      * @param array<string, mixed> $connection
      *
-     * @return array{mode: string, automated: bool, rate: string|null}
+     * @return array{mode: string, automated: bool, rate: string|null, codes?: array<string, array<int, string>>}
      */
     public function salesTax(array $connection): array
     {
@@ -220,8 +225,15 @@ class QuickBooksClient
         if (array_key_exists($realm, $this->countryByRealm) === false) {
             $this->countryByRealm[$realm] = (string) ($this->companyInfo($connection)['Country'] ?? '');
         }
+        $settings = InvoiceTax::settings($this->preferences($connection), $this->countryByRealm[$realm]);
+        if ($settings['mode'] === InvoiceTax::GLOBAL) {
+            $this->taxCodesByRealm[$realm] ??= InvoiceTax::codeRates(
+                $this->queryPages($connection, 'select * from TaxCode', 'TaxCode', false)
+            );
+            $settings['codes'] = $this->taxCodesByRealm[$realm];
+        }
 
-        return InvoiceTax::settings($this->preferences($connection), $this->countryByRealm[$realm]);
+        return $settings;
     }
 
     /**

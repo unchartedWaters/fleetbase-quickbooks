@@ -792,8 +792,14 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   line is sent with the product's sales tax code, else the customer's
   default code, and a new invoice says its amounts are before tax. Which of
   the two codes QuickBooks expects first is not checked. The tax is copied
-  back to the invoice there, but not shared over its lines
-  (`Support/InvoiceTax.php`, `InvoiceMapper::fromQuickBooks`).
+  back to the invoice there, and the tax of each QuickBooks rate (for example
+  GST and PST) is shared over the lines whose tax code holds that rate, read
+  from the company's tax codes, so a Ledger edit, which adds up the line
+  taxes, keeps it. A line rate is the sum of its code's rates, to two
+  decimals. The tax stays whole on the invoice, with no line share, when the
+  amounts include tax, a line's code is not among the codes QuickBooks
+  returned, or a tax line is not a percent (`Support/InvoiceTax.php`,
+  `InvoiceMapper::quickBooksTax`).
 - **Partial payments.** An invoice has at most one QuickBooks Payment from this
   package. Partial and later payments are not created as separate Payments. The
   one Payment is created with the amount recorded as paid on the Fleetbase

@@ -9,7 +9,9 @@ namespace Fleetbase\Quickbooks\Support;
  * names a rate. So Fleetbase sends the tax code of each line and the invoice rate, read from the
  * QuickBooks product, customer and company.
  *
- * @phpstan-type Settings array{mode: string, automated: bool, rate: string|null}
+ * @phpstan-type Settings array{
+ *     mode: string, automated: bool, rate: string|null, codes?: array<string, array<int, string>>
+ * }
  * @phpstan-type Plan array{lines: array<int, string|null>, rate: string|null, global: string|null}
  */
 class InvoiceTax
@@ -42,6 +44,35 @@ class InvoiceTax
             'automated' => ($prefs['PartnerTaxEnabled'] ?? false) === true,
             'rate'      => self::rateCode($prefs['TaxGroupCodeRef'] ?? null),
         ];
+    }
+
+    /**
+     * The sales tax rates of each QuickBooks tax code, by code id, from a TaxCode query. A code
+     * with no sales rates (exempt, zero-rated or purchases only) has none.
+     *
+     * @param array<int, array<string, mixed>> $taxCodes
+     *
+     * @return array<string, array<int, string>>
+     */
+    public static function codeRates(array $taxCodes): array
+    {
+        $codes = [];
+        foreach ($taxCodes as $code) {
+            $id = trim((string) ($code['Id'] ?? ''));
+            if ($id === '') {
+                continue;
+            }
+            $details     = $code['SalesTaxRateList']['TaxRateDetail'] ?? [];
+            $codes[$id]  = [];
+            foreach (is_array($details) === true ? $details : [] as $detail) {
+                $rate = is_array($detail) === true ? self::refValue($detail['TaxRateRef'] ?? null) : null;
+                if ($rate !== null) {
+                    $codes[$id][] = $rate;
+                }
+            }
+        }
+
+        return $codes;
     }
 
     /**

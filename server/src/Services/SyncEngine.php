@@ -19,7 +19,9 @@ use Fleetbase\Quickbooks\Support\WalletMapper;
 
 /**
  * @phpstan-type RemovedLine array{id: string, description: string, amount: int}
- * @phpstan-type StoredLines array{removed?: array<int, RemovedLine>, mapped?: bool}
+ * @phpstan-type StoredLines array{
+ *     removed?: array<int, RemovedLine>, mapped?: bool, codes?: array<string, array<int, string>>
+ * }
  * @phpstan-type BufferedWrite array{
  *     bId: string,
  *     operation: string,
@@ -35,6 +37,8 @@ use Fleetbase\Quickbooks\Support\WalletMapper;
  *     status: int,
  *     halt: bool
  * }
+ *
+ * @phpstan-import-type Settings from InvoiceTax as InvoiceTaxSettings
  */
 class SyncEngine
 {
@@ -248,7 +252,7 @@ class SyncEngine
      * QuickBooks sales tax settings by company for an invoice block. A failed read is kept, so the
      * other invoices of the block fail with it instead of reading again. Null outside a block.
      *
-     * @var array<string, array{mode: string, automated: bool, rate: string|null}|QuickBooksException>|null
+     * @var array<string, InvoiceTaxSettings|QuickBooksException>|null
      */
     private ?array $salesTaxByCompany = null;
 
@@ -895,7 +899,8 @@ class SyncEngine
             $reference = (string) ($settings['invoice_reference'] ?? 'fleetbase');
             $realmId   = (string) $connection['realm_id'];
             $clears    = $this->copiesClears($settings, 'invoice', $link, $remote);
-            $this->applyInvoiceFromRemote($ledger, $localUuid, $remote, $reference, $realmId, $clears);
+            $codes     = $this->taxCodesFor($connection, $remote);
+            $this->applyInvoiceFromRemote($ledger, $localUuid, $remote, $reference, $realmId, $clears, $codes);
             $this->applyPaymentStatus($ledger, $localUuid);
 
             return true;
@@ -2465,7 +2470,7 @@ class SyncEngine
             $createdId = (string) ($created['Id'] ?? '');
             $this->recordPushedLines($ledger, $uuid, $connection, $createdId, $payload, $created, []);
             if ($copy === true) {
-                $this->copyQuickBooksTax($ledger, $uuid, $created);
+                $this->copyQuickBooksTax($ledger, $connection, $uuid, $created);
             }
 
             return $this->withPayment('created', $this->syncPayment($ledger, $connection, $ledger->invoices[$uuid], (string) $customerLink['qbo_id'], (string) ($created['Id'] ?? ''), $settings));
@@ -2527,7 +2532,7 @@ class SyncEngine
             $customerRef,
             $pushClears === true && $currencyOk === true,
             $remoteSuppliesLines === false,
-            ['removed' => $removed, 'mapped' => $mapped]
+            ['removed' => $removed, 'mapped' => $mapped, 'codes' => $this->taxCodesFor($connection, $remote)]
         );
         // A line moving to its own QuickBooks product (from the service item, or after a rename)
         // is a change to send even when the amounts and text match.
@@ -2551,7 +2556,7 @@ class SyncEngine
             $paired  = $this->invoiceMapper($invoice)->pairedLineIds($items, $remote, $removed, $mapped);
             $this->recordLineMap($ledger, $uuid, $connection, (string) $remote['Id'], $paired, $stored['uuids']);
             $copiesTax = $copy === true && $remoteSuppliesLines === false;
-            if ($copiesTax === true && $this->copyQuickBooksTax($ledger, $uuid, $remote) === true) {
+            if ($copiesTax === true && $this->copyQuickBooksTax($ledger, $connection, $uuid, $remote) === true) {
                 $outcome = 'updated';
             }
             $supplies = $this->quickbooksSupplies($settings, 'invoice');
@@ -2574,7 +2579,16 @@ class SyncEngine
         if ($copy === true && ($conflict === 'quickbooks' || $push === false) && $edited === false) {
             $beforeStatus = (string) ($ledger->invoices[$uuid]['status'] ?? '');
             $realmId      = (string) $connection['realm_id'];
-            $applied      = $this->applyInvoiceFromRemote($ledger, $uuid, $remote, $reference, $realmId, $clears);
+            $codes        = $this->taxCodesFor($connection, $remote);
+            $applied      = $this->applyInvoiceFromRemote(
+                $ledger,
+                $uuid,
+                $remote,
+                $reference,
+                $realmId,
+                $clears,
+                $codes
+            );
             $changed      = $applied === true || $numberChanged === true || $partyChanged === true;
             $changed      = $changed === true || $followed === true;
             $this->applyPaymentStatus($ledger, $uuid);
@@ -2671,7 +2685,7 @@ class SyncEngine
         $remoteId = (string) $remote['Id'];
         $this->recordPushedLines($ledger, $uuid, $connection, $remoteId, $payload, $updated, $stored['uuids']);
         if ($copy === true && ($remoteSuppliesLines === false || $edited === true)) {
-            $this->copyQuickBooksTax($ledger, $uuid, $updated);
+            $this->copyQuickBooksTax($ledger, $connection, $uuid, $updated);
         }
 
         return $this->withPayment('updated', $this->syncPayment($ledger, $connection, $ledger->invoices[$uuid], (string) $customerLink['qbo_id'], (string) ($updated['Id'] ?? $remote['Id']), $settings));
@@ -3103,7 +3117,7 @@ class SyncEngine
     /**
      * @param array<string, mixed> $connection
      *
-     * @return array{mode: string, automated: bool, rate: string|null}
+     * @return InvoiceTaxSettings
      */
     private function salesTaxSettings(array $connection): array
     {
@@ -3265,16 +3279,18 @@ class SyncEngine
      * total. Activity says when a line tax rate Fleetbase had changed. Returns whether anything
      * changed.
      *
+     * @param array<string, mixed> $connection
      * @param array<string, mixed> $remote
      */
-    private function copyQuickBooksTax(SyncLedger $ledger, string $uuid, array $remote): bool
+    private function copyQuickBooksTax(SyncLedger $ledger, array $connection, string $uuid, array $remote): bool
     {
         $invoice = $ledger->invoices[$uuid] ?? null;
         if (is_array($invoice) === false) {
             return false;
         }
         $items    = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
-        $taxed    = $this->invoiceMapper($invoice)->quickBooksTax($remote, $items);
+        $codes    = $this->taxCodesFor($connection, $remote);
+        $taxed    = $this->invoiceMapper($invoice)->quickBooksTax($remote, $items, $codes);
         $subtotal = 0;
         $changed  = false;
         $replaced = false;
@@ -3308,6 +3324,33 @@ class SyncEngine
         $this->noteCopiedTax($uuid, $total < (int) ($invoice['total'] ?? 0), $replaced);
 
         return true;
+    }
+
+    /**
+     * The sales tax rates of each QuickBooks tax code (InvoiceTax::codeRates), for sharing the tax
+     * of an invoice outside the US over its lines. Only read when a line names a rate code (not
+     * TAX or NON), so a US or untaxed invoice reads nothing. A lasting read failure leaves the
+     * tax whole on the invoice, as before codes were read.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $remote
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function taxCodesFor(array $connection, array $remote): array
+    {
+        if (InvoiceMapper::namesRateCodes($remote) === false) {
+            return [];
+        }
+        try {
+            return $this->salesTaxSettings($connection)['codes'] ?? [];
+        } catch (QuickBooksException $exception) {
+            if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
+                throw $exception;
+            }
+
+            return [];
+        }
     }
 
     /**
@@ -3537,7 +3580,7 @@ class SyncEngine
                 $other['currency'] = $remoteCurrency;
             }
         }
-        $mapped         = $this->invoiceMapper($invoice)->fromQuickBooks($compared, $localItems);
+        $mapped         = $this->invoiceMapper($invoice)->fromQuickBooks($compared, $localItems, $lines['codes'] ?? []);
         $local['items'] = $this->hashableInvoiceItems($localItems, $ignoreExtraSalesLines === false);
         $other['items'] = $this->hashableInvoiceItems($mapped['items'], $ignoreExtraSalesLines === false);
         if ($ignoreExtraSalesLines === false) {
@@ -4717,7 +4760,8 @@ class SyncEngine
     }
 
     /**
-     * @param array<string, mixed> $remote
+     * @param array<string, mixed>              $remote
+     * @param array<string, array<int, string>> $taxCodes sales tax rates by tax code (taxCodesFor)
      */
     private function applyInvoiceFromRemote(
         SyncLedger $ledger,
@@ -4726,6 +4770,7 @@ class SyncEngine
         string $reference,
         string $realmId = '',
         bool $clears = false,
+        array $taxCodes = [],
     ): bool {
         // Both copies run: a number change must not skip the customer and currency copy.
         $numberChanged = $this->copyInvoiceNumber($ledger, $uuid, $remote, $reference) === true;
@@ -4744,7 +4789,7 @@ class SyncEngine
 
         $current = $ledger->invoices[$uuid]['items'] ?? [];
         $current = is_array($current) === true ? $current : [];
-        $mapped  = $this->invoiceMapper($ledger->invoices[$uuid])->fromQuickBooks($remote, $current);
+        $mapped  = $this->invoiceMapper($ledger->invoices[$uuid])->fromQuickBooks($remote, $current, $taxCodes);
         if ($mapped['items'] !== [] && $mapped['items'] !== $this->hashableInvoiceItems($current)) {
             $ledger->invoices[$uuid]['items']                 = $mapped['items'];
             $ledger->invoices[$uuid]['items_from_quickbooks'] = true;
@@ -6642,7 +6687,7 @@ class SyncEngine
             }
             $edited = ($lines['edited'] ?? false) === true;
             if ($edited === true || $this->copiesTaxAfterPush($settings, $plan['outcome']) === true) {
-                $this->copyQuickBooksTax($ledger, (string) $uuid, $result['body']);
+                $this->copyQuickBooksTax($ledger, $connection, (string) $uuid, $result['body']);
             }
         }
     }
@@ -8480,6 +8525,8 @@ class SyncEngine
  * Sends SyncEngine's QuickBooks calls through SyncEngine::runAuthorized.
  * The inner client stays the real or fake client; this brackets HTTP and repeats a call
  * once with a refreshed access token when QuickBooks answers 401.
+ *
+ * @phpstan-import-type Settings from InvoiceTax as InvoiceTaxSettings
  */
 class QuickBooksHttpGate extends QuickBooksClient
 {
@@ -8633,7 +8680,7 @@ class QuickBooksHttpGate extends QuickBooksClient
 
     public function salesTax(array $connection): array
     {
-        /** @var array{mode: string, automated: bool, rate: string|null} $settings */
+        /** @var InvoiceTaxSettings $settings */
         $settings = $this->engine->runAuthorized(
             $connection,
             fn (array $connection): array => $this->inner->salesTax($connection)

@@ -744,6 +744,33 @@ test('the sales tax settings read the preferences and the company country once p
     Http::assertSentCount(2);
 });
 
+test('outside the US the sales tax settings hold the rates of each tax code, read once per company', function () {
+    Http::fake(function (Request $request) {
+        if (str_contains($request->url(), '/companyinfo/') === true) {
+            return Http::response(['CompanyInfo' => ['CompanyName' => 'Sandbox', 'Country' => 'CA']], 200);
+        }
+        if (str_contains($request->url(), '/query') === true) {
+            return Http::response(['QueryResponse' => ['TaxCode' => [
+                ['Id' => '4', 'SalesTaxRateList' => ['TaxRateDetail' => [
+                    ['TaxRateRef' => ['value' => '1']], ['TaxRateRef' => ['value' => '2']],
+                ]]],
+            ]]], 200);
+        }
+
+        return Http::response(['Preferences' => ['TaxPrefs' => ['UsingSalesTax' => true]]], 200);
+    });
+    $client = new QuickBooksClient();
+
+    $settings = $client->salesTax(clientConnection());
+    $again    = $client->salesTax(clientConnection());
+
+    expect($settings['mode'])->toBe(InvoiceTax::GLOBAL)
+        ->and($settings['codes'] ?? null)->toBe(['4' => ['1', '2']])
+        ->and($again['codes'] ?? null)->toBe(['4' => ['1', '2']]);
+    Http::assertSentCount(3);
+    Http::assertSent(fn (Request $request) => str_contains(urldecode($request->url()), 'select * from TaxCode'));
+});
+
 test('an item is read by id, inactive or not', function () {
     $item = ['Id' => '20', 'Active' => false, 'Taxable' => true];
     Http::fake(['sandbox-quickbooks.api.intuit.com/*' => Http::response(['Item' => $item], 200)]);

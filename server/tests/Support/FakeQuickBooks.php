@@ -88,7 +88,7 @@ class FakeQuickBooks extends QuickBooksClient
     /**
      * How the company taxes invoices (InvoiceTax::settings). Sales tax is off unless a test turns it on.
      *
-     * @var array{mode: string, automated: bool, rate: string|null}
+     * @var array{mode: string, automated: bool, rate: string|null, codes?: array<string, array<int, string>>}
      */
     public array $salesTax = ['mode' => 'off', 'automated' => false, 'rate' => null];
 
@@ -989,7 +989,7 @@ class FakeQuickBooks extends QuickBooksClient
     /**
      * @param array<string, mixed> $connection
      *
-     * @return array{mode: string, automated: bool, rate: string|null}
+     * @return array{mode: string, automated: bool, rate: string|null, codes?: array<string, array<int, string>>}
      */
     public function salesTax(array $connection): array
     {

@@ -38,6 +38,33 @@ class InvoiceLines
     }
 
     /**
+     * A tax line of a company outside the US: the amount of one QuickBooks tax rate.
+     *
+     * @return array<string, mixed>
+     */
+    public static function rateTax(string $amount, string $percent, string $rateId, string $net): array
+    {
+        $line                                      = self::tax($amount, $percent);
+        $line['TaxLineDetail']['TaxRateRef']       = ['value' => $rateId];
+        $line['TaxLineDetail']['NetAmountTaxable'] = $net;
+
+        return $line;
+    }
+
+    /**
+     * A sales line with a QuickBooks tax code.
+     *
+     * @return array<string, mixed>
+     */
+    public static function coded(string $id, string $description, string $amount, string $code): array
+    {
+        $line                                      = self::sales($id, $description, $amount);
+        $line['SalesItemLineDetail']['TaxCodeRef'] = ['value' => $code];
+
+        return $line;
+    }
+
+    /**
      * A deleted Fleetbase line whose QuickBooks line was stored on an earlier sync.
      *
      * @return array<string, mixed>
