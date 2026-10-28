@@ -58,16 +58,16 @@ class InvoiceTax
     {
         $codes = [];
         foreach ($taxCodes as $code) {
-            $id = trim((string) ($code['Id'] ?? ''));
-            if ($id === '') {
+            $codeId = trim((string) ($code['Id'] ?? ''));
+            if ($codeId === '') {
                 continue;
             }
-            $details     = $code['SalesTaxRateList']['TaxRateDetail'] ?? [];
-            $codes[$id]  = [];
+            $details        = $code['SalesTaxRateList']['TaxRateDetail'] ?? [];
+            $codes[$codeId] = [];
             foreach (is_array($details) === true ? $details : [] as $detail) {
                 $rate = is_array($detail) === true ? self::refValue($detail['TaxRateRef'] ?? null) : null;
                 if ($rate !== null) {
-                    $codes[$id][] = $rate;
+                    $codes[$codeId][] = $rate;
                 }
             }
         }

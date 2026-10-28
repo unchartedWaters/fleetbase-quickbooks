@@ -1017,9 +1017,9 @@ class InvoiceMapper
                 $shares[$index]['tax'] += $cents;
             }
         }
-        $total = array_sum(array_column($shares, 'tax'));
+        $balanced = array_sum(array_column($shares, 'tax')) === $this->lineAmount($detail['TotalTax'] ?? 0);
 
-        return $total === $this->lineAmount($detail['TotalTax'] ?? 0) ? $shares : null;
+        return $balanced === true ? $shares : null;
     }
 
     /**
