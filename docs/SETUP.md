@@ -30,7 +30,8 @@ screens without the surrounding Fleetbase console menus.
   is left out when the totals are compared and does not cause another update.
   When QuickBooks shows such an invoice as fully paid (no balance left), its
   Fleetbase status is paid, although the amount paid is less than the
-  Fleetbase total. QuickBooks works out the tax (see Tax below). Each line
+  Fleetbase total. QuickBooks works out the tax unless Fleetbase is set to
+  (see Tax below). Each line
   uses the QuickBooks product of its name (see Products below); any other
   line uses the QuickBooks product "Fleetbase service". Fleetbase
   creates it posting to an active income account: a service or fee income
@@ -47,8 +48,10 @@ screens without the surrounding Fleetbase console menus.
   it is. If "Fleetbase service" is made inactive in QuickBooks, the first
   invoice QuickBooks then refuses makes Fleetbase forget it, and the next sync
   finds or creates an active one.
-- **Tax** — QuickBooks works out invoice tax, and Fleetbase never sends a tax
-  amount. When sales tax is on in QuickBooks, a line Fleetbase sends is taxable
+- **Tax** — By default QuickBooks works out invoice tax, and Fleetbase never
+  sends a tax amount; Fleetbase can work it out instead (see [Tax](#tax) under
+  Settings). The rest of this item is about QuickBooks working it out. When
+  sales tax is on in QuickBooks, a line Fleetbase sends is taxable
   when both the line's QuickBooks product and the QuickBooks customer are
   taxable. The invoice gets the customer's sales tax rate, else the company's
   default rate. A customer Fleetbase creates in QuickBooks is taxable at the
@@ -370,8 +373,9 @@ customer import brings it in, the invoice is queued and moves to the linked
 Fleetbase customer, so QuickBooks still wins.
 Identifiers still come from QuickBooks: customer names, invoice numbers and
 account numbers, so a customer renamed only in Fleetbase takes the QuickBooks
-name back on the next sync. QuickBooks decides tax, so a tax difference alone
-is copied from QuickBooks. A record linked without a stored token, such as a
+name back on the next sync. When QuickBooks works out tax, a tax difference
+alone is copied from QuickBooks; when Fleetbase does, see [Tax](#tax). A
+record linked without a stored token, such as a
 customer matched by the customer import or a record moved by a QuickBooks
 merge, counts as changed in QuickBooks on its first sync.
 That sync copies the values QuickBooks holds and empties nothing in Fleetbase.
@@ -385,6 +389,57 @@ no Enable schedule control, and a stored `enabled` flag does not stop the
 scheduler. Sync now with no connection returns HTTP 422 and does not save an
 activity row. The console shows that error. A stored realm that needs reconnect
 returns HTTP 422 and saves a skipped activity row, at most once per cooldown.
+
+### Tax
+
+**Who works out invoice tax** (`tax_source`) is QuickBooks or Fleetbase, one
+choice for all sales taxes of the organization, on its own **Tax** panel.
+QuickBooks is the default, and an organization copy saved before this setting
+existed uses QuickBooks.
+
+- **QuickBooks** works out the tax from its products, customers and tax codes,
+  as described under Tax in What syncs, and Fleetbase invoices get the
+  QuickBooks tax.
+- **Fleetbase** keeps the tax on the Fleetbase invoice lines (each line's tax
+  rate and amount, as Ledger works them out) and sends it to QuickBooks. This
+  applies to invoices Fleetbase first sends to QuickBooks while the setting is
+  Fleetbase. An invoice QuickBooks already had, including one Fleetbase links
+  by its number, keeps the QuickBooks tax. Switching back to QuickBooks lets
+  QuickBooks work out the tax of every invoice again.
+
+With Fleetbase, when the QuickBooks invoice holds a different tax, Fleetbase's
+tax wins whichever side is Primary: while invoices are sent to QuickBooks
+(Both or To QuickBooks), the next sync sends it back, and Activity says so. A
+QuickBooks change that leaves a different tax queues the invoice. Only the
+invoice tax is compared, as QuickBooks and Ledger round line taxes
+differently. With invoices From QuickBooks only, nothing is sent: the
+QuickBooks lines are copied but each line keeps its Fleetbase tax rate. A line
+only QuickBooks has gets no tax until a rate is set on it, and Activity says
+so. A tax rate or amount change on a Fleetbase line queues the invoice.
+
+How the tax is sent depends on the QuickBooks company:
+
+- **US** — a line with tax is sent taxable and a line without tax not taxable,
+  with the customer's or company's sales tax rate and the Fleetbase tax as the
+  invoice tax. With manual sales tax and no rate, an invoice with tax fails.
+- **Outside the US** (for example GST and PST) — each line is sent with the
+  QuickBooks tax code it already has, or else its product's code (the
+  customer's when the product has none), whichever has rates adding up to the
+  line's Fleetbase rate. The tax of each
+  rate is sent on its own, shared by rate with the rounding on the last one.
+  The invoice fails before anything is sent when no code fits a line, a code's
+  rates add up to more than the 2 decimals Ledger keeps (Québec GST and QST,
+  14.975%), a code taxes tax (compound), a rate is read only in QuickBooks, or
+  the rates could not be read.
+- **Sales tax off** — the invoice is sent without tax, Fleetbase keeps its tax,
+  and Activity says so.
+
+An invoice QuickBooks holds with tax included in its amounts fails, and
+nothing is copied from it. When QuickBooks does not keep the tax Fleetbase
+sent, the invoice fails with both amounts. The invoice, its other changes and
+its payment then wait until the QuickBooks invoice or the Fleetbase tax
+changes. To upgrade, run `php artisan migrate`, which adds the
+`quickbooks_links` columns `tax_source` and `refused_tax`.
 
 ### Environments
 
@@ -803,7 +858,13 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   amounts include tax, a line's code is not among the codes QuickBooks
   returned (an inactive code may not be), a tax line is not a percent, or the
   tax codes could not be read (`Support/InvoiceTax.php`,
-  `InvoiceMapper::quickBooksTax`).
+  `InvoiceMapper::quickBooksTax`). Tax worked out by Fleetbase
+  (`Support/FleetbaseTax.php`) is tested only against a simulated QuickBooks:
+  whether QuickBooks keeps the tax of each rate sent outside the US, or the
+  invoice tax with automated sales tax, is not checked live. A tax QuickBooks
+  does not keep fails the invoice (see [Tax](#tax)). Tax moved from one line
+  to another with the invoice tax unchanged is not sent, so QuickBooks can
+  show the wrong line as taxed until another change to the invoice is sent.
 - **Partial payments.** An invoice has at most one QuickBooks Payment from this
   package. Partial and later payments are not created as separate Payments. The
   one Payment is created with the amount recorded as paid on the Fleetbase

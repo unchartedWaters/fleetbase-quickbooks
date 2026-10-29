@@ -6,6 +6,8 @@ class SyncSettingsResolver
 {
     public const DEFAULT_PRIMARY = 'quickbooks';
 
+    public const DEFAULT_TAX_SOURCE = 'quickbooks';
+
     /**
      * Config defaults, then the global template row, then the organization row,
      * per field. An organization with its own complete copy sets every field; a null or
@@ -50,6 +52,12 @@ class SyncSettingsResolver
             'invoice_enabled'    => $this->pickBool('invoice_enabled', $admin, (bool) ($defaults['invoice_enabled'] ?? true)),
             'payment_enabled'    => $this->pickBool('payment_enabled', $admin, (bool) ($defaults['payment_enabled'] ?? true)),
             'wallet_enabled'     => $this->pickBool('wallet_enabled', $admin, (bool) ($defaults['wallet_enabled'] ?? false)),
+            'tax_source'         => $this->pickChoice(
+                'tax_source',
+                $admin,
+                (string) ($defaults['tax_source'] ?? self::DEFAULT_TAX_SOURCE),
+                [self::DEFAULT_TAX_SOURCE, 'fleetbase']
+            ),
         ];
 
         $resolved = [

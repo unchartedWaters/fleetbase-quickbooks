@@ -842,6 +842,86 @@ class InvoiceMapper
     }
 
     /**
+     * With Fleetbase working out tax, a QuickBooks copy keeps the tax rate of the Fleetbase line
+     * each QuickBooks line pairs with by line id, and the tax Ledger works out from that rate. A
+     * line Fleetbase cannot pair gets no tax ('unpaired' counts them). The total keeps what
+     * QuickBooks adds besides tax, such as a discount: its total less its tax, plus Fleetbase's.
+     * A tax-inclusive invoice is left as copied (its lines already hold QuickBooks' tax).
+     *
+     * @param array{items: array<int, array<string, mixed>>, tax: int, total: int} $mapped  fromQuickBooks
+     * @param array<string, mixed>                                                 $remote
+     * @param array<int, mixed>                                                    $current the Fleetbase items
+     *
+     * @return array{items: array<int, array<string, mixed>>, tax: int, total: int, unpaired: int}
+     */
+    public function withFleetbaseRates(array $mapped, array $remote, array $current): array
+    {
+        if (self::taxInclusive($remote) === true) {
+            return $mapped + ['unpaired' => 0];
+        }
+        $invoiceId = trim((string) ($remote['Id'] ?? ''));
+        $rates     = [];
+        foreach ($current as $item) {
+            $lineId = is_array($item) === true ? self::heldLineId($item, $invoiceId) : '';
+            if ($lineId !== '') {
+                $rates[$lineId] = self::taxRate($item['tax_rate'] ?? 0);
+            }
+        }
+        $lineIds = [];
+        foreach (is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [] as $line) {
+            if (is_array($line) === true && $this->isProductSalesLine($line) === true) {
+                $lineIds[] = trim((string) ($line['Id'] ?? ''));
+            }
+        }
+        $tax      = 0;
+        $unpaired = 0;
+        foreach ($mapped['items'] as $index => $item) {
+            $rate = $rates[$lineIds[$index] ?? ''] ?? null;
+            if ($rate === null) {
+                $unpaired++;
+            }
+            $item['tax_rate']   = $rate ?? '0.00';
+            $item['tax_amount'] = self::ledgerTax((int) ($item['amount'] ?? 0), $item['tax_rate']);
+            $tax += $item['tax_amount'];
+            $mapped['items'][$index] = $item;
+        }
+        $detail = is_array($remote['TxnTaxDetail'] ?? null) === true ? $remote['TxnTaxDetail'] : [];
+
+        return [
+            'items'    => $mapped['items'],
+            'tax'      => $tax,
+            'total'    => $mapped['total'] - $this->lineAmount($detail['TotalTax'] ?? 0) + $tax,
+            'unpaired' => $unpaired,
+        ];
+    }
+
+    /**
+     * A line's tax as Ledger works it out when the line is saved (InvoiceItem::calculateAmount).
+     */
+    public static function ledgerTax(int $amount, string $rate): int
+    {
+        return (int) round($amount * ((float) $rate / 100));
+    }
+
+    /**
+     * The QuickBooks line id a Fleetbase item holds for this invoice: the one this sync paired it
+     * with, else the line stored on an earlier sync.
+     *
+     * @param array<string, mixed> $item
+     */
+    private static function heldLineId(array $item, string $invoiceId): string
+    {
+        $paired = trim((string) ($item['qbo_line_id'] ?? ''));
+        if ($paired !== '') {
+            return $paired;
+        }
+        $stored = is_array($item['qbo_line'] ?? null) === true ? $item['qbo_line'] : [];
+        $same   = $invoiceId !== '' && trim((string) ($stored['invoice'] ?? '')) === $invoiceId;
+
+        return $same === true ? trim((string) ($stored['id'] ?? '')) : '';
+    }
+
+    /**
      * The tax QuickBooks worked out on the lines Fleetbase sent. The tax is shared by amount over
      * the QuickBooks lines coded TAX (US), the rounding left on the last one, and each Fleetbase
      * item takes the share of its QuickBooks line (qbo_line_id), so the tax of a line only

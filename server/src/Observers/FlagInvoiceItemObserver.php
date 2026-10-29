@@ -16,7 +16,7 @@ use Illuminate\Queue\Events\Looping;
  */
 class FlagInvoiceItemObserver
 {
-    private const WATCHED = ['description', 'quantity', 'unit_price', 'amount'];
+    private const WATCHED = ['description', 'quantity', 'unit_price', 'amount', 'tax_rate', 'tax_amount'];
 
     /**
      * Invoice uuids already flagged in this HTTP request or queue job.

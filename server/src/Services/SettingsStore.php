@@ -147,6 +147,7 @@ class SettingsStore
     /**
      * What a stored organization row means. A complete copy is the organization's own settings.
      * A legacy row (override=true) keeps its fields and inherits the rest; any other legacy row reads as none.
+     * Both predate the fields in SettingsKeys::LATER_SYNC_FIELDS, so a missing one reads as it was before.
      *
      * @param array<string, mixed> $row
      *
@@ -157,15 +158,20 @@ class SettingsStore
         if (($row[SettingsKeys::ORGANIZATION_MARKER] ?? null) !== SettingsKeys::ORGANIZATION_MARKER_VALUE) {
             return [];
         }
-        if (self::isCompleteCopy($row) === false && ($row['override'] ?? false) !== true) {
+        $complete = self::isCompleteCopy($row);
+        if ($complete === false && ($row['override'] ?? false) !== true) {
             return [];
+        }
+        foreach (SettingsKeys::LATER_SYNC_FIELDS as $field => $before) {
+            $row[$field] = isset($row[$field]) === true && $row[$field] !== '' ? $row[$field] : $before;
         }
 
         return self::onlySyncFields($row);
     }
 
     /**
-     * A complete copy carries the organization marker and every sync field with a real value.
+     * A complete copy carries the organization marker and every sync field with a real value, but
+     * those added later (SettingsKeys::LATER_SYNC_FIELDS), which syncFromRow fills in.
      *
      * @param array<string, mixed> $row
      */
@@ -175,6 +181,9 @@ class SettingsStore
             return false;
         }
         foreach (SettingsKeys::SYNC_FIELDS as $field) {
+            if (array_key_exists($field, SettingsKeys::LATER_SYNC_FIELDS) === true) {
+                continue;
+            }
             if (isset($row[$field]) === false || $row[$field] === '') {
                 return false;
             }

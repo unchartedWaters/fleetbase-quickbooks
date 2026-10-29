@@ -75,10 +75,19 @@ test('a second save after the HTTP request is handled loads the parent again', f
 test('an unwatched line change does not load the parent', function () {
     [$observer, $directory] = itemObserverHarness();
 
-    $observer->updated(invoiceLine('inv-1', ['tax_rate']));
+    $observer->updated(invoiceLine('inv-1', ['meta']));
 
     expect($observer->loads)->toBe(0)
         ->and($directory->written)->toBe([]);
+});
+
+test('a line tax change queues the invoice, since Fleetbase may work out its tax', function () {
+    [$observer, $directory] = itemObserverHarness();
+
+    $observer->updated(invoiceLine('inv-1', ['tax_rate', 'tax_amount']));
+
+    expect($observer->loads)->toBe(1)
+        ->and($directory->written)->toHaveCount(1);
 });
 
 test('a second invoice still loads its parent', function () {

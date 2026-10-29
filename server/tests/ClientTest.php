@@ -795,6 +795,45 @@ test('a failed tax code read leaves the sales tax settings without codes, and is
         ->and($queries)->toBe(2);
 });
 
+test('tax rates are read once per company, their percent kept exact', function () {
+    Http::fake(['sandbox-quickbooks.api.intuit.com/*' => Http::response(
+        '{"QueryResponse":{"TaxRate":[{"Id":"qst","RateValue":9.975,"DisplayType":"ReadOnly"},'
+            . '{"Id":"gst","RateValue":5}]}}',
+        200
+    )]);
+    $client = new QuickBooksClient();
+
+    $rates = $client->taxRates(clientConnection());
+    $client->taxRates(clientConnection());
+
+    expect($rates)->toBe([
+        'qst' => ['percent' => '9.975', 'read_only' => true],
+        'gst' => ['percent' => '5', 'read_only' => false],
+    ]);
+    Http::assertSentCount(1);
+    Http::assertSent(fn (Request $request) => str_contains(urldecode($request->url()), 'select * from TaxRate'));
+});
+
+test('outside the US the sales tax settings name the codes that charge tax on tax', function () {
+    Http::fake(function (Request $request) {
+        if (str_contains($request->url(), '/companyinfo/') === true) {
+            return Http::response(['CompanyInfo' => ['CompanyName' => 'Sandbox', 'Country' => 'CA']], 200);
+        }
+        if (str_contains($request->url(), '/query') === true) {
+            return Http::response(['QueryResponse' => ['TaxCode' => [
+                ['Id' => '8', 'SalesTaxRateList' => ['TaxRateDetail' => [
+                    ['TaxRateRef' => ['value' => '1'], 'TaxTypeApplicable' => 'TaxOnAmount'],
+                    ['TaxRateRef' => ['value' => '2'], 'TaxTypeApplicable' => 'TaxOnAmountPlusTax'],
+                ]]],
+            ]]], 200);
+        }
+
+        return Http::response(['Preferences' => ['TaxPrefs' => ['UsingSalesTax' => true]]], 200);
+    });
+
+    expect((new QuickBooksClient())->salesTax(clientConnection())['compound'] ?? null)->toBe(['8']);
+});
+
 test('an item is read by id, inactive or not', function () {
     $item = ['Id' => '20', 'Active' => false, 'Taxable' => true];
     Http::fake(['sandbox-quickbooks.api.intuit.com/*' => Http::response(['Item' => $item], 200)]);

@@ -27,6 +27,7 @@ const POLICY_FIELDS = [
     'wallet_conflict',
     'wallet_reference',
     'wallet_direction',
+    'tax_source',
 ];
 const PRIMARY_ENTITIES = ['customer', 'invoice', 'payment', 'wallet'];
 const CHOICE_DEFAULTS = {
@@ -42,6 +43,7 @@ const CHOICE_DEFAULTS = {
     invoice_direction: 'both',
     payment_direction: 'both',
     wallet_direction: 'both',
+    tax_source: 'quickbooks',
 };
 const ERROR_FIELD_ORDER = [
     'environment',
@@ -64,6 +66,7 @@ const ERROR_FIELD_ORDER = [
     'wallet_conflict',
     'wallet_reference',
     'wallet_direction',
+    'tax_source',
 ];
 
 const CREDENTIAL_FIELDS = ['environment', 'client_id', 'client_secret', 'webhook_verifier'];
@@ -296,6 +299,10 @@ export default class QuickbooksSettingsComponent extends Component {
                 directionKey: direction.directionKey,
             };
         });
+    }
+
+    get taxSource() {
+        return this.present('tax_source').value;
     }
 
     get displayedUrls() {

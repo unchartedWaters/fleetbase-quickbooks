@@ -123,5 +123,14 @@ export function validateSettings({ auth, sync, secretSet, verifierSet = false, s
         }
     });
 
+    checkTaxSource(errors, sync);
+
     return errors;
+}
+
+// A form that does not send the field is left to the server.
+function checkTaxSource(errors, sync) {
+    if (sync?.tax_source !== undefined && !['quickbooks', 'fleetbase'].includes(sync.tax_source)) {
+        errors.tax_source = 'quickbooks.validation.tax-source';
+    }
 }

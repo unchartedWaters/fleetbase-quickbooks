@@ -10,7 +10,11 @@ namespace Fleetbase\Quickbooks\Support;
  * QuickBooks product, customer and company.
  *
  * @phpstan-type Settings array{
- *     mode: string, automated: bool, rate: string|null, codes?: array<string, array<int, string>>
+ *     mode: string,
+ *     automated: bool,
+ *     rate: string|null,
+ *     codes?: array<string, array<int, string>>,
+ *     compound?: array<int, string>
  * }
  * @phpstan-type Plan array{lines: array<int, string|null>, rate: string|null, global: string|null}
  */
@@ -73,6 +77,31 @@ class InvoiceTax
         }
 
         return $codes;
+    }
+
+    /**
+     * The QuickBooks tax codes with a rate charged on the amount plus tax (TaxTypeApplicable other
+     * than TaxOnAmount), from a TaxCode query. Their rates do not add up to the code's rate.
+     *
+     * @param array<int, array<string, mixed>> $taxCodes
+     *
+     * @return array<int, string>
+     */
+    public static function compoundCodes(array $taxCodes): array
+    {
+        $compound = [];
+        foreach ($taxCodes as $code) {
+            $details = $code['SalesTaxRateList']['TaxRateDetail'] ?? [];
+            foreach (is_array($details) === true ? $details : [] as $detail) {
+                $applies = is_array($detail) === true ? (string) ($detail['TaxTypeApplicable'] ?? '') : '';
+                if ($applies !== '' && $applies !== 'TaxOnAmount') {
+                    $compound[] = trim((string) ($code['Id'] ?? ''));
+                    break;
+                }
+            }
+        }
+
+        return $compound;
     }
 
     /**

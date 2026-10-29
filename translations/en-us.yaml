@@ -141,6 +141,9 @@ quickbooks:
     sync-direction: Sync direction
     sync-direction-help: Both keeps the two systems in step. To QuickBooks only sends Fleetbase changes. From QuickBooks only brings QuickBooks changes into Fleetbase.
     entity-sync-direction: "{entity} Sync direction"
+    tax: Tax
+    tax-source: Who works out invoice tax
+    tax-source-help: With QuickBooks, QuickBooks works out the tax from its products, customers and tax codes, and Fleetbase invoices get the QuickBooks tax. With Fleetbase, the tax on the Fleetbase invoice lines is kept and sent to QuickBooks with invoices Fleetbase sends, and a different tax in QuickBooks is replaced with it on the next sync.
     client-secret: Client secret
     client-secret-help: "On Keys & credentials, next to the Client ID. Stored encrypted."
     client-secret-saved: A Client secret is already saved. Leave this blank to keep it.
@@ -210,6 +213,7 @@ quickbooks:
     primary-invoice: Choose Fleetbase or QuickBooks as Primary for Invoices.
     primary-payment: Choose Fleetbase or QuickBooks as Primary for Payments.
     primary-wallet: Choose Fleetbase or QuickBooks as Primary for Accounts / Wallets.
+    tax-source: Choose QuickBooks or Fleetbase for who works out invoice tax.
   messages:
     action-cooldown: This was started a moment ago. Try again shortly.
     unauthorized: This action is unauthorized.
@@ -293,6 +297,18 @@ quickbooks:
     invoice-no-tax-rate: The invoice was sent, but QuickBooks added no tax because neither the customer nor the company has a sales tax rate in QuickBooks. Set a sales tax rate in QuickBooks and edit the invoice to add the tax.
     invoice-tax-lowered: QuickBooks worked out less tax for this invoice than Fleetbase had, so the Fleetbase tax, line tax rates and total were changed to the QuickBooks ones and the total went down. A payment above the new total is sent to QuickBooks for the total only. Check which products and customers are taxable, and the sales tax settings, in QuickBooks.
     invoice-tax-from-quickbooks: QuickBooks worked out the tax of this invoice, so the tax rates on its lines in Fleetbase were changed to the QuickBooks rates.
+    invoice-tax-from-fleetbase: QuickBooks had a different tax for this invoice. Fleetbase works out tax for this organization, so its tax was sent back to QuickBooks.
+    invoice-tax-not-sent: Sales tax is off in QuickBooks, so the tax on this Fleetbase invoice was not sent to QuickBooks.
+    invoice-tax-new-line: QuickBooks added lines to this invoice. Fleetbase works out tax for this organization, so the new lines have no tax in Fleetbase until a tax rate is set on them.
+    invoice-tax-not-kept: "QuickBooks did not keep the tax Fleetbase sent for this invoice ({sent}) and has {kept} instead. Fleetbase will not sync this invoice, its other changes or its payment until the invoice in QuickBooks or its tax in Fleetbase changes. Check the sales tax settings in QuickBooks."
+    invoice-tax-no-rate-fleetbase: Fleetbase did not send this invoice. Its tax is worked out in Fleetbase, but QuickBooks has no sales tax rate for the customer or the company, and without one QuickBooks does not keep the tax. Set a sales tax rate in QuickBooks, or turn on automated sales tax.
+    invoice-tax-inclusive: Fleetbase did not sync this invoice. Its amounts in QuickBooks include tax, and Fleetbase works out tax on amounts before tax. Set the invoice in QuickBooks to amounts that exclude tax.
+    invoice-tax-no-code: 'Fleetbase did not send this invoice. Line "{line}" has no QuickBooks tax code. Give its product or the customer a sales tax code in QuickBooks.'
+    invoice-tax-rate-mismatch: 'Fleetbase did not send this invoice. Line "{line}" has a tax rate of {rate}% in Fleetbase, but its QuickBooks tax code adds up to {code}%. Give the product or customer a QuickBooks tax code with the same rate, or change the line''s tax rate in Fleetbase.'
+    invoice-tax-rate-precision: 'Fleetbase did not send this invoice. The QuickBooks tax code of line "{line}" adds up to {code}%, but a Fleetbase tax rate has only two decimals, so the tax cannot be split over its rates exactly. Use another tax code, or let QuickBooks work out tax.'
+    invoice-tax-compound: 'Fleetbase did not send this invoice. The QuickBooks tax code of line "{line}" charges tax on tax, which a Fleetbase tax rate cannot hold. Use another tax code, or let QuickBooks work out tax.'
+    invoice-tax-rates-unread: 'Fleetbase did not send this invoice. It could not read the QuickBooks tax rates of the tax code of line "{line}". Check that the code is active in QuickBooks and try again.'
+    invoice-tax-read-only: 'Fleetbase did not send this invoice. A QuickBooks tax rate of the tax code of line "{line}" is read-only, so QuickBooks does not accept tax worked out elsewhere. Use another tax code, or let QuickBooks work out tax.'
     invoice-number-unconfirmed: QuickBooks did not confirm a free invoice number, so Fleetbase did not create this invoice.
     invoice-number-taken: "QuickBooks invoice number {number} was not copied because another Fleetbase invoice already uses it."
     invoice-number-kept: "This invoice keeps {number}."

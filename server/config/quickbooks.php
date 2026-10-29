@@ -53,6 +53,9 @@ return [
         'payment_enabled'         => true,
         // Off for a fresh install: a wallet per driver or customer can flood the QuickBooks chart of accounts.
         'wallet_enabled'          => false,
+        // Who works out invoice tax: quickbooks (from its products, customers and tax codes) or
+        // fleetbase (the tax on the Fleetbase invoice lines, sent to QuickBooks as is).
+        'tax_source'              => 'quickbooks',
         // How long a running sync leases the pending rows it loaded. A lease left by a
         // killed worker expires after this many seconds. Keep it above the job timeout.
         'claim_seconds'           => 900,

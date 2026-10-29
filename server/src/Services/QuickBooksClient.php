@@ -2,6 +2,7 @@
 
 namespace Fleetbase\Quickbooks\Services;
 
+use Fleetbase\Quickbooks\Support\FleetbaseTax;
 use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\NextDocNumber;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
@@ -21,6 +22,9 @@ use Illuminate\Support\Facades\Http;
  *     query?: string,
  *     key?: string
  * }
+ *
+ * @phpstan-import-type Settings from InvoiceTax as InvoiceTaxSettings
+ * @phpstan-import-type Rates from FleetbaseTax as FleetbaseTaxRates
  */
 class QuickBooksClient
 {
@@ -60,8 +64,11 @@ class QuickBooksClient
     /** @var array<string, string> */
     private array $countryByRealm = [];
 
-    /** @var array<string, array<string, array<int, string>>> */
+    /** @var array<string, array{codes: array<string, array<int, string>>, compound: array<int, string>}> */
     private array $taxCodesByRealm = [];
+
+    /** @var array<string, FleetbaseTaxRates> */
+    private array $taxRatesByRealm = [];
 
     /**
      * The Fleetbase record a single write belongs to (for example invoice:<uuid>), set by
@@ -217,7 +224,7 @@ class QuickBooksClient
      *
      * @param array<string, mixed> $connection
      *
-     * @return array{mode: string, automated: bool, rate: string|null, codes?: array<string, array<int, string>>}
+     * @return InvoiceTaxSettings
      */
     public function salesTax(array $connection): array
     {
@@ -229,7 +236,8 @@ class QuickBooksClient
         if ($settings['mode'] === InvoiceTax::GLOBAL) {
             $codes = $this->taxCodes($connection, $realm);
             if ($codes !== null) {
-                $settings['codes'] = $codes;
+                $settings['codes']    = $codes['codes'];
+                $settings['compound'] = $codes['compound'];
             }
         }
 
@@ -237,13 +245,14 @@ class QuickBooksClient
     }
 
     /**
-     * The sales tax rates of each tax code (InvoiceTax::codeRates), read once per company. A failed
-     * read is null and is tried again next time: without codes the tax stays whole on the invoice,
-     * so it does not fail the invoice. An expired token or the rate limit still stops the run.
+     * The sales tax rates of each tax code (InvoiceTax::codeRates) and the codes that charge tax on
+     * tax (InvoiceTax::compoundCodes), read once per company. A failed read is null and is tried
+     * again next time: without codes the tax stays whole on the invoice, so it does not fail the
+     * invoice. An expired token or the rate limit still stops the run.
      *
      * @param array<string, mixed> $connection
      *
-     * @return array<string, array<int, string>>|null
+     * @return array{codes: array<string, array<int, string>>, compound: array<int, string>}|null
      */
     private function taxCodes(array $connection, string $realm): ?array
     {
@@ -257,10 +266,32 @@ class QuickBooksClient
 
                 return null;
             }
-            $this->taxCodesByRealm[$realm] = InvoiceTax::codeRates($rows);
+            $this->taxCodesByRealm[$realm] = [
+                'codes'    => InvoiceTax::codeRates($rows),
+                'compound' => InvoiceTax::compoundCodes($rows),
+            ];
         }
 
         return $this->taxCodesByRealm[$realm];
+    }
+
+    /**
+     * The company's sales tax rates (FleetbaseTax::rates), read once per company, for sending the
+     * tax Fleetbase works out outside the US. A failed read throws: that invoice cannot be sent.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return FleetbaseTaxRates
+     */
+    public function taxRates(array $connection): array
+    {
+        $realm = (string) ($connection['realm_id'] ?? '');
+        if (isset($this->taxRatesByRealm[$realm]) === false) {
+            $rows                          = $this->queryPages($connection, 'select * from TaxRate', 'TaxRate', false);
+            $this->taxRatesByRealm[$realm] = FleetbaseTax::rates($rows);
+        }
+
+        return $this->taxRatesByRealm[$realm];
     }
 
     /**
@@ -1813,7 +1844,7 @@ class QuickBooksClient
     private function decodeBody(Response $response): array
     {
         $json = preg_replace(
-            '/"(Amount|TotalAmt|Balance|UnitPrice|TotalTax|TaxPercent|NetAmountTaxable)"'
+            '/"(Amount|TotalAmt|Balance|UnitPrice|TotalTax|TaxPercent|NetAmountTaxable|RateValue)"'
                 . '\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/',
             '"$1":"$2"',
             $response->body()
