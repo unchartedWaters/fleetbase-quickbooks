@@ -49,7 +49,7 @@ class FleetbaseTax
         }
         $items = array_values(array_filter($items, 'is_array'));
         if ($settings['mode'] === InvoiceTax::US) {
-            return self::us($payload, $items, $settings);
+            return self::unitedStates($payload, $items, $settings);
         }
 
         return self::global($payload, $items, $settings, $planCodes, $rates);
@@ -126,7 +126,7 @@ class FleetbaseTax
      *
      * @return array{payload: array<string, mixed>, error: string|null}
      */
-    private static function us(array $payload, array $items, array $settings): array
+    private static function unitedStates(array $payload, array $items, array $settings): array
     {
         foreach (self::salesLines($payload, count($items)) as $position => $index) {
             $taxed = (int) ($items[$position]['tax_amount'] ?? 0) !== 0
