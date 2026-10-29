@@ -173,7 +173,7 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.deepEqual(disabledCustomer, {});
     });
 
-    test('the tax source must be QuickBooks or Fleetbase, whichever way invoices sync', function (assert) {
+    test('the tax source must be QuickBooks or Fleetbase, whichever way invoices sync', (assert) => {
         const check = (sync) =>
             validateSettings({ auth: null, sync: { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, ...sync }, syncOnly: true });
         const sent = { invoice_conflict: 'quickbooks', invoice_reference: 'quickbooks', invoice_direction: 'both' };
