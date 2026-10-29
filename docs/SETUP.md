@@ -859,9 +859,11 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   returned (an inactive code may not be), a tax line is not a percent, or the
   tax codes could not be read (`Support/InvoiceTax.php`,
   `InvoiceMapper::quickBooksTax`). Tax worked out by Fleetbase
-  (`Support/FleetbaseTax.php`) is tested only against a simulated QuickBooks:
-  whether QuickBooks keeps the tax of each rate sent outside the US, or the
-  invoice tax with automated sales tax, is not checked live. A tax QuickBooks
+  (`Support/FleetbaseTax.php`) is checked live in a US company with manual
+  sales tax: QuickBooks keeps the invoice tax Fleetbase sends, and a changed
+  Fleetbase tax is sent. Whether QuickBooks keeps the tax of each rate sent
+  outside the US, or the invoice tax with automated sales tax, is not checked
+  live. A tax QuickBooks
   does not keep fails the invoice (see [Tax](#tax)). Tax moved from one line
   to another with the invoice tax unchanged is not sent, so QuickBooks can
   show the wrong line as taxed until another change to the invoice is sent.

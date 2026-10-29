@@ -12,7 +12,8 @@
  * in the sandbox company. Intuit rotates refresh tokens about once a day; when the stored one
  * stops working the run fails with invalid_grant and a new one is needed from Intuit's
  * OAuth 2.0 Playground. Tokens stay in memory and are never printed. QuickBooks works out
- * invoice tax, so totals are checked against the tax it reports. Automated sales tax is not tested.
+ * invoice tax, so totals are checked against the tax it reports, except in the test where
+ * Fleetbase works out tax (US manual sales tax only). Automated sales tax is not tested.
  */
 
 // Keep secrets out of stack traces however php.ini is set.
@@ -772,4 +773,92 @@ test('products are created, adopted, updated, made inactive and brought back, an
     expect($back['Active'] ?? null)->toBeTrue()
         ->and($back['Name'] ?? null)->toBe('FB MUG ' . $tag)
         ->and($itemOf('FB Mug ' . $tag))->toBe($mugId);
+})->group('sandbox');
+
+test('with Fleetbase working out tax QuickBooks keeps the Fleetbase tax and an edit to it is sent', function () {
+    $client     = new QuickBooksClient();
+    $connection = sandboxConnection();
+    if ($client->salesTax($connection)['mode'] !== InvoiceTax::US) {
+        test()->markTestSkipped('The sandbox company does not use US sales tax.');
+    }
+    $tag     = sandboxTag();
+    $company = 'sandbox-company';
+    $engine  = new SyncEngine(
+        $client,
+        new CustomerMapper(),
+        new InvoiceMapper(),
+        new WalletMapper(),
+        new BackoffPolicy(static fn (int $wait): int => $wait)
+    );
+    $ledger                        = new SyncLedger();
+    $ledger->connections[$company] = $connection + ['default_item_id' => sandboxServiceItem($client, $connection)];
+    $ledger->customers['cust-own'] = [
+        'uuid'         => 'cust-own',
+        'company_uuid' => $company,
+        'name'         => 'Fleetbase Test Own Tax ' . $tag,
+        'email'        => 'fbqb-own-tax-' . $tag . '@example.com',
+    ];
+    // Ledger's own tax: 15% on both lines, which is not the QuickBooks rate.
+    $ledger->invoices['inv-own'] = [
+        'uuid'          => 'inv-own',
+        'company_uuid'  => $company,
+        'customer_uuid' => 'cust-own',
+        'number'        => 'FO' . $tag,
+        'date'          => gmdate('Y-m-d'),
+        'due_date'      => gmdate('Y-m-d', time() + 14 * 86400),
+        'currency'      => $client->homeCurrency($connection),
+        'tax'           => 450,
+        'total'         => 3450,
+        'status'        => 'sent',
+        'items'         => [
+            InvoiceMapper::item('Delivery', 2, 1000, 2000, '15.00', 300),
+            InvoiceMapper::item('Wait time', 1, 1000, 1000, '15.00', 150),
+        ],
+    ];
+    $pending = fn (string $type, string $uuid): array => [
+        'company_uuid' => $company, 'local_type' => $type, 'local_uuid' => $uuid,
+        'status'       => 'pending', 'attempts' => 0,
+    ];
+    $ledger->pending = [$pending('customer', 'cust-own'), $pending('invoice', 'inv-own')];
+    $settings        = qbSettings(['interval_minutes' => 1, 'tax_source' => 'fleetbase']);
+    $again           = function (int $when) use ($engine, $ledger, $company, $settings, $pending): array {
+        $ledger->connections[$company]['last_batch_at'] = null;
+        $ledger->pending                                = [$pending('invoice', 'inv-own')];
+
+        return $engine->runScheduled($ledger, $company, $settings, $when, true);
+    };
+
+    $first  = $engine->runScheduled($ledger, $company, $settings, time(), true);
+    $errors = array_values(array_filter(array_column($ledger->attempts, 'error')));
+    $link   = $ledger->link($company, (string) $connection['realm_id'], 'invoice', 'inv-own');
+    $remote = $client->getInvoice($connection, (string) ($link['qbo_id'] ?? ''));
+
+    expect($errors)->toBe([])
+        ->and($first['failed'] ?? 0)->toBe(0)
+        ->and($link['tax_source'] ?? null)->toBe('fleetbase')
+        ->and($remote['Line'][0]['SalesItemLineDetail']['TaxCodeRef']['value'] ?? null)->toBe('TAX')
+        ->and(sandboxCents($remote['TxnTaxDetail']['TotalTax'] ?? null))->toBe(450)
+        ->and(sandboxCents($remote['TotalAmt'] ?? null))->toBe(3450)
+        ->and($ledger->invoices['inv-own']['tax'])->toBe(450)
+        ->and($ledger->invoices['inv-own']['items'][0]['tax_rate'])->toBe('15.00');
+
+    $second = $again(time() + 5);
+
+    expect($second['aligned'] ?? 0)->toBe(1);
+
+    // The wait time stops being taxed in Fleetbase: QuickBooks gets that line untaxed and the new tax.
+    $ledger->invoices['inv-own']['items'][1]['tax_rate']   = '0.00';
+    $ledger->invoices['inv-own']['items'][1]['tax_amount'] = 0;
+    $ledger->invoices['inv-own']['tax']                    = 300;
+    $ledger->invoices['inv-own']['total']                  = 3300;
+
+    $third  = $again(time() + 10);
+    $remote = $client->getInvoice($connection, (string) $link['qbo_id']);
+    $fourth = $again(time() + 15);
+
+    expect($third['updated'] ?? 0)->toBe(1)
+        ->and($remote['Line'][1]['SalesItemLineDetail']['TaxCodeRef']['value'] ?? null)->toBe('NON')
+        ->and(sandboxCents($remote['TxnTaxDetail']['TotalTax'] ?? null))->toBe(300)
+        ->and(sandboxCents($remote['TotalAmt'] ?? null))->toBe(3300)
+        ->and($fourth['aligned'] ?? 0)->toBe(1);
 })->group('sandbox');
