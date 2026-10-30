@@ -2520,8 +2520,8 @@ class SyncEngine
                 if ($payload === null) {
                     return 'failed';
                 }
-            } else {
-                $this->noteMissingTaxRate($uuid, $payload, $connection);
+            } elseif ($this->quickBooksTaxSendable($uuid, $payload, $connection) === false) {
+                return 'failed';
             }
             if ($this->writeBuffer !== null) {
                 $this->writeBuffer[] = [
@@ -2773,8 +2773,8 @@ class SyncEngine
             if ($payload === null) {
                 return 'failed';
             }
-        } else {
-            $this->noteMissingTaxRate($uuid, $payload, $connection);
+        } elseif ($this->quickBooksTaxSendable($uuid, $payload, $connection) === false) {
+            return 'failed';
         }
         $this->rememberPushedLineIds($ledger, $uuid, $payload);
 
@@ -3216,6 +3216,34 @@ class SyncEngine
             $known,
             $ids
         );
+    }
+
+    /**
+     * Whether an invoice whose tax QuickBooks works out can be sent. Outside the US QuickBooks
+     * refuses a line with no sales tax code (checked in a Canadian sandbox company), so such an
+     * invoice is stopped with lastError naming the line. In the US a missing rate is only noted.
+     *
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $connection
+     */
+    private function quickBooksTaxSendable(string $uuid, array $payload, array $connection): bool
+    {
+        if ($this->salesTaxSettings($connection)['mode'] !== InvoiceTax::GLOBAL) {
+            $this->noteMissingTaxRate($uuid, $payload, $connection);
+
+            return true;
+        }
+        foreach (is_array($payload['Line'] ?? null) === true ? $payload['Line'] : [] as $line) {
+            $detail = is_array($line) === true ? ($line['SalesItemLineDetail'] ?? null) : null;
+            if (is_array($detail) === true && trim((string) ($detail['TaxCodeRef']['value'] ?? '')) === '') {
+                $name            = (string) ($line['Description'] ?? ($detail['ItemRef']['name'] ?? ''));
+                $this->lastError = Translation::encode('quickbooks.messages.invoice-tax-no-code', ['line' => $name]);
+
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
