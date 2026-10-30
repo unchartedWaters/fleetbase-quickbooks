@@ -153,6 +153,8 @@ class ImportDatabase
             $table->text('invoice_tokens')->nullable();
             $table->string('kept_customer')->nullable();
             $table->string('kept_from')->nullable();
+            $table->string('tax_source')->nullable();
+            $table->string('refused_tax')->nullable();
             $table->timestamps();
             $table->unique(['company_uuid', 'local_type', 'local_uuid']);
         });

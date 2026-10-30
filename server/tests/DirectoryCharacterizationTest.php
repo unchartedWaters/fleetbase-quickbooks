@@ -71,6 +71,8 @@ function dctSchema(Illuminate\Database\Schema\Builder $schema): void
         $table->text('invoice_tokens')->nullable();
         $table->string('kept_customer')->nullable();
         $table->string('kept_from')->nullable();
+        $table->string('tax_source')->nullable();
+        $table->string('refused_tax')->nullable();
         $table->timestamps();
     });
     $schema->create('quickbooks_sync_attempts', function (Blueprint $table) {
@@ -1607,6 +1609,41 @@ test('a product link keeps its name and state, and a cleared state is written', 
             ->and($loaded['state'])->toBe('deactivated')
             ->and($cleared->state)->toBeNull()
             ->and($cleared->sync_token)->toBe('1');
+    } finally {
+        $restore();
+    }
+})->skip($dctNoSqlite, 'PDO SQLite is unavailable.');
+
+test('an invoice link keeps who works out its tax and a refused tax, and a cleared refusal is written', function () {
+    $restore = dctSqlite();
+    try {
+        dctConnection();
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->loadPending('company-uuid', 50, time())['ledger'];
+        $link      = [
+            'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1', 'local_type' => 'invoice',
+            'local_uuid'   => 'inv-t', 'qbo_entity' => 'Invoice', 'qbo_id' => '41', 'sync_token' => '0',
+            'tax_source'   => 'fleetbase', 'refused_tax' => '0|150',
+        ];
+        $ledger->putLink($link);
+        $directory->save($ledger);
+        $stored = DB::table('quickbooks_links')->where('local_uuid', 'inv-t')->first();
+
+        dctContact('cust-a', 'Ada');
+        dctInvoice('inv-t', 'cust-a');
+        dctPendingRow('pend-t', 'invoice', 'inv-t');
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->loadPending('company-uuid', 50, time())['ledger'];
+        $loaded    = $ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-t');
+        $ledger->putLink(['refused_tax' => null, 'sync_token' => '1'] + $link);
+        $directory->save($ledger);
+        $cleared = DB::table('quickbooks_links')->where('local_uuid', 'inv-t')->first();
+
+        expect($stored->tax_source)->toBe('fleetbase')
+            ->and($stored->refused_tax)->toBe('0|150')
+            ->and($loaded['tax_source'] ?? null)->toBe('fleetbase')
+            ->and($cleared->refused_tax)->toBeNull()
+            ->and($cleared->tax_source)->toBe('fleetbase');
     } finally {
         $restore();
     }

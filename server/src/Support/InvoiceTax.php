@@ -9,7 +9,13 @@ namespace Fleetbase\Quickbooks\Support;
  * names a rate. So Fleetbase sends the tax code of each line and the invoice rate, read from the
  * QuickBooks product, customer and company.
  *
- * @phpstan-type Settings array{mode: string, automated: bool, rate: string|null}
+ * @phpstan-type Settings array{
+ *     mode: string,
+ *     automated: bool,
+ *     rate: string|null,
+ *     codes?: array<string, array<int, string>>,
+ *     compound?: array<int, string>
+ * }
  * @phpstan-type Plan array{lines: array<int, string|null>, rate: string|null, global: string|null}
  */
 class InvoiceTax
@@ -42,6 +48,60 @@ class InvoiceTax
             'automated' => ($prefs['PartnerTaxEnabled'] ?? false) === true,
             'rate'      => self::rateCode($prefs['TaxGroupCodeRef'] ?? null),
         ];
+    }
+
+    /**
+     * The sales tax rates of each QuickBooks tax code, by code id, from a TaxCode query. A code
+     * with no sales rates (exempt, zero-rated or purchases only) has none.
+     *
+     * @param array<int, array<string, mixed>> $taxCodes
+     *
+     * @return array<string, array<int, string>>
+     */
+    public static function codeRates(array $taxCodes): array
+    {
+        $codes = [];
+        foreach ($taxCodes as $code) {
+            $codeId = trim((string) ($code['Id'] ?? ''));
+            if ($codeId === '') {
+                continue;
+            }
+            $details        = $code['SalesTaxRateList']['TaxRateDetail'] ?? [];
+            $codes[$codeId] = [];
+            foreach (is_array($details) === true ? $details : [] as $detail) {
+                $rate = is_array($detail) === true ? self::refValue($detail['TaxRateRef'] ?? null) : null;
+                if ($rate !== null) {
+                    $codes[$codeId][] = $rate;
+                }
+            }
+        }
+
+        return $codes;
+    }
+
+    /**
+     * The QuickBooks tax codes with a rate charged on the amount plus tax (TaxTypeApplicable other
+     * than TaxOnAmount), from a TaxCode query. Their rates do not add up to the code's rate.
+     *
+     * @param array<int, array<string, mixed>> $taxCodes
+     *
+     * @return array<int, string>
+     */
+    public static function compoundCodes(array $taxCodes): array
+    {
+        $compound = [];
+        foreach ($taxCodes as $code) {
+            $details = $code['SalesTaxRateList']['TaxRateDetail'] ?? [];
+            foreach (is_array($details) === true ? $details : [] as $detail) {
+                $applies = is_array($detail) === true ? (string) ($detail['TaxTypeApplicable'] ?? '') : '';
+                if ($applies !== '' && $applies !== 'TaxOnAmount') {
+                    $compound[] = trim((string) ($code['Id'] ?? ''));
+                    break;
+                }
+            }
+        }
+
+        return $compound;
     }
 
     /**

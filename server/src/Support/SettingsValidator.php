@@ -88,8 +88,24 @@ class SettingsValidator
             $this->requireChoice($errors, $sync, $entity . '_reference', ['fleetbase', 'quickbooks'], $primary);
             $this->requireDirection($errors, $sync, $entity . '_direction', $direction);
         }
+        $this->requireTaxSource($errors, $sync);
 
         return $errors;
+    }
+
+    /**
+     * QuickBooks or Fleetbase works out invoice tax. A missing value stays stored (an older copy
+     * keeps QuickBooks).
+     *
+     * @param array<string, string> $errors
+     * @param array<string, mixed>  $sync
+     */
+    private function requireTaxSource(array &$errors, array $sync): void
+    {
+        if (array_key_exists('tax_source', $sync) === true) {
+            $choices = ['quickbooks', 'fleetbase'];
+            $this->requireChoice($errors, $sync, 'tax_source', $choices, 'quickbooks.validation.tax-source');
+        }
     }
 
     /**

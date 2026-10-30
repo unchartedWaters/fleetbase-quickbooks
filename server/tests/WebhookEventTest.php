@@ -722,6 +722,8 @@ test('a quickbooks delete voids the invoice and retires customers and wallets wi
             $table->text('invoice_tokens')->nullable();
             $table->string('kept_customer')->nullable();
             $table->string('kept_from')->nullable();
+            $table->string('tax_source')->nullable();
+            $table->string('refused_tax')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -905,6 +907,8 @@ test('a deleted payment stored under its quickbooks id unmarks the invoice and d
             $table->text('invoice_tokens')->nullable();
             $table->string('kept_customer')->nullable();
             $table->string('kept_from')->nullable();
+            $table->string('tax_source')->nullable();
+            $table->string('refused_tax')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -1019,6 +1023,8 @@ test('a deleted or voided payment quickbooks no longer returns unmarks only the 
             $table->text('invoice_tokens')->nullable();
             $table->string('kept_customer')->nullable();
             $table->string('kept_from')->nullable();
+            $table->string('tax_source')->nullable();
+            $table->string('refused_tax')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -1136,6 +1142,8 @@ test('a payment read does not unmark an invoice that payment did not pay', funct
             $table->text('invoice_tokens')->nullable();
             $table->string('kept_customer')->nullable();
             $table->string('kept_from')->nullable();
+            $table->string('tax_source')->nullable();
+            $table->string('refused_tax')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -1249,6 +1257,8 @@ test('a deleted payment unmarks every invoice it paid and leaves the others', fu
             $table->text('invoice_tokens')->nullable();
             $table->string('kept_customer')->nullable();
             $table->string('kept_from')->nullable();
+            $table->string('tax_source')->nullable();
+            $table->string('refused_tax')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -1368,6 +1378,8 @@ test('a missing payment read unmarks every stored invoice on that payment', func
             $table->text('invoice_tokens')->nullable();
             $table->string('kept_customer')->nullable();
             $table->string('kept_from')->nullable();
+            $table->string('tax_source')->nullable();
+            $table->string('refused_tax')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -1540,6 +1552,8 @@ function qboChangedUnreadPaymentDelete(string $failure): void
             $table->text('invoice_tokens')->nullable();
             $table->string('kept_customer')->nullable();
             $table->string('kept_from')->nullable();
+            $table->string('tax_source')->nullable();
+            $table->string('refused_tax')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -1816,6 +1830,8 @@ test('payments from quickbooks leave linked and unlinked payment webhooks to the
             $table->text('invoice_tokens')->nullable();
             $table->string('kept_customer')->nullable();
             $table->string('kept_from')->nullable();
+            $table->string('tax_source')->nullable();
+            $table->string('refused_tax')->nullable();
             $table->timestamps();
         });
         $now = now();
@@ -1934,6 +1950,8 @@ test('a payment stored under its quickbooks id queues the fleetbase invoice', fu
             $table->text('invoice_tokens')->nullable();
             $table->string('kept_customer')->nullable();
             $table->string('kept_from')->nullable();
+            $table->string('tax_source')->nullable();
+            $table->string('refused_tax')->nullable();
             $table->timestamps();
         });
         $now = now();
@@ -2068,6 +2086,8 @@ test('a connection is not shared with another organization on the same realm', f
             $table->text('invoice_tokens')->nullable();
             $table->string('kept_customer')->nullable();
             $table->string('kept_from')->nullable();
+            $table->string('tax_source')->nullable();
+            $table->string('refused_tax')->nullable();
             $table->timestamps();
         });
         $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {

@@ -202,3 +202,165 @@ test('a tax that cannot be shared over lines is copied whole onto the invoice', 
     expect($copied['tax'])->toBe(200)
         ->and($copied['items'][0]['tax_amount'])->toBe(0);
 });
+
+/*
+ * Outside the US each line names a tax code, and the invoice holds one tax line per QuickBooks
+ * tax rate. With the rates of each code (InvoiceTax::codeRates), each rate's tax is shared over
+ * the lines whose code holds it, so a Ledger edit, which adds up the line taxes, keeps it.
+ */
+
+test('outside the US the tax of each rate is shared over the lines whose code holds that rate', function () {
+    $remote = [
+        'TotalAmt'     => '184.50',
+        'Line'         => [
+            InvoiceLines::coded('1', 'Delivery', '100.00', '4'),
+            InvoiceLines::coded('2', 'Fuel surcharge', '50.00', '5'),
+            InvoiceLines::coded('3', 'Customs fee', '20.00', '6'),
+        ],
+        'TxnTaxDetail' => ['TotalTax' => '14.50', 'TaxLine' => [
+            InvoiceLines::rateTax('7.50', '5', 'gst', '150.00'),
+            InvoiceLines::rateTax('7.00', '7', 'pst', '100.00'),
+        ]],
+    ];
+    $codes  = ['4' => ['gst', 'pst'], '5' => ['gst'], '6' => []];
+
+    $mapper = new InvoiceMapper();
+    $mapped = $mapper->fromQuickBooks($remote, [], $codes);
+    $items  = [
+        ['description' => 'Delivery', 'amount' => 10000, 'qbo_line_id' => '1'],
+        ['description' => 'Fuel surcharge', 'amount' => 5000, 'qbo_line_id' => '2'],
+        ['description' => 'Customs fee', 'amount' => 2000, 'qbo_line_id' => '3'],
+    ];
+    $copied = $mapper->quickBooksTax($remote, $items, $codes);
+
+    expect($mapped['tax'])->toBe(1450)
+        ->and(array_column($mapped['items'], 'tax_rate'))->toBe(['12.00', '5.00', '0.00'])
+        ->and(array_column($mapped['items'], 'tax_amount'))->toBe([1200, 250, 0])
+        ->and($copied['tax'])->toBe(1450)
+        ->and(array_column($copied['items'], 'tax_rate'))->toBe(['12.00', '5.00', '0.00'])
+        ->and(array_column($copied['items'], 'tax_amount'))->toBe([1200, 250, 0]);
+});
+
+test('outside the US each rate share rounds so the line taxes add up to the invoice tax', function () {
+    $lines = [];
+    foreach (['1', '2', '3'] as $id) {
+        $lines[] = InvoiceLines::coded($id, 'Line ' . $id, '0.33', '4');
+    }
+    $remote = ['Line' => $lines, 'TxnTaxDetail' => ['TotalTax' => '0.12', 'TaxLine' => [
+        InvoiceLines::rateTax('0.05', '5', 'gst', '0.99'),
+        InvoiceLines::rateTax('0.07', '7', 'pst', '0.99'),
+    ]]];
+    $items  = [];
+    foreach (['1', '2', '3'] as $id) {
+        $items[] = ['description' => 'Line ' . $id, 'amount' => 33, 'qbo_line_id' => $id];
+    }
+
+    $copied = (new InvoiceMapper())->quickBooksTax($remote, $items, ['4' => ['gst', 'pst']]);
+
+    expect($copied['tax'])->toBe(12)
+        ->and(array_sum(array_column($copied['items'], 'tax_amount')))->toBe(12)
+        ->and($copied['items'][0]['tax_rate'])->toBe('12.00');
+});
+
+test('outside the US the tax of QuickBooks lines Fleetbase does not have is left out', function () {
+    $remote = ['Line' => [
+        InvoiceLines::coded('1', 'Delivery', '100.00', '5'),
+        InvoiceLines::coded('2', 'Added in QuickBooks', '100.00', '5'),
+    ], 'TxnTaxDetail' => ['TotalTax' => '10.00', 'TaxLine' => [
+        InvoiceLines::rateTax('10.00', '5', 'gst', '200.00'),
+    ]]];
+
+    $copied = (new InvoiceMapper())->quickBooksTax(
+        $remote,
+        [['description' => 'Delivery', 'amount' => 10000, 'qbo_line_id' => '1']],
+        ['5' => ['gst']]
+    );
+
+    expect($copied['tax'])->toBe(500)
+        ->and($copied['items'][0]['tax_amount'])->toBe(500)
+        ->and($copied['items'][0]['tax_rate'])->toBe('5.00');
+});
+
+test('outside the US the tax stays whole on the invoice when a line code or rate is not known', function () {
+    $line                                  = InvoiceLines::coded('1', 'Delivery', '100.00', '9');
+    $items                                 = [['description' => 'Delivery', 'amount' => 10000, 'qbo_line_id' => '1']];
+    $tax                                   = ['TotalTax' => '5.00', 'TaxLine' => [
+        InvoiceLines::rateTax('5.00', '5', 'gst', '100.00'),
+    ]];
+    $flat                                  = InvoiceLines::rateTax('5.00', '5', 'gst', '100.00');
+    $flat['TaxLineDetail']['PercentBased'] = false;
+    $mapper                                = new InvoiceMapper();
+
+    $unknown = $mapper->quickBooksTax(['Line' => [$line], 'TxnTaxDetail' => $tax], $items, ['4' => ['gst']]);
+    $amount  = $mapper->quickBooksTax(
+        ['Line' => [InvoiceLines::coded('1', 'Delivery', '100.00', '4')], 'TxnTaxDetail' => [
+            'TotalTax' => '5.00', 'TaxLine' => [$flat],
+        ]],
+        $items,
+        ['4' => ['gst']]
+    );
+
+    expect($unknown['tax'])->toBe(500)
+        ->and($unknown['items'][0]['tax_amount'])->toBe(0)
+        ->and($amount['tax'])->toBe(500)
+        ->and($amount['items'][0]['tax_amount'])->toBe(0);
+});
+
+test('a tax-inclusive invoice keeps its tax on the invoice, since its lines already hold it', function () {
+    $remote = [
+        'GlobalTaxCalculation' => 'TaxInclusive',
+        'Line'                 => [InvoiceLines::coded('1', 'Delivery', '105.00', '5')],
+        'TxnTaxDetail'         => ['TotalTax' => '5.00', 'TaxLine' => [
+            InvoiceLines::rateTax('5.00', '5', 'gst', '100.00'),
+        ]],
+    ];
+
+    $copied = (new InvoiceMapper())->quickBooksTax(
+        $remote,
+        [['description' => 'Delivery', 'amount' => 10500, 'qbo_line_id' => '1']],
+        ['5' => ['gst']]
+    );
+
+    expect($copied['tax'])->toBe(500)
+        ->and($copied['inclusive'])->toBeTrue()
+        ->and($copied['items'][0]['tax_amount'])->toBe(0);
+});
+
+test('outside the US a line coded NON holds no rate and the other lines are still shared', function () {
+    $remote = ['Line' => [
+        InvoiceLines::coded('1', 'Delivery', '100.00', '5'),
+        InvoiceLines::coded('2', 'Exempt fee', '10.00', 'NON'),
+    ], 'TxnTaxDetail' => ['TotalTax' => '5.00', 'TaxLine' => [
+        InvoiceLines::rateTax('5.00', '5', 'gst', '100.00'),
+    ]]];
+
+    $mapped = (new InvoiceMapper())->fromQuickBooks($remote, [], ['5' => ['gst']]);
+
+    expect(array_column($mapped['items'], 'tax_amount'))->toBe([500, 0])
+        ->and(array_column($mapped['items'], 'tax_rate'))->toBe(['5.00', '0.00']);
+});
+
+test('outside the US rate ids that are numbers, as QuickBooks gives them, are shared too', function () {
+    // PHP turns the array key "15" into the integer 15, so ids must still match the code's "15".
+    $remote = [
+        'TotalAmt'     => '33.60',
+        'Line'         => [
+            InvoiceLines::coded('1', 'Delivery', '20.00', '7'),
+            InvoiceLines::coded('2', 'Wait time', '10.00', '7'),
+        ],
+        'TxnTaxDetail' => ['TotalTax' => '3.60', 'TaxLine' => [
+            InvoiceLines::rateTax('2.10', '7', '16', '30.00'),
+            InvoiceLines::rateTax('1.50', '5', '15', '30.00'),
+        ]],
+    ];
+    $items = [
+        ['description' => 'Delivery', 'amount' => 2000, 'qbo_line_id' => '1'],
+        ['description' => 'Wait time', 'amount' => 1000, 'qbo_line_id' => '2'],
+    ];
+
+    $copied = (new InvoiceMapper())->quickBooksTax($remote, $items, ['7' => ['15', '16']]);
+
+    expect($copied['tax'])->toBe(360)
+        ->and(array_column($copied['items'], 'tax_rate'))->toBe(['12.00', '12.00'])
+        ->and(array_column($copied['items'], 'tax_amount'))->toBe([240, 120]);
+});

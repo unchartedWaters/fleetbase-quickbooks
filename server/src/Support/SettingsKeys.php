@@ -41,6 +41,17 @@ class SettingsKeys
         'wallet_reference',
         'wallet_direction',
         'wallet_enabled',
+        'tax_source',
+    ];
+
+    /**
+     * Sync fields added after organizations had copies, with the value an older copy keeps: the
+     * behaviour from before the field existed, never the template's.
+     *
+     * @var array<string, string>
+     */
+    public const LATER_SYNC_FIELDS = [
+        'tax_source' => 'quickbooks',
     ];
 
     public static function companyAuth(string $companyUuid): string

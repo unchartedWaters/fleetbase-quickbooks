@@ -290,4 +290,31 @@
             </:default>
         </ContentPanel>
     </div>
+
+    <div data-test-tax>
+        <ContentPanel @title={{t "quickbooks.settings.tax"}} @open={{true}} @wrapperClass="bordered-classic">
+            <div data-test-sync-field="tax_source">
+                <InputGroup @name={{t "quickbooks.settings.tax-source"}} @required={{true}} as |id|>
+                    <select
+                        id={{id}}
+                        aria-label={{t "quickbooks.settings.tax-source"}}
+                        class="form-select form-input w-full {{if (get @errors 'tax_source') 'border-red-500 dark:border-red-400'}}"
+                        style={{if (get @errors "tax_source") "border-color:#dc2626"}}
+                        disabled={{@readOnly}}
+                        data-test-sync="tax_source"
+                        aria-invalid={{if (get @errors "tax_source") "true"}}
+                        aria-describedby={{if (get @errors "tax_source") "tax_source-sync-error"}}
+                        {{on "change" (fn @onUpdate "tax_source")}}
+                    >
+                        <option value="quickbooks" selected={{eq @taxSource "quickbooks"}}>{{t "quickbooks.settings.options.quickbooks"}}</option>
+                        <option value="fleetbase" selected={{eq @taxSource "fleetbase"}}>{{t "quickbooks.settings.options.fleetbase"}}</option>
+                    </select>
+                    {{#if (get @errors "tax_source")}}
+                        <p id="tax_source-sync-error" class="text-xs text-red-600 dark:text-red-400 mt-1" data-test-error="tax_source" tabindex="-1">{{get @errors "tax_source"}}</p>
+                    {{/if}}
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-field-help="tax_source">{{t "quickbooks.settings.tax-source-help"}}</p>
+                </InputGroup>
+            </div>
+        </ContentPanel>
+    </div>
 </div>

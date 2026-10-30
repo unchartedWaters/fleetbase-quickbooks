@@ -468,7 +468,7 @@ class FleetbaseDirectory
         $linkFields            = [
             'company_uuid', 'realm_id', 'local_type', 'local_uuid', 'qbo_entity', 'qbo_id', 'sync_token',
             'name', 'state', 'invoice_tokens', 'kept_customer',
-            'kept_from',
+            'kept_from', 'tax_source', 'refused_tax',
         ];
         $freshLinks                  = [];
         $changedLinks                = [];
@@ -5627,6 +5627,8 @@ class FleetbaseDirectory
                 'invoice_tokens' => $link['invoice_tokens'] ?? null,
                 'kept_customer'  => $link['kept_customer'] ?? null,
                 'kept_from'      => $link['kept_from'] ?? null,
+                'tax_source'     => $link['tax_source'] ?? null,
+                'refused_tax'    => $link['refused_tax'] ?? null,
                 'created_at'     => $now,
                 'updated_at'     => $now,
             ];
@@ -5684,6 +5686,8 @@ class FleetbaseDirectory
                     'invoice_tokens' => $row['invoice_tokens'],
                     'kept_customer'  => $row['kept_customer'],
                     'kept_from'      => $row['kept_from'],
+                    'tax_source'     => $row['tax_source'],
+                    'refused_tax'    => $row['refused_tax'],
                 ],
             ];
         }

@@ -42,7 +42,8 @@ test('a legacy row reads exactly as before: override=true keeps its fields, over
     $store->rows[SettingsKeys::companySync('org-b')] = ['interval_minutes' => 9, 'override' => true];
     $store->rows[SettingsKeys::companySync('org-d')] = orgRow(['interval_minutes' => 11], false);
 
-    expect($store->companySync('org-a'))->toBe(['interval_minutes' => 7])
+    // A field added later reads as it was when the row was written: QuickBooks worked out tax.
+    expect($store->companySync('org-a'))->toBe(['interval_minutes' => 7, 'tax_source' => 'quickbooks'])
         ->and($store->hasCompanyCopy('org-a'))->toBeFalse()
         ->and($store->companySync('org-b'))->toBe([])
         ->and($store->companySync('org-d'))->toBe([]);

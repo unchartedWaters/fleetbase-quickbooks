@@ -48,6 +48,7 @@ function qbSettings(array $overrides = []): array
         'invoice_enabled'         => true,
         'payment_enabled'         => true,
         'wallet_enabled'          => true,
+        'tax_source'              => 'quickbooks',
     ], $overrides);
 }
 

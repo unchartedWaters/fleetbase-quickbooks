@@ -173,6 +173,22 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.deepEqual(disabledCustomer, {});
     });
 
+    test('the tax source must be QuickBooks or Fleetbase, whichever way invoices sync', (assert) => {
+        const check = (sync) =>
+            validateSettings({ auth: null, sync: { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, ...sync }, syncOnly: true });
+        const sent = { invoice_conflict: 'quickbooks', invoice_reference: 'quickbooks', invoice_direction: 'both' };
+
+        assert.strictEqual(check({ ...sent, tax_source: 'quickbooks' }).tax_source, undefined);
+        assert.strictEqual(check({ ...sent, tax_source: 'fleetbase' }).tax_source, undefined);
+        assert.strictEqual(check({ ...sent, invoice_direction: 'outbound', tax_source: 'fleetbase' }).tax_source, undefined);
+        assert.strictEqual(check({ ...sent, tax_source: 'agency' }).tax_source, 'quickbooks.validation.tax-source');
+        assert.strictEqual(check({ ...sent, invoice_direction: 'inbound', tax_source: 'fleetbase' }).tax_source, undefined);
+        assert.strictEqual(check({ ...sent, invoice_enabled: false, tax_source: 'fleetbase' }).tax_source, undefined);
+        assert.strictEqual(check({ ...sent, invoice_direction: 'inbound', tax_source: 'quickbooks' }).tax_source, undefined);
+        // An older form that does not send the field is left to the server.
+        assert.strictEqual(check(sent).tax_source, undefined);
+    });
+
     test('a saved Client secret is kept only for the Client ID it was saved with', (assert) => {
         const sync = { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 };
         const check = (clientId, savedClientId, secret = '') =>

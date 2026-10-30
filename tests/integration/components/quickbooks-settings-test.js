@@ -1315,6 +1315,59 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-error='public_oauth_redirect_url']").doesNotExist();
     });
 
+    test('the Tax panel shows who works out invoice tax and saves the choice', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
+
+        assert.dom('[data-test-tax]').includesText('Tax');
+        assert.dom("[data-test-sync='tax_source']").hasValue('quickbooks');
+        assert.dom("[data-test-sync='tax_source'] option[value='quickbooks']").hasText('QuickBooks');
+        assert.dom("[data-test-sync='tax_source'] option[value='fleetbase']").hasText('Fleetbase');
+        assert.dom("[data-test-sync='tax_source']").hasAttribute('aria-label', 'Who works out invoice tax');
+        assert.dom('[data-test-field-help="tax_source"]').hasClass('text-gray-500');
+        assert.dom('[data-test-field-help="tax_source"]').includesText('QuickBooks works out the tax');
+
+        await click(saveButton());
+        assert.strictEqual(this.saved.sync.tax_source, 'quickbooks');
+
+        await fillIn("[data-test-sync='tax_source']", 'fleetbase');
+        await click(saveButton());
+        assert.strictEqual(this.saved.sync.tax_source, 'fleetbase');
+    });
+
+    test('a stored tax choice shows, and a server error for it sits under the control', async function (assert) {
+        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('sync', {
+            interval_minutes: 5,
+            periodic_interval_hours: 24,
+            retry_limit: 5,
+            default_backoff_seconds: 30,
+            invoice_direction: 'inbound',
+            tax_source: 'fleetbase',
+        });
+        this.set('onSave', () => {
+            const error = new Error('save failed');
+            error.errors = { tax_source: 'quickbooks.validation.tax-source' };
+            throw error;
+        });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
+
+        assert.dom("[data-test-sync='tax_source']").hasValue('fleetbase');
+        await click(saveButton());
+
+        assertFieldError(assert, "[data-test-sync='tax_source']", 'tax_source');
+        assert.dom("[data-test-error='tax_source']").hasText('Choose QuickBooks or Fleetbase for who works out invoice tax.');
+        assert.strictEqual(document.activeElement, this.element.querySelector("[data-test-sync='tax_source']"));
+
+        await fillIn("[data-test-sync='tax_source']", 'quickbooks');
+        assert.dom("[data-test-error='tax_source']").doesNotExist();
+    });
+
     test('each validation error sits under its control, before the hint', async function (assert) {
         this.set('settings', {
             client_id: '',

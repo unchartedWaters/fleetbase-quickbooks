@@ -42,6 +42,7 @@ const GLOBAL_SYNC = {
     wallet_reference: 'fleetbase',
     wallet_direction: 'both',
     wallet_enabled: true,
+    tax_source: 'quickbooks',
 };
 const SYNC_KEYS = Object.keys(GLOBAL_SYNC).sort();
 

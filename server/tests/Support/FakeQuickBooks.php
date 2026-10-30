@@ -88,7 +88,7 @@ class FakeQuickBooks extends QuickBooksClient
     /**
      * How the company taxes invoices (InvoiceTax::settings). Sales tax is off unless a test turns it on.
      *
-     * @var array{mode: string, automated: bool, rate: string|null}
+     * @var array{mode: string, automated: bool, rate: string|null, codes?: array<string, array<int, string>>}
      */
     public array $salesTax = ['mode' => 'off', 'automated' => false, 'rate' => null];
 
@@ -103,6 +103,20 @@ class FakeQuickBooks extends QuickBooksClient
     public array $sentInvoices = [];
 
     public ?\Throwable $failSalesTax = null;
+
+    /**
+     * Sales tax rates by id (FleetbaseTax::rates), read for tax Fleetbase works out outside the US.
+     *
+     * @var array<string, array{percent: string, read_only: bool}>
+     */
+    public array $taxRateList = [];
+
+    public ?\Throwable $failTaxRates = null;
+
+    public int $taxRateReads = 0;
+
+    /** QuickBooks keeps a TotalTax the payload sends (an override) rather than working it out. */
+    public bool $keepsSentTax = true;
 
     public int $salesTaxReads = 0;
 
@@ -208,7 +222,7 @@ class FakeQuickBooks extends QuickBooksClient
             'Id'        => $id,
             'SyncToken' => '0',
             'TotalAmt'  => $this->lineTotal($payload),
-        ]));
+        ]), $payload['TxnTaxDetail'] ?? null);
         $this->invoices[$id] = $record;
 
         return $record;
@@ -234,7 +248,7 @@ class FakeQuickBooks extends QuickBooksClient
             'SyncToken' => (string) ((int) $syncToken + 1),
         ]);
         $record['TotalAmt']  = $this->lineTotal($payload, $record['TxnTaxDetail'] ?? null);
-        $record              = $this->withTax($record);
+        $record              = $this->withTax($record, $payload['TxnTaxDetail'] ?? null);
         $this->invoices[$id] = $record;
 
         return $record;
@@ -989,7 +1003,7 @@ class FakeQuickBooks extends QuickBooksClient
     /**
      * @param array<string, mixed> $connection
      *
-     * @return array{mode: string, automated: bool, rate: string|null}
+     * @return array{mode: string, automated: bool, rate: string|null, codes?: array<string, array<int, string>>}
      */
     public function salesTax(array $connection): array
     {
@@ -999,6 +1013,21 @@ class FakeQuickBooks extends QuickBooksClient
         }
 
         return $this->salesTax;
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, array{percent: string, read_only: bool}>
+     */
+    public function taxRates(array $connection): array
+    {
+        $this->taxRateReads++;
+        if ($this->failTaxRates !== null) {
+            throw $this->failTaxRates;
+        }
+
+        return $this->taxRateList;
     }
 
     /**
@@ -1074,14 +1103,25 @@ class FakeQuickBooks extends QuickBooksClient
 
     /**
      * The tax QuickBooks works out for an invoice with a rate in taxRates: the percent of its
-     * lines coded TAX, added to the total.
+     * lines coded TAX, added to the total. A TotalTax the payload sends ($sent) is kept as an
+     * override unless keepsSentTax is off.
      *
      * @param array<string, mixed> $record
      *
      * @return array<string, mixed>
      */
-    private function withTax(array $record): array
+    private function withTax(array $record, mixed $sent = null): array
     {
+        if (is_array($sent) === true && array_key_exists('TotalTax', $sent) === true) {
+            if ($this->keepsSentTax === true) {
+                $record['TxnTaxDetail'] = $sent;
+                $record['TotalAmt']     = $this->lineTotal(['Line' => $record['Line'] ?? []], $sent);
+
+                return $record;
+            }
+            unset($record['TxnTaxDetail']['TotalTax'], $record['TxnTaxDetail']['TaxLine']);
+            $record['TotalAmt'] = $this->lineTotal(['Line' => $record['Line'] ?? []]);
+        }
         $rate    = (string) ($record['TxnTaxDetail']['TxnTaxCodeRef']['value'] ?? $this->automatedRate ?? '');
         $percent = $this->taxRates[$rate] ?? null;
         if ($percent === null) {

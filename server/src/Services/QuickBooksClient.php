@@ -2,6 +2,7 @@
 
 namespace Fleetbase\Quickbooks\Services;
 
+use Fleetbase\Quickbooks\Support\FleetbaseTax;
 use Fleetbase\Quickbooks\Support\InvoiceTax;
 use Fleetbase\Quickbooks\Support\NextDocNumber;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
@@ -21,6 +22,9 @@ use Illuminate\Support\Facades\Http;
  *     query?: string,
  *     key?: string
  * }
+ *
+ * @phpstan-import-type Settings from InvoiceTax as InvoiceTaxSettings
+ * @phpstan-import-type Rates from FleetbaseTax as FleetbaseTaxRates
  */
 class QuickBooksClient
 {
@@ -59,6 +63,12 @@ class QuickBooksClient
 
     /** @var array<string, string> */
     private array $countryByRealm = [];
+
+    /** @var array<string, array{codes: array<string, array<int, string>>, compound: array<int, string>}> */
+    private array $taxCodesByRealm = [];
+
+    /** @var array<string, FleetbaseTaxRates> */
+    private array $taxRatesByRealm = [];
 
     /**
      * The Fleetbase record a single write belongs to (for example invoice:<uuid>), set by
@@ -207,12 +217,14 @@ class QuickBooksClient
     }
 
     /**
-     * How QuickBooks taxes invoices for this company (see InvoiceTax::settings). The country is
-     * read once per company, like the preferences.
+     * How QuickBooks taxes invoices for this company (see InvoiceTax::settings). Outside the US it
+     * holds the sales tax rates of each tax code too (InvoiceTax::codeRates), so the tax of each
+     * rate can be shared over the lines. The country and tax codes are read once per company, like
+     * the preferences.
      *
      * @param array<string, mixed> $connection
      *
-     * @return array{mode: string, automated: bool, rate: string|null}
+     * @return InvoiceTaxSettings
      */
     public function salesTax(array $connection): array
     {
@@ -220,8 +232,66 @@ class QuickBooksClient
         if (array_key_exists($realm, $this->countryByRealm) === false) {
             $this->countryByRealm[$realm] = (string) ($this->companyInfo($connection)['Country'] ?? '');
         }
+        $settings = InvoiceTax::settings($this->preferences($connection), $this->countryByRealm[$realm]);
+        if ($settings['mode'] === InvoiceTax::GLOBAL) {
+            $codes = $this->taxCodes($connection, $realm);
+            if ($codes !== null) {
+                $settings['codes']    = $codes['codes'];
+                $settings['compound'] = $codes['compound'];
+            }
+        }
 
-        return InvoiceTax::settings($this->preferences($connection), $this->countryByRealm[$realm]);
+        return $settings;
+    }
+
+    /**
+     * The sales tax rates of each tax code (InvoiceTax::codeRates) and the codes that charge tax on
+     * tax (InvoiceTax::compoundCodes), read once per company. A failed read is null and is tried
+     * again next time: without codes the tax stays whole on the invoice, so it does not fail the
+     * invoice. An expired token or the rate limit still stops the run.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array{codes: array<string, array<int, string>>, compound: array<int, string>}|null
+     */
+    private function taxCodes(array $connection, string $realm): ?array
+    {
+        if (isset($this->taxCodesByRealm[$realm]) === false) {
+            try {
+                $rows = $this->queryPages($connection, 'select * from TaxCode', 'TaxCode', false);
+            } catch (QuickBooksException $exception) {
+                if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
+                    throw $exception;
+                }
+
+                return null;
+            }
+            $this->taxCodesByRealm[$realm] = [
+                'codes'    => InvoiceTax::codeRates($rows),
+                'compound' => InvoiceTax::compoundCodes($rows),
+            ];
+        }
+
+        return $this->taxCodesByRealm[$realm];
+    }
+
+    /**
+     * The company's sales tax rates (FleetbaseTax::rates), read once per company, for sending the
+     * tax Fleetbase works out outside the US. A failed read throws: that invoice cannot be sent.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return FleetbaseTaxRates
+     */
+    public function taxRates(array $connection): array
+    {
+        $realm = (string) ($connection['realm_id'] ?? '');
+        if (isset($this->taxRatesByRealm[$realm]) === false) {
+            $rows                          = $this->queryPages($connection, 'select * from TaxRate', 'TaxRate', false);
+            $this->taxRatesByRealm[$realm] = FleetbaseTax::rates($rows);
+        }
+
+        return $this->taxRatesByRealm[$realm];
     }
 
     /**
@@ -1774,7 +1844,7 @@ class QuickBooksClient
     private function decodeBody(Response $response): array
     {
         $json = preg_replace(
-            '/"(Amount|TotalAmt|Balance|UnitPrice|TotalTax|TaxPercent|NetAmountTaxable)"'
+            '/"(Amount|TotalAmt|Balance|UnitPrice|TotalTax|TaxPercent|NetAmountTaxable|RateValue)"'
                 . '\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/',
             '"$1":"$2"',
             $response->body()

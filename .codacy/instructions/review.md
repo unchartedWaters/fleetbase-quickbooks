@@ -156,6 +156,13 @@
   link-local or other non-public IPv4/IPv6).
 - Sync correctness: respect row leases, link-first transactions,
   Primary/direction settings, and one QuickBooks Payment per invoice.
+- Tax: sync field `tax_source` is `quickbooks` (default) or `fleetbase`, one
+  choice for all taxes. Fleetbase's tax applies only to invoices whose link has
+  `tax_source` `fleetbase` (first sent while the setting was Fleetbase), wins
+  over QuickBooks' tax whichever side is Primary, and a tax QuickBooks refused
+  is kept in `refused_tax` so it is not sent again unchanged. A sync field
+  added after organizations had copies goes in `SettingsKeys::LATER_SYNC_FIELDS`
+  with the value that keeps the old behaviour.
 - A 401 gets one refresh and retry, then the connection is marked for reconnect;
   no unbounded retries.
 - Gates: connect returns 422 without Client ID, secret and redirect. Sync,
