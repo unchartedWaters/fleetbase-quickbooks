@@ -13,7 +13,8 @@
  * stops working the run fails with invalid_grant and a new one is needed from Intuit's
  * OAuth 2.0 Playground. Tokens stay in memory and are never printed. QuickBooks works out
  * invoice tax, so totals are checked against the tax it reports, except in the test where
- * Fleetbase works out tax (US manual sales tax only). Automated sales tax is not tested.
+ * Fleetbase works out tax. The tax tests for a US company skip in a company outside the US and
+ * the other way round. Automated sales tax is not tested.
  */
 
 // Keep secrets out of stack traces however php.ini is set.
@@ -861,4 +862,145 @@ test('with Fleetbase working out tax QuickBooks keeps the Fleetbase tax and an e
         ->and(sandboxCents($remote['TxnTaxDetail']['TotalTax'] ?? null))->toBe(300)
         ->and(sandboxCents($remote['TotalAmt'] ?? null))->toBe(3300)
         ->and($fourth['aligned'] ?? 0)->toBe(1);
+})->group('sandbox');
+
+test('outside the US the tax of each rate is shared over the lines, and kept when Fleetbase works it out', function () {
+    $client     = new QuickBooksClient();
+    $connection = sandboxConnection();
+    $taxes      = $client->salesTax($connection);
+    if ($taxes['mode'] !== InvoiceTax::GLOBAL) {
+        test()->markTestSkipped('The sandbox company does not use sales tax codes outside the US.');
+    }
+    // The code with the most rates Fleetbase can send: not compound, not read only, a sum above 0
+    // with 2 decimals. An Ontario sandbox has only HST (one rate); a GST + PST code can be added
+    // once with Intuit's TaxService API (POST taxservice/taxcode) to cover a code of two rates.
+    $rates  = $client->taxRates($connection);
+    $chosen = null;
+    foreach ($taxes['codes'] ?? [] as $code => $ids) {
+        $micro = 0;
+        foreach ($ids as $rateId) {
+            $usable = $micro !== null && isset($rates[$rateId]) === true && $rates[$rateId]['read_only'] === false;
+            $micro  = $usable === true ? $micro + (int) round(((float) $rates[$rateId]['percent']) * 1000000) : null;
+        }
+        $compound = in_array((string) $code, $taxes['compound'] ?? [], true);
+        $fits     = $micro !== null && $micro > 0 && $micro % 10000 === 0 && $compound === false;
+        if ($fits === true && count($ids) > ($chosen['rates'] ?? 0)) {
+            $rate   = number_format($micro / 1000000, 2, '.', '');
+            $chosen = ['code' => (string) $code, 'rates' => count($ids), 'rate' => $rate];
+        }
+    }
+    if ($chosen === null) {
+        test()->markTestSkipped('The sandbox company has no tax code Fleetbase can send.');
+    }
+    $tag     = sandboxTag();
+    $company = 'sandbox-company';
+    $income  = $client->batch($connection, [[
+        'bId'   => 'income',
+        'query' => "select * from Account where AccountType = 'Income' maxresults 1000",
+    ]]);
+    $item = $client->batch($connection, [[
+        'bId'       => 'item',
+        'operation' => 'create',
+        'entity'    => 'Item',
+        'payload'   => [
+            'Name'             => 'Fleetbase Test Two Rates ' . $tag,
+            'Type'             => 'Service',
+            'Taxable'          => true,
+            'SalesTaxCodeRef'  => ['value' => $chosen['code']],
+            'IncomeAccountRef' => [
+                'value' => (string) QuickBooksClient::serviceIncomeAccount($income['income']['rows'] ?? []),
+            ],
+        ],
+    ]]);
+    $itemId = (string) ($item['item']['body']['Id'] ?? '');
+
+    expect($itemId)->not->toBe('');
+
+    $engine = new SyncEngine(
+        $client,
+        new CustomerMapper(),
+        new InvoiceMapper(),
+        new WalletMapper(),
+        new BackoffPolicy(static fn (int $wait): int => $wait)
+    );
+    $ledger                        = new SyncLedger();
+    $ledger->connections[$company] = $connection + ['default_item_id' => $itemId];
+    $ledger->customers['cust-ca']  = [
+        'uuid'         => 'cust-ca',
+        'company_uuid' => $company,
+        'name'         => 'Fleetbase Test Two Rates ' . $tag,
+        'email'        => 'fbqb-two-rates-' . $tag . '@example.com',
+    ];
+    $invoice = fn (string $uuid, string $rate): array => [
+        'uuid'          => $uuid,
+        'company_uuid'  => $company,
+        'customer_uuid' => 'cust-ca',
+        'number'        => strtoupper(substr($uuid, -2)) . $tag,
+        'date'          => gmdate('Y-m-d'),
+        'due_date'      => gmdate('Y-m-d', time() + 14 * 86400),
+        'currency'      => $client->homeCurrency($connection),
+        'tax'           => InvoiceMapper::ledgerTax(2000, $rate) + InvoiceMapper::ledgerTax(1000, $rate),
+        'total'         => 3000 + InvoiceMapper::ledgerTax(2000, $rate) + InvoiceMapper::ledgerTax(1000, $rate),
+        'status'        => 'sent',
+        'items'         => [
+            InvoiceMapper::item('Delivery', 2, 1000, 2000, $rate, InvoiceMapper::ledgerTax(2000, $rate)),
+            InvoiceMapper::item('Wait time', 1, 1000, 1000, $rate, InvoiceMapper::ledgerTax(1000, $rate)),
+        ],
+    ];
+    $pending = fn (string $type, string $uuid): array => [
+        'company_uuid' => $company, 'local_type' => $type, 'local_uuid' => $uuid,
+        'status'       => 'pending', 'attempts' => 0,
+    ];
+    $run = function (array $settings, array $uuids, int $when) use ($engine, $ledger, $company, $pending): array {
+        $ledger->connections[$company]['last_batch_at'] = null;
+        $ledger->pending                                = array_map(
+            static fn (string $uuid): array => $pending('invoice', $uuid),
+            $uuids
+        );
+
+        return $engine->runScheduled($ledger, $company, $settings, $when, true);
+    };
+    $remote = function (string $uuid) use ($client, $connection, $ledger, $company): array {
+        $link = $ledger->link($company, (string) $connection['realm_id'], 'invoice', $uuid);
+
+        return $client->getInvoice($connection, (string) ($link['qbo_id'] ?? '')) ?? [];
+    };
+
+    // QuickBooks works out the tax: each rate's tax is shared over the Fleetbase lines.
+    $ledger->invoices['inv-qb'] = array_merge($invoice('inv-qb', '0.00'), ['tax' => 0, 'total' => 3000]);
+    $quickbooks                 = qbSettings(['interval_minutes' => 1]);
+    $ledger->pending            = [$pending('customer', 'cust-ca')];
+    $engine->runScheduled($ledger, $company, $quickbooks, time(), true);
+    $first   = $run($quickbooks, ['inv-qb'], time() + 5);
+    $copied  = $remote('inv-qb');
+    $tax     = sandboxCents($copied['TxnTaxDetail']['TotalTax'] ?? 0);
+    $items   = $ledger->invoices['inv-qb']['items'];
+    $aligned = $run($quickbooks, ['inv-qb'], time() + 10);
+
+    expect(array_values(array_filter(array_column($ledger->attempts, 'error'))))->toBe([])
+        ->and($first['failed'] ?? 0)->toBe(0)
+        ->and($copied['Line'][0]['SalesItemLineDetail']['TaxCodeRef']['value'] ?? null)->toBe($chosen['code'])
+        ->and(count($copied['TxnTaxDetail']['TaxLine'] ?? []))->toBe($chosen['rates'])
+        ->and($tax)->toBeGreaterThan(0)
+        ->and($ledger->invoices['inv-qb']['tax'])->toBe($tax)
+        ->and(array_sum(array_column($items, 'tax_amount')))->toBe($tax)
+        ->and($items[0]['tax_rate'])->toBe($chosen['rate'])
+        ->and($aligned['aligned'] ?? 0)->toBe(1);
+
+    // Fleetbase works out the tax: QuickBooks keeps the amount Fleetbase sends for each rate.
+    $fleetbase                   = qbSettings(['interval_minutes' => 1, 'tax_source' => 'fleetbase']);
+    $ledger->invoices['inv-fb']  = $invoice('inv-fb', $chosen['rate']);
+    $sent                        = $run($fleetbase, ['inv-fb'], time() + 15);
+    $kept                        = $remote('inv-fb');
+    $again                       = $run($fleetbase, ['inv-fb'], time() + 20);
+    $ledger->invoices['inv-bad'] = $invoice('inv-bad', number_format((float) $chosen['rate'] + 1, 2, '.', ''));
+    $mismatch                    = $run($fleetbase, ['inv-bad'], time() + 25);
+
+    expect($sent['created'] ?? 0)->toBe(1)
+        ->and(sandboxCents($kept['TxnTaxDetail']['TotalTax'] ?? null))->toBe($ledger->invoices['inv-fb']['tax'])
+        ->and(sandboxCents($kept['TotalAmt'] ?? null))->toBe($ledger->invoices['inv-fb']['total'])
+        ->and(count($kept['TxnTaxDetail']['TaxLine'] ?? []))->toBe($chosen['rates'])
+        ->and($again['aligned'] ?? 0)->toBe(1)
+        ->and($mismatch['failed'] ?? 0)->toBe(1)
+        ->and($ledger->link($company, (string) $connection['realm_id'], 'invoice', 'inv-bad'))->toBeNull();
 })->group('sandbox');

@@ -238,3 +238,21 @@ test('a QuickBooks copy keeps the Fleetbase rate of each line it pairs by QuickB
         ->and($kept['unpaired'])->toBe(1)
         ->and($mapper->withFleetbaseRates($copied, $inclusive, $current))->toBe($copied + ['unpaired' => 0]);
 });
+
+test('outside the US rate ids that are numbers, as QuickBooks gives them, are sent as text', function () {
+    $settings = array_merge(Company::gstPst(), ['codes' => ['7' => ['15', '16']], 'compound' => []]);
+    $rates    = FleetbaseTax::rates([
+        ['Id' => '15', 'RateValue' => '5', 'DisplayType' => 'None'],
+        ['Id' => '16', 'RateValue' => '7', 'DisplayType' => 'None'],
+    ]);
+    $items    = [InvoiceMapper::item('Delivery', 1, 10000, 10000, '12.00', 1200)];
+    $payload  = ['Line' => [InvoiceLines::coded('', 'Delivery', '100.00', '7')]];
+
+    $sent = FleetbaseTax::apply($payload, $items, $settings, ['7'], $rates, []);
+
+    expect($sent['error'])->toBeNull()
+        ->and($sent['payload']['TxnTaxDetail'])->toBe(['TotalTax' => '12.00', 'TaxLine' => [
+            FleetbaseTax::taxLine('15', '5', '5.00', '100.00'),
+            FleetbaseTax::taxLine('16', '7', '7.00', '100.00'),
+        ]]);
+});

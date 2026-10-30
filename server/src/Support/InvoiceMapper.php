@@ -1083,7 +1083,8 @@ class InvoiceMapper
             $shares[$index] = ['tax' => 0, 'rate' => self::taxRate($percent)];
         }
         foreach ($rates as $rateId => $rate) {
-            $holds   = static fn (array $ids): bool => in_array($rateId, $ids, true);
+            // PHP makes a numeric rate id such as "15" an integer key; the code lists it as text.
+            $holds   = static fn (array $ids): bool => in_array((string) $rateId, $ids, true);
             $members = array_keys(array_filter($lineRates, $holds));
             $amounts = [];
             foreach ($members as $index) {

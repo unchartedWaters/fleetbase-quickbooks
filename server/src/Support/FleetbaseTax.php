@@ -192,7 +192,7 @@ class FleetbaseTax
         $lines = [];
         foreach ($sums as $rateId => $sum) {
             $lines[] = self::taxLine(
-                $rateId,
+                (string) $rateId,
                 $rates[$rateId]['percent'] ?? '0',
                 Amounts::centsToDecimal($sum['tax'], $currency),
                 Amounts::centsToDecimal($sum['net'], $currency)

@@ -838,35 +838,35 @@ Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChang
   it to allow one), so the later create fails once and the next sync reserves a
   new number.
 - **Quantities.** Fleetbase invoice line quantities are whole numbers. A fractional QuickBooks quantity imports as 1 unit at the line amount.
-- **Tax.** Checked live in a US QuickBooks company with manual sales tax.
-  Automated sales tax and companies outside the US (VAT and GST) are not
-  tested live. With automated sales tax, Fleetbase sends each line as taxable
-  or not and no invoice rate, so QuickBooks chooses the rate from the address.
-  An update sends back the rate QuickBooks chose, as manual sales tax needs,
-  so a later address change does not change the rate. Outside the US, each
-  line is sent with the product's sales tax code, else the customer's
-  default code, and a new invoice says its amounts are before tax. Which of
-  the two codes QuickBooks expects first is not checked. The tax is copied
-  back to the invoice there, and the tax of each QuickBooks rate (for example
-  GST and PST) is shared over the lines whose tax code holds that rate, read
-  from the company's tax codes, so a Ledger edit, which adds up the line
-  taxes, keeps it. A line rate is the sum of the invoice's tax line percents
-  for its code's rates, to two decimals, so a combined rate with three
-  decimals (GST and QST, 14.975%) is stored as 14.98% and a Ledger edit can
-  move the line tax a few cents until the next sync copies QuickBooks' amount
-  again. The tax stays whole on the invoice, with no line share, when the
-  amounts include tax, a line's code is not among the codes QuickBooks
-  returned (an inactive code may not be), a tax line is not a percent, or the
-  tax codes could not be read (`Support/InvoiceTax.php`,
+- **Tax.** Checked live in a US QuickBooks company with manual sales tax and in
+  a Canadian (Ontario) company, with a tax code of two rates (GST and PST) added
+  for the test. Automated sales tax and VAT companies are not tested live. In
+  that Canadian company QuickBooks refuses an invoice with a line that has no
+  sales tax code ("Make sure all your transactions have a GST/HST rate"), so
+  give "Fleetbase service" and other products a sales tax code there. With
+  automated sales tax, Fleetbase sends each line as taxable or not and no
+  invoice rate, so QuickBooks chooses the rate from the address. An update sends
+  back the rate QuickBooks chose, as manual sales tax needs, so a later address
+  change does not change the rate. Outside the US, each line is sent with the
+  product's sales tax code, else the customer's default code, and a new invoice
+  says its amounts are before tax. The tax is copied back to the invoice there,
+  and the tax of each QuickBooks rate (for example GST and PST) is shared over
+  the lines whose tax code holds that rate, read from the company's tax codes,
+  so a Ledger edit, which adds up the line taxes, keeps it. A line rate is the
+  sum of the invoice's tax line percents for its code's rates, to two decimals,
+  so a combined rate with three decimals (GST and QST, 14.975%) is stored as
+  14.98% and a Ledger edit can move the line tax a few cents until the next sync
+  copies QuickBooks' amount again. The tax stays whole on the invoice, with no
+  line share, when the amounts include tax, a line's code is not among the codes
+  QuickBooks returned (an inactive code may not be), a tax line is not a
+  percent, or the tax codes could not be read (`Support/InvoiceTax.php`,
   `InvoiceMapper::quickBooksTax`). Tax worked out by Fleetbase
-  (`Support/FleetbaseTax.php`) is checked live in a US company with manual
-  sales tax: QuickBooks keeps the invoice tax Fleetbase sends, and a changed
-  Fleetbase tax is sent. Whether QuickBooks keeps the tax of each rate sent
-  outside the US, or the invoice tax with automated sales tax, is not checked
-  live. A tax QuickBooks
-  does not keep fails the invoice (see [Tax](#tax)). Tax moved from one line
-  to another with the invoice tax unchanged is not sent, so QuickBooks can
-  show the wrong line as taxed until another change to the invoice is sent.
+  (`Support/FleetbaseTax.php`) is checked live in both companies: QuickBooks
+  keeps the invoice tax, and outside the US the tax of each rate, that Fleetbase
+  sends. With automated sales tax it is not checked live. A tax QuickBooks does
+  not keep fails the invoice (see [Tax](#tax)). Tax moved from one line to
+  another with the invoice tax unchanged is not sent, so QuickBooks can show the
+  wrong line as taxed until another change to the invoice is sent.
 - **Partial payments.** An invoice has at most one QuickBooks Payment from this
   package. Partial and later payments are not created as separate Payments. The
   one Payment is created with the amount recorded as paid on the Fleetbase

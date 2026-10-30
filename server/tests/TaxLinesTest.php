@@ -339,3 +339,28 @@ test('outside the US a line coded NON holds no rate and the other lines are stil
     expect(array_column($mapped['items'], 'tax_amount'))->toBe([500, 0])
         ->and(array_column($mapped['items'], 'tax_rate'))->toBe(['5.00', '0.00']);
 });
+
+test('outside the US rate ids that are numbers, as QuickBooks gives them, are shared too', function () {
+    // PHP turns the array key "15" into the integer 15, so ids must still match the code's "15".
+    $remote = [
+        'TotalAmt'     => '33.60',
+        'Line'         => [
+            InvoiceLines::coded('1', 'Delivery', '20.00', '7'),
+            InvoiceLines::coded('2', 'Wait time', '10.00', '7'),
+        ],
+        'TxnTaxDetail' => ['TotalTax' => '3.60', 'TaxLine' => [
+            InvoiceLines::rateTax('2.10', '7', '16', '30.00'),
+            InvoiceLines::rateTax('1.50', '5', '15', '30.00'),
+        ]],
+    ];
+    $items = [
+        ['description' => 'Delivery', 'amount' => 2000, 'qbo_line_id' => '1'],
+        ['description' => 'Wait time', 'amount' => 1000, 'qbo_line_id' => '2'],
+    ];
+
+    $copied = (new InvoiceMapper())->quickBooksTax($remote, $items, ['7' => ['15', '16']]);
+
+    expect($copied['tax'])->toBe(360)
+        ->and(array_column($copied['items'], 'tax_rate'))->toBe(['12.00', '12.00'])
+        ->and(array_column($copied['items'], 'tax_amount'))->toBe([240, 120]);
+});
