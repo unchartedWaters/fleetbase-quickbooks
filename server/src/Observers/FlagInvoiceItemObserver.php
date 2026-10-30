@@ -76,7 +76,7 @@ class FlagInvoiceItemObserver
      */
     private static function productChanged(object $item): bool
     {
-        if ($item->wasChanged('meta') === false) {
+        if (method_exists($item, 'wasChanged') === false || $item->wasChanged('meta') === false) {
             return false;
         }
         $before = method_exists($item, 'getRawOriginal') === true ? $item->getRawOriginal('meta') : null;
