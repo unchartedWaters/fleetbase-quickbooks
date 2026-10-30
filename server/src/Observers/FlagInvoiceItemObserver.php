@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Observers;
 
 use Fleetbase\Quickbooks\Listeners\FlagInvoiceListener;
 use Fleetbase\Quickbooks\Support\FlagGuard;
+use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -54,7 +55,10 @@ class FlagInvoiceItemObserver
 
     public function updated(object $item): void
     {
-        if (method_exists($item, 'wasChanged') === false || $item->wasChanged(self::WATCHED) === false) {
+        if (method_exists($item, 'wasChanged') === false) {
+            return;
+        }
+        if ($item->wasChanged(self::WATCHED) === false && self::productChanged($item) === false) {
             return;
         }
 
@@ -64,6 +68,28 @@ class FlagInvoiceItemObserver
     public function deleted(object $item): void
     {
         $this->flagParent($item);
+    }
+
+    /**
+     * Whether a meta change named another product for the line (ProductMapper::metaProduct), which
+     * moves its QuickBooks line to that product.
+     */
+    private static function productChanged(object $item): bool
+    {
+        if (method_exists($item, 'wasChanged') === false || $item->wasChanged('meta') === false) {
+            return false;
+        }
+        $before = method_exists($item, 'getRawOriginal') === true ? $item->getRawOriginal('meta') : null;
+
+        return self::productKey($before) !== self::productKey($item->meta ?? null);
+    }
+
+    private static function productKey(mixed $meta): string
+    {
+        $meta    = is_string($meta) === true ? json_decode($meta, true) : $meta;
+        $product = ProductMapper::metaProduct($meta);
+
+        return $product === null ? '' : ProductMapper::key((string) $product['name']);
     }
 
     private function flagParent(object $item): void

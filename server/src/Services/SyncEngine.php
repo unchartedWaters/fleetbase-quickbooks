@@ -431,6 +431,14 @@ class SyncEngine
      */
     private array $liveProductKeys = [];
 
+    /**
+     * Products invoice lines of a run name in their meta (ProductMapper::lineProduct): name key =>
+     * name. These are kept like a fee's product (ProductItems::prepare).
+     *
+     * @var array<string, string>
+     */
+    private array $lineProducts = [];
+
     private QuickBooksClient $client;
 
     /**
@@ -1203,6 +1211,7 @@ class SyncEngine
         $this->itemRows          = [];
         $this->managedItems      = [];
         $this->liveProductKeys   = [];
+        $this->lineProducts      = [];
         $this->followUps         = [];
         $this->followUpRows      = [];
         $this->recordedRows      = [];
@@ -1614,7 +1623,8 @@ class SyncEngine
                     $connection,
                     $missing,
                     $serviceId,
-                    $serviceItem ?? []
+                    $serviceItem ?? [],
+                    $this->lineProducts
                 );
             } catch (QuickBooksException $exception) {
                 if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
@@ -1668,8 +1678,7 @@ class SyncEngine
                     continue;
                 }
                 foreach (is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [] as $item) {
-                    $description = trim((string) (is_array($item) === true ? ($item['description'] ?? '') : ''));
-                    $key         = $description === '' ? null : $this->lineKey($ledger, $companyUuid, $description);
+                    $key = is_array($item) === true ? $this->lineKey($ledger, $companyUuid, $item) : null;
                     if ($key !== null) {
                         $keys[] = $key;
                     }
@@ -1712,9 +1721,10 @@ class SyncEngine
         $keys        = [];
         $names       = [];
         foreach ($items as $index => $item) {
-            $description   = trim((string) (is_array($item) === true ? ($item['description'] ?? '') : ''));
-            $keys[$index]  = $description === '' ? null : $this->lineKey($ledger, $companyUuid, $description);
-            $names[$index] = ProductMapper::name($description);
+            $item          = is_array($item) === true ? $item : [];
+            $keys[$index]  = $this->lineKey($ledger, $companyUuid, $item);
+            $names[$index] = ProductMapper::lineProduct($item)
+                ?? ProductMapper::name(trim((string) ($item['description'] ?? '')));
         }
         $results = $this->productItemsFor($ledger, $connection, array_values(array_filter($keys, 'is_string')));
         $ids     = [];
@@ -1740,15 +1750,47 @@ class SyncEngine
     }
 
     /**
-     * The product name a line goes by: a live Storefront product's, else a fee's, else none (the
-     * service item). Without Storefront products to read, a line that is not a fee fails, since
-     * it may be a product.
+     * The QuickBooks product of each product lines name in this run, by its id: the product as a
+     * line's meta names it (InvoiceMapper::withLineProducts).
+     *
+     * @return array<string, array{name: string}>
      */
-    private function lineKey(SyncLedger $ledger, string $companyUuid, string $description): ?string
+    private function lineProductItems(): array
     {
-        $key = ProductMapper::key($description);
-        if ($key === ProductMapper::key(ProductMapper::SERVICE_ITEM_NAME)) {
+        $items = [];
+        foreach ($this->lineProducts as $key => $name) {
+            $id = trim((string) ($this->productResults[$key]['id'] ?? ''));
+            if ($id !== '') {
+                $items[$id] = ['name' => $name];
+            }
+        }
+
+        return $items;
+    }
+
+    /**
+     * The product name a line goes by: the product its meta names, else a live Storefront
+     * product's, else a fee's, else none (the service item). Without Storefront products to read,
+     * a line that is not a fee and names no product fails, since it may be a product.
+     *
+     * @param array<string, mixed> $item
+     */
+    private function lineKey(SyncLedger $ledger, string $companyUuid, array $item): ?string
+    {
+        $named       = ProductMapper::lineProduct($item);
+        $description = trim((string) ($item['description'] ?? ''));
+        $key         = ProductMapper::key($named ?? $description);
+        if ($key === ProductMapper::key(ProductMapper::SERVICE_ITEM_NAME) || ($named ?? $description) === '') {
             return null;
+        }
+        if ($named !== null) {
+            if (isset($this->lineProducts[$key]) === false) {
+                // A name settled earlier in the run without its lines is settled again with them.
+                unset($this->productResults[$key]);
+                $this->lineProducts[$key] = $named;
+            }
+
+            return $key;
         }
         if (isset($this->liveProductKeys[$companyUuid]) === false) {
             $this->liveProductKeys[$companyUuid] = [];
@@ -2643,8 +2685,11 @@ class SyncEngine
             ) === false;
         }
         // QuickBooks did not change the invoice since the last sync, so a Fleetbase change is sent.
+        // A line moving to another product is such a change too.
         $edited  = $leads === true
-            && $this->fleetbaseEditedInvoice($invoice, $remote, $reference, $customerRef, $stored, $ownTax);
+            && ($this->fleetbaseEditedInvoice($invoice, $remote, $reference, $customerRef, $stored, $ownTax) === true
+                || ($push === true && $remoteSuppliesLines === true && $this->invoiceMapper($invoice)
+                    ->movesLineItems($payload, $remote, $stored['removed'], $mapped, $managed) === true));
         $matched = $matched === true && $edited === false;
         if ($matched === true) {
             $changed = $numberChanged === true || $partyChanged === true || $followed === true;
@@ -5150,7 +5195,8 @@ class SyncEngine
         $current = is_array($current) === true ? $current : [];
         $mapped  = $this->remoteInvoiceLines($ledger->invoices[$uuid], $uuid, $remote, $taxCodes, $ownsTax);
         if ($mapped['items'] !== [] && $mapped['items'] !== $this->hashableInvoiceItems($current)) {
-            $ledger->invoices[$uuid]['items']                 = $mapped['items'];
+            $ledger->invoices[$uuid]['items']                 = $this->invoiceMapper($ledger->invoices[$uuid])
+                ->withLineProducts($mapped['items'], $remote, $current, $this->lineProductItems());
             $ledger->invoices[$uuid]['items_from_quickbooks'] = true;
             $changed                                          = true;
             $this->recordReplacedLines($ledger, $uuid, $remote, $realmId);

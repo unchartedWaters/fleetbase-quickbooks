@@ -213,6 +213,14 @@ class Products
         ] + self::link('x', 'x');
     }
 
+    /**
+     * Name the product of line $index of inv-1, as the Ledger line's meta.product holds it.
+     */
+    public static function nameLine(SyncLedger $ledger, int $index, string $name): void
+    {
+        $ledger->invoices['inv-1']['items'][$index]['product'] = ['name' => $name];
+    }
+
     private static function recordLineId(SyncLedger $ledger, int $index, string $id): void
     {
         $ledger->invoices['inv-1']['items'][$index]['qbo_line_id'] = $id;

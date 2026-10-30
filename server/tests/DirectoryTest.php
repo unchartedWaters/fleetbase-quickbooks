@@ -669,6 +669,76 @@ test('lines replaced from quickbooks store their quickbooks ids and the old rows
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
+test('the product a line names in its meta is read, and kept when the line is replaced from quickbooks', function () {
+    [$restore] = directorySqlite();
+    try {
+        $schema = DB::connection('sqlite')->getSchemaBuilder();
+        directoryWebhookSchema($schema);
+        $schema->table('ledger_invoices', function (Blueprint $table) {
+            $table->integer('subtotal')->default(0);
+            $table->integer('balance')->default(0);
+        });
+        $schema->table('ledger_invoice_items', function (Blueprint $table) {
+            $table->decimal('tax_rate', 5, 2)->default(0);
+            $table->integer('tax_amount')->default(0);
+            $table->timestamps();
+        });
+        directoryWebhookRows();
+        $product = ['code' => 'DIST', 'name' => 'Distance'];
+        $line    = static fn (string $uuid, string $description, mixed $meta): array => [
+            'uuid'         => $uuid,
+            'invoice_uuid' => 'inv-9',
+            'description'  => $description,
+            'amount'       => 1000,
+            'meta'         => $meta === null ? null : json_encode($meta),
+        ];
+        DB::table('ledger_invoice_items')->insert([
+            $line('item-1', 'Distance (10 km)', ['product' => $product]),
+            $line('item-2', 'Blank name', ['product' => ['name' => '  ']]),
+            $line('item-3', 'Text product', ['product' => 'Distance']),
+            $line('item-4', 'No meta', null),
+        ]);
+        $directory = new FleetbaseDirectory();
+        $ledger    = $directory->load('company-uuid')['ledger'];
+        $items     = $ledger->invoices['inv-9']['items'];
+
+        expect($items[0]['product'])->toBe($product)
+            ->and($items[1])->not->toHaveKey('product')
+            ->and($items[2])->not->toHaveKey('product')
+            ->and($items[3])->not->toHaveKey('product');
+
+        $ledger->invoices['inv-9']['replace_from_quickbooks'] = true;
+        $ledger->invoices['inv-9']['items_from_quickbooks']   = true;
+        $ledger->invoices['inv-9']['line_map']                = ['realm' => 'realm-1', 'invoice' => '8'];
+        $ledger->invoices['inv-9']['items']                   = [
+            [
+                'description' => 'Distance (10 km)',
+                'quantity'    => 1,
+                'unit_price'  => 1200,
+                'amount'      => 1200,
+                'qbo_line_id' => '1',
+                'product'     => $product,
+            ],
+            ['description' => 'Fuel', 'quantity' => 1, 'unit_price' => 500, 'amount' => 500, 'product' => $product],
+        ];
+
+        $directory->save($ledger);
+        $live = DB::table('ledger_invoice_items')
+            ->where('invoice_uuid', 'inv-9')
+            ->whereNull('deleted_at')
+            ->orderBy('description')
+            ->get();
+
+        expect(json_decode((string) $live[0]->meta, true))->toBe([
+            'quickbooks_line' => ['realm' => 'realm-1', 'invoice' => '8', 'id' => '1'],
+            'product'         => $product,
+        ])
+            ->and(json_decode((string) $live[1]->meta, true))->toBe(['product' => $product]);
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
 test('line taxes are read, and the tax QuickBooks worked out is written on the lines and the invoice', function () {
     [$restore] = directorySqlite();
     try {
