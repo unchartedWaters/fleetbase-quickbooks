@@ -146,6 +146,54 @@ once a day and the old one then stops working. When a run fails with
 
 Front end: run `pnpm install --frozen-lockfile`, then `pnpm lint` and `pnpm test:ember`. Ember tests need Chrome. Skip them when Chrome is not installed.
 
+## Fleetbase release check
+
+`.github/workflows/fleetbase-release.yml` checks this extension against each
+new Fleetbase release. Fleetbase does not notify this repository, so the
+workflow looks for the newest release of `fleetbase/fleetbase` every 6 hours.
+It waits until the release's `fleetbase/fleetbase-api` image is on Docker Hub,
+and fails if the image is still missing a day after the release.
+
+Each pair of Fleetbase API image and this package's version is checked once,
+passed or failed. To check again, run the workflow by hand from the Actions tab
+with `force`. To check an older release, give its tag, such as `v0.7.74`, as
+`fleetbase_version`. A pull request that changes the workflow, its scripts in
+`scripts/fleetbase-release/`, or `docker/ensure-quickbooks-extension.sh` runs
+the check too. GitHub emails a failed scheduled run to whoever last changed the
+schedule, and turns scheduled workflows off after 60 days with no activity in
+the repository.
+
+The check:
+
+1. Builds the console at the release tag with this engine added from
+   `npm pack`, and checks the engine is in the build.
+2. Runs the release's published API image with MySQL and Redis, installs this
+   package with `docker/ensure-quickbooks-extension.sh`, and runs the
+   release's own `api/deploy.sh`.
+3. `verify-install.php` checks the provider, migrations, tables, permissions,
+   policies, roles, routes, commands and schedule, and that every Fleetbase
+   class or event this package names in a string exists in the release.
+4. `smoke-sync.php` saves a Fleet-Ops customer and a Ledger invoice, checks
+   both are queued, and runs Sync now against the test suite's
+   `FakeQuickBooks`. Nothing reaches Intuit and no credentials are used.
+5. `http-smoke.php` signs in through Fleetbase and calls this package's API
+   through Octane, each call twice. Then the queue and scheduler run once.
+6. `browser-check.mjs` signs in to the built console in headless Chrome and
+   opens QuickBooks Setup and QuickBooks Activity. Screenshots are kept as the
+   `console-screenshots` artifact.
+
+The scripts read these environment variables:
+
+- `RELEASE_CHECK_EMAIL` and `RELEASE_CHECK_PASSWORD`: the administrator that
+  `http-smoke.php` creates and both it and `browser-check.mjs` sign in as.
+- `FLEETBASE_API_PATH`: the Fleetbase API directory (default `/fleetbase/api`).
+- `RELEASE_CHECK_API_URL`: the API address (default `http://127.0.0.1:8000`).
+- `CONSOLE_HOST`: the console address the OAuth callback returns to.
+- `RELEASE_CHECK_CONSOLE_URL`: the console address (default
+  `http://localhost:4200`).
+- `CHROME_PATH`: the browser binary, when it is not Playwright's own.
+- `RELEASE_CHECK_SCREENSHOTS`: a directory for a screenshot of each page.
+
 ## Lint
 
 ```bash

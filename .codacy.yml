@@ -18,7 +18,10 @@ engines:
       - "tests/**"
   # PHPMD on the whole engine, so test fixtures and the upstream constructor stub
   # in scripts/test-support are not refactored to satisfy complexity rules.
+  # scripts/fleetbase-release holds command-line checks run inside a Fleetbase
+  # container by the release check workflow; their exit code is the result.
   phpmd:
     exclude_paths:
       - "server/tests/**"
       - "scripts/test-support/**"
+      - "scripts/fleetbase-release/**"
