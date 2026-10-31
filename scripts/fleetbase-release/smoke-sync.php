@@ -93,7 +93,7 @@ InvoiceItem::create([
 ]);
 $report->check('saving a Ledger invoice queues it', $queued($invoice->uuid, 'invoice'));
 
-$result = $app->make(BatchRunner::class)->run($company->uuid, 'now');
+$result   = $app->make(BatchRunner::class)->run($company->uuid, 'now');
 $finished = ($result['status'] ?? '') === 'finished' && ($result['failed'] ?? 1) === 0;
 $report->check('Sync now finishes without failures', $finished ? [] : [(string) json_encode($result)]);
 
