@@ -2,6 +2,8 @@
 
 namespace Fleetbase\Quickbooks\Tests\Support;
 
+use Symfony\Component\Process\Process;
+
 /**
  * Runs scripts/fleetbase-release/decide.sh for FleetbaseReleaseCheckTest, with gh stubbed by a
  * script that answers from the given artifacts JSON through the same jq filter, and records the
@@ -32,7 +34,6 @@ class ReleaseDecision
 
         $output = $dir . '/output';
         $calls  = $dir . '/calls';
-        $log    = $dir . '/log';
         touch($output);
         touch($calls);
         $env = [
@@ -47,22 +48,15 @@ class ReleaseDecision
             'ARTIFACTS_JSON'    => $artifactsJson,
             'GH_CALLS'          => $calls,
         ];
-        $process = proc_open(
-            ['bash', DocsSource::path('scripts/fleetbase-release/decide.sh')],
-            [1 => ['file', $log, 'a'], 2 => ['file', $log, 'a']],
-            $pipes,
-            null,
-            $env
-        );
-        $status = is_resource($process) === true ? proc_close($process) : 1;
+        $process = new Process(['bash', DocsSource::path('scripts/fleetbase-release/decide.sh')], null, $env);
+        $status  = $process->run();
 
         preg_match('/^run=(\w+)$/m', (string) file_get_contents($output), $match);
         $result = $status === 0 ? ($match[1] ?? 'none') : 'error';
         $gh     = (string) file_get_contents($calls);
-        $text   = (string) file_get_contents($log);
-        array_map('unlink', [$stub, $output, $calls, $log]);
+        array_map('unlink', [$stub, $output, $calls]);
         rmdir($dir);
 
-        return ['result' => $result, 'gh' => $gh, 'log' => $text];
+        return ['result' => $result, 'gh' => $gh, 'log' => $process->getOutput() . $process->getErrorOutput()];
     }
 }
