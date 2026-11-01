@@ -149,18 +149,23 @@ Front end: run `pnpm install --frozen-lockfile`, then `pnpm lint` and `pnpm test
 ## Fleetbase release check
 
 `.github/workflows/fleetbase-release.yml` checks this extension against each
-new Fleetbase release. Fleetbase does not notify this repository, so the
-workflow looks for the newest release of `fleetbase/fleetbase` every 6 hours.
-It waits until the release's `fleetbase/fleetbase-api` image is on Docker Hub,
-and fails if the image is still missing a day after the release.
+new Fleetbase release. Fleetbase does not notify this repository, so every 6
+hours the workflow looks up the newest release of `fleetbase/fleetbase` and
+checks it only when it is new: published in the last 14 days, not checked by
+any run yet, and with its `fleetbase/fleetbase-api` image on Docker Hub.
+Otherwise the run stops after the lookup. The rules are in
+`scripts/fleetbase-release/decide.sh`, tested by `FleetbaseReleaseCheckTest`.
 
-Each Fleetbase version is built and checked once, passed or failed. The run
-uploads an artifact named for the version, such as
-`fleetbase-release-checked-v0.7.74`, and later runs skip a version that has
-one. To check again, run the workflow by hand from the Actions tab with
-`force`. To check an older release, give its tag, such as `v0.7.74`, as
+Each run that checks a release keeps its screenshots and logs for 90 days as
+the `fleetbase-<version>-results` artifact, such as
+`fleetbase-v0.7.74-results`, passed or failed. A release with that artifact
+counts as checked, so the schedule does not retry a failed release: run the
+workflow by hand from the Actions tab after a fix. A run by hand always
+checks; to check an older release, give its tag, such as `v0.7.74`, as
 `fleetbase_version`. A release of this extension (a `v*` tag) is also checked
-against the newest Fleetbase release. Pull requests do not run it. GitHub
+against the newest Fleetbase release. Pull requests do not run it. The
+schedule runs only on the default branch, and the Actions tab offers the run
+by hand once the workflow is on the default branch. GitHub
 emails a failed scheduled run to whoever last changed the schedule, and turns
 scheduled workflows off after 60 days with no activity in the repository.
 
@@ -169,8 +174,9 @@ The check:
 1. Builds the console at the release tag with this engine added from
    `npm pack`, and checks the engine is in the build.
 2. Runs the release's published API image with MySQL and Redis, installs this
-   package with `docker/ensure-quickbooks-extension.sh`, and runs the
-   release's own `api/deploy.sh`.
+   extension's npm package (the files the Fleetbase registry serves) with
+   `docker/ensure-quickbooks-extension.sh`, and runs the release's own
+   `api/deploy.sh`.
 3. `verify-install.php` checks the provider, migrations, tables, permissions,
    policies, roles, routes, commands and schedule, and that every Fleetbase
    class or event this package names in a string exists in the release.
@@ -180,8 +186,7 @@ The check:
 5. `http-smoke.php` signs in through Fleetbase and calls this package's API
    through Octane, each call twice. Then the queue and scheduler run once.
 6. `browser-check.mjs` signs in to the built console in headless Chrome and
-   opens QuickBooks Setup and QuickBooks Activity. Screenshots are kept as the
-   `console-screenshots` artifact.
+   opens QuickBooks Setup and QuickBooks Activity, with a screenshot of each.
 
 The scripts read these environment variables:
 
