@@ -1,0 +1,16 @@
+node_modules
+server_vendor
+.git
+.github
+coverage
+dist
+tmp
+*.md
+.editorconfig
+.eslintrc.js
+.prettierrc*
+.stylelintrc*
+.template-lintrc.js
+testem.js
+tests
+server/tests
