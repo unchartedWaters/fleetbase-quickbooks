@@ -32,8 +32,9 @@ screens without the surrounding Fleetbase console menus.
   Fleetbase status is paid, although the amount paid is less than the
   Fleetbase total. QuickBooks works out the tax unless Fleetbase is set to
   (see Tax below). Each line
-  uses the QuickBooks product of its name (see Products below); any other
-  line uses the QuickBooks product "Fleetbase service". Fleetbase
+  uses the QuickBooks product it names or the one of its name (see Products
+  below); any other line uses the QuickBooks product "Fleetbase service".
+  Fleetbase
   creates it posting to an active income account: a service or fee income
   account first, then sales of product income, then other income, and never a
   discount, refund or unapplied cash account. The connection card names that
@@ -113,6 +114,23 @@ screens without the surrounding Fleetbase console menus.
   products; a renamed product gets a new QuickBooks product. A product with no
   name is not sent. While Storefront cannot be read, its products and the
   invoices that may use them wait and are tried again.
+- **Products a line names** — a Ledger invoice line can name its product in
+  its meta, as `{"product": {"name": "Distance", "code": "DIST"}}`; a pricing
+  extension does this for each line it writes. Only the name is used, and it
+  wins over the line's text, so lines named "Distance (10 km)" and
+  "Distance (4 km)" both use the QuickBooks product "Distance". The product
+  QuickBooks has under the name is used as it is, so set its income account
+  and sales tax (GST, for example) in QuickBooks. It is not used when another
+  record or organization uses it; Fleetbase then makes "Distance (Fleetbase)".
+  Without one, Fleetbase makes it like a fee product: the income account and
+  tax of "Fleetbase service", with no description or price. Outside the US, an
+  invoice with a line that gets no sales tax code from its product or the
+  customer is stopped before it is sent (see Tax). Fleetbase never makes these
+  products inactive. A line whose meta names another product queues its
+  invoice, and its QuickBooks line moves to that product, with QuickBooks as
+  Primary too when QuickBooks did not change the invoice since the last sync.
+  Lines copied back from QuickBooks keep the product their Fleetbase line
+  named, and a line added in QuickBooks on such a product names it.
 - **Payments** — a payment for a paid Fleetbase invoice. Amount and date are
   compared when a payment already exists. The payload includes `TxnDate`: the
   day the invoice was paid in the organization's timezone (the app timezone when

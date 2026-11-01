@@ -1715,8 +1715,9 @@ class FleetbaseDirectory
         foreach ($ledger->invoices as $invoice) {
             foreach (is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [] as $item) {
                 $description = is_array($item) === true ? trim((string) ($item['description'] ?? '')) : '';
-                if ($description !== '') {
-                    $keys[ProductMapper::key($description)] = true;
+                $named       = is_array($item) === true ? ProductMapper::lineProduct($item) : null;
+                if ($named !== null || $description !== '') {
+                    $keys[ProductMapper::key($named ?? $description)] = true;
                 }
             }
         }
@@ -2850,6 +2851,10 @@ class FleetbaseDirectory
             ];
             if ($stored !== null) {
                 $row['qbo_line'] = $stored;
+            }
+            $product = ProductMapper::metaProduct($meta);
+            if ($product !== null) {
+                $row['product'] = $product;
             }
             $items[] = $row;
         }
@@ -5925,7 +5930,8 @@ class FleetbaseDirectory
      * Replace every current line for one invoice with the inbound lines.
      * One delete of the current lines, then one insert. Integers are written
      * on the table so a negative amount does not pass through the Money cast.
-     * With a line map, each new line stores the QuickBooks line it came from.
+     * With a line map, each new line stores the QuickBooks line it came from, and each keeps the
+     * product it names.
      *
      * @param array<int, mixed>                            $items
      * @param array{realm?: string, invoice?: string}|null $lineMap
@@ -5963,21 +5969,40 @@ class FleetbaseDirectory
                 'created_at'   => $now,
                 'updated_at'   => $now,
             ];
-            if ($lineMap !== null) {
-                $lineId      = trim((string) ($item['qbo_line_id'] ?? ''));
-                $row['meta'] = $lineId === '' ? null : json_encode([self::LINE_META => [
-                    'realm'   => (string) ($lineMap['realm'] ?? ''),
-                    'invoice' => (string) ($lineMap['invoice'] ?? ''),
-                    'id'      => $lineId,
-                ]]);
-            }
-            $rows[] = $row;
+            $row['meta'] = self::replacedLineMeta($item, $lineMap);
+            $rows[]      = $row;
         }
         if ($rows === []) {
             return;
         }
 
         $model->getConnection()->table($model->getTable())->insert($rows);
+    }
+
+    /**
+     * The meta of a line replaced from QuickBooks: the QuickBooks line it came from (with a line
+     * map), and the product it named before the copy (InvoiceMapper::withLineProducts).
+     *
+     * @param array<string, mixed>                         $item
+     * @param array{realm?: string, invoice?: string}|null $lineMap
+     */
+    private static function replacedLineMeta(array $item, ?array $lineMap): ?string
+    {
+        $meta   = [];
+        $lineId = $lineMap !== null ? trim((string) ($item['qbo_line_id'] ?? '')) : '';
+        if ($lineId !== '') {
+            $meta[self::LINE_META] = [
+                'realm'   => (string) ($lineMap['realm'] ?? ''),
+                'invoice' => (string) ($lineMap['invoice'] ?? ''),
+                'id'      => $lineId,
+            ];
+        }
+        $product = ProductMapper::metaProduct(['product' => $item['product'] ?? null]);
+        if ($product !== null) {
+            $meta['product'] = $product;
+        }
+
+        return $meta === [] ? null : (string) json_encode($meta);
     }
 
     /**

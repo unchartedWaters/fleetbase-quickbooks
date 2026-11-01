@@ -896,6 +896,47 @@ class InvoiceMapper
     }
 
     /**
+     * Lines copied from QuickBooks (fromQuickBooks) keep the product their Fleetbase line named in
+     * its meta (ProductMapper::metaProduct), paired by QuickBooks line id, so a copy does not move
+     * them off that product on the next send. A line Fleetbase cannot pair names the product its
+     * QuickBooks product stands for ($byItem), if any.
+     *
+     * @param array<int, array<string, mixed>>     $items   fromQuickBooks items
+     * @param array<string, mixed>                 $remote
+     * @param array<int, mixed>                    $current the Fleetbase items
+     * @param array<string, array<string, string>> $byItem  products lines name, by QuickBooks product id
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function withLineProducts(array $items, array $remote, array $current, array $byItem = []): array
+    {
+        $invoiceId = trim((string) ($remote['Id'] ?? ''));
+        $products  = [];
+        foreach ($current as $item) {
+            $item    = is_array($item) === true ? $item : [];
+            $lineId  = self::heldLineId($item, $invoiceId);
+            $product = ProductMapper::metaProduct(['product' => $item['product'] ?? null]);
+            if ($lineId !== '' && $product !== null) {
+                $products[$lineId] = $product;
+            }
+        }
+        $index = 0;
+        foreach (is_array($remote['Line'] ?? null) === true ? $remote['Line'] : [] as $line) {
+            if (is_array($line) === false || $this->isProductSalesLine($line) === false) {
+                continue;
+            }
+            $item    = trim((string) ($line['SalesItemLineDetail']['ItemRef']['value'] ?? ''));
+            $product = $products[trim((string) ($line['Id'] ?? ''))] ?? $byItem[$item] ?? null;
+            if ($product !== null && isset($items[$index]) === true) {
+                $items[$index]['product'] = $product;
+            }
+            $index++;
+        }
+
+        return $items;
+    }
+
+    /**
      * A line's tax as Ledger works it out when the line is saved (InvoiceItem::calculateAmount).
      */
     public static function ledgerTax(int $amount, string $rate): int

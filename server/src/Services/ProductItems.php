@@ -12,7 +12,9 @@ use Fleetbase\Quickbooks\Support\Translation;
  *
  * A product QuickBooks already had under the name is used as it is and never written to
  * ("adopted"). Fleetbase makes a product inactive when no live product uses its name any more
- * ("deactivated"), and active again when the name is used again. A fee is never made inactive.
+ * ("deactivated"), and active again when the name is used again. A fee is never made inactive,
+ * nor is a product an invoice line names in its meta ("line", see ProductMapper::lineProduct),
+ * which is made and kept like a fee's.
  *
  * @phpstan-type Result array{
  *     id: string|null, item: array<string, mixed>|null, outcome: string, error: string|null,
@@ -20,7 +22,7 @@ use Fleetbase\Quickbooks\Support\Translation;
  * }
  * @phpstan-type Plan array{
  *     key: string, name: string, products: array<int, array<string, mixed>>, fee: bool, wanted: bool,
- *     link: array<string, mixed>|null, uuid: string
+ *     line: bool, link: array<string, mixed>|null, uuid: string
  * }
  * @phpstan-type Operation array{bId: string, operation: string, entity: string, payload: array<string, mixed>}
  * @phpstan-type Write array{write: Operation, link: array<string, mixed>, name: string}
@@ -32,6 +34,8 @@ class ProductItems
     public const ADOPTED = 'adopted';
 
     public const DEACTIVATED = 'deactivated';
+
+    public const LINE = 'line';
 
     private ProductItemCalls $calls;
 
@@ -50,6 +54,9 @@ class ProductItems
     /** @var Found */
     private array $byName = ['rows' => [], 'failed' => null];
 
+    /** @var array<string, string> */
+    private array $lineNames = [];
+
     public function __construct(QuickBooksClient $client, private ProductMapper $mapper = new ProductMapper())
     {
         $this->calls = new ProductItemCalls($client);
@@ -59,9 +66,10 @@ class ProductItems
      * Read, plan and write the QuickBooks product of each name. A 401 or a rate limit is thrown;
      * any other failure is the result of the names it is about.
      *
-     * @param array<string, mixed> $connection
-     * @param array<int, string>   $keys        product name keys (ProductMapper::key)
-     * @param array<string, mixed> $serviceItem the "Fleetbase service" item, read
+     * @param array<string, mixed>  $connection
+     * @param array<int, string>    $keys        product name keys (ProductMapper::key)
+     * @param array<string, mixed>  $serviceItem the "Fleetbase service" item, read
+     * @param array<string, string> $lineNames   products invoice lines name, by key: name
      *
      * @return array<string, Result> by key
      */
@@ -71,7 +79,9 @@ class ProductItems
         array $keys,
         string $serviceItemId,
         array $serviceItem,
+        array $lineNames = [],
     ): array {
+        $this->lineNames     = $lineNames;
         $this->ledger        = $ledger;
         $this->connection    = $connection;
         $this->serviceItemId = $serviceItemId;
@@ -153,16 +163,21 @@ class ProductItems
         $link     = $ledger->link($company, $realm, 'item', $uuid);
         $products = self::liveProducts($ledger, $company, $key);
         $feeName  = ProductMapper::feeProduct($key);
+        $named    = $this->lineNames[$key] ?? null;
+        // A product made for lines stays one, though no line in this run names it.
+        $line     = $named !== null || (is_array($link) === true && ($link['state'] ?? null) === self::LINE);
         $name     = ProductMapper::sharedName($products)
             ?? $feeName
+            ?? $named
             ?? (is_array($link) === true ? trim((string) ($link['name'] ?? '')) : '');
 
         return [
             'key'      => $key,
             'name'     => ProductMapper::name($name !== '' ? $name : $key),
             'products' => $products,
-            'fee'      => $feeName !== null,
-            'wanted'   => $products !== [] || $feeName !== null,
+            'fee'      => $feeName !== null || $line === true,
+            'wanted'   => $products !== [] || $feeName !== null || $line === true,
+            'line'     => $line,
             'link'     => is_array($link) === true && trim((string) ($link['qbo_id'] ?? '')) !== '' ? $link : null,
             'uuid'     => $uuid,
         ];
@@ -362,6 +377,11 @@ class ProductItems
     {
         $changes = $this->mapper->changes($plan['name'], $plan['products'], $remote, $this->home);
         if ($changes === []) {
+            if ($plan['line'] === true && ($plan['link']['state'] ?? null) === null) {
+                // A product lines now name is kept from here on, though nothing is sent.
+                $this->ledger->putLink($this->link($plan, $remote, null));
+            }
+
             return ['result' => self::result((string) $remote['Id'], $remote, 'aligned')];
         }
 
@@ -453,7 +473,8 @@ class ProductItems
     /**
      * A QuickBooks product Fleetbase may use as it is: active, a service or non-inventory
      * product, not a sub-product, not the service item, and no other record's product. A fee
-     * may share one with the fee of another organization on the same QuickBooks company.
+     * may share one with the fee of another organization on the same QuickBooks company; a
+     * product lines name may not, as anyone who edits a line can name it.
      *
      * @param Plan                 $plan
      * @param array<string, mixed> $remote
@@ -471,7 +492,7 @@ class ProductItems
             return false;
         }
 
-        return $plan['fee'] === true || $this->linkedElsewhere($plan, $itemId) === false;
+        return ProductMapper::feeProduct($plan['key']) !== null || $this->linkedElsewhere($plan, $itemId) === false;
     }
 
     /**
@@ -509,7 +530,7 @@ class ProductItems
             'local_uuid'   => (string) $plan['uuid'],
             'qbo_entity'   => 'Item',
             'name'         => (string) $plan['name'],
-            'state'        => $state,
+            'state'        => $state ?? ($plan['line'] === true ? self::LINE : null),
         ];
         if ($remote !== null) {
             $link['qbo_id']     = (string) ($remote['Id'] ?? '');

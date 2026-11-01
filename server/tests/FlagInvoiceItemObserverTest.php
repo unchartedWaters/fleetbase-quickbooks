@@ -7,6 +7,7 @@ use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Fleetbase\Quickbooks\Tests\Support\CountingDirectory;
+use Fleetbase\Quickbooks\Tests\Support\MetaChangedLine;
 use Illuminate\Container\Container;
 use Illuminate\Queue\Events\JobProcessed;
 
@@ -76,6 +77,32 @@ test('an unwatched line change does not load the parent', function () {
     [$observer, $directory] = itemObserverHarness();
 
     $observer->updated(invoiceLine('inv-1', ['meta']));
+
+    expect($observer->loads)->toBe(0)
+        ->and($directory->written)->toBe([]);
+});
+
+test('a line whose meta names another product queues the invoice', function (?array $before, ?array $after) {
+    [$observer, $directory] = itemObserverHarness();
+
+    $observer->updated(new MetaChangedLine('inv-1', $after, $before));
+
+    expect($observer->loads)->toBe(1)
+        ->and($directory->written)->toHaveCount(1);
+})->with([
+    'named'   => [['note' => 'x'], ['note' => 'x', 'product' => ['name' => 'Distance']]],
+    'renamed' => [['product' => ['name' => 'Distance']], ['product' => ['name' => 'Express']]],
+    'cleared' => [['product' => ['name' => 'Distance']], null],
+]);
+
+test('a line meta change that keeps its product does not load the parent', function () {
+    [$observer, $directory] = itemObserverHarness();
+
+    $observer->updated(new MetaChangedLine(
+        'inv-1',
+        ['product' => ['name' => 'Distance'], 'quickbooks_line' => ['id' => '1']],
+        ['product' => ['name' => 'distance']]
+    ));
 
     expect($observer->loads)->toBe(0)
         ->and($directory->written)->toBe([]);

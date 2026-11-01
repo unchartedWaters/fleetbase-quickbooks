@@ -84,6 +84,34 @@ class ProductMapper
     }
 
     /**
+     * The product a Ledger line's meta names (meta.product, an object with a name), as stored. A
+     * pricing extension names the product of each line it writes this way. Null when there is
+     * none or its name is blank.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function metaProduct(mixed $meta): ?array
+    {
+        $product = is_array($meta) === true ? ($meta['product'] ?? null) : null;
+        $name    = is_array($product) === true ? ($product['name'] ?? null) : null;
+        $blank   = is_string($name) === false || trim((string) preg_replace('/[\s:]+/u', ' ', $name)) === '';
+
+        return $blank === true ? null : $product;
+    }
+
+    /**
+     * The name of the product a line names (metaProduct), or null.
+     *
+     * @param array<string, mixed> $item a Ledger line as the directory reads it
+     */
+    public static function lineProduct(array $item): ?string
+    {
+        $product = self::metaProduct(['product' => $item['product'] ?? null]);
+
+        return $product === null ? null : self::name((string) $product['name']);
+    }
+
+    /**
      * The fixed local id of the link of one product name of a company. Every Storefront product
      * and fee of that name shares the one QuickBooks product.
      */

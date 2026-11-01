@@ -310,7 +310,7 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert
             .dom('[data-test-income-account]')
             .hasText(
-                'Invoice lines use the QuickBooks product of their name: one Fleetbase keeps for each Storefront product and Fleet-Ops fee, else "Fleetbase service", which posts to the income account Services. Products Fleetbase makes post to that account and are taxed like "Fleetbase service". QuickBooks taxes a line only when its product and the customer are taxable. To change the account or whether lines are taxed, edit the products in QuickBooks.'
+                'Invoice lines use the QuickBooks product they name, else the one of their name: one Fleetbase keeps for each Storefront product and Fleet-Ops fee, else "Fleetbase service", which posts to the income account Services. Products Fleetbase makes post to that account and are taxed like "Fleetbase service". QuickBooks taxes a line only when its product and the customer are taxable. To change the account or whether lines are taxed, edit the products in QuickBooks.'
             );
 
         this.set('connection', { realm_id: '123', environment: 'sandbox' });
