@@ -57,6 +57,9 @@
   `MemorySettingsStore`, `InstallAdminRequest`.
 - `scripts/` – `pest-runner.php` prepends `pest-bootstrap.php`, which loads stub
   Fleetbase/Laravel classes from `scripts/test-support/`.
+  `scripts/fleetbase-release/` holds the command-line checks that
+  `.github/workflows/fleetbase-release.yml` runs inside a real Fleetbase
+  release container; they print `ok`/`FAIL` lines and exit non-zero on failure.
 - `addon/` – engine components, routes and `utils`; `tests/` – Ember QUnit
   tests; `translations/en-us.yaml` – UI strings.
 
@@ -85,6 +88,10 @@
   behavior may need a stub in `scripts/test-support/`.
 - Ember: QUnit unit and integration tests in `tests/` (`pnpm test:ember`, needs
   Chrome).
+- Real Fleetbase: `fleetbase-release.yml` installs the package into each new
+  Fleetbase release (published API image, console built at the tag) and runs
+  `scripts/fleetbase-release/`. It uses no secrets and must never reach Intuit;
+  `smoke-sync.php` binds `FakeQuickBooks` and deletes its made-up connection.
 - Behavior changes and bug fixes need tests. Refactors keep the existing tests
   passing unchanged.
 - Security- and tenancy-sensitive changes need explicit tests: company scoping,

@@ -9,6 +9,7 @@ engines:
       - "tests/**"
       - "config/**"
       - "*.js"
+      - "scripts/**/*.mjs"
   # Lizard's function-length rule (50 lines) flags test setup helpers, which build whole
   # fixtures in one place by design. Production code under server/src is still checked.
   # Ember component tests are the same kind of fixture, so tests/ is excluded too.
@@ -18,7 +19,10 @@ engines:
       - "tests/**"
   # PHPMD on the whole engine, so test fixtures and the upstream constructor stub
   # in scripts/test-support are not refactored to satisfy complexity rules.
+  # scripts/fleetbase-release holds command-line checks run inside a Fleetbase
+  # container by the release check workflow; their exit code is the result.
   phpmd:
     exclude_paths:
       - "server/tests/**"
       - "scripts/test-support/**"
+      - "scripts/fleetbase-release/**"

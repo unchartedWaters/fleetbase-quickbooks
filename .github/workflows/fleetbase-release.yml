@@ -1,0 +1,371 @@
+name: Fleetbase release check
+
+# Checks this extension against each new Fleetbase release.
+#
+# When it runs:
+# - schedule: Fleetbase publishes a release as a vX.Y.Z tag on fleetbase/fleetbase and the API
+#   image fleetbase/fleetbase-api:vX.Y.Z on Docker Hub. Nothing notifies this repository, so
+#   every 6 hours the run looks up the newest release and checks it only if it is new: published
+#   in the last 14 days, not checked by any run yet (no fleetbase-<version>-results artifact),
+#   and with its API image on Docker Hub. Otherwise it stops after the lookup. A failed check
+#   counts as checked, so run it again by hand after a fix. The rules are in
+#   scripts/fleetbase-release/decide.sh, tested by FleetbaseReleaseCheckTest.
+# - a release of this extension (a v* tag, as deploy.yml) checks the newest Fleetbase release.
+# - workflow_dispatch always checks; `fleetbase_version` picks an older release.
+# The schedule runs only on the default branch, and the Actions tab offers the run by hand once
+# this file is on the default branch. GitHub turns scheduled workflows off after 60 days without
+# activity in the repository.
+#
+# What it does:
+# - console: builds the console at the release tag with this engine added from its npm package,
+#   as a self-hosted install that adds the extension does.
+# - stack: runs the published API image of the release (building it from source needs
+#   Fleetbase's private token), installs this extension's npm package, the files the Fleetbase
+#   registry serves, with docker/ensure-quickbooks-extension.sh, runs the release's own deploy.sh,
+#   then checks the install, a sync against a fake QuickBooks, the API through Octane, and the
+#   QuickBooks pages in the built console.
+# Screenshots and logs are kept for 90 days as the fleetbase-<version>-results artifact.
+# No secrets are used, and nothing reaches Intuit.
+
+on:
+  schedule:
+    - cron: '41 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      fleetbase_version:
+        description: 'Fleetbase release tag to check, such as v0.7.74. Empty checks the newest release.'
+        required: false
+        default: ''
+  # A release of this extension: create-release.yml publishes the GitHub release with
+  # GITHUB_TOKEN, which starts no workflows, so a `release` trigger would never fire.
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fleetbase-release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Lists this repository's artifacts, to see which Fleetbase versions were checked.
+      actions: read
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      digest: ${{ steps.release.outputs.digest }}
+      published: ${{ steps.release.outputs.published }}
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Find the release and its API image
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.fleetbase_version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${REQUESTED:-}" ]; then
+            if ! [[ "$REQUESTED" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::fleetbase_version must look like v0.7.74."
+              exit 1
+            fi
+            release=$(gh api "repos/fleetbase/fleetbase/releases/tags/${REQUESTED}")
+          else
+            release=$(gh api repos/fleetbase/fleetbase/releases/latest)
+          fi
+          version=$(jq -r '.tag_name' <<<"$release")
+          published=$(jq -r '.published_at' <<<"$release")
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unexpected Fleetbase release tag: ${version}"
+            exit 1
+          fi
+          status=$(curl -sS -o image.json -w '%{http_code}' \
+            "https://hub.docker.com/v2/repositories/fleetbase/fleetbase-api/tags/${version}")
+          digest=""
+          if [ "$status" = "200" ]; then
+            digest=$(jq -r '.digest // ""' image.json)
+          fi
+          if [ -n "$digest" ] && ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Unexpected image digest: ${digest}"
+            exit 1
+          fi
+          echo "Fleetbase ${version} (${published}), API image ${digest:-not published}"
+          {
+            echo "version=${version}"
+            echo "digest=${digest}"
+            echo "published=${published}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to check this release
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          VERSION: ${{ steps.release.outputs.version }}
+          PUBLISHED_AT: ${{ steps.release.outputs.published }}
+          DIGEST: ${{ steps.release.outputs.digest }}
+        run: bash scripts/fleetbase-release/decide.sh
+
+  console:
+    needs: resolve
+    if: needs.resolve.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out Fleetbase ${{ needs.resolve.outputs.version }}
+        uses: actions/checkout@v7
+        with:
+          repository: fleetbase/fleetbase
+          ref: ${{ needs.resolve.outputs.version }}
+          path: fleetbase
+          persist-credentials: false
+
+      - name: Check out this extension
+        uses: actions/checkout@v7
+        with:
+          path: quickbooks
+          persist-credentials: false
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # The console's packageManager field names the pnpm version its lockfile needs.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: fleetbase/console/package.json
+
+      - name: Add the packed engine to the console
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/engine"
+          (cd quickbooks && npm pack --pack-destination "$RUNNER_TEMP/engine")
+          cd fleetbase/console
+          pnpm add "$RUNNER_TEMP"/engine/unchartedwaters-quickbooks-engine-*.tgz
+
+      # A production console reads its settings at build time (runtime config is off). It
+      # points at the API the stack job serves on this runner, and EXTENSIONS turns the
+      # engine on the way an administrator does for an engine not installed from the registry.
+      # Step time limits sit below the job's, so a hang fails the step and the results are kept.
+      - name: Build the console
+        working-directory: fleetbase/console
+        timeout-minutes: 30
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+          EXTENSIONS: '@unchartedwaters/quickbooks-engine'
+          API_HOST: http://localhost:8000
+          API_SECURE: 'false'
+          SOCKETCLUSTER_HOST: localhost
+          SOCKETCLUSTER_SECURE: 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/results"
+          pnpm build --environment production 2>&1 | tee "$RUNNER_TEMP/results/console-build.log"
+
+      - name: Check the engine is in the build
+        working-directory: fleetbase/console
+        run: |
+          set -euo pipefail
+          test -d dist/engines-dist/@unchartedwaters/quickbooks-engine
+          jq -e 'map(.name) | index("@unchartedwaters/quickbooks-engine")' dist/extensions.json > /dev/null
+          echo "The QuickBooks engine is in dist/engines-dist and dist/extensions.json."
+
+      - name: Keep the build for the stack job
+        uses: actions/upload-artifact@v7
+        with:
+          name: console-dist
+          path: fleetbase/console/dist
+          retention-days: 1
+
+      # The stack job does not run when the console fails, so this run's results come from here.
+      - name: Note the failure
+        if: failure()
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/results"
+          echo "The console build for Fleetbase ${VERSION} failed. The run's log has the details." \
+            > "$RUNNER_TEMP/results/console-failed.txt"
+
+      - name: Keep the results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fleetbase-${{ needs.resolve.outputs.version }}-results
+          path: ${{ runner.temp }}/results
+          if-no-files-found: warn
+          retention-days: 90
+          # "Re-run failed jobs" keeps the run, so a re-run replaces the earlier results.
+          overwrite: true
+
+  stack:
+    needs: [resolve, console]
+    if: needs.resolve.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      database:
+        image: mysql:8.0-oracle
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: fleetbase
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      cache:
+        image: redis:4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DIGEST: ${{ needs.resolve.outputs.digest }}
+      RELEASE_CHECK_EMAIL: release-check@example.com
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The files the Fleetbase registry serves for this extension.
+      - name: Pack the extension
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/results"
+          npm pack --pack-destination "$RUNNER_TEMP"
+          tar -xzf "$RUNNER_TEMP"/unchartedwaters-quickbooks-engine-*.tgz -C "$RUNNER_TEMP"
+
+      - name: Download the console build
+        uses: actions/download-artifact@v8
+        with:
+          name: console-dist
+          path: ${{ runner.temp }}/console
+
+      - name: Start the Fleetbase ${{ needs.resolve.outputs.version }} API container
+        run: |
+          set -euo pipefail
+          password="Rc-$(openssl rand -hex 16)"
+          echo "::add-mask::${password}"
+          echo "RELEASE_CHECK_PASSWORD=${password}" >> "$GITHUB_ENV"
+          # The services publish their ports on the runner, which the container shares.
+          {
+            echo "APP_KEY=base64:$(openssl rand -base64 32)"
+            echo "DATABASE_URL=mysql://root@127.0.0.1/fleetbase"
+            echo "QUEUE_CONNECTION=redis"
+            echo "CACHE_DRIVER=redis"
+            echo "CACHE_URL=tcp://127.0.0.1"
+            echo "REDIS_URL=tcp://127.0.0.1"
+            echo "BROADCAST_DRIVER=log"
+            echo "CONSOLE_HOST=http://localhost:4200"
+          } > "$RUNNER_TEMP/fleetbase.env"
+          docker pull "fleetbase/fleetbase-api@${DIGEST}"
+          docker run -d --name fleetbase --network host \
+            --env-file "$RUNNER_TEMP/fleetbase.env" \
+            -v "$RUNNER_TEMP/package:/fleetbase/packages/quickbooks:ro" \
+            -v "$GITHUB_WORKSPACE:/release-check:ro" \
+            --entrypoint sleep "fleetbase/fleetbase-api@${DIGEST}" infinity
+
+      - name: Install the extension as docs/SETUP.md describes
+        run: >-
+          docker exec -e QUICKBOOKS_SKIP_MIGRATE=1 fleetbase
+          sh /fleetbase/packages/quickbooks/docker/ensure-quickbooks-extension.sh true
+
+      - name: Run the release's deploy.sh
+        timeout-minutes: 10
+        run: docker exec fleetbase sh ./deploy.sh
+
+      - name: Check the install
+        run: docker exec fleetbase php /release-check/scripts/fleetbase-release/verify-install.php
+
+      - name: Sync a customer and an invoice against a fake QuickBooks
+        run: docker exec fleetbase php /release-check/scripts/fleetbase-release/smoke-sync.php
+
+      - name: Serve the API with Octane, as the image does
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          docker exec -d fleetbase sh -c \
+            'php artisan octane:frankenphp --max-requests=1000 --port=8000 --host=0.0.0.0 > /tmp/octane.log 2>&1'
+          for attempt in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8000/health; then
+              echo "The API answers."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::The API did not answer /health within 2 minutes."
+          exit 1
+
+      - name: Call the extension's API through Octane
+        run: >-
+          docker exec -e RELEASE_CHECK_EMAIL -e RELEASE_CHECK_PASSWORD fleetbase
+          php /release-check/scripts/fleetbase-release/http-smoke.php
+
+      - name: Run the queue and the scheduler once
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          docker exec fleetbase php artisan queue:work --stop-when-empty --tries=1 --max-time=300
+          docker exec fleetbase php artisan schedule:run
+          docker exec fleetbase php artisan quickbooks:sync
+          docker exec fleetbase php artisan quickbooks:prune
+          failed=$(docker exec fleetbase php artisan tinker --execute \
+            "echo DB::table('failed_jobs')->where('payload', 'like', '%Quickbooks%')->count();" | tail -n 1)
+          if [ "$failed" != "0" ]; then
+            docker exec fleetbase php artisan queue:failed
+            echo "::error::${failed} QuickBooks queue job(s) failed."
+            exit 1
+          fi
+
+      - name: Open the QuickBooks pages in the built console
+        timeout-minutes: 10
+        env:
+          CONSOLE_DIR: ${{ runner.temp }}/console
+        run: |
+          set -euo pipefail
+          node scripts/fleetbase-release/serve-console.mjs "$CONSOLE_DIR" 4200 &
+          mkdir -p "$RUNNER_TEMP/browser" "$RUNNER_TEMP/results/screenshots"
+          npm install --prefix "$RUNNER_TEMP/browser" --no-save --ignore-scripts playwright-core@1.64.1
+          cd "$RUNNER_TEMP/browser"
+          CHROME_PATH="$(command -v google-chrome)" \
+          RELEASE_CHECK_SCREENSHOTS="$RUNNER_TEMP/results/screenshots" \
+            node "$GITHUB_WORKSPACE/scripts/fleetbase-release/browser-check.mjs"
+
+      - name: Collect the logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/results"
+          docker exec fleetbase sh -c 'tail -n 500 /tmp/octane.log' > "$RUNNER_TEMP/results/octane.log" 2>&1 || true
+          docker exec fleetbase sh -c 'tail -n 500 storage/logs/*.log' > "$RUNNER_TEMP/results/laravel.log" 2>&1 || true
+          docker logs --tail 200 fleetbase > "$RUNNER_TEMP/results/container.log" 2>&1 || true
+
+      # This artifact also tells later scheduled runs that this release was checked. It is kept
+      # whether the checks passed or failed, but not when the run was cancelled.
+      - name: Keep the results
+        if: success() || failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fleetbase-${{ needs.resolve.outputs.version }}-results
+          path: ${{ runner.temp }}/results
+          if-no-files-found: warn
+          retention-days: 90
+          # "Re-run failed jobs" keeps the run, so a re-run replaces the earlier results.
+          overwrite: true
