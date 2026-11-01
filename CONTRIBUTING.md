@@ -154,14 +154,15 @@ workflow looks for the newest release of `fleetbase/fleetbase` every 6 hours.
 It waits until the release's `fleetbase/fleetbase-api` image is on Docker Hub,
 and fails if the image is still missing a day after the release.
 
-Each pair of Fleetbase API image and this package's version is checked once,
-passed or failed. To check again, run the workflow by hand from the Actions tab
-with `force`. To check an older release, give its tag, such as `v0.7.74`, as
-`fleetbase_version`. A pull request that changes the workflow, its scripts in
-`scripts/fleetbase-release/`, or `docker/ensure-quickbooks-extension.sh` runs
-the check too. GitHub emails a failed scheduled run to whoever last changed the
-schedule, and turns scheduled workflows off after 60 days with no activity in
-the repository.
+Each Fleetbase version is built and checked once, passed or failed. The run
+uploads an artifact named for the version, such as
+`fleetbase-release-checked-v0.7.74`, and later runs skip a version that has
+one. To check again, run the workflow by hand from the Actions tab with
+`force`. To check an older release, give its tag, such as `v0.7.74`, as
+`fleetbase_version`. A release of this extension (a `v*` tag) is also checked
+against the newest Fleetbase release. Pull requests do not run it. GitHub
+emails a failed scheduled run to whoever last changed the schedule, and turns
+scheduled workflows off after 60 days with no activity in the repository.
 
 The check:
 

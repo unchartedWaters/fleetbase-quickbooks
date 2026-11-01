@@ -14,13 +14,12 @@ test('the release check polls for new Fleetbase releases and can be run by hand'
         ->and($on['workflow_dispatch']['inputs']['force']['type'])->toBe('boolean');
 });
 
-test('a pull request that changes the check runs it before merge', function () {
-    $pull = ReleaseWorkflow::parsed()['on']['pull_request'];
+test('a release of this extension is checked against the newest Fleetbase, and pull requests are not', function () {
+    $on = ReleaseWorkflow::parsed()['on'];
 
-    expect($pull['branches'])->toBe(['main'])
-        ->and($pull['paths'])->toContain('.github/workflows/fleetbase-release.yml')
-        ->and($pull['paths'])->toContain('scripts/fleetbase-release/**')
-        ->and($pull['paths'])->toContain('docker/ensure-quickbooks-extension.sh');
+    expect($on)->not->toHaveKey('pull_request')
+        ->and($on['push'])->toBe(['tags' => ['v*']])
+        ->and(ReleaseWorkflow::runs('resolve'))->toContain('[ "$EVENT" != "push" ]');
 });
 
 test('the release check reads the repository only and uses no secrets', function () {
@@ -32,8 +31,9 @@ test('the release check reads the repository only and uses no secrets', function
         }
     }
 
+    // Only resolve reads the Actions artifacts, to see which Fleetbase versions were checked.
     expect($workflow['permissions'])->toBe(['contents' => 'read'])
-        ->and($granted)->toBe([])
+        ->and($granted)->toBe(['resolve' => ['contents' => 'read', 'actions' => 'read']])
         ->and(ReleaseWorkflow::text())->not->toContain('secrets.');
 });
 
@@ -118,15 +118,23 @@ test('the console is built at the release tag with the packed engine', function 
         ->and($runs)->toContain('engines-dist/@unchartedwaters/quickbooks-engine');
 });
 
-test('a release is checked once: the marker is saved after the checks, never from a pull request', function () {
+test('each Fleetbase version is checked once and remembered after the checks', function () {
     $record = ReleaseWorkflow::job('record');
-    $uses   = array_column($record['steps'], 'uses');
+    $upload = array_values(array_filter(
+        $record['steps'],
+        static fn (array $step): bool => ($step['uses'] ?? '') === 'actions/upload-artifact@v7'
+    ));
+    $script = ReleaseWorkflow::runs('resolve');
 
     expect($record['needs'])->toBe(['resolve', 'console', 'stack'])
-        ->and($record['if'])->toContain("github.event_name != 'pull_request'")
         ->and($record['if'])->toContain("needs.resolve.outputs.run == 'true'")
         ->and($record['if'])->toContain('always()')
-        ->and($uses)->toContain('actions/cache/save@v6');
+        ->and($upload)->toHaveCount(1)
+        ->and($upload[0]['with']['name'])->toBe('${{ needs.resolve.outputs.marker }}')
+        ->and($upload[0]['with']['retention-days'])->toBe(90)
+        ->and($script)->toContain('marker=fleetbase-release-checked-${version}"')
+        ->and($script)->toContain('actions/artifacts?name=${MARKER}')
+        ->and(ReleaseWorkflow::text())->not->toContain('actions/cache');
     foreach (['console', 'stack'] as $job) {
         expect(ReleaseWorkflow::job($job)['if'])->toContain("needs.resolve.outputs.run == 'true'");
     }
