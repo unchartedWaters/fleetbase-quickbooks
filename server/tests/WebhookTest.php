@@ -794,7 +794,6 @@ test('normalizeAuth keeps a client secret result unchanged when webhook_verifier
     ]))->toBe([
         'client_id'     => 'id',
         'client_secret' => 'secret',
-        'redirect_uri'  => 'https://example.test/callback',
         'environment'   => 'sandbox',
     ])
         ->and($store->normalizeAuth([

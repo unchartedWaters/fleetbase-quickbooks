@@ -11,6 +11,7 @@ use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\Authorizer;
+use Fleetbase\Quickbooks\Support\ConsoleHost;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SecretCipher;
@@ -149,7 +150,7 @@ test('saving settings keeps stored auth fields that were not sent', function () 
             ->and($stored['client_id'])->toBe('kept-id')
             ->and($stored['client_secret'])->not->toBe('kept-secret')
             ->and((new SecretCipher())->decrypt($stored['client_secret']))->toBe('kept-secret')
-            ->and($stored['redirect_uri'])->toBe('https://example.com/callback')
+            ->and($stored)->not->toHaveKey('redirect_uri')
             ->and($stored['environment'])->toBe('sandbox');
     } finally {
         session(['company' => null]);
@@ -162,119 +163,108 @@ test('an authorization started by another organization cannot be completed by th
     $begun = $flow->begin('attacker-company', 'attacker-user', [
         'client_id'     => 'id',
         'client_secret' => 'secret',
-        'redirect_uri'  => 'https://example.test/callback',
+        'redirect_uri'  => 'https://console.example.test/quickbooks',
         'environment'   => 'sandbox',
     ]);
     $controller = securityConnectionController($flow);
 
-    // The victim's browser arrives with the attacker's state and the victim's code.
-    $redirect = $controller->callback(Request::create('/oauth/callback', 'GET', [
-        'state'   => $begun['state'],
-        'code'    => 'victim-code',
-        'realmId' => '9341453000000002',
-    ]));
-    parse_str((string) parse_url($redirect->getTargetUrl(), PHP_URL_QUERY), $query);
-    $handle = (string) $query['oauth_state'];
-
+    // The victim's browser arrives on the console with the attacker's state and the victim's code.
     session(['company' => 'victim-company', 'user' => 'victim-user']);
     try {
-        $refused = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
+        $refused = $controller->complete(Request::create('/oauth/complete', 'POST', [
+            'state'   => $begun['state'],
+            'code'    => 'victim-code',
+            'realmId' => '9341453000000002',
+        ]));
+        $cancel = $controller->complete(Request::create('/oauth/complete', 'POST', [
+            'state' => $begun['state'],
+            'error' => 'access_denied',
+        ]));
         expect($refused->getStatusCode())->toBe(422)
             ->and($refused->getData(true)['message'])->toContain('different user or organization')
-            ->and($refused->getData(true)['message'])->not->toContain('cURL');
+            ->and($refused->getData(true)['message'])->not->toContain('cURL')
+            ->and($cancel->getData(true))->toBe(['connected' => false]);
     } finally {
         session(['company' => null, 'user' => null]);
     }
 
-    // A wrong user must not consume the handle or its PKCE verifier.
-    $pending = Cache::get('quickbooks.oauth-state.' . $handle);
+    // A wrong user must not consume or cancel the state, and the victim's code is never kept.
+    $pending = Cache::get('quickbooks.oauth-state.' . $begun['state']);
     expect($pending)->toBeArray()
         ->and($pending['company_uuid'])->toBe('attacker-company')
         ->and($pending['user_uuid'])->toBe('attacker-user')
-        ->and($pending['code'])->toBe('victim-code')
+        ->and($pending)->not->toHaveKey('code')
         ->and($pending['code_verifier'])->toBeString()
         ->and($pending['code_verifier'])->not->toBe('');
-
-    session(['company' => 'attacker-company', 'user' => 'attacker-user']);
-    try {
-        $replay = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $begun['state']]));
-        expect($replay->getStatusCode())->toBe(422)
-            ->and($replay->getData(true)['message'])->toBe('QuickBooks authorization state is invalid or expired.');
-    } finally {
-        session(['company' => null, 'user' => null]);
-    }
 });
 
-test('a cancelled authorization forgets the state and says it was cancelled', function () {
+test('a cancelled authorization forgets the state', function () {
     config()->set('quickbooks.console_host', 'https://console.example.test');
     $flow  = new OAuthFlow(new QuickBooksClient());
     $begun = $flow->begin('company-uuid', 'user-uuid', [
         'client_id'     => 'id',
         'client_secret' => 'secret',
-        'redirect_uri'  => 'https://example.test/callback',
+        'redirect_uri'  => 'https://console.example.test/quickbooks',
         'environment'   => 'sandbox',
     ]);
 
-    $redirect = securityConnectionController($flow)->callback(Request::create('/oauth/callback', 'GET', [
-        'state' => $begun['state'],
-        'error' => 'access_denied',
-    ]));
+    session(['company' => 'company-uuid', 'user' => 'user-uuid']);
+    try {
+        $cancelled = securityConnectionController($flow)->complete(Request::create('/oauth/complete', 'POST', [
+            'state' => $begun['state'],
+            'error' => 'access_denied',
+        ]));
+    } finally {
+        session(['company' => null, 'user' => null]);
+    }
 
-    expect($redirect->getTargetUrl())->toBe('https://console.example.test/quickbooks?error=cancelled')
+    expect($cancelled->getData(true))->toBe(['connected' => false])
         ->and(fn () => $flow->receive($begun['state'], 'code', '123456789'))->toThrow(QuickBooksException::class);
 });
 
-test('an intuit error sends only a fixed code back to the console', function () {
-    config()->set('quickbooks.console_host', 'https://console.example.test');
+test('an intuit error is never echoed back', function () {
+    session(['company' => 'company-uuid', 'user' => 'user-uuid']);
+    try {
+        $response = securityConnectionController(new OAuthFlow(new QuickBooksClient()))
+            ->complete(Request::create('/oauth/complete', 'POST', [
+                'state'             => 'bogus',
+                'error'             => 'Your account was locked, call 555-0100',
+                'error_description' => '<b>Call support</b>',
+            ]));
+    } finally {
+        session(['company' => null, 'user' => null]);
+    }
 
-    $redirect = securityConnectionController(new OAuthFlow(new QuickBooksClient()))
-        ->callback(Request::create('/oauth/callback', 'GET', [
-            'state'             => 'bogus',
-            'error'             => 'Your account was locked, call 555-0100',
-            'error_description' => '<b>Call support</b>',
-        ]));
-
-    expect($redirect->getTargetUrl())->toBe('https://console.example.test/quickbooks?error=failed');
+    expect($response->getStatusCode())->toBe(200)
+        ->and($response->getContent())->toBe('{"connected":false}');
 });
 
 test('the quickbooks console host is used before fleetbase.console.host', function () {
     config()->set('fleetbase.console.host', 'https://other.example.test');
     config()->set('quickbooks.console_host', 'http://localhost:4200');
 
-    $redirect = securityConnectionController(new OAuthFlow(new QuickBooksClient()))
-        ->callback(Request::create('/oauth/callback', 'GET', ['state' => 'bogus']));
-
-    expect($redirect->getTargetUrl())->toBe('http://localhost:4200/quickbooks?error=state');
+    expect(ConsoleHost::oauthRedirectUrl())->toBe('http://localhost:4200/quickbooks');
 });
 
 test('fleetbase.console.host is used when the quickbooks console host is unset', function () {
     config()->set('quickbooks.console_host', null);
     config()->set('fleetbase.console.host', 'console.example.test');
 
-    $redirect = securityConnectionController(new OAuthFlow(new QuickBooksClient()))
-        ->callback(Request::create('/oauth/callback', 'GET', ['state' => 'bogus']));
-
-    expect($redirect->getTargetUrl())->toBe('https://console.example.test/quickbooks?error=state');
+    expect(ConsoleHost::oauthRedirectUrl())->toBe('https://console.example.test/quickbooks');
 });
 
-test('a console host keeps its http scheme', function () {
+test('a console host keeps its http scheme and port', function () {
     config()->set('quickbooks.console_host', 'http://10.30.0.34:4200/');
 
-    $redirect = securityConnectionController(new OAuthFlow(new QuickBooksClient()))
-        ->callback(Request::create('/oauth/callback', 'GET', ['state' => 'bogus']));
-
-    expect($redirect->getTargetUrl())->toBe('http://10.30.0.34:4200/quickbooks?error=state');
+    expect(ConsoleHost::oauthRedirectUrl())->toBe('http://10.30.0.34:4200/quickbooks');
 });
 
-test('the callback refuses to redirect when only the fleetbase.io default host is known', function () {
+test('there is no redirect when only the fleetbase.io default host is known', function () {
     config()->set('quickbooks.console_host', null);
     config()->set('fleetbase.console.host', 'fleetbase.io');
 
-    $response = securityConnectionController(new OAuthFlow(new QuickBooksClient()))
-        ->callback(Request::create('/oauth/callback', 'GET', ['state' => 'bogus']));
-
-    expect($response->getStatusCode())->toBe(500)
-        ->and($response->getData(true))->toBe(['message' => 'Set CONSOLE_HOST so QuickBooks can return to the console.']);
+    expect(ConsoleHost::origin())->toBe('')
+        ->and(ConsoleHost::oauthRedirectUrl())->toBe('');
 });
 
 test('string booleans in sync settings are read as booleans', function () {

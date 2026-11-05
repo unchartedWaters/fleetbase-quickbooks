@@ -35,9 +35,9 @@ class SettingsStore
     }
 
     /**
-     * Auth holds app credentials and the saved public webhook and OAuth URLs.
-     * A blank client secret, webhook verifier, or public URL is omitted.
-     * Sync fields such as interval_minutes are removed. A non-empty secret is kept unchanged.
+     * Auth holds the Intuit app credentials only. The OAuth redirect and webhook receiver URLs
+     * are computed, so a sent or older stored copy, and any sync field such as interval_minutes,
+     * is removed. A blank client secret or webhook verifier is omitted. A non-empty secret is kept unchanged.
      *
      * @param array<string, mixed> $auth
      *
@@ -46,15 +46,17 @@ class SettingsStore
     public function normalizeAuth(array $auth): array
     {
         $normalized = [];
-        foreach (['client_id', 'client_secret', 'redirect_uri', 'environment', 'webhook_verifier', 'public_webhook_receiver_url', 'public_oauth_redirect_url'] as $field) {
+        $secrets    = ['client_secret', 'webhook_verifier'];
+        foreach (['client_id', 'client_secret', 'environment', 'webhook_verifier'] as $field) {
             if (array_key_exists($field, $auth) === false) {
                 continue;
             }
             $value = $auth[$field];
-            if (in_array($field, ['client_secret', 'webhook_verifier', 'public_webhook_receiver_url', 'public_oauth_redirect_url'], true) === true && (is_string($value) === false || trim($value) === '')) {
+            $blank = is_string($value) === false || trim($value) === '';
+            if (in_array($field, $secrets, true) === true && $blank === true) {
                 continue;
             }
-            $normalized[$field] = in_array($field, ['public_webhook_receiver_url', 'public_oauth_redirect_url'], true) === true ? trim((string) $value) : $value;
+            $normalized[$field] = $value;
         }
 
         return $normalized;

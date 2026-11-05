@@ -239,7 +239,7 @@ test('the route count matches the routes the routes file declares', function () 
         . "\$router->group([], function (\$router) {});\n\$router->prefix('p');\n";
 
     expect(ReleaseChecks::declaredRouteCount($routes))->toBe(2)
-        ->and(ReleaseChecks::declaredRouteCount(DocsSource::text('server/src/routes.php')))->toBe(14);
+        ->and(ReleaseChecks::declaredRouteCount(DocsSource::text('server/src/routes.php')))->toBe(13);
 });
 
 test('migration names come from the migration files', function () {

@@ -140,11 +140,16 @@
   Fleetbase records must be scoped by `company_uuid`. Webhooks fan out per
   connected organization; never act across companies.
 - Missing authorization: every protected endpoint needs an `authorize*` call.
-  `v1/oauth/callback` and `v1/webhooks` are public (outside
-  `fleetbase.protected`); treat any change there as security-sensitive.
-- Settings scope: Client ID/secret, webhook verifier, environment, redirect and
-  public URLs are global and admin-only. Flag any org-level endpoint, payload or
-  UI that reads, returns or writes them. Organization rows may hold only
+  `v1/webhooks` is the only public route (outside `fleetbase.protected`);
+  treat any change there as security-sensitive. The OAuth redirect is the
+  console's QuickBooks page, which posts the code to the protected
+  `oauth/complete`; flag any new public OAuth route.
+- Settings scope: Client ID/secret, webhook verifier and environment are global
+  and admin-only. The OAuth redirect and webhook receiver URLs are computed
+  from server config (`CONSOLE_HOST`, `APP_URL`), shown read-only and never
+  stored; flag any input, payload key or stored field that sets them. Flag any
+  org-level endpoint, payload or UI that reads, returns or writes these global
+  settings. Organization rows may hold only
   `SettingsKeys::SYNC_FIELDS`.
 - Secrets: OAuth tokens and secrets are encrypted at rest and never returned.
   Client secret and webhook verifier surface only as
@@ -172,7 +177,8 @@
   with the value that keeps the old behaviour.
 - A 401 gets one refresh and retry, then the connection is marked for reconnect;
   no unbounded retries.
-- Gates: connect returns 422 without Client ID, secret and redirect. Sync,
+- Gates: connect returns 422 without Client ID, secret and a public https
+  console address. Sync,
   reconcile and import return 422 without a usable connection; with no realm no
   activity row is saved, a realm needing reconnect saves a skipped row.
 

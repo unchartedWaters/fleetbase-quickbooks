@@ -29,7 +29,6 @@ use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionResolver;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -47,7 +46,7 @@ test('global credentials are used and an organization row does not replace them'
         ->and($resolved['client_secret'])->toBe('')
         ->and($resolved['sources']['client_secret'])->toBe('none')
         ->and($resolved['redirect_uri'])->toBe('')
-        ->and($resolved['sources']['redirect_uri'])->toBe('none')
+        ->and($resolved['sources'])->not->toHaveKey('redirect_uri')
         ->and($resolved['webhook_verifier'])->toBe('')
         ->and($resolved['sources']['webhook_verifier'])->toBe('none')
         ->and($resolved['environment'])->toBe('sandbox')
@@ -476,7 +475,7 @@ test('the session company is used when the request sends no company uuid', funct
     }
 });
 
-test('oauth start refuses a private callback and sends a public https redirect', function () {
+test('oauth start sends the console QuickBooks page and refuses one that is not public https', function () {
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     $previous = qbRememberConfig([
         'app.url',
@@ -486,14 +485,16 @@ test('oauth start refuses a private callback and sends a public https redirect',
     ]);
     config()->set('app.url', 'http://localhost:8000');
     config()->set('fleetbase.url', null);
-    config()->set('fleetbase.console.host', 'http://10.30.0.34:4200');
+    config()->set('fleetbase.console.host', null);
     config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
-    $computed                                               = 'http://10.30.0.34:8000/quickbooks/int/v1/oauth/callback';
-    $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::adminAuth()]                 = [
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
         'client_id'     => 'client-id',
         'client_secret' => (new SecretCipher())->encrypt('secret'),
         'environment'   => 'sandbox',
+        // Stored redirect and public URLs from an older build are never used.
+        'redirect_uri'              => 'https://example.com/quickbooks/int/v1/oauth/callback',
+        'public_oauth_redirect_url' => 'https://example.com/quickbooks/int/v1/oauth/callback',
     ];
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
@@ -504,127 +505,41 @@ test('oauth start refuses a private callback and sends a public https redirect',
     );
 
     try {
-        expect(SettingController::internalOAuthRedirectUrl())->toBe($computed);
-
         $start = static fn (): JsonResponse => $controller->start(Request::create('/oauth/start', 'POST', [
             'company_uuid' => 'company-uuid',
         ]));
 
-        foreach ([
-            null,
-            'https://example.test/callback',
-            'http://10.30.0.34:4200/quickbooks',
-        ] as $redirect) {
-            if ($redirect === null) {
-                unset($store->rows[SettingsKeys::adminAuth()]['redirect_uri']);
-            } else {
-                $store->rows[SettingsKeys::adminAuth()]['redirect_uri'] = $redirect;
-            }
-            unset($store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']);
+        $refusedHosts = [
+            'http://10.30.0.34:4200',
+            'http://fleet.example.com',
+            'https://10.0.0.5',
+            'https://192.168.1.9',
+            'https://127.0.0.1',
+            'https://localhost',
+            'https://[fd00::1]',
+            'https://169.254.169.254',
+        ];
+        foreach ($refusedHosts as $consoleHost) {
+            config()->set('quickbooks.console_host', $consoleHost);
             $refused = $start();
             expect($refused->getStatusCode())->toBe(422)
-                ->and($refused->getContent())->not->toContain('10.30.0.34')
-                ->and($refused->getContent())->not->toContain('localhost');
+                ->and($refused->getData(true))->not->toHaveKey('url')
+                ->and($refused->getData(true)['message'])->toBe('QuickBooks cannot be connected yet: Intuit needs a'
+                    . ' public https:// address to send you back to. Ask an installation administrator to set'
+                    . ' CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API to the console\'s public'
+                    . ' https:// address, then add the Public OAuth Redirect URL shown in Admin → QuickBooks →'
+                    . ' Settings to the Intuit app.');
         }
 
-        foreach ([
-            'http://public.example.test/callback',
-            'https://10.0.0.5/callback',
-            'https://192.168.1.9/callback',
-            'https://172.16.5.5/callback',
-            'https://127.0.0.2/callback',
-            'https://127.1/callback',
-            'https://0177.0.0.1/callback',
-            'https://2130706433/callback',
-            'https://0x7f000001/callback',
-            'https://127.000.000.001/callback',
-            'https://0.0.0.0/callback',
-            'https://100.64.0.1/callback',
-            'https://192.0.2.1/callback',
-            'https://224.0.0.1/callback',
-            'https://[::]/callback',
-            'https://[ff02::1]/callback',
-            'https://localhost/callback',
-            'https://127.0.0.1.nip.io/callback',
-            'https://public.example.test/callback',
-            'not-a-url',
-        ] as $redirect) {
-            $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url'] = $redirect;
-            $refused                                                             = $start();
-            expect($refused->getStatusCode())->toBe(422)
-                ->and($refused->getContent())->not->toContain($redirect);
-        }
-
-        $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url'] = 'https://example.com/quickbooks/int/v1/oauth/callback';
-        $public                                                              = qbOAuthRedirect($start());
-        expect($public)->toBe('https://example.com/quickbooks/int/v1/oauth/callback');
-
-        config()->set('app.url', 'https://example.com');
-        unset($store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']);
-        expect(qbOAuthRedirect($start()))->toBe('https://example.com/quickbooks/int/v1/oauth/callback');
+        // The API's own address and port never become the redirect.
+        config()->set('quickbooks.console_host', 'https://fleet.example.com:8443/');
+        expect(qbOAuthRedirect($start()))->toBe('https://fleet.example.com:8443/quickbooks');
+        Cache::flush();
+        config()->set('quickbooks.console_host', 'fleet.example.com');
+        expect(qbOAuthRedirect($start()))->toBe('https://fleet.example.com/quickbooks');
     } finally {
         qbRestoreConfig($previous);
         session(['company' => null, 'user' => null]);
-    }
-});
-
-test('a path-only computed callback uses a full public oauth url and otherwise stays internal', function () {
-    session(['company' => 'company-uuid']);
-    $previous = qbRememberConfig([
-        'app.url',
-        'fleetbase.url',
-        'fleetbase.console.host',
-        'quickbooks.console_host',
-    ]);
-    config()->set('app.url', null);
-    config()->set('fleetbase.url', null);
-    config()->set('fleetbase.console.host', null);
-    config()->set('quickbooks.console_host', null);
-    $public                                                 = 'https://example.com/quickbooks/int/v1/oauth/callback';
-    $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::adminAuth()]                 = [
-        'client_id'                  => 'client-id',
-        'client_secret'              => (new SecretCipher())->encrypt('secret'),
-        'redirect_uri'               => $public,
-        'public_oauth_redirect_url'  => $public,
-        'environment'                => 'sandbox',
-    ];
-    $controller = new ConnectionController(
-        new Authorizer(static fn () => true),
-        new OAuthFlow(new QuickBooksClient()),
-        new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()),
-        $store,
-        new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
-    );
-
-    try {
-        expect(SettingController::internalOAuthRedirectUrl())->toBe('/quickbooks/int/v1/oauth/callback');
-        // Connect also needs the console address the callback returns to.
-        config()->set('quickbooks.console_host', 'https://console.example.com');
-
-        $kept = qbOAuthRedirect($controller->start(Request::create('/oauth/start', 'POST', [
-            'company_uuid' => 'company-uuid',
-        ])));
-        expect($kept)->toBe($public);
-
-        unset($store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']);
-        $redirectOnly = $controller->start(Request::create('/oauth/start', 'POST', [
-            'company_uuid' => 'company-uuid',
-        ]));
-        expect($redirectOnly->getStatusCode())->toBe(422)
-            ->and($redirectOnly->getData(true)['message'])->toBe('QuickBooks cannot be connected yet: Intuit needs a'
-                . ' public https:// address to send you back to. Ask an installation administrator to enter the'
-                . ' Public OAuth Redirect URL in Admin → QuickBooks → Settings and add the same URL to the'
-                . ' Intuit app.');
-
-        $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']                 = 'not-a-url';
-        $invalid                                                                             = $controller->start(Request::create('/oauth/start', 'POST', [
-            'company_uuid' => 'company-uuid',
-        ]));
-        expect($invalid->getStatusCode())->toBe(422);
-    } finally {
-        qbRestoreConfig($previous);
-        session(['company' => null]);
     }
 });
 
@@ -635,13 +550,12 @@ test('oauth start refuses before Intuit when no console host is configured', fun
     config()->set('fleetbase.url', null);
     config()->set('fleetbase.console.host', 'fleetbase.io');
     config()->set('quickbooks.console_host', null);
-    $public                                 = 'https://example.com/quickbooks/int/v1/oauth/callback';
+    $public                                 = 'https://console.example.com/quickbooks';
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'                 => 'client-id',
-        'client_secret'             => (new SecretCipher())->encrypt('secret'),
-        'public_oauth_redirect_url' => $public,
-        'environment'               => 'sandbox',
+        'client_id'     => 'client-id',
+        'client_secret' => (new SecretCipher())->encrypt('secret'),
+        'environment'   => 'sandbox',
     ];
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
@@ -674,7 +588,7 @@ test('oauth start refuses before Intuit when no console host is configured', fun
     }
 });
 
-test('oauth complete exchanges the code with the same computed callback', function () {
+test('oauth complete exchanges the code with the console QuickBooks page as the redirect', function () {
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     $previous = qbRememberConfig([
         'app.url',
@@ -682,11 +596,12 @@ test('oauth complete exchanges the code with the same computed callback', functi
         'fleetbase.console.host',
         'quickbooks.console_host',
     ]);
-    config()->set('app.url', 'https://example.com');
+    // The API port must not leak into the redirect: Intuit returns to the console.
+    config()->set('app.url', 'http://localhost:8000');
     config()->set('fleetbase.url', null);
-    config()->set('fleetbase.console.host', 'http://10.30.0.34:4200');
-    config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
-    $computed = 'https://example.com/quickbooks/int/v1/oauth/callback';
+    config()->set('fleetbase.console.host', 'https://fleet.example.com');
+    config()->set('quickbooks.console_host', 'https://fleet.example.com/');
+    $computed = 'https://fleet.example.com/quickbooks';
     Http::swap(new Illuminate\Http\Client\Factory());
     Http::fake([
         'oauth.platform.intuit.com/*' => Http::response([
@@ -732,18 +647,12 @@ test('oauth complete exchanges the code with the same computed callback', functi
         expect(qbOAuthRedirect($started))->toBe($computed);
         $state = (string) $started->getData(true)['state'];
 
-        $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
-            'state'   => $state,
-            'code'    => 'code',
-            'realmId' => '9341453000000001',
-        ]));
-        expect($callback->getTargetUrl())->toStartWith('http://10.30.0.34:4200/quickbooks?oauth_state=');
-        parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
-
         $completed = null;
-        $jobs      = qbCaptureDispatches(function () use ($controller, $query, &$completed): void {
+        $jobs      = qbCaptureDispatches(function () use ($controller, $state, &$completed): void {
             $completed = $controller->complete(Request::create('/oauth/complete', 'POST', [
-                'state' => (string) $query['oauth_state'],
+                'state'   => $state,
+                'code'    => 'code',
+                'realmId' => '9341453000000001',
             ]));
         });
         $exchanges = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
@@ -771,14 +680,14 @@ test('oauth complete exchanges the code with the same computed callback', functi
     }
 });
 
-test('oauth complete sends the redirect uri used at start even if the saved one changed since', function () {
+test('oauth complete sends the redirect uri used at start even if the console host changed since', function () {
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     $previous = qbRememberConfig(['app.url', 'fleetbase.url', 'fleetbase.console.host', 'quickbooks.console_host']);
     config()->set('app.url', null);
     config()->set('fleetbase.url', null);
-    config()->set('fleetbase.console.host', 'http://10.30.0.34:4200');
-    config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
-    $atStart = 'https://example.com/quickbooks/int/v1/oauth/callback';
+    config()->set('fleetbase.console.host', null);
+    config()->set('quickbooks.console_host', 'https://example.com');
+    $atStart = 'https://example.com/quickbooks';
     Http::swap(new Illuminate\Http\Client\Factory());
     Http::fake([
         'oauth.platform.intuit.com/*' => Http::response([
@@ -790,10 +699,9 @@ test('oauth complete sends the redirect uri used at start even if the saved one 
     ]);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'                 => 'client-id',
-        'client_secret'             => (new SecretCipher())->encrypt('secret'),
-        'environment'               => 'sandbox',
-        'public_oauth_redirect_url' => $atStart,
+        'client_id'     => 'client-id',
+        'client_secret' => (new SecretCipher())->encrypt('secret'),
+        'environment'   => 'sandbox',
     ];
     $authorizer = new Authorizer(static fn () => true);
     $flow       = new OAuthFlow(new QuickBooksClient());
@@ -820,19 +728,16 @@ test('oauth complete sends the redirect uri used at start even if the saved one 
     try {
         $started = $controller->start(Request::create('/oauth/start', 'POST'));
         expect(qbOAuthRedirect($started))->toBe($atStart);
-        $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
-            'state'   => (string) $started->getData(true)['state'],
-            'code'    => 'code',
-            'realmId' => '9341453000000001',
-        ]));
-        parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
+        $state = (string) $started->getData(true)['state'];
 
-        // The administrator changes the public URL while the user is at Intuit.
-        $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url'] = 'https://example.net/quickbooks/cb';
-        $completed                                                           = null;
-        qbCaptureDispatches(function () use ($controller, $query, &$completed): void {
+        // The console host changes while the user is at Intuit.
+        config()->set('quickbooks.console_host', 'https://example.net');
+        $completed = null;
+        qbCaptureDispatches(function () use ($controller, $state, &$completed): void {
             $completed = $controller->complete(Request::create('/oauth/complete', 'POST', [
-                'state' => (string) $query['oauth_state'],
+                'state'   => $state,
+                'code'    => 'code',
+                'realmId' => '9341453000000001',
             ]));
         });
         $exchanges = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
@@ -856,7 +761,7 @@ test('an operator may only reconnect the QuickBooks company the organization alr
     $previous = qbRememberConfig(['app.url', 'fleetbase.url', 'fleetbase.console.host', 'quickbooks.console_host']);
     config()->set('app.url', 'https://example.com');
     config()->set('fleetbase.url', null);
-    config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
+    config()->set('quickbooks.console_host', 'https://fleet.example.com');
     Http::swap(new Illuminate\Http\Client\Factory());
     Http::fake([
         'oauth.platform.intuit.com/*' => Http::response([
@@ -887,16 +792,13 @@ test('an operator may only reconnect the QuickBooks company the organization alr
 
             return;
         }
-        $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
-            'state'   => (string) $started->getData(true)['state'],
-            'code'    => 'code',
-            'realmId' => '9341453000000001',
-        ]));
-        parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
+        $state     = (string) $started->getData(true)['state'];
         $completed = null;
-        $jobs      = qbCaptureDispatches(function () use ($controller, $query, &$completed): void {
+        $jobs      = qbCaptureDispatches(function () use ($controller, $state, &$completed): void {
             $completed = $controller->complete(Request::create('/oauth/complete', 'POST', [
-                'state' => (string) $query['oauth_state'],
+                'state'   => $state,
+                'code'    => 'code',
+                'realmId' => '9341453000000001',
             ]));
         });
         $exchanges = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
@@ -1006,16 +908,12 @@ test('oauth complete skips customer import when customers are turned off', funct
         $started = $controller->start(Request::create('/oauth/start', 'POST', [
             'company_uuid' => 'company-uuid',
         ]));
-        $state    = (string) $started->getData(true)['state'];
-        $callback = $controller->callback(Request::create('/oauth/callback', 'GET', [
-            'state'   => $state,
-            'code'    => 'code',
-            'realmId' => '9341453000000001',
-        ]));
-        parse_str((string) parse_url($callback->getTargetUrl(), PHP_URL_QUERY), $query);
-        $jobs = qbCaptureDispatches(function () use ($controller, $query): void {
+        $state = (string) $started->getData(true)['state'];
+        $jobs  = qbCaptureDispatches(function () use ($controller, $state): void {
             $completed = $controller->complete(Request::create('/oauth/complete', 'POST', [
-                'state' => (string) $query['oauth_state'],
+                'state'   => $state,
+                'code'    => 'code',
+                'realmId' => '9341453000000001',
             ]));
             expect($completed->getStatusCode())->toBe(200);
         });
@@ -1033,57 +931,34 @@ test('oauth complete skips customer import when customers are turned off', funct
     }
 });
 
-test('the oauth callback route stays a public get and is the only throttled route', function () {
+test('there is no public oauth callback route and oauth complete needs a signed-in console', function () {
     $routes      = (string) file_get_contents(dirname(__DIR__) . '/src/routes.php');
-    $callbackAt  = strpos($routes, "\$router->get('v1/oauth/callback', [ConnectionController::class, 'callback'])");
+    $config      = (string) file_get_contents(dirname(__DIR__) . '/config/quickbooks.php');
     $webhookAt   = strpos($routes, "\$router->post('v1/webhooks', [WebhookController::class, 'handle']);");
     $protectedAt = strpos($routes, "'middleware' => ['fleetbase.protected']");
+    $completeAt  = strpos($routes, "\$router->post('oauth/complete', [ConnectionController::class, 'complete']);");
 
-    expect($callbackAt)->not->toBeFalse()
+    // Intuit returns the browser to the console's QuickBooks page, which posts the code to oauth/complete.
+    expect($routes)->not->toContain('oauth/callback')
+        ->and($routes)->not->toContain('callbackThrottle')
+        ->and($config)->not->toContain('callback_per_minute')
+        ->and(method_exists(ConnectionController::class, 'callback'))->toBeFalse()
         ->and($webhookAt)->not->toBeFalse()
         ->and($protectedAt)->not->toBeFalse()
-        ->and($callbackAt)->toBeLessThan($protectedAt)
-        // Intuit may burst webhook notifications, so only the callback is throttled: the webhook
-        // statement above carries no middleware.
-        ->and(substr_count($routes, 'ConnectionController::callbackThrottle()'))->toBe(1)
-        ->and(substr_count($routes, '->middleware('))->toBe(1);
-});
-
-test('the oauth callback limit comes from config and zero turns it off', function () {
-    $previous = config('quickbooks.oauth.callback_per_minute');
-
-    try {
-        config()->set('quickbooks.oauth.callback_per_minute', null);
-        expect(ConnectionController::callbackThrottle())->toBe('throttle:30,1');
-
-        config()->set('quickbooks.oauth.callback_per_minute', 120);
-        expect(ConnectionController::callbackThrottle())->toBe('throttle:120,1');
-
-        config()->set('quickbooks.oauth.callback_per_minute', '45');
-        expect(ConnectionController::callbackThrottle())->toBe('throttle:45,1');
-
-        foreach ([0, '0', -5] as $off) {
-            config()->set('quickbooks.oauth.callback_per_minute', $off);
-            expect(ConnectionController::callbackThrottle())->toBeNull();
-        }
-
-        // A value that is not a number keeps the default limit rather than turning it off.
-        config()->set('quickbooks.oauth.callback_per_minute', 'abc');
-        expect(ConnectionController::callbackThrottle())->toBe('throttle:30,1');
-    } finally {
-        config()->set('quickbooks.oauth.callback_per_minute', $previous);
-    }
+        ->and($webhookAt)->toBeLessThan($protectedAt)
+        ->and($completeAt)->toBeGreaterThan($protectedAt)
+        // Intuit may burst webhook notifications, so the webhook statement carries no middleware.
+        ->and(substr_count($routes, '->middleware('))->toBe(0);
 });
 
 test('oauth start twice in a row answers 429 the second time', function () {
     session(['company' => 'company-uuid']);
-    $public                                 = 'https://example.com/quickbooks/int/v1/oauth/callback';
+    $public                                 = 'https://console.example.com/quickbooks';
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'                 => 'client-id',
-        'client_secret'             => (new SecretCipher())->encrypt('secret'),
-        'public_oauth_redirect_url' => $public,
-        'environment'               => 'sandbox',
+        'client_id'     => 'client-id',
+        'client_secret' => (new SecretCipher())->encrypt('secret'),
+        'environment'   => 'sandbox',
     ];
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
@@ -1122,10 +997,9 @@ test('a cancelled or failed connection does not hold back the next Connect', fun
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'                 => 'client-id',
-        'client_secret'             => (new SecretCipher())->encrypt('secret'),
-        'public_oauth_redirect_url' => 'https://example.com/quickbooks/int/v1/oauth/callback',
-        'environment'               => 'sandbox',
+        'client_id'     => 'client-id',
+        'client_secret' => (new SecretCipher())->encrypt('secret'),
+        'environment'   => 'sandbox',
     ];
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
@@ -1146,8 +1020,8 @@ test('a cancelled or failed connection does not hold back the next Connect', fun
     config()->set('quickbooks.console_host', 'https://console.example.com');
 
     try {
-        $started = $controller->start(Request::create('/oauth/start', 'POST'));
-        $controller->callback(Request::create('/oauth/callback', 'GET', [
+        $started   = $controller->start(Request::create('/oauth/start', 'POST'));
+        $cancelled = $controller->complete(Request::create('/oauth/complete', 'POST', [
             'state' => $started->getData(true)['state'],
             'error' => 'access_denied',
         ]));
@@ -1163,6 +1037,7 @@ test('a cancelled or failed connection does not hold back the next Connect', fun
     }
 
     expect($started->getStatusCode())->toBe(200)
+        ->and($cancelled->getData(true))->toBe(['connected' => false])
         ->and($afterCancel->getStatusCode())->toBe(200)
         ->and($failed->getStatusCode())->toBe(422)
         ->and($afterFail->getStatusCode())->toBe(200)
@@ -1190,23 +1065,39 @@ test('oauth start rejects missing client id or redirect uri', function () {
     session(['company' => null]);
 });
 
-test('the oauth callback rejects an unknown state and sends the browser back to the console', function () {
+test('oauth complete refuses an unknown state', function () {
+    session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     config()->set('quickbooks.console_host', 'https://console.example.test');
     $controller = new ConnectionController(
-        new Authorizer(static fn () => false),
+        new Authorizer(static fn () => true),
         new OAuthFlow(new QuickBooksClient()),
         new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()),
-        new SettingsStore(),
+        new MemorySettingsStore(),
         new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
     );
 
-    $response = $controller->callback(Request::create('/oauth/callback', 'GET', ['state' => 'bogus', 'code' => 'code', 'realmId' => '123456789']));
+    try {
+        $response = $controller->complete(Request::create('/oauth/complete', 'POST', [
+            'state'   => 'bogus',
+            'code'    => 'code',
+            'realmId' => '123456789',
+        ]));
+        $cancel = $controller->complete(Request::create('/oauth/complete', 'POST', [
+            'state' => 'bogus',
+            'error' => 'access_denied',
+        ]));
 
-    expect($response)->toBeInstanceOf(RedirectResponse::class)
-        ->and($response->getTargetUrl())->toBe('https://console.example.test/quickbooks?error=state');
+        expect($response->getStatusCode())->toBe(422)
+            ->and($response->getData(true))->not->toHaveKey('connected')
+            ->and($cancel->getStatusCode())->toBe(200)
+            ->and($cancel->getData(true))->toBe(['connected' => false]);
+    } finally {
+        config()->set('quickbooks.console_host', null);
+        session(['company' => null, 'user' => null]);
+    }
 });
 
-test('the oauth callback only keeps the code and the user who started the flow completes it', function () {
+test('only the user who started the flow can finish it, and a reload does not exchange again', function () {
     config()->set('quickbooks.console_host', 'https://console.example.test');
     Http::swap(new Illuminate\Http\Client\Factory());
     Http::fake([
@@ -1257,25 +1148,24 @@ test('the oauth callback only keeps the code and the user who started the flow c
         }
     };
 
-    $callback = Request::create('/oauth/callback', 'GET', [
+    $finish = static fn (): Request => Request::create('/oauth/complete', 'POST', [
         'state'   => $begun['state'],
         'code'    => 'code',
         'realmId' => '9341453000000001',
     ]);
-    $response = $controller->callback($callback);
 
-    expect($controller->saved)->toBe([])
-        ->and($response->getTargetUrl())->toStartWith('https://console.example.test/quickbooks?oauth_state=');
-
-    parse_str((string) parse_url($response->getTargetUrl(), PHP_URL_QUERY), $query);
-    $handle = (string) $query['oauth_state'];
-    expect($handle)->not->toBe($begun['state'])
-        ->and($controller->callback($callback)->getTargetUrl())->toBe('https://console.example.test/quickbooks?error=state');
+    // Another user of the same organization cannot use the state, and it is not burned for its owner.
+    session(['company' => 'company-uuid', 'user' => 'other-user']);
+    $other = $controller->complete($finish());
+    expect($other->getStatusCode())->toBe(422)
+        ->and($controller->saved)->toBe([])
+        ->and(Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com')))
+        ->toHaveCount(0);
 
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     try {
-        $jobs = qbCaptureDispatches(function () use ($controller, $handle): void {
-            $completed = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
+        $jobs = qbCaptureDispatches(function () use ($controller, $finish): void {
+            $completed = $controller->complete($finish());
 
             expect($completed->getStatusCode())->toBe(200)
                 ->and($completed->getData(true))->toBe(['connected' => true])
@@ -1286,7 +1176,7 @@ test('the oauth callback only keeps the code and the user who started the flow c
 
             // A reload repeats complete(); it reports connected without a second code exchange, save, or sync.
             $controller->saved = [];
-            $repeated          = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
+            $repeated          = $controller->complete($finish());
             $exchanges         = Http::recorded(fn ($request) => str_contains($request->url(), 'oauth.platform.intuit.com'));
 
             expect($repeated->getStatusCode())->toBe(200)
@@ -1295,7 +1185,7 @@ test('the oauth callback only keeps the code and the user who started the flow c
                 ->and($exchanges)->toHaveCount(1);
 
             $controller->stored = false;
-            $disconnected       = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
+            $disconnected       = $controller->complete($finish());
             expect($disconnected->getStatusCode())->toBe(422)
                 ->and($disconnected->getData(true)['message'])->toBe('QuickBooks is not connected. '
                     . 'Connect again from QuickBooks Setup.');
@@ -1462,9 +1352,8 @@ test('a failed token exchange and an unreachable probe do not return transport t
         'redirect_uri'  => 'https://example.test/callback',
         'environment'   => 'sandbox',
     ];
-    $flow   = new OAuthFlow($client);
-    $begun  = $flow->begin('company-uuid', 'user-uuid', $credentials);
-    $handle = $flow->receive($begun['state'], 'code', '9341453000000001');
+    $flow  = new OAuthFlow($client);
+    $begun = $flow->begin('company-uuid', 'user-uuid', $credentials);
 
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     try {
@@ -1474,7 +1363,11 @@ test('a failed token exchange and an unreachable probe do not return transport t
             new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()),
             new MemorySettingsStore(),
             new Fleetbase\Quickbooks\Services\ConnectionProbe($client)
-        ))->complete(Request::create('/oauth/complete', 'POST', ['state' => $handle]));
+        ))->complete(Request::create('/oauth/complete', 'POST', [
+            'state'   => $begun['state'],
+            'code'    => 'code',
+            'realmId' => '9341453000000001',
+        ]));
 
         expect($response->getStatusCode())->toBe(422)
             ->and($response->getData(true)['message'])->toBe('QuickBooks could not finish connecting. '

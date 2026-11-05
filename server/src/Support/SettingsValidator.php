@@ -29,12 +29,6 @@ class SettingsValidator
             $errors['client_id'] = 'quickbooks.validation.client-id';
         }
 
-        $redirect = trim((string) ($auth['redirect_uri'] ?? ''));
-        $schemeOk = str_starts_with($redirect, 'https://') === true || str_starts_with($redirect, 'http://') === true;
-        if (filter_var($redirect, FILTER_VALIDATE_URL) === false || $schemeOk === false) {
-            $errors['redirect_uri'] = 'quickbooks.validation.redirect-uri';
-        }
-
         $environment = (string) ($auth['environment'] ?? '');
         if (in_array($environment, ['sandbox', 'production'], true) === false) {
             $errors['environment'] = 'quickbooks.validation.environment';

@@ -32,21 +32,13 @@ class CurrentUserStubService extends Service {
 }
 
 const URL_COPY = {
-    internal_webhook_receiver_url: {
-        label: 'Fleetbase webhook receiver',
-        hint: 'Fleetbase listens for webhooks here. Copy the Public Webhook Receiver URL into Intuit.',
-    },
     public_webhook_receiver_url: {
         label: 'Public Webhook Receiver URL',
         hint: 'Paste this into the Intuit webhook Endpoint URL.',
     },
-    internal_oauth_redirect_url: {
-        label: 'Fleetbase OAuth redirect',
-        hint: 'Fleetbase receives the QuickBooks sign-in return here. Copy the Public OAuth Redirect URL into Intuit.',
-    },
     public_oauth_redirect_url: {
         label: 'Public OAuth Redirect URL',
-        hint: 'Paste this into Intuit Redirect URIs.',
+        hint: 'Paste this into Intuit Redirect URIs. After sign-in, Intuit returns to this QuickBooks page on the console (CONSOLE_HOST).',
     },
 };
 
@@ -81,18 +73,6 @@ function assertSelectableUrl(assert, key, value) {
     assert.dom(`[data-test-field-help="${key}"]`).hasText(copy.hint);
 }
 
-function assertPublicUrl(assert, key, value) {
-    const copy = URL_COPY[key];
-    const field = `[data-test-sync-field="${key}"]`;
-    assert.dom(`${field} label`).hasText(copy.label);
-    assert.dom(`${field} input[data-test-field="${key}"]`).hasValue(value);
-    assert.dom(`${field} input[data-test-field="${key}"]`).isNotDisabled();
-    assert.dom(`${field} input[data-test-field="${key}"]`).doesNotHaveAttribute('readonly');
-    assert.dom(`${field} .input-group [data-test-field-help="${key}"]`).hasText(copy.hint);
-    assert.dom(`${field} [data-test-field-help="${key}"]`).hasClass('text-xs');
-    assert.dom(`${field} [data-test-field-help="${key}"]`).hasClass('mt-1');
-}
-
 function assertFieldError(assert, controlSelector, errorKey) {
     const control = document.querySelector(controlSelector);
     const error = document.querySelector(`[data-test-error="${errorKey}"]`);
@@ -109,15 +89,16 @@ function assertFieldError(assert, controlSelector, errorKey) {
     assert.dom(control).hasAttribute('aria-invalid', 'true');
 }
 
-function assertUrlsStayOutOfPayload(assert, payload, publicUrls = {}) {
+// The URLs are computed by the server and shown as text, so a save never sends one.
+function assertUrlsStayOutOfPayload(assert, payload) {
     assert.strictEqual(payload.auth.internal_webhook_receiver_url, undefined);
     assert.strictEqual(payload.auth.internal_oauth_redirect_url, undefined);
     assert.strictEqual(payload.sync.internal_webhook_receiver_url, undefined);
     assert.strictEqual(payload.sync.internal_oauth_redirect_url, undefined);
     assert.strictEqual(payload.sync.public_webhook_receiver_url, undefined);
     assert.strictEqual(payload.sync.public_oauth_redirect_url, undefined);
-    assert.strictEqual(payload.auth.public_webhook_receiver_url, publicUrls.public_webhook_receiver_url ?? '');
-    assert.strictEqual(payload.auth.public_oauth_redirect_url, publicUrls.public_oauth_redirect_url ?? '');
+    assert.strictEqual(payload.auth.public_webhook_receiver_url, undefined);
+    assert.strictEqual(payload.auth.public_oauth_redirect_url, undefined);
     assert.strictEqual(payload.auth.redirect_uri, undefined);
     assert.strictEqual(payload.auth.webhook_url, undefined);
     assert.strictEqual(payload.auth.public_receiver_url, undefined);
@@ -159,8 +140,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             webhook_verifier_set: true,
             internal_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
             public_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
-            internal_oauth_redirect_url: 'http://internal.example/quickbooks/int/v1/oauth/callback',
-            public_oauth_redirect_url: 'http://internal.example/quickbooks/int/v1/oauth/callback',
+            public_oauth_redirect_url: 'https://console.example/quickbooks',
             sources: {
                 client_id: 'admin',
                 environment: 'admin',
@@ -309,10 +289,11 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom().doesNotIncludeText('Records in each sync');
         assert.dom().doesNotIncludeText('Clear Enable');
         assert.dom().doesNotIncludeText('when Enable is on');
-        assertPublicUrl(assert, 'public_webhook_receiver_url', 'http://internal.example/quickbooks/int/v1/webhooks');
-        assertSelectableUrl(assert, 'internal_webhook_receiver_url', 'http://internal.example/quickbooks/int/v1/webhooks');
-        assertPublicUrl(assert, 'public_oauth_redirect_url', 'http://internal.example/quickbooks/int/v1/oauth/callback');
-        assertSelectableUrl(assert, 'internal_oauth_redirect_url', 'http://internal.example/quickbooks/int/v1/oauth/callback');
+        assertSelectableUrl(assert, 'public_webhook_receiver_url', 'http://internal.example/quickbooks/int/v1/webhooks');
+        assertSelectableUrl(assert, 'public_oauth_redirect_url', 'https://console.example/quickbooks');
+        // Only the two addresses Intuit needs are shown; the API's own callback is gone.
+        assert.dom("[data-test-sync-field='internal_webhook_receiver_url']").doesNotExist();
+        assert.dom("[data-test-sync-field='internal_oauth_redirect_url']").doesNotExist();
         assert.dom().doesNotIncludeText('Intuit posts webhooks to this address.');
         assert.dom().doesNotIncludeText('QuickBooks returns here after sign-in.');
         assert.dom("[data-test-policy='customer'] [data-test-sync='customer_conflict']").exists();
@@ -354,8 +335,6 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.strictEqual(this.saved, null);
 
         await fillIn("[data-test-field='client_id']", 'org-id');
-        await fillIn("[data-test-field='public_webhook_receiver_url']", 'https://edited.example/hooks');
-        await fillIn("[data-test-field='public_oauth_redirect_url']", 'https://edited.example/oauth');
         await fillIn("[data-test-sync='customer_conflict']", 'quickbooks');
         await click(saveButton());
         assert.strictEqual(this.saved.auth.client_id, 'org-id');
@@ -374,10 +353,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.strictEqual(this.saved.sync.periodic_interval_hours, 24);
         assert.strictEqual(this.saved.auth.webhook_verifier, undefined);
         assert.strictEqual(this.saved.auth.client_secret, undefined);
-        assertUrlsStayOutOfPayload(assert, this.saved, {
-            public_webhook_receiver_url: 'https://edited.example/hooks',
-            public_oauth_redirect_url: 'https://edited.example/oauth',
-        });
+        assertUrlsStayOutOfPayload(assert, this.saved);
         assert.dom('[data-test-policy="wallet"]').includesText('Primary');
         assert.dom('[data-test-policy="wallet"]').includesText('Sync direction');
         assert.dom('[data-test-policy="wallet"]').includesText('Accounts / Wallets');
@@ -455,12 +431,12 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.deepEqual(order.slice(0, 4), ['environment', 'client_id', 'client_secret', 'webhook_verifier']);
     });
 
-    test('a public url that is not a public https address is flagged until it is edited', async function (assert) {
+    test('a URL that is not a public https address says which setting to change', async function (assert) {
         this.set('settings', {
             client_id: 'id',
             environment: 'sandbox',
             client_secret_set: true,
-            public_oauth_redirect_url: 'http://localhost/quickbooks/int/v1/oauth/callback',
+            public_oauth_redirect_url: 'http://localhost:4200/quickbooks',
             public_oauth_redirect_ready: false,
             public_webhook_receiver_url: 'https://fleet.example.com/quickbooks/int/v1/webhooks',
             public_webhook_receiver_ready: true,
@@ -471,11 +447,21 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         assert
             .dom("[data-test-url-not-public='public_oauth_redirect_url']")
-            .hasText('This is not a public https:// address, so Intuit cannot reach it. Enter the address Fleetbase is reached at from the internet.');
+            .hasText("This is not a public https:// address, so Intuit cannot send you back to it. Set CONSOLE_HOST on the Fleetbase API to the console's public https:// address.");
         assert.dom("[data-test-url-not-public='public_webhook_receiver_url']").doesNotExist();
+        assert.dom('input[data-test-field="public_oauth_redirect_url"]').doesNotExist();
 
-        await fillIn("[data-test-field='public_oauth_redirect_url']", 'https://fleet.example.com/quickbooks/int/v1/oauth/callback');
+        this.set('settings', {
+            ...this.settings,
+            public_oauth_redirect_url: 'https://fleet.example.com/quickbooks',
+            public_oauth_redirect_ready: true,
+            public_webhook_receiver_url: 'http://10.0.0.5:8000/quickbooks/int/v1/webhooks',
+            public_webhook_receiver_ready: false,
+        });
         assert.dom("[data-test-url-not-public='public_oauth_redirect_url']").doesNotExist();
+        assert
+            .dom("[data-test-url-not-public='public_webhook_receiver_url']")
+            .hasText('This is not a public https:// address, so Intuit cannot reach it. Set APP_URL on the Fleetbase API to the address the API is reached at from the internet.');
     });
 
     test('a changed Client ID needs its Client secret, and an unchanged one keeps the saved secret', async function (assert) {
@@ -844,8 +830,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             webhook_verifier_set: true,
             internal_webhook_receiver_url: 'http://internal.example/hooks',
             public_webhook_receiver_url: 'http://internal.example/hooks',
-            internal_oauth_redirect_url: 'http://internal.example/oauth',
-            public_oauth_redirect_url: 'http://internal.example/oauth',
+            public_oauth_redirect_url: 'http://console.example/quickbooks',
         });
         this.set('sync', {
             enabled: true,
@@ -877,10 +862,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         await render(hbs`
             <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
         `);
-        assertPublicUrl(assert, 'public_webhook_receiver_url', 'http://internal.example/hooks');
-        assertSelectableUrl(assert, 'internal_webhook_receiver_url', 'http://internal.example/hooks');
-        assertPublicUrl(assert, 'public_oauth_redirect_url', 'http://internal.example/oauth');
-        assertSelectableUrl(assert, 'internal_oauth_redirect_url', 'http://internal.example/oauth');
+        assertSelectableUrl(assert, 'public_webhook_receiver_url', 'http://internal.example/hooks');
+        assertSelectableUrl(assert, 'public_oauth_redirect_url', 'http://console.example/quickbooks');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
         assert.dom("[data-test-field-help='environment']").hasClass('text-gray-500');
         assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
@@ -895,10 +878,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.strictEqual(this.saved.sync.customer_conflict, 'quickbooks');
         assert.strictEqual(this.saved.sync.customer_reference, 'quickbooks');
         assert.strictEqual(this.saved.sync.customer_direction, 'both');
-        assertUrlsStayOutOfPayload(assert, this.saved, {
-            public_webhook_receiver_url: 'http://internal.example/hooks',
-            public_oauth_redirect_url: 'http://internal.example/oauth',
-        });
+        assertUrlsStayOutOfPayload(assert, this.saved);
 
         this.set('settings', {
             client_id: 'id',
@@ -908,13 +888,10 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             webhook_verifier_set: true,
             internal_webhook_receiver_url: 'http://localhost/quickbooks/int/v1/webhooks',
             public_webhook_receiver_url: 'http://localhost/quickbooks/int/v1/webhooks',
-            internal_oauth_redirect_url: 'http://localhost/quickbooks/int/v1/oauth/callback',
-            public_oauth_redirect_url: 'http://localhost/quickbooks/int/v1/oauth/callback',
+            public_oauth_redirect_url: 'http://localhost:4200/quickbooks',
         });
-        assert.dom("[data-test-field='internal_webhook_receiver_url']").hasText('http://localhost/quickbooks/int/v1/webhooks');
-        assert.dom("[data-test-field='public_webhook_receiver_url']").hasValue('http://localhost/quickbooks/int/v1/webhooks');
-        assert.dom("[data-test-field='internal_oauth_redirect_url']").hasText('http://localhost/quickbooks/int/v1/oauth/callback');
-        assert.dom("[data-test-field='public_oauth_redirect_url']").hasValue('http://localhost/quickbooks/int/v1/oauth/callback');
+        assert.dom("[data-test-field='public_webhook_receiver_url']").hasText('http://localhost/quickbooks/int/v1/webhooks');
+        assert.dom("[data-test-field='public_oauth_redirect_url']").hasText('http://localhost:4200/quickbooks');
         assert.dom('[data-test-localhost-warning]').doesNotExist();
         assert.dom().doesNotIncludeText('If this address is localhost');
         assert.dom().doesNotIncludeText('{{fleetbase.url}}');
@@ -925,15 +902,12 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             environment: 'sandbox',
             client_secret_set: true,
             webhook_verifier_set: true,
-            internal_webhook_receiver_url: 'http://internal.example/hooks',
+            internal_webhook_receiver_url: 'https://public.example/hooks',
             public_webhook_receiver_url: 'https://public.example/hooks',
-            internal_oauth_redirect_url: 'http://internal.example/oauth',
-            public_oauth_redirect_url: 'https://public.example/oauth',
+            public_oauth_redirect_url: 'https://console.example/quickbooks',
         });
-        assert.dom("[data-test-field='internal_webhook_receiver_url']").hasText('http://internal.example/hooks');
-        assert.dom("[data-test-field='public_webhook_receiver_url']").hasValue('https://public.example/hooks');
-        assert.dom("[data-test-field='internal_oauth_redirect_url']").hasText('http://internal.example/oauth');
-        assert.dom("[data-test-field='public_oauth_redirect_url']").hasValue('https://public.example/oauth');
+        assert.dom("[data-test-field='public_webhook_receiver_url']").hasText('https://public.example/hooks');
+        assert.dom("[data-test-field='public_oauth_redirect_url']").hasText('https://console.example/quickbooks');
 
         await fillIn("[data-test-sync='customer_direction']", 'outbound');
         await fillIn("[data-test-field='webhook_verifier']", 'verifier-token');
@@ -943,10 +917,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.strictEqual(this.saved.sync.customer_reference, 'quickbooks');
         assert.strictEqual(this.saved.auth.webhook_verifier, 'verifier-token');
         assert.strictEqual(this.saved.auth.client_secret, undefined);
-        assertUrlsStayOutOfPayload(assert, this.saved, {
-            public_webhook_receiver_url: 'https://public.example/hooks',
-            public_oauth_redirect_url: 'https://public.example/oauth',
-        });
+        assertUrlsStayOutOfPayload(assert, this.saved);
     });
 
     test('a missing environment defaults to production and a stored sandbox value stays sandbox', async function (assert) {
@@ -965,10 +936,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         assert.dom("[data-test-field='environment']").hasValue('production');
         assert.dom("[data-test-sync='batch_size']").doesNotExist();
-        assertPublicUrl(assert, 'public_webhook_receiver_url', '');
-        assertSelectableUrl(assert, 'internal_webhook_receiver_url', '');
-        assertPublicUrl(assert, 'public_oauth_redirect_url', '');
-        assertSelectableUrl(assert, 'internal_oauth_redirect_url', '');
+        assertSelectableUrl(assert, 'public_webhook_receiver_url', '');
+        assertSelectableUrl(assert, 'public_oauth_redirect_url', '');
         await click(saveButton());
         assert.strictEqual(this.saved.auth.environment, 'production');
         assertUrlsStayOutOfPayload(assert, this.saved);
@@ -1161,8 +1130,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             environment: 'sandbox',
             client_secret_set: true,
             webhook_verifier_set: true,
-            internal_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
-            internal_oauth_redirect_url: 'http://internal.example/quickbooks/int/v1/oauth/callback',
+            public_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
+            public_oauth_redirect_url: 'https://console.example/quickbooks',
         });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
 
@@ -1287,32 +1256,6 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         await settled();
         assert.dom('[data-test-save]', document).doesNotHaveClass('btn-is-loading');
         assert.dom('[data-test-save]', document).isNotDisabled();
-    });
-
-    test('a refused public URL shows its error under that field until it is edited', async function (assert) {
-        this.set('settings', {
-            client_id: 'id',
-            environment: 'sandbox',
-            client_secret_set: true,
-            internal_oauth_redirect_url: 'https://api.example.test/quickbooks/int/v1/oauth/callback',
-            public_oauth_redirect_url: 'https://api.example.test/quickbooks/int/v1/oauth/callback',
-        });
-        this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
-        // The fetch service rejects with the server's JSON body when rawError is set.
-        this.set('onSave', () => {
-            throw { message: 'save failed', errors: { public_oauth_redirect_url: 'quickbooks.validation.public-oauth-url' } };
-        });
-
-        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
-        await fillIn("[data-test-field='public_oauth_redirect_url']", 'https://new.invalid/callback');
-        await click(saveButton());
-
-        assertFieldError(assert, "[data-test-field='public_oauth_redirect_url']", 'public_oauth_redirect_url');
-        assert.dom("[data-test-error='public_oauth_redirect_url']").includesText('Public OAuth Redirect URL must be an https:// address');
-        assert.dom("[data-test-field='public_oauth_redirect_url']").hasValue('https://new.invalid/callback');
-
-        await fillIn("[data-test-field='public_oauth_redirect_url']", 'https://example.com/callback');
-        assert.dom("[data-test-error='public_oauth_redirect_url']").doesNotExist();
     });
 
     test('the Tax panel shows who works out invoice tax and saves the choice', async function (assert) {

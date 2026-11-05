@@ -2,11 +2,8 @@ import Route from '@ember/routing/route';
 import { inject as service } from '@ember/service';
 import { dropTask, waitForQueue } from 'ember-concurrency';
 
-const ERROR_KEYS = new Map([
-    ['cancelled', 'quickbooks.connection.oauth-cancelled'],
-    ['state', 'quickbooks.connection.oauth-expired'],
-    ['failed', 'quickbooks.connection.oauth-failed'],
-]);
+// Intuit's error codes. Anything else gets the generic message, never the raw text.
+const ERROR_KEYS = new Map([['access_denied', 'quickbooks.connection.oauth-cancelled']]);
 
 export default class SettingsRoute extends Route {
     @service fetch;
@@ -14,34 +11,51 @@ export default class SettingsRoute extends Route {
     @service notifications;
     @service intl;
 
-    /** Prevents ?error= / ?oauth_state= from toasting again if setup re-enters. */
+    /** Prevents ?error= / ?code= from posting or toasting again if setup re-enters. */
     oauthResultKey = null;
 
-    /** Finishes the connection before the page renders, so Connection loads the new status. */
+    /**
+     * This page is the OAuth redirect: Intuit sends the browser back here with code, state and realmId
+     * (or error and state). The connection is finished before the page renders, so Connection loads the new status.
+     */
     async model(params) {
-        const state = params.oauth_state;
-        const resultKey = `state:${state}`;
+        const code = params.code;
+        const state = params.state;
+        const realmId = params.realmId;
+        const error = params.error;
+        if (!state || (!code && !error)) {
+            return null;
+        }
 
-        if (!state || this.oauthResultKey === resultKey) {
+        const resultKey = `state:${state}`;
+        if (this.oauthResultKey === resultKey) {
             return null;
         }
         this.oauthResultKey = resultKey;
 
+        if (error) {
+            // Lets the server drop the state so Connect can be tried again at once; setupController shows the message.
+            try {
+                await this.complete({ state, error });
+            } catch {
+                // The cancelled or failed message is shown either way.
+            }
+
+            return null;
+        }
+
         try {
-            await this.fetch.post(
-                'oauth/complete',
-                {
-                    state,
-                    company_uuid: this.currentUser.companyId,
-                },
-                { namespace: 'quickbooks/int/v1' }
-            );
+            await this.complete({ state, code, realmId });
             this.notifications.success(this.intl.t('quickbooks.connection.connected-toast'));
-        } catch (error) {
-            this.notifications.serverError(error);
+        } catch (failure) {
+            this.notifications.serverError(failure);
         }
 
         return null;
+    }
+
+    complete(body) {
+        return this.fetch.post('oauth/complete', { ...body, company_uuid: this.currentUser.companyId }, { namespace: 'quickbooks/int/v1' });
     }
 
     setupController(controller, model) {
@@ -60,7 +74,10 @@ export default class SettingsRoute extends Route {
     }
 
     showOauthResult(controller) {
-        controller.oauth_state = null;
+        // The code is single use and done with; keep it out of the address bar and history.
+        controller.code = null;
+        controller.state = null;
+        controller.realmId = null;
 
         const error = controller.error;
         if (!error) {
@@ -82,7 +99,9 @@ export default class SettingsRoute extends Route {
     resetController(controller, isExiting) {
         if (isExiting) {
             controller.error = null;
-            controller.oauth_state = null;
+            controller.code = null;
+            controller.state = null;
+            controller.realmId = null;
             this.oauthResultKey = null;
         }
     }

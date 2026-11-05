@@ -23,12 +23,12 @@ use Fleetbase\Quickbooks\Services\WebhookSubscriptions;
 use Fleetbase\Quickbooks\Support\ActivityErrors;
 use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
+use Fleetbase\Quickbooks\Support\ConsoleHost;
 use Fleetbase\Quickbooks\Support\PublicHttps;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -36,8 +36,6 @@ use Illuminate\Support\Facades\Log;
 
 class ConnectionController extends QuickbooksController
 {
-    private const CALLBACK_PER_MINUTE = 30;
-
     public function __construct(
         Authorizer $authorizer,
         private OAuthFlow $oauth,
@@ -231,14 +229,14 @@ class ConnectionController extends QuickbooksController
                 'message' => Translation::get('quickbooks.messages.not-set-up'),
             ], 422);
         }
-        if ($this->isAbsoluteHttpUrl($credentials['redirect_uri']) === false) {
+        // Intuit sends the browser back to the console's QuickBooks page, so the console address is needed.
+        if (ConsoleHost::origin() === '') {
+            return response()->json(['message' => Translation::get('quickbooks.messages.console-host-connect')], 422);
+        }
+        if ($credentials['redirect_uri'] === '') {
             return response()->json([
                 'message' => Translation::get('quickbooks.messages.redirect-not-public'),
             ], 422);
-        }
-        // Without it the callback could not hand the code back to the console after the Intuit sign-in.
-        if ($this->consoleHost() === '') {
-            return response()->json(['message' => Translation::get('quickbooks.messages.console-host-connect')], 422);
         }
         $cooling = $this->cooldown($companyUuid, 'start');
         if ($cooling !== null) {
@@ -254,48 +252,33 @@ class ConnectionController extends QuickbooksController
     }
 
     /**
-     * Intuit sends the user's browser here with only code, state and realmId, so there is
-     * no Fleetbase session. Nothing is connected here: the code is kept and the console
-     * finishes the connection through complete(), where the signed-in user is known.
-     */
-    public function callback(Request $request): RedirectResponse|JsonResponse
-    {
-        $state = (string) $request->input('state');
-
-        // Only fixed codes go back to the console; the console maps them to its own messages.
-        if ($request->filled('error') === true) {
-            $companyUuid = $this->oauth->forget($state);
-            // Nothing was connected, so Connect can be tried again at once.
-            if ($companyUuid !== null) {
-                $this->releaseCooldown($companyUuid, 'start');
-            }
-
-            return $this->redirectToConsole(['error' => $request->input('error') === 'access_denied' ? 'cancelled' : 'failed']);
-        }
-
-        try {
-            $handle = $this->oauth->receive($state, (string) $request->input('code'), (string) $request->input('realmId'));
-        } catch (QuickBooksException) {
-            return $this->redirectToConsole(['error' => 'state']);
-        }
-
-        return $this->redirectToConsole(['oauth_state' => $handle]);
-    }
-
-    /**
-     * Finish an authorization received by callback(). Only the user and organization that
-     * started it can finish it.
+     * Intuit sends the browser back to the console's QuickBooks page with code, state and realmId
+     * (or error and state). The signed-in console posts them here. Only the user and organization
+     * that started the state can finish or cancel it.
      */
     public function complete(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks connect connection', $request);
         $companyUuid = $this->companyUuid($request);
+        $state       = (string) $request->input('state');
+        $userUuid    = (string) session('user', '');
+
+        if ($request->filled('error') === true) {
+            // Nothing was connected, so Connect can be tried again at once.
+            if ($this->oauth->cancel($state, $companyUuid, $userUuid) === true) {
+                $this->releaseCooldown($companyUuid, 'start');
+            }
+
+            return response()->json(['connected' => false]);
+        }
 
         try {
-            $connection = $this->oauth->complete(
-                (string) $request->input('state'),
+            $connection = $this->oauth->finish(
+                $state,
+                (string) $request->input('code'),
+                (string) $request->input('realmId'),
                 $companyUuid,
-                (string) session('user', ''),
+                $userUuid,
                 $this->credentials($companyUuid),
                 fn (string $realmId): bool => $this->mayConnectRealm($request, $companyUuid, $realmId)
             );
@@ -492,22 +475,6 @@ class ConnectionController extends QuickbooksController
         return $shared;
     }
 
-    /**
-     * Rate limit for the public OAuth callback, per client IP. Behind a proxy that the host does
-     * not trust, every user shares the proxy's IP and so one limit; raise the value, or set 0 to
-     * turn it off. A value that is not a number keeps the default.
-     */
-    public static function callbackThrottle(): ?string
-    {
-        $configured = config('quickbooks.oauth.callback_per_minute', self::CALLBACK_PER_MINUTE);
-        $perMinute  = is_numeric($configured) === true ? (int) $configured : self::CALLBACK_PER_MINUTE;
-        if ($perMinute < 1) {
-            return null;
-        }
-
-        return 'throttle:' . $perMinute . ',1';
-    }
-
     private function client(): QuickBooksClient
     {
         if ($this->client === null) {
@@ -608,37 +575,6 @@ class ConnectionController extends QuickbooksController
         $model->save();
         $this->store->put(SettingsKeys::companyLastRealm($companyUuid), ['realm_id' => (string) $model->realm_id]);
         FleetbaseDirectory::forgetReauthNotice($companyUuid);
-    }
-
-    /**
-     * @param array<string, int|string> $query
-     */
-    protected function redirectToConsole(array $query): RedirectResponse|JsonResponse
-    {
-        $host = $this->consoleHost();
-        if ($host === '') {
-            return response()->json(['message' => Translation::get('quickbooks.messages.console-host')], 500);
-        }
-        if (preg_match('#^https?://#i', $host) !== 1) {
-            $host = 'https://' . $host;
-        }
-
-        return new RedirectResponse(rtrim($host, '/') . '/quickbooks?' . http_build_query($query));
-    }
-
-    /**
-     * The console origin the OAuth callback returns to, or '' when it is not known.
-     */
-    protected function consoleHost(): string
-    {
-        $host = trim((string) config('quickbooks.console_host', ''));
-        if ($host === '') {
-            // fleetbase.console.host falls back to 'fleetbase.io' when CONSOLE_HOST is unset.
-            $fleetbaseHost = trim((string) config('fleetbase.console.host', ''));
-            $host          = $fleetbaseHost === 'fleetbase.io' ? '' : $fleetbaseHost;
-        }
-
-        return $host;
     }
 
     /**
@@ -851,7 +787,6 @@ class ConnectionController extends QuickbooksController
     /**
      * Sync now uses the saved Client ID and Client secret.
      * A public https redirect is required to start OAuth, not to sync.
-     * The computed callback may be http://localhost.
      */
     private function syncCredentialStatus(string $companyUuid): bool
     {
@@ -863,29 +798,18 @@ class ConnectionController extends QuickbooksController
     }
 
     /**
-     * Intuit is sent a public https URL: the saved public OAuth URL when it passes
-     * the same check used on save, otherwise the computed callback when that passes.
+     * Intuit is sent the console's QuickBooks page as the redirect when it is a public https URL.
+     * It comes from server config and only the browser goes there, so it is not looked up in DNS:
+     * the same check the settings page uses for its warning.
      *
      * @return array{client_id: string, client_secret: string, redirect_uri: string, environment: string}
      */
     private function credentials(string $companyUuid): array
     {
-        $credentials = $this->settings->credentialsFor($this->store, $companyUuid);
-        $public      = trim((string) ($this->store->adminAuth()['public_oauth_redirect_url'] ?? ''));
-        $internal    = SettingController::internalOAuthRedirectUrl();
-        if ($this->isAbsoluteHttpUrl($public) === true) {
-            $credentials['redirect_uri'] = $public;
-        } elseif ($this->isAbsoluteHttpUrl($internal) === true) {
-            $credentials['redirect_uri'] = $internal;
-        } else {
-            $credentials['redirect_uri'] = '';
-        }
+        $credentials                 = $this->settings->credentialsFor($this->store, $companyUuid);
+        $redirect                    = ConsoleHost::oauthRedirectUrl();
+        $credentials['redirect_uri'] = PublicHttps::isPublicHttpsUrl($redirect, false) === true ? $redirect : '';
 
         return $credentials;
-    }
-
-    private function isAbsoluteHttpUrl(string $url): bool
-    {
-        return PublicHttps::isPublicHttpsUrl($url);
     }
 }
