@@ -19,7 +19,10 @@ export default class SettingsRoute extends Route {
      * (or error and state). The connection is finished before the page renders, so Connection loads the new status.
      */
     async model(params) {
-        const { code, state, realmId, error } = params;
+        const code = params.code;
+        const state = params.state;
+        const realmId = params.realmId;
+        const error = params.error;
         if (!state || (!code && !error)) {
             return null;
         }

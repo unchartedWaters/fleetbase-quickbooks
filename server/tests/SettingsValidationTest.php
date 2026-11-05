@@ -800,12 +800,13 @@ test('a submitted or stored public oauth or webhook url is ignored', function ()
     $webhook  = 'https://api.example.test/quickbooks/int/v1/webhooks';
 
     try {
-        foreach ([
+        $submittedUrls = [
             'https://10.0.0.5/callback',
             'not-a-url',
             '   ',
             'https://example.com/quickbooks/int/v1/oauth/callback',
-        ] as $submitted) {
+        ];
+        foreach ($submittedUrls as $submitted) {
             $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
                 'scope' => 'admin',
                 'auth'  => validAuth([

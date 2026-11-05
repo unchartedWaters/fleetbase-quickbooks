@@ -509,7 +509,7 @@ test('oauth start sends the console QuickBooks page and refuses one that is not 
             'company_uuid' => 'company-uuid',
         ]));
 
-        foreach ([
+        $refusedHosts = [
             'http://10.30.0.34:4200',
             'http://fleet.example.com',
             'https://10.0.0.5',
@@ -518,7 +518,8 @@ test('oauth start sends the console QuickBooks page and refuses one that is not 
             'https://localhost',
             'https://[fd00::1]',
             'https://169.254.169.254',
-        ] as $consoleHost) {
+        ];
+        foreach ($refusedHosts as $consoleHost) {
             config()->set('quickbooks.console_host', $consoleHost);
             $refused = $start();
             expect($refused->getStatusCode())->toBe(422)
