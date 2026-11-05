@@ -201,7 +201,8 @@ test('settings are rejected when required values are missing or out of range', f
             . '→ Keys & credentials.')
         ->and(qbText($validator->errors(['environment' => 'staging'], [])['environment']))->toBe('Choose Sandbox for '
             . 'Development keys, or Production for your live company.')
-        ->and($validator->errors([], []))->toHaveKey('redirect_uri');
+        // The OAuth redirect is computed, so it is never a setting to validate.
+        ->and($validator->errors([], []))->not->toHaveKey('redirect_uri');
 
     $errors = $validator->errors(validAuth([
         'redirect_uri'  => 'not-a-url',
@@ -211,7 +212,7 @@ test('settings are rejected when required values are missing or out of range', f
         'default_backoff_seconds' => 4,
     ]));
 
-    expect($errors)->toHaveKey('redirect_uri')
+    expect($errors)->not->toHaveKey('redirect_uri')
         ->and($errors)->toHaveKey('client_secret')
         ->and($errors)->toHaveKey('interval_minutes')
         ->and(qbText($errors['default_backoff_seconds']))->toBe('Enter a whole number of seconds for Retry delay, at '
@@ -228,10 +229,6 @@ test('settings are rejected when required values are missing or out of range', f
         'payment_conflict'  => 'fleetbase',
         'wallet_conflict'   => 'quickbooks',
     ])))->toBe([]);
-
-    expect($validator->errors(validAuth([
-        'redirect_uri' => 'http://10.30.0.34:8000/quickbooks/int/v1/oauth/callback',
-    ]), qbSettings()))->not->toHaveKey('redirect_uri');
 });
 
 test('a blank client secret is not configured and interval minutes stay out of auth', function () {
@@ -249,9 +246,8 @@ test('a blank client secret is not configured and interval minutes stay out of a
             'redirect_uri'     => 'https://example.test/callback',
             'environment'      => 'sandbox',
         ]))->toBe([
-            'client_id'    => 'id',
-            'redirect_uri' => 'https://example.test/callback',
-            'environment'  => 'sandbox',
+            'client_id'   => 'id',
+            'environment' => 'sandbox',
         ])
         ->and($store->normalizeAuth([
             'client_secret'    => 'kept-secret',
@@ -405,7 +401,7 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
     $store = new MemorySettingsStore();
     session(['company' => 'company-uuid']);
     config()->set('app.url', 'https://api.example.test/');
-    config()->set('quickbooks.console_host', null);
+    config()->set('quickbooks.console_host', 'https://console.example.test/');
     config()->set('fleetbase.console.host', null);
     config()->set('fleetbase.url', null);
     $store->rows[SettingsKeys::adminAuth()] = validAuth([
@@ -417,7 +413,8 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
         $store
     );
     $webhook = 'https://api.example.test/quickbooks/int/v1/webhooks';
-    $oauth   = 'https://api.example.test/quickbooks/int/v1/oauth/callback';
+    // The OAuth redirect is the console's QuickBooks page, never an API address.
+    $oauth = 'https://console.example.test/quickbooks';
 
     try {
         $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
@@ -427,11 +424,9 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
 
         expect($shown['internal_webhook_receiver_url'])->toBe($webhook)
             ->and($shown['public_webhook_receiver_url'])->toBe($webhook)
-            ->and($shown['internal_oauth_redirect_url'])->toBe($oauth)
             ->and($shown['public_oauth_redirect_url'])->toBe($oauth)
             ->and($shown['auth']['internal_webhook_receiver_url'])->toBe($webhook)
             ->and($shown['auth']['public_webhook_receiver_url'])->toBe($webhook)
-            ->and($shown['auth']['internal_oauth_redirect_url'])->toBe($oauth)
             ->and($shown['auth']['public_oauth_redirect_url'])->toBe($oauth)
             ->and($shown['auth']['public_receiver_url'])->toBe($webhook)
             ->and($shown['auth']['webhook_url'])->toBe($webhook)
@@ -444,16 +439,16 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
             ->and($shown['auth']['public_webhook_receiver_ready'])->toBeTrue();
 
         config()->set('app.url', '   ');
+        config()->set('quickbooks.console_host', null);
         $pathOnly = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
         expect($pathOnly['internal_webhook_receiver_url'])->toBe('/quickbooks/int/v1/webhooks')
             ->and($pathOnly['public_webhook_receiver_url'])->toBe('/quickbooks/int/v1/webhooks')
-            ->and($pathOnly['internal_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback')
-            ->and($pathOnly['public_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback')
+            ->and($pathOnly['public_oauth_redirect_url'])->toBe('')
             ->and($pathOnly['auth']['internal_webhook_receiver_url'])->toBe('/quickbooks/int/v1/webhooks')
-            ->and($pathOnly['auth']['public_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback')
+            ->and($pathOnly['auth']['public_oauth_redirect_url'])->toBe('')
             ->and($pathOnly['auth']['public_oauth_redirect_ready'])->toBeFalse()
             ->and($pathOnly['auth']['public_webhook_receiver_ready'])->toBeFalse();
 
@@ -464,13 +459,12 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
         expect($fromCore['internal_webhook_receiver_url'])->toBe('https://api.core.test/quickbooks/int/v1/webhooks')
-            ->and($fromCore['public_oauth_redirect_url'])->toBe('https://api.core.test/quickbooks/int/v1/oauth/callback')
+            ->and($fromCore['public_oauth_redirect_url'])->toBe('https://console.example.test/quickbooks')
             ->and($fromCore['auth']['internal_webhook_receiver_url'])->toBe('https://api.core.test/quickbooks/int/v1/webhooks')
-            ->and($fromCore['auth']['public_oauth_redirect_url'])->toBe('https://api.core.test/quickbooks/int/v1/oauth/callback');
+            ->and($fromCore['auth']['public_oauth_redirect_url'])->toBe('https://console.example.test/quickbooks');
 
         config()->set('app.url', 'https://api.example.test');
-        expect(SettingController::publicReceiverUrl())->toBe($webhook)
-            ->and(SettingController::internalOAuthRedirectUrl())->toBe($oauth);
+        expect(SettingController::publicReceiverUrl())->toBe($webhook);
 
         config()->set('app.url', '   ');
         config()->set('fleetbase.url', null);
@@ -504,37 +498,18 @@ test('webhook and oauth urls are computed and client copies are not stored', fun
             ->and($stored)->not->toHaveKey('public_receiver_url')
             ->and($stored)->not->toHaveKey('internal_webhook_receiver_url')
             ->and($stored)->not->toHaveKey('internal_oauth_redirect_url')
-            ->and($stored['public_webhook_receiver_url'])->toBe('https://example.com/quickbooks/int/v1/webhooks')
-            ->and($stored['public_oauth_redirect_url'])->toBe('https://example.com/quickbooks/int/v1/oauth/callback')
+            ->and($stored)->not->toHaveKey('public_webhook_receiver_url')
+            ->and($stored)->not->toHaveKey('public_oauth_redirect_url')
             ->and($storedSync)->not->toHaveKey('internal_webhook_receiver_url')
             ->and($storedSync)->not->toHaveKey('public_webhook_receiver_url')
             ->and($storedSync)->not->toHaveKey('public_oauth_redirect_url')
             ->and($body['internal_webhook_receiver_url'])->toBe('/quickbooks/int/v1/webhooks')
-            ->and($body['public_webhook_receiver_url'])->toBe('https://example.com/quickbooks/int/v1/webhooks')
-            ->and($body['internal_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback')
-            ->and($body['public_oauth_redirect_url'])->toBe('https://example.com/quickbooks/int/v1/oauth/callback')
+            ->and($body['public_webhook_receiver_url'])->toBe('/quickbooks/int/v1/webhooks')
+            ->and($stored)->not->toHaveKey('redirect_uri')
+            ->and($body['public_oauth_redirect_url'])->toBe('')
             ->and($body['auth']['internal_webhook_receiver_url'])->toBe('/quickbooks/int/v1/webhooks')
-            ->and($body['auth']['public_webhook_receiver_url'])->toBe('https://example.com/quickbooks/int/v1/webhooks')
-            ->and($body['auth']['internal_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback')
-            ->and($body['auth']['public_oauth_redirect_url'])->toBe('https://example.com/quickbooks/int/v1/oauth/callback');
-
-        $cleared = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope'        => 'admin',
-            'company_uuid' => 'company-uuid',
-            'auth'         => validAuth([
-                'redirect_uri'                => 'https://example.com/callback',
-                'public_webhook_receiver_url' => '   ',
-                'public_oauth_redirect_url'   => '',
-            ]),
-            'sync' => qbSettings(),
-        ]));
-        $clearedStored = $store->rows[SettingsKeys::adminAuth()];
-        $clearedBody   = $cleared->getData(true);
-        expect($cleared->getStatusCode())->toBe(200)
-            ->and($clearedStored)->not->toHaveKey('public_webhook_receiver_url')
-            ->and($clearedStored)->not->toHaveKey('public_oauth_redirect_url')
-            ->and($clearedBody['public_webhook_receiver_url'])->toBe('/quickbooks/int/v1/webhooks')
-            ->and($clearedBody['auth']['public_oauth_redirect_url'])->toBe('/quickbooks/int/v1/oauth/callback');
+            ->and($body['auth']['public_webhook_receiver_url'])->toBe('/quickbooks/int/v1/webhooks')
+            ->and($body['auth']['public_oauth_redirect_url'])->toBe('');
     } finally {
         session(['company' => null]);
         config()->set('app.url', null);
@@ -584,133 +559,6 @@ test('batch size must be from 1 to 100 when it is sent', function () {
     }
 });
 
-// .invalid never resolves (RFC 6761), so these URLs fail the live public https check.
-test('a saved public URL is kept and shown without a new DNS lookup', function () {
-    $store = new MemorySettingsStore();
-    session(['company' => 'company-uuid']);
-    config()->set('app.url', 'https://api.example.test');
-    $webhook                                = 'https://hooks.invalid/quickbooks/int/v1/webhooks';
-    $oauth                                  = 'https://auth.invalid/quickbooks/int/v1/oauth/callback';
-    $store->rows[SettingsKeys::adminAuth()] = validAuth([
-        'public_webhook_receiver_url' => $webhook,
-        'public_oauth_redirect_url'   => $oauth,
-    ]);
-    $controller = new SettingController(
-        new Authorizer(static fn () => true),
-        new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
-        $store
-    );
-
-    try {
-        $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', ['scope' => 'admin']))
-            ->getData(true);
-        $same = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope' => 'admin',
-            'auth'  => validAuth([
-                'public_webhook_receiver_url' => $webhook,
-                'public_oauth_redirect_url'   => ' ' . $oauth . ' ',
-            ]),
-            'sync' => qbSettings(['interval_minutes' => 9]),
-        ]));
-        $afterSame = $store->rows[SettingsKeys::adminAuth()];
-        $syncSame  = $store->rows[SettingsKeys::adminSync()];
-        $absent    = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope' => 'admin',
-            'auth'  => validAuth(),
-            'sync'  => qbSettings(),
-        ]));
-        $afterAbsent = $store->rows[SettingsKeys::adminAuth()];
-
-        expect($shown['public_webhook_receiver_url'])->toBe($webhook)
-            ->and($shown['public_oauth_redirect_url'])->toBe($oauth)
-            ->and($same->getStatusCode())->toBe(200)
-            ->and($same->getData(true)['public_oauth_redirect_url'])->toBe($oauth)
-            ->and($afterSame['public_webhook_receiver_url'])->toBe($webhook)
-            ->and($afterSame['public_oauth_redirect_url'])->toBe($oauth)
-            ->and($syncSame['interval_minutes'])->toBe(9)
-            ->and($absent->getStatusCode())->toBe(200)
-            ->and($afterAbsent['public_webhook_receiver_url'])->toBe($webhook)
-            ->and($afterAbsent['public_oauth_redirect_url'])->toBe($oauth);
-    } finally {
-        session(['company' => null]);
-        config()->set('app.url', null);
-    }
-});
-
-test('a new public URL that fails the check is refused by field and nothing is saved', function () {
-    $store = new MemorySettingsStore();
-    session(['company' => 'company-uuid']);
-    config()->set('app.url', 'https://api.example.test');
-    $saved                                  = 'https://hooks.invalid/quickbooks/int/v1/webhooks';
-    $store->rows[SettingsKeys::adminAuth()] = validAuth(['public_webhook_receiver_url' => $saved]);
-    $store->rows[SettingsKeys::adminSync()] = qbSettings(['interval_minutes' => 5]);
-    $authBefore                             = $store->rows[SettingsKeys::adminAuth()];
-    $controller                             = new SettingController(
-        new Authorizer(static fn () => true),
-        new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
-        $store
-    );
-
-    try {
-        $refused = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope' => 'admin',
-            'auth'  => validAuth([
-                'environment'                 => 'production',
-                'public_webhook_receiver_url' => 'https://other-hooks.invalid/quickbooks/int/v1/webhooks',
-                'public_oauth_redirect_url'   => 'https://auth.invalid/quickbooks/int/v1/oauth/callback',
-            ]),
-            'sync' => qbSettings(['interval_minutes' => 9]),
-        ]));
-        $body = $refused->getData(true);
-
-        expect($refused->getStatusCode())->toBe(422)
-            ->and($body['message'])->toBe('Some QuickBooks settings are missing or invalid.')
-            ->and($body['errors']['public_webhook_receiver_url'])->toContain('Public Webhook Receiver URL')
-            ->and($body['errors']['public_oauth_redirect_url'])->toContain('Public OAuth Redirect URL')
-            ->and($store->rows[SettingsKeys::adminAuth()])->toBe($authBefore)
-            ->and($store->rows[SettingsKeys::adminSync()]['interval_minutes'])->toBe(5);
-    } finally {
-        session(['company' => null]);
-        config()->set('app.url', null);
-    }
-});
-
-test('a blanked public URL is cleared and the computed address sent back is not stored', function () {
-    $store = new MemorySettingsStore();
-    session(['company' => 'company-uuid']);
-    // .test does not resolve either; the computed address is cleared without a check.
-    config()->set('app.url', 'https://api.example.test');
-    $store->rows[SettingsKeys::adminAuth()] = validAuth([
-        'public_webhook_receiver_url' => 'https://hooks.invalid/quickbooks/int/v1/webhooks',
-    ]);
-    $controller = new SettingController(
-        new Authorizer(static fn () => true),
-        new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
-        $store
-    );
-
-    try {
-        $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope' => 'admin',
-            'auth'  => validAuth([
-                'public_webhook_receiver_url' => '  ',
-                'public_oauth_redirect_url'   => 'https://api.example.test/quickbooks/int/v1/oauth/callback',
-            ]),
-            'sync' => qbSettings(),
-        ]));
-        $stored = $store->rows[SettingsKeys::adminAuth()];
-
-        expect($saved->getStatusCode())->toBe(200)
-            ->and($stored)->not->toHaveKey('public_webhook_receiver_url')
-            ->and($stored)->not->toHaveKey('public_oauth_redirect_url')
-            ->and($saved->getData(true)['public_webhook_receiver_url'])
-            ->toBe('https://api.example.test/quickbooks/int/v1/webhooks');
-    } finally {
-        session(['company' => null]);
-        config()->set('app.url', null);
-    }
-});
-
 test('a global save does not require batch size, and a stored one is kept', function () {
     $store = new MemorySettingsStore();
     session(['company' => 'company-uuid']);
@@ -753,52 +601,6 @@ test('a global save does not require batch size, and a stored one is kept', func
     }
 });
 
-test('a blank path-only loopback or port 4200 redirect is saved as the api callback', function () {
-    $store = new MemorySettingsStore();
-    session(['company' => 'company-uuid']);
-    config()->set('app.url', 'https://api.example.test');
-    $controller = new SettingController(
-        new Authorizer(static fn () => true),
-        new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
-        $store
-    );
-    $callback = 'https://api.example.test/quickbooks/int/v1/oauth/callback';
-
-    try {
-        foreach ([
-            '',
-            '/quickbooks/int/v1/oauth/callback',
-            'http://localhost:8000/callback',
-            'http://127.0.0.1/callback',
-            'http://[::1]/callback',
-            'https://console.example.test:4200/callback',
-        ] as $redirect) {
-            $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-                'scope'        => 'admin',
-                'company_uuid' => 'company-uuid',
-                'auth'         => validAuth(['redirect_uri' => $redirect]),
-                'sync'         => qbSettings(),
-            ]));
-
-            expect($saved->getStatusCode())->toBe(200)
-                ->and($store->rows[SettingsKeys::adminAuth()]['redirect_uri'])->toBe($callback);
-        }
-
-        $kept = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope'        => 'admin',
-            'company_uuid' => 'company-uuid',
-            'auth'         => validAuth(['redirect_uri' => 'https://example.com/callback']),
-            'sync'         => qbSettings(),
-        ]));
-
-        expect($kept->getStatusCode())->toBe(200)
-            ->and($store->rows[SettingsKeys::adminAuth()]['redirect_uri'])->toBe('https://example.com/callback');
-    } finally {
-        session(['company' => null]);
-        config()->set('app.url', null);
-    }
-});
-
 test('a loopback app url yields to a configured non-loopback api host', function () {
     $store = new MemorySettingsStore();
     session(['company' => 'company-uuid']);
@@ -821,8 +623,7 @@ test('a loopback app url yields to a configured non-loopback api host', function
             ->and($shown['auth']['webhook_url'])->toBe('https://api.core.test/quickbooks/int/v1/webhooks')
             ->and($shown['auth']['internal_webhook_receiver_url'])->toBe('https://api.core.test/quickbooks/int/v1/webhooks')
             ->and($shown['auth']['public_webhook_receiver_url'])->toBe('https://api.core.test/quickbooks/int/v1/webhooks')
-            ->and($shown['auth']['internal_oauth_redirect_url'])->toBe('https://api.core.test/quickbooks/int/v1/oauth/callback')
-            ->and($shown['auth']['public_oauth_redirect_url'])->toBe('https://api.core.test/quickbooks/int/v1/oauth/callback');
+            ->and($shown['auth']['public_oauth_redirect_url'])->toBe('https://console.example.test/quickbooks');
     } finally {
         session(['company' => null]);
         config()->set('app.url', null);
@@ -844,7 +645,8 @@ test('a loopback app url uses the non-loopback host and the api port', function 
         $store
     );
     $webhook = 'http://10.30.0.34:8000/quickbooks/int/v1/webhooks';
-    $oauth   = 'http://10.30.0.34:8000/quickbooks/int/v1/oauth/callback';
+    // The redirect is the console page and never carries the API port.
+    $oauth = 'http://10.30.0.34:4200/quickbooks';
 
     try {
         $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
@@ -854,14 +656,12 @@ test('a loopback app url uses the non-loopback host and the api port', function 
 
         expect($shown['internal_webhook_receiver_url'])->toBe($webhook)
             ->and($shown['public_webhook_receiver_url'])->toBe($webhook)
-            ->and($shown['internal_oauth_redirect_url'])->toBe($oauth)
             ->and($shown['public_oauth_redirect_url'])->toBe($oauth)
             ->and($shown['auth']['internal_webhook_receiver_url'])->toBe($webhook)
             ->and($shown['auth']['public_webhook_receiver_url'])->toBe($webhook)
-            ->and($shown['auth']['internal_oauth_redirect_url'])->toBe($oauth)
             ->and($shown['auth']['public_oauth_redirect_url'])->toBe($oauth)
             ->and(SettingController::publicReceiverUrl())->toBe($webhook)
-            ->and(SettingController::internalOAuthRedirectUrl())->toBe($oauth);
+            ->and($shown['auth']['public_oauth_redirect_ready'])->toBeFalse();
 
         config()->set('quickbooks.console_host', null);
         config()->set('fleetbase.console.host', 'fleetbase.io');
@@ -870,8 +670,7 @@ test('a loopback app url uses the non-loopback host and the api port', function 
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
 
-        expect($kept['internal_webhook_receiver_url'])->toBe('http://localhost:8000/quickbooks/int/v1/webhooks')
-            ->and($kept['internal_oauth_redirect_url'])->toBe('http://localhost:8000/quickbooks/int/v1/oauth/callback');
+        expect($kept['internal_webhook_receiver_url'])->toBe('http://localhost:8000/quickbooks/int/v1/webhooks');
 
         config()->set('app.url', 'http://localhost');
         config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
@@ -883,8 +682,7 @@ test('a loopback app url uses the non-loopback host and the api port', function 
 
         expect($withoutApiPort['internal_webhook_receiver_url'])->toBe('http://10.30.0.34/quickbooks/int/v1/webhooks')
             ->and($withoutApiPort['public_webhook_receiver_url'])->toBe('http://10.30.0.34/quickbooks/int/v1/webhooks')
-            ->and($withoutApiPort['internal_oauth_redirect_url'])->toBe('http://10.30.0.34/quickbooks/int/v1/oauth/callback')
-            ->and($withoutApiPort['public_oauth_redirect_url'])->toBe('http://10.30.0.34/quickbooks/int/v1/oauth/callback');
+            ->and($withoutApiPort['public_oauth_redirect_url'])->toBe('http://10.30.0.34:4200/quickbooks');
     } finally {
         session(['company' => null]);
         config()->set('app.url', null);
@@ -907,7 +705,7 @@ test('a loopback https app url keeps that scheme on the console host', function 
         $store
     );
     $webhook = 'https://10.30.0.34:8000/quickbooks/int/v1/webhooks';
-    $oauth   = 'https://10.30.0.34:8000/quickbooks/int/v1/oauth/callback';
+    $oauth   = 'http://10.30.0.34:4200/quickbooks';
 
     try {
         $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
@@ -917,11 +715,9 @@ test('a loopback https app url keeps that scheme on the console host', function 
 
         expect($shown['internal_webhook_receiver_url'])->toBe($webhook)
             ->and($shown['public_webhook_receiver_url'])->toBe($webhook)
-            ->and($shown['internal_oauth_redirect_url'])->toBe($oauth)
             ->and($shown['public_oauth_redirect_url'])->toBe($oauth)
             ->and($shown['auth']['internal_webhook_receiver_url'])->toBe($webhook)
             ->and($shown['auth']['public_webhook_receiver_url'])->toBe($webhook)
-            ->and($shown['auth']['internal_oauth_redirect_url'])->toBe($oauth)
             ->and($shown['auth']['public_oauth_redirect_url'])->toBe($oauth);
     } finally {
         session(['company' => null]);
@@ -986,90 +782,55 @@ test('a new install defaults to production and a stored sandbox stays stored', f
     }
 });
 
-test('a public oauth or webhook url must be https and not an internal address', function () {
+// The public URLs are computed from the configured origin. A submitted or stored copy is never used.
+test('a submitted or stored public oauth or webhook url is ignored', function () {
     $store = new MemorySettingsStore();
     session(['company' => 'company-uuid']);
     config()->set('app.url', 'https://api.example.test');
     config()->set('fleetbase.url', null);
     config()->set('fleetbase.console.host', null);
-    config()->set('quickbooks.console_host', null);
+    config()->set('quickbooks.console_host', 'https://console.example.test');
     Http::fake();
     $controller = new SettingController(
         new Authorizer(static fn () => true),
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
         $store
     );
-    $callback = 'https://api.example.test/quickbooks/int/v1/oauth/callback';
+    $callback = 'https://console.example.test/quickbooks';
     $webhook  = 'https://api.example.test/quickbooks/int/v1/webhooks';
 
     try {
         foreach ([
-            'http://public.example.test/callback',
             'https://10.0.0.5/callback',
-            'https://192.168.1.9/callback',
-            'https://172.16.5.5/callback',
-            'https://127.0.0.2/callback',
-            'https://127.1/callback',
-            'https://127.0.1/callback',
-            'https://0177.0.0.1/callback',
-            'https://2130706433/callback',
-            'https://0x7f000001/callback',
-            'https://127.000.000.001/callback',
-            'https://0.0.0.0/callback',
-            'https://100.64.0.1/callback',
-            'https://192.0.2.1/callback',
-            'https://224.0.0.1/callback',
-            'https://169.254.169.254/callback',
-            'https://[::]/callback',
-            'https://[ff02::1]/callback',
-            'https://[fe80::1]/callback',
-            'https://[fd00::1]/callback',
-            'https://localhost/callback',
-            'https://127.0.0.1.nip.io/callback',
-            'https://public.example.test/callback',
-        ] as $redirect) {
+            'not-a-url',
+            '   ',
+            'https://example.com/quickbooks/int/v1/oauth/callback',
+        ] as $submitted) {
             $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
                 'scope' => 'admin',
                 'auth'  => validAuth([
-                    'redirect_uri'                => $redirect,
-                    'public_oauth_redirect_url'   => $redirect,
-                    'public_webhook_receiver_url' => $redirect,
+                    'public_oauth_redirect_url'   => $submitted,
+                    'public_webhook_receiver_url' => $submitted,
                 ]),
                 'sync' => qbSettings(),
             ]));
             $stored = $store->rows[SettingsKeys::adminAuth()] ?? [];
             $body   = $saved->getData(true);
 
-            // A new public URL that fails the check refuses the whole save instead of being dropped.
-            expect($saved->getStatusCode())->toBe(422)
-                ->and($body['errors'])->toHaveKeys(['public_oauth_redirect_url', 'public_webhook_receiver_url'])
-                ->and($stored)->toBe([]);
+            expect($saved->getStatusCode())->toBe(200)
+                ->and($body['errors'] ?? [])->toBe([])
+                ->and($stored)->not->toHaveKey('public_oauth_redirect_url')
+                ->and($stored)->not->toHaveKey('public_webhook_receiver_url')
+                ->and($body['public_oauth_redirect_url'])->toBe($callback)
+                ->and($body['public_webhook_receiver_url'])->toBe($webhook)
+                ->and($body['auth']['public_oauth_redirect_url'])->toBe($callback)
+                ->and($body['auth']['public_webhook_receiver_url'])->toBe($webhook);
         }
 
         Http::assertNothingSent();
 
-        $public = 'https://example.com/quickbooks/int/v1/oauth/callback';
-        $hook   = 'https://example.com/quickbooks/int/v1/webhooks';
-        $kept   = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope' => 'admin',
-            'auth'  => validAuth([
-                'redirect_uri'                => $public,
-                'public_oauth_redirect_url'   => $public,
-                'public_webhook_receiver_url' => $hook,
-            ]),
-            'sync' => qbSettings(),
-        ]));
-        $keptBody = $kept->getData(true);
-
-        expect($kept->getStatusCode())->toBe(200)
-            ->and($store->rows[SettingsKeys::adminAuth()]['redirect_uri'])->toBe($public)
-            ->and($store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url'])->toBe($public)
-            ->and($store->rows[SettingsKeys::adminAuth()]['public_webhook_receiver_url'])->toBe($hook)
-            ->and($keptBody['public_oauth_redirect_url'])->toBe($public)
-            ->and($keptBody['public_webhook_receiver_url'])->toBe($hook);
-
-        $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']   = 'https://10.1.1.1/callback';
-        $store->rows[SettingsKeys::adminAuth()]['public_webhook_receiver_url'] = 'http://192.168.0.8/hook';
+        $store->rows[SettingsKeys::adminAuth()]['public_oauth_redirect_url']   = 'https://example.com/callback';
+        $store->rows[SettingsKeys::adminAuth()]['public_webhook_receiver_url'] = 'https://example.com/hook';
         $shown                                                                 = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
             'scope' => 'admin',
         ]))->getData(true);
@@ -1077,10 +838,13 @@ test('a public oauth or webhook url must be https and not an internal address', 
         expect($shown['public_oauth_redirect_url'])->toBe($callback)
             ->and($shown['public_webhook_receiver_url'])->toBe($webhook)
             ->and($shown['auth']['public_oauth_redirect_url'])->toBe($callback)
-            ->and($shown['auth']['public_webhook_receiver_url'])->toBe($webhook);
+            ->and($shown['auth']['public_webhook_receiver_url'])->toBe($webhook)
+            ->and($shown['company_auth'])->not->toHaveKey('public_oauth_redirect_url')
+            ->and($shown['company_auth'])->not->toHaveKey('public_webhook_receiver_url');
     } finally {
         session(['company' => null]);
         config()->set('app.url', null);
+        config()->set('quickbooks.console_host', null);
     }
 });
 

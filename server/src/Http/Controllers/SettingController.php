@@ -7,6 +7,7 @@ use Fleetbase\Quickbooks\Services\OrganizationSyncSettings;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SettingsStore;
 use Fleetbase\Quickbooks\Support\Authorizer;
+use Fleetbase\Quickbooks\Support\ConsoleHost;
 use Fleetbase\Quickbooks\Support\PublicHttps;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SettingsValidator;
@@ -22,18 +23,8 @@ class SettingController extends QuickbooksController
         'webhook_url',
         'internal_webhook_receiver_url',
         'internal_oauth_redirect_url',
-    ];
-
-    /** @var array<int, string> */
-    private const PUBLIC_URL_KEYS = [
         'public_webhook_receiver_url',
         'public_oauth_redirect_url',
-    ];
-
-    /** @var array<string, string> */
-    private const PUBLIC_URL_ERRORS = [
-        'public_webhook_receiver_url' => 'quickbooks.validation.public-webhook-url',
-        'public_oauth_redirect_url'   => 'quickbooks.validation.public-oauth-url',
     ];
 
     /** @var array<int, string> */
@@ -81,9 +72,8 @@ class SettingController extends QuickbooksController
         $incomingSync = $this->onlySyncKeys($incomingSync);
         $this->stripReadOnly($incomingAuth);
         $this->stripReadOnly($incomingSync);
-        $this->stripPublicUrls($incomingSync);
         unset($incomingAuth['sources'], $incomingAuth['client_secret_set'], $incomingAuth['webhook_verifier_set']);
-        $publicUrls   = $this->capturePublicUrls($incomingAuth);
+        // The redirect and receiver URLs are computed, so normalizeAuth() drops any that are sent.
         $incomingAuth = $this->store->normalizeAuth($incomingAuth);
 
         [$mergedAuth, $incomingAuth, $mergedSync] = $this->mergeSavedSettings($existingAuth, $incomingAuth, $existingSync, $incomingSync);
@@ -92,20 +82,13 @@ class SettingController extends QuickbooksController
         if (self::verifierNeeded($existingAuth, $incomingAuth, $mergedAuth) === true) {
             $errors['webhook_verifier'] = 'quickbooks.validation.webhook-verifier';
         }
-        [$publicUrls, $publicErrors] = $this->resolvePublicUrls($publicUrls, $existingAuth);
-        $errors                      = array_merge($errors, $publicErrors);
         if ($errors !== []) {
             return $this->invalid($errors);
         }
 
         $storedAuth = $this->settings->storeAuth($incomingAuth, $existingAuth);
-        $storedAuth = $this->applyPublicUrls(
-            $this->store->normalizeAuth(array_merge($existingAuth, $storedAuth)),
-            $publicUrls
-        );
-        $this->store->put($authKey, $storedAuth);
+        $this->store->put($authKey, $this->store->normalizeAuth(array_merge($existingAuth, $storedAuth)));
         $this->stripReadOnly($mergedSync);
-        $this->stripPublicUrls($mergedSync);
         $this->store->put($syncKey, $mergedSync);
         // The global row is only a template: no organization that has its own copy changes, so nothing is queued.
         $this->applyWebhookSubscriptions($companyUuid);
@@ -187,11 +170,8 @@ class SettingController extends QuickbooksController
      */
     private function mergeSavedSettings(array $existingAuth, array $incomingAuth, array $existingSync, array $incomingSync): array
     {
-        $mergedAuth = $this->withComputedRedirect(array_merge($existingAuth, $incomingAuth));
-        if (isset($mergedAuth['redirect_uri']) === true) {
-            $incomingAuth['redirect_uri'] = $mergedAuth['redirect_uri'];
-        }
-        $secret = $incomingAuth['client_secret'] ?? '';
+        $mergedAuth = array_merge($existingAuth, $incomingAuth);
+        $secret     = $incomingAuth['client_secret'] ?? '';
         if (is_string($secret) === false || $secret === '') {
             // A saved secret belongs to the saved Client ID, so a changed Client ID needs its own secret.
             $kept                        = self::clientChanged($existingAuth, $mergedAuth) === false;
@@ -202,7 +182,6 @@ class SettingController extends QuickbooksController
 
         $mergedSync = array_merge($this->onlySyncKeys($existingSync), $incomingSync);
         $this->stripReadOnly($mergedSync);
-        $this->stripPublicUrls($mergedSync);
         $this->normalizeDirections($mergedSync);
 
         return [$mergedAuth, $incomingAuth, $mergedSync];
@@ -275,18 +254,15 @@ class SettingController extends QuickbooksController
         $browser['webhook_verifier_hint']         = self::secretHint($resolved['webhook_verifier'] ?? null);
         $browser['sources']                       = is_array($resolved['sources'] ?? null) === true ? $resolved['sources'] : [];
         $webhook                                  = self::internalWebhookReceiverUrl();
-        $oauth                                    = self::internalOAuthRedirectUrl();
-        $publicWebhook                            = self::publicOrInternal($companyAuth['public_webhook_receiver_url'] ?? null, $webhook);
-        $publicOauth                              = self::publicOrInternal($companyAuth['public_oauth_redirect_url'] ?? null, $oauth);
+        $oauth                                    = ConsoleHost::oauthRedirectUrl();
         $browser['public_receiver_url']           = $webhook;
         $browser['webhook_url']                   = $webhook;
         $browser['internal_webhook_receiver_url'] = $webhook;
-        $browser['public_webhook_receiver_url']   = $publicWebhook;
-        $browser['internal_oauth_redirect_url']   = $oauth;
-        $browser['public_oauth_redirect_url']     = $publicOauth;
+        $browser['public_webhook_receiver_url']   = $webhook;
+        $browser['public_oauth_redirect_url']     = $oauth;
         // Intuit needs public https addresses; the page warns when the one shown is not.
-        $browser['public_webhook_receiver_ready'] = PublicHttps::isPublicHttpsUrl($publicWebhook, false);
-        $browser['public_oauth_redirect_ready']   = PublicHttps::isPublicHttpsUrl($publicOauth, false);
+        $browser['public_webhook_receiver_ready'] = PublicHttps::isPublicHttpsUrl($webhook, false);
+        $browser['public_oauth_redirect_ready']   = PublicHttps::isPublicHttpsUrl($oauth, false);
         unset($browser['sources']['webhook_url']);
 
         return [
@@ -300,9 +276,8 @@ class SettingController extends QuickbooksController
             'company_auth'                    => $this->settings->forBrowser($companyAuth),
             'company_sync'                    => $this->companySyncForBrowser($companySync),
             'internal_webhook_receiver_url'   => $webhook,
-            'public_webhook_receiver_url'     => $publicWebhook,
-            'internal_oauth_redirect_url'     => $oauth,
-            'public_oauth_redirect_url'       => $publicOauth,
+            'public_webhook_receiver_url'     => $webhook,
+            'public_oauth_redirect_url'       => $oauth,
         ];
     }
 
@@ -318,14 +293,6 @@ class SettingController extends QuickbooksController
     public static function internalWebhookReceiverUrl(): string
     {
         return self::absoluteUrl(self::routePath('webhooks'));
-    }
-
-    /**
-     * The OAuth callback registered in routes.php: {prefix}/{internal}/v1/oauth/callback.
-     */
-    public static function internalOAuthRedirectUrl(): string
-    {
-        return self::absoluteUrl(self::routePath('oauth/callback'));
     }
 
     private static function absoluteUrl(string $path): string
@@ -598,147 +565,6 @@ class SettingController extends QuickbooksController
     }
 
     /**
-     * Public URLs belong on the global auth row. A sync payload must not keep them.
-     *
-     * @param array<string, mixed> $bag
-     */
-    private function stripPublicUrls(array &$bag): void
-    {
-        foreach (self::PUBLIC_URL_KEYS as $key) {
-            unset($bag[$key]);
-        }
-    }
-
-    /**
-     * @param array<string, mixed> $auth
-     *
-     * @return array<string, string>
-     */
-    private function capturePublicUrls(array &$auth): array
-    {
-        $public = [];
-        foreach (self::PUBLIC_URL_KEYS as $key) {
-            if (array_key_exists($key, $auth) === false) {
-                continue;
-            }
-            $public[$key] = trim((string) $auth[$key]);
-            unset($auth[$key]);
-        }
-
-        return $public;
-    }
-
-    /**
-     * What to do with each submitted public URL: null clears it, a string stores it. A blank
-     * value, or the computed internal address the screen shows when none is saved, clears it.
-     * The saved value sent back unchanged is kept without a new DNS lookup, so a resolver
-     * outage cannot drop it. Any other value must pass the public https check now, or the
-     * whole save is refused with an error on that field.
-     *
-     * @param array<string, string> $submitted
-     * @param array<string, mixed>  $existingAuth
-     *
-     * @return array{0: array<string, string|null>, 1: array<string, string>}
-     */
-    private function resolvePublicUrls(array $submitted, array $existingAuth): array
-    {
-        $internal = [
-            'public_webhook_receiver_url' => self::internalWebhookReceiverUrl(),
-            'public_oauth_redirect_url'   => self::internalOAuthRedirectUrl(),
-        ];
-        $resolved = [];
-        $errors   = [];
-        foreach ($submitted as $key => $value) {
-            $saved = trim((string) ($existingAuth[$key] ?? ''));
-            if ($value !== '' && $value === $saved) {
-                $resolved[$key] = $saved;
-            } elseif ($value === '' || $value === $internal[$key]) {
-                $resolved[$key] = null;
-            } elseif (self::isPublicHttpsUrl($value) === true) {
-                $resolved[$key] = $value;
-            } else {
-                $errors[$key] = self::PUBLIC_URL_ERRORS[$key];
-            }
-        }
-
-        return [$resolved, $errors];
-    }
-
-    /**
-     * Applies resolvePublicUrls(). A URL that was not submitted keeps its saved value.
-     *
-     * @param array<string, mixed>       $auth
-     * @param array<string, string|null> $public
-     *
-     * @return array<string, mixed>
-     */
-    private function applyPublicUrls(array $auth, array $public): array
-    {
-        foreach ($public as $key => $value) {
-            if ($value === null) {
-                unset($auth[$key]);
-                continue;
-            }
-            $auth[$key] = $value;
-        }
-
-        return $auth;
-    }
-
-    /**
-     * A saved public URL passed the DNS check when it was saved, so it is not looked up
-     * again here: a failed lookup would show the internal address, and the next save
-     * would send that back. Internal IP literals and non-https values are still hidden.
-     */
-    private static function publicOrInternal(mixed $saved, string $internal): string
-    {
-        $saved = is_string($saved) === true ? trim($saved) : '';
-        if ($saved !== '' && PublicHttps::isPublicHttpsUrl($saved, false) === true) {
-            return $saved;
-        }
-
-        return $internal;
-    }
-
-    /**
-     * A blank, path-only, non-https, non-public, or console-port redirect is replaced
-     * with the computed API callback. A public https address is left alone.
-     *
-     * @param array<string, mixed> $auth
-     *
-     * @return array<string, mixed>
-     */
-    private function withComputedRedirect(array $auth): array
-    {
-        $current = trim((string) ($auth['redirect_uri'] ?? ''));
-        if ($this->usableRedirect($current) === true) {
-            return $auth;
-        }
-
-        $auth['redirect_uri'] = self::internalOAuthRedirectUrl();
-
-        return $auth;
-    }
-
-    private function usableRedirect(string $redirect): bool
-    {
-        if (self::isPublicHttpsUrl($redirect) === false) {
-            return false;
-        }
-        $parts = parse_url($redirect);
-
-        return is_array($parts) === true && (int) ($parts['port'] ?? 0) !== 4200;
-    }
-
-    /**
-     * The same public https check used when the redirect is sent to Intuit.
-     */
-    private static function isPublicHttpsUrl(string $url): bool
-    {
-        return PublicHttps::isPublicHttpsUrl($url);
-    }
-
-    /**
      * @param array<string, mixed> $sync
      */
     private function normalizeDirections(array &$sync): void
@@ -760,7 +586,6 @@ class SettingController extends QuickbooksController
     {
         $sync = $this->onlySyncKeys($sync);
         $this->stripReadOnly($sync);
-        $this->stripPublicUrls($sync);
         foreach (self::DIRECTION_FIELDS as $field) {
             if (array_key_exists($field, $sync) === false) {
                 continue;

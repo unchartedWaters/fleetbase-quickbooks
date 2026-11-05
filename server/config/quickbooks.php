@@ -9,11 +9,6 @@ return [
     ],
     'environment'   => env('QUICKBOOKS_ENVIRONMENT', 'production'),
     'console_host'  => env('QUICKBOOKS_CONSOLE_HOST', env('CONSOLE_HOST')),
-    'oauth'         => [
-        // Requests per minute per client IP on the public OAuth callback. Behind a proxy the
-        // host does not trust, all users share the proxy IP and this one limit. 0 turns it off.
-        'callback_per_minute' => 30,
-    ],
     // Seconds before an organization can start the same manual action again (Sync now,
     // reconcile, customer import, Connect). A repeat inside it answers HTTP 429. 0 turns it off.
     'manual_cooldown_seconds' => env('QUICKBOOKS_MANUAL_COOLDOWN_SECONDS', 30),

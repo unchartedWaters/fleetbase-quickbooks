@@ -25,7 +25,8 @@ accounts), and products with QuickBooks Online.
   and Notifications. The QuickBooks header item opens QuickBooks Setup. Engine
   routes `connection`, `activity`, and `actions` redirect to
   `console.quickbooks.settings`.
-- Connect without Client ID, Client secret, and Redirect URI returns HTTP 422 and does not open Intuit.
+- Connect without Client ID, Client secret, and a public https console address
+  returns HTTP 422 and does not open Intuit.
 - The Connection card on QuickBooks Setup shows only the actions that apply:
   Connect when not connected or when QuickBooks must be connected again,
   Sync now when connected, and Disconnect when a company is saved. An action
@@ -35,24 +36,26 @@ accounts), and products with QuickBooks Online.
 - Import customers with no connection returns HTTP 422 with a message to connect
   from QuickBooks Setup, and does not save an activity row. A stored realm that
   needs reconnect saves a skipped activity row.
-- The callback path is `/quickbooks/int/v1/oauth/callback`. The Redirect URI is
-  that path on the Fleetbase API host, for example
-  `https://{{fleetbase.url}}/quickbooks/int/v1/oauth/callback`. Sandbox uses
-  Development keys and `https://sandbox-quickbooks.api.intuit.com`. Production
-  uses Production keys and `https://quickbooks.api.intuit.com`. After the
-  callback, the browser returns to `CONSOLE_HOST` plus
-  `/quickbooks?oauth_state=...`. `CONSOLE_HOST` (or `QUICKBOOKS_CONSOLE_HOST`,
-  checked first) must be set so QuickBooks can return to the console;
+- The OAuth redirect is the console's QuickBooks page, `CONSOLE_HOST` plus
+  `/quickbooks`, for example `https://fleet.example.com/quickbooks`. There is
+  no OAuth route on the API. Sandbox uses Development keys and
+  `https://sandbox-quickbooks.api.intuit.com`. Production uses Production keys
+  and `https://quickbooks.api.intuit.com`. `CONSOLE_HOST` (or
+  `QUICKBOOKS_CONSOLE_HOST`, checked first) must be set;
   `fleetbase.console.host` counts only when it is set to something other than
   its default `fleetbase.io`, so set `CONSOLE_HOST` (or
   `QUICKBOOKS_CONSOLE_HOST`) explicitly. An `http://` or `https://` prefix is
-  kept, and `https://` is added when there is none. The console then finishes
-  the connection with `POST /quickbooks/int/v1/oauth/complete`, which checks the
-  signed-in user and organization.
-- A failed callback returns to `/quickbooks?error=...` with `cancelled` (cancelled on Intuit), `state` (missing, expired, or used OAuth state), or `failed` (any other Intuit error). The console maps each code to a fixed message.
-- Global settings (Client ID, Client secret, Redirect URI, environment, webhook
-  verifier, public URLs) are edited only by an installation administrator on
-  Admin → QuickBooks → Settings, with `scope=admin` on the system settings rows.
+  kept, and `https://` is added when there is none. Intuit returns to that page
+  with `code`, `state` and `realmId`, and the page finishes the connection with
+  `POST /quickbooks/int/v1/oauth/complete`, which checks the signed-in user and
+  organization.
+- When Intuit returns `error` instead, the page posts the state with the error
+  so the API drops it, and shows a fixed message: cancelled for
+  `access_denied`, a generic failure otherwise.
+- Global settings (Client ID, Client secret, environment, webhook verifier) are
+  edited only by an installation administrator on Admin → QuickBooks →
+  Settings, with `scope=admin` on the system settings rows. The OAuth redirect
+  and webhook receiver URLs are computed, shown there as text, and not stored.
   The sync options on that screen are only a template. Changing them does not
   change any organization's sync settings, and a global save queues nothing for
   organizations. A blank system field stays blank. QuickBooks Setup uses
@@ -194,7 +197,8 @@ The scripts read these environment variables:
   `http-smoke.php` creates and both it and `browser-check.mjs` sign in as.
 - `FLEETBASE_API_PATH`: the Fleetbase API directory (default `/fleetbase/api`).
 - `RELEASE_CHECK_API_URL`: the API address (default `http://127.0.0.1:8000`).
-- `CONSOLE_HOST`: the console address the OAuth callback returns to.
+- `CONSOLE_HOST`: the console address; its QuickBooks page is the OAuth
+  redirect.
 - `RELEASE_CHECK_CONSOLE_URL`: the console address (default
   `http://localhost:4200`).
 - `CHROME_PATH`: the browser binary, when it is not Playwright's own.

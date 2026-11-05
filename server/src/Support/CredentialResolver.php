@@ -5,7 +5,8 @@ namespace Fleetbase\Quickbooks\Support;
 /**
  * Resolves Intuit app credentials without reading the session.
  * The install-wide system row is the only source for client id, client secret,
- * redirect URI, and webhook verifier. A blank system field stays blank.
+ * and webhook verifier. A blank system field stays blank. The OAuth redirect is
+ * not stored: it is left blank here and set by the caller that starts OAuth.
  * An organization row is unused. Environment may fall back to the env value.
  *
  * @phpstan-type ResolvedAuth array{client_id: string, client_secret: string, redirect_uri: string, environment: string, webhook_verifier: string, sources: array<string, string>}
@@ -24,20 +25,18 @@ class CredentialResolver
         unset($company);
         $clientId    = $this->storedValue($admin, 'client_id');
         $secret      = $this->storedValue($admin, 'client_secret');
-        $redirectUri = $this->storedValue($admin, 'redirect_uri');
         $environment = $this->pick($admin, $env, 'environment');
         $verifier    = $this->storedValue($admin, 'webhook_verifier');
 
         return [
             'client_id'        => $clientId['value'],
             'client_secret'    => $secret['value'],
-            'redirect_uri'     => $redirectUri['value'],
+            'redirect_uri'     => '',
             'environment'      => $environment['value'],
             'webhook_verifier' => $verifier['value'],
             'sources'          => [
                 'client_id'        => $clientId['source'],
                 'client_secret'    => $secret['source'],
-                'redirect_uri'     => $redirectUri['source'],
                 'environment'      => $environment['source'],
                 'webhook_verifier' => $verifier['source'],
             ],
@@ -57,6 +56,7 @@ class CredentialResolver
         unset(
             $copy['client_secret'],
             $copy['webhook_verifier'],
+            $copy['redirect_uri'],
             $copy['public_receiver_url'],
             $copy['webhook_url'],
             $copy['internal_webhook_receiver_url'],

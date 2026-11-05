@@ -34,9 +34,8 @@ class FetchStubService extends Service {
                 environment: 'sandbox',
                 client_secret_set: true,
                 internal_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
-                public_webhook_receiver_url: '',
-                internal_oauth_redirect_url: 'http://internal.example/quickbooks/int/v1/oauth/callback',
-                public_oauth_redirect_url: '',
+                public_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
+                public_oauth_redirect_url: 'https://console.example/quickbooks',
             },
             sync: { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 },
         };
@@ -49,7 +48,7 @@ class FetchStubService extends Service {
     }
 }
 
-const REFUSED_URL = 'Public OAuth Redirect URL must be an https:// address that resolves to a public IP address.';
+const REFUSED_CLIENT_ID = 'Enter the Client ID from Keys & credentials.';
 
 // Rejects the way ember-core's fetch does: with an Error that keeps only the message, unless rawError is set.
 class RefusingFetchStubService extends FetchStubService {
@@ -61,7 +60,7 @@ class RefusingFetchStubService extends FetchStubService {
 
         throw {
             message: 'Some QuickBooks settings are missing or invalid.',
-            errors: { public_oauth_redirect_url: REFUSED_URL },
+            errors: { client_id: REFUSED_CLIENT_ID },
         };
     }
 }
@@ -100,7 +99,11 @@ module('Integration | Component | quickbooks-admin-settings', function (hooks) {
         assert.dom('[data-test-field="client_secret"]').exists();
         assert.dom('[data-test-field="webhook_verifier"]').exists();
         assert.dom('[data-test-field="environment"]').exists();
-        assert.dom('[data-test-field="public_webhook_receiver_url"]').exists();
+        // The URLs are text to copy into Intuit, not inputs.
+        assert.dom('[data-test-field="public_webhook_receiver_url"]').hasText('http://internal.example/quickbooks/int/v1/webhooks');
+        assert.dom('[data-test-field="public_oauth_redirect_url"]').hasText('https://console.example/quickbooks');
+        assert.dom('input[data-test-field="public_webhook_receiver_url"]').doesNotExist();
+        assert.dom('input[data-test-field="public_oauth_redirect_url"]').doesNotExist();
         assert.dom('[data-test-sync="interval_minutes"]').isNotDisabled();
         assert.dom('[data-test-override]').doesNotExist();
         assert
@@ -133,18 +136,17 @@ module('Integration | Component | quickbooks-admin-settings', function (hooks) {
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
     });
 
-    test('a refused public URL from the server is shown under that field', async function (assert) {
+    test('a field error from the server is shown under that field', async function (assert) {
         this.owner.register('service:fetch', RefusingFetchStubService);
         const fetch = this.owner.lookup('service:fetch');
 
         await render(hbs`<QuickbooksAdminSettings />`);
-        await fillIn('[data-test-field="public_oauth_redirect_url"]', 'https://intranet.local/quickbooks/int/v1/oauth/callback');
         await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
 
         assert.true(fetch.posts.at(-1).options.rawError);
-        assert.dom('[data-test-error="public_oauth_redirect_url"]').exists();
-        assert.dom('[data-test-error="public_oauth_redirect_url"]').hasText(REFUSED_URL);
-        assert.dom('[data-test-field="public_oauth_redirect_url"]').hasValue('https://intranet.local/quickbooks/int/v1/oauth/callback');
+        assert.false(Object.hasOwn(fetch.posts.at(-1).body.auth, 'public_oauth_redirect_url'));
+        assert.dom('[data-test-error="client_id"]').hasText(REFUSED_CLIENT_ID);
+        assert.dom('[data-test-field="client_id"]').hasValue('id');
         assert.false(this.notifications.messages.some((entry) => entry[0] === 'success'));
     });
 });

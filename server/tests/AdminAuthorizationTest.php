@@ -157,12 +157,10 @@ test('operator routes stay signed in and the connection test stays on the admin 
 
     expect(strpos($routes, "post('connection/test'"))->toBeGreaterThan($adminAt);
 
-    foreach ([
-        "get('v1/oauth/callback'",
-        "post('v1/webhooks'",
-    ] as $route) {
-        expect(strpos($routes, $route))->toBeLessThan($protectedAt);
-    }
+    // Intuit's webhook is the only route outside fleetbase.protected; the OAuth return goes to the console.
+    expect(strpos($routes, "post('v1/webhooks'"))->not->toBeFalse()
+        ->and(strpos($routes, "post('v1/webhooks'"))->toBeLessThan($protectedAt)
+        ->and($routes)->not->toContain('oauth/callback');
 });
 
 test('global settings need an installation administrator and the organization view needs view settings', function () {

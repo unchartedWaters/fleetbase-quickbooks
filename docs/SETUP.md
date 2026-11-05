@@ -178,11 +178,13 @@ Portal. One app serves the whole install. Intuit's own guides cover each step:
    scopes][intuit-scopes]), so Payments is not needed. Intuit creates a sandbox
    company to test with: [Create and test with a sandbox
    company][intuit-sandbox].
-2. On Admin → QuickBooks → Settings, set Public OAuth Redirect URL and Public
-   Webhook Receiver URL to your public https host and save. A blank field shows
-   the internal URL, which Intuit cannot reach on a private install. Intuit
-   allows `localhost` for sandbox apps, but this extension requires a public
-   https URL (see [Developing locally](#developing-locally)).
+2. Set `CONSOLE_HOST` and `APP_URL` on the Fleetbase API to their public
+   https addresses. Admin → QuickBooks → Settings then shows Public OAuth
+   Redirect URL (the console's QuickBooks page, `CONSOLE_HOST` plus
+   `/quickbooks`) and Public Webhook Receiver URL (the API address plus
+   `/quickbooks/int/v1/webhooks`) as text to copy. Neither can be edited
+   there. Intuit allows `localhost` for sandbox apps, but this extension
+   requires a public https URL (see [Developing locally](#developing-locally)).
 3. Copy the Client ID and Client secret from the app's Keys & credentials:
    [Get the Client ID and Client Secret][intuit-keys]. Development keys work
    only with sandbox companies; choose Sandbox for Environment. Production keys
@@ -212,8 +214,9 @@ Portal. One app serves the whole install. Intuit's own guides cover each step:
 
 ## Settings
 
-Global settings are Client ID, Client secret, Redirect URI, environment, webhook
-verifier, public webhook and OAuth URLs. Only an installation administrator can
+Global settings are Client ID, Client secret, environment and webhook verifier.
+The OAuth redirect and webhook receiver URLs are computed and shown read-only;
+they are not stored. Only an installation administrator can
 view or save them, on Admin → QuickBooks → Settings, which uses `scope=admin`
 and the system rows `system.quickbooks.auth` and `system.quickbooks.sync`
 (others get HTTP 403).
@@ -224,8 +227,8 @@ organizations. Credentials, the webhook verifier, environment, and URLs are
 global and admin-only.
 
 ![Admin, QuickBooks, Settings: the template note, then Authentication
-with Environment, Client ID, masked secret and verifier, and the webhook and
-OAuth URLs][admin-settings]
+with Environment, Client ID, masked secret and verifier, and the read-only
+webhook and OAuth URLs][admin-settings]
 
 Organization settings → QuickBooks Setup uses `scope=company` (the default). It
 shows the connection controls and the organization's own sync options. An
@@ -281,7 +284,7 @@ QuickBooks header item opens QuickBooks Setup. The Fleetbase Admin panel
 
 An installation administrator saves the install's Client ID, Client secret, and
 system webhook verifier on Admin → QuickBooks → Settings. Connect on QuickBooks
-Setup uses those saved keys. Client ID, Client secret, Redirect URI, and the
+Setup uses those saved keys. Client ID, Client secret, and the
 webhook verifier come only from that system row. A blank system field stays
 blank. Environment may fall back to `QUICKBOOKS_ENVIRONMENT`, which defaults to
 `production`.
@@ -494,24 +497,19 @@ shows why.
 
 Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved by an installation administrator in Admin → QuickBooks → Settings for the install and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
 
-The internal OAuth callback path is `/quickbooks/int/v1/oauth/callback`. The
-internal webhook path is `/quickbooks/int/v1/webhooks`. Admin → QuickBooks →
-Settings shows the Fleetbase webhook receiver and the Fleetbase OAuth redirect
-as plain text, not inputs. Public OAuth Redirect URL and Public Webhook Receiver
-URL stay editable and are saved on the install-wide settings row. Paste the
-public OAuth URL into Intuit Redirect URIs and the public webhook URL into the
-Intuit Endpoint URL. A blank public URL is shown as the matching internal URL.
-When the address shown is not a public https address, the page says so under the
-field, and Connect answers that Intuit needs a public https address instead of
-saying QuickBooks is not set up.
-
-A new or changed public URL is checked when you save: it must be `https://` and
-its host must resolve to a public address. If it fails, the save is refused
-with an error under that field, and nothing from that save is stored. A saved
-URL sent back unchanged is kept without a new DNS lookup, so a resolver outage
-does not remove it. Clearing the field removes the saved URL. Connect sends
-Intuit the redirect URL in use when it started, and finishing the connection
-uses that same URL even if the setting changed in between.
+The OAuth redirect is the console's QuickBooks page: `CONSOLE_HOST` plus
+`/quickbooks`. The webhook path is `/quickbooks/int/v1/webhooks` on the API
+address. Admin → QuickBooks → Settings shows both as Public OAuth Redirect URL
+and Public Webhook Receiver URL, as plain text to copy, not inputs. Neither is
+stored. Paste the OAuth URL into Intuit Redirect URIs and the webhook URL into
+the Intuit Endpoint URL. When an address is not a public https address, the page
+says which setting to change under it (`CONSOLE_HOST` for the redirect,
+`APP_URL` for the webhook receiver), and Connect answers that Intuit needs a
+public https address instead of saying QuickBooks is not set up. Changing
+either setting needs the API's config cache cleared and the application, queue
+and scheduler restarted. Connect sends Intuit the redirect URL in use when it
+started, and finishing the connection uses that same URL even if the setting
+changed in between.
 
 The Connection card on QuickBooks Setup shows only the actions that apply.
 Before a company is connected it offers **Connect to QuickBooks**. Once
@@ -537,22 +535,30 @@ cannot be reached, the actions are not limited.
 
 Connect uses PKCE (`S256`). The API stores a code verifier with the OAuth state and sends the code challenge on `https://appcenter.intuit.com/connect/oauth2` with scope `com.intuit.quickbooks.accounting`.
 
-Intuit redirects the browser to the public route `GET /quickbooks/int/v1/oauth/callback`. That request has no Fleetbase session. It checks the single-use state, keeps the code, and sends the browser to the console at `/quickbooks?oauth_state=...`. The signed-in console finishes the connection with `POST /quickbooks/int/v1/oauth/complete`, which checks the user and organization that started it and exchanges the code at `https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer`.
+Intuit sends the browser back to the console's QuickBooks page with `code`,
+`state` and `realmId`. The signed-in console finishes the connection with
+`POST /quickbooks/int/v1/oauth/complete`, which checks the user and organization
+that started the state and exchanges the code at
+`https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer`. The page then
+removes `code`, `state` and `realmId` from the address. Another user, or another
+organization, cannot use the state, and their attempt does not use it up.
+Posting the same state again after it worked reports connected without a second
+exchange. There is no public OAuth route on the API.
 
-The callback is limited per client IP to `quickbooks.oauth.callback_per_minute` requests per minute (default 30; 0 turns the limit off). Behind a reverse proxy, configure the host application's trusted proxies so the client IP is the user's, not the proxy's; otherwise every user shares one limit. The `realmId` must be 6 to 20 digits. If the first Intuit call for a new connection returns 401, 403, or 404, the connection is not stored. A failed callback returns to `/quickbooks?error=...`:
-
-- `cancelled` — the user cancelled on Intuit.
-- `state` — the OAuth state is missing, expired, or already used, or the `realmId` is not valid.
-- `failed` — Intuit returned any other error.
+The `realmId` must be 6 to 20 digits. If the first Intuit call for a new
+connection returns 401, 403, or 404, the connection is not stored. When Intuit
+returns an `error` instead (`access_denied` when the user cancels), the console
+tells the API to drop the state, so Connect can be tried again at once, and
+shows a fixed message: cancelled for `access_denied`, a generic failure for
+anything else. Intuit's own error text is never shown.
 
 `QUICKBOOKS_CONSOLE_HOST` is checked first, then `CONSOLE_HOST`, then
 `fleetbase.console.host`. That last fallback counts only when it is set to
 something other than its default `fleetbase.io`, so set `CONSOLE_HOST` (or
 `QUICKBOOKS_CONSOLE_HOST`) explicitly. One of those must be the console origin
-so the callback can return to the console. An `http://` or `https://` prefix is
-kept. If the host has no prefix, the API adds `https://`. Without a console
-host, Connect answers HTTP 422 and does not open Intuit; a callback that still
-arrives returns HTTP 500.
+because the OAuth redirect is its QuickBooks page. An `http://` or `https://`
+prefix is kept. If the host has no prefix, the API adds `https://`. Without a
+console host, Connect answers HTTP 422 and does not open Intuit.
 
 **Disconnect** revokes the refresh token at Intuit (`developer.api.intuit.com/v2/oauth2/tokens/revoke`) on a best-effort basis, then deletes the local connection row and this organization's still-pending sync rows. A failed revoke does not block the disconnect. `quickbooks_links` rows are kept so a later reconnect restores the mappings. Disconnect does not change the Intuit app or its webhook subscription.
 The revoke is skipped while another organization is connected to the same
@@ -679,7 +685,10 @@ that explanation.
 ![QuickBooks Activity: one row per run with trigger, status, direction,
 and counts; a failed run shows its error under the row][activity]
 
-The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires `quickbooks reconcile sync` or an installation administrator, plus a connection and a saved Client ID and Client secret. It does not require a Redirect URI. OAuth connect still needs the public https redirect.
+The Ledger dashboard widget is QuickBooks Sync. Its Sync now button requires
+`quickbooks reconcile sync` or an installation administrator, plus a connection
+and a saved Client ID and Client secret. It does not need a public console
+address. OAuth connect still needs the public https redirect.
 
 The widget reads its status only for users with `quickbooks view sync` (both
 QuickBooks roles) or installation administrators. Other Ledger users see a
@@ -807,7 +816,12 @@ line id of each item is kept in the item's `meta` column. An invoice synced
 before this was recorded gets its line ids on its next sync; a line deleted
 before then cannot be told apart from a line added in QuickBooks, so it stays.
 
-Internal Webhook Receiver URL is computed from the configured origin and is not stored. Public Webhook Receiver URL is saved on the install-wide settings row when you set it. When that field is blank, the value shown is the internal URL. Paste the public URL into the Intuit Endpoint URL. The internal path stays `/quickbooks/int/v1/webhooks`. Saving settings does not register the URL with Intuit.
+Public Webhook Receiver URL is computed from the API origin and is not
+stored or editable. The origin is `APP_URL`; when `APP_URL` is a loopback
+address such as `localhost`, the console host is used with the API's port.
+Paste the URL into the Intuit Endpoint URL.
+The path is `/quickbooks/int/v1/webhooks`. Saving settings does not register
+the URL with Intuit.
 
 Intuit subscription is configured in the Intuit developer portal only. Open the app, choose Webhooks, then Production or Development, and paste this URL into Endpoint URL. Subscribe to Customer, Invoice, Payment, and Account when that type's direction is From QuickBooks or Both. Fleetbase does not call an Intuit API to register the URL, choose entities, or unsubscribe a realm. `WebhookSubscriptions::apply()` does not call Intuit.
 
@@ -1028,12 +1042,20 @@ On this machine the repository is checked out at `/opt/fleetbase-quickbooks` on 
 
 ### Developing locally
 
-Starting OAuth needs a public https redirect URL. The redirect that Intuit receives is the `public_oauth_redirect_url` setting (Public OAuth Redirect URL on Admin → QuickBooks → Settings) when it is set, otherwise the computed callback on the API host. Either one must pass `Support/PublicHttps`: it has to be `https://`, and localhost, loopback, private, link-local, and other internal addresses are rejected, as is a hostname that does not resolve to a public address. A dev server on a private IP such as `10.30.0.34` therefore cannot connect as it is. Put a public https tunnel or reverse proxy in front of the API, save its callback URL (`https://<public host>/quickbooks/int/v1/oauth/callback`) as Public OAuth Redirect URL, and list the same URL under Redirect URIs in the Intuit app. Without a usable redirect, connect returns HTTP 422 and does not open Intuit.
+Starting OAuth needs a public https redirect URL. The redirect that Intuit
+receives is the console's QuickBooks page, `CONSOLE_HOST` (or
+`QUICKBOOKS_CONSOLE_HOST`) plus `/quickbooks`. It must pass
+`Support/PublicHttps` without a DNS lookup: it has to be `https://`, and
+localhost, loopback, private, link-local, and other internal addresses are
+rejected. A console on a private IP such as `http://10.30.0.34:4200` therefore
+cannot connect as it is. Put a public https tunnel or reverse proxy in front of
+the console, set `CONSOLE_HOST` to its address, and list `https://<public
+console host>/quickbooks` under Redirect URIs in the Intuit app. Without a
+usable redirect, connect returns HTTP 422 and does not open Intuit. Webhooks
+also need the API itself reachable at a public https `APP_URL`.
 
-Set `CONSOLE_HOST` (or `QUICKBOOKS_CONSOLE_HOST`) on the API to the console
-origin. The OAuth callback redirects the browser there. Without a console host,
-Connect answers HTTP 422 and does not open Intuit. Sync now and the schedule do
-not need the public redirect once a connection exists.
+Without a console host, Connect answers HTTP 422 and does not open Intuit. Sync
+now and the schedule do not need the public redirect once a connection exists.
 
 `api/composer.json` requires `unchartedwaters/quickbooks-api` and has a path repository at `../../fleetbase-quickbooks`. The running `application`, `queue`, and `scheduler` containers get the package from the ensure script and the read-only mount. The console UI is the copy baked into the console image.
 

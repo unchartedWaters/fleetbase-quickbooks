@@ -70,7 +70,6 @@ const ERROR_FIELD_ORDER = [
 ];
 
 const CREDENTIAL_FIELDS = ['environment', 'client_id', 'client_secret', 'webhook_verifier'];
-const PUBLIC_URL_FIELDS = ['public_webhook_receiver_url', 'public_oauth_redirect_url'];
 
 function firstErrorKey(errors) {
     return ERROR_FIELD_ORDER.find((key) => errors?.[key]) || Object.keys(errors || {})[0] || null;
@@ -81,33 +80,25 @@ function errorFieldSelector(key) {
         return `[data-test-sync="${key.replace(/_reference$/, '_conflict')}"]`;
     }
 
-    if (CREDENTIAL_FIELDS.includes(key) || PUBLIC_URL_FIELDS.includes(key)) {
+    if (CREDENTIAL_FIELDS.includes(key)) {
         return `[data-test-field="${key}"]`;
     }
 
     return `[data-test-sync="${key}"]`;
 }
 
+// The server computes both addresses: the webhook receiver from the API address (APP_URL), the OAuth redirect from
+// the console's QuickBooks page (CONSOLE_HOST). They are shown as text to copy into Intuit, never edited here.
 const DISPLAY_URLS = [
     {
         key: 'public_webhook_receiver_url',
-        editable: true,
-        fallback: 'internal_webhook_receiver_url',
         readyKey: 'public_webhook_receiver_ready',
-    },
-    {
-        key: 'internal_webhook_receiver_url',
-        editable: false,
+        notPublicKey: 'quickbooks.settings.urls.not-public-webhook',
     },
     {
         key: 'public_oauth_redirect_url',
-        editable: true,
-        fallback: 'internal_oauth_redirect_url',
         readyKey: 'public_oauth_redirect_ready',
-    },
-    {
-        key: 'internal_oauth_redirect_url',
-        editable: false,
+        notPublicKey: 'quickbooks.settings.urls.not-public-oauth',
     },
 ];
 
@@ -153,9 +144,7 @@ const HINT_KEYS = {
 };
 
 const URL_COPY = {
-    internal_webhook_receiver_url: ['quickbooks.settings.urls.internal-webhook', 'quickbooks.settings.urls.internal-webhook-hint'],
     public_webhook_receiver_url: ['quickbooks.settings.urls.public-webhook', 'quickbooks.settings.urls.public-webhook-hint'],
-    internal_oauth_redirect_url: ['quickbooks.settings.urls.internal-oauth', 'quickbooks.settings.urls.internal-oauth-hint'],
     public_oauth_redirect_url: ['quickbooks.settings.urls.public-oauth', 'quickbooks.settings.urls.public-oauth-hint'],
 };
 
@@ -243,7 +232,7 @@ export default class QuickbooksSettingsComponent extends Component {
 
     // A server error for a key no field renders (such as settings) would otherwise be silent.
     showFieldlessError(error, serverErrors) {
-        const rendered = Object.keys(serverErrors).some((key) => ERROR_FIELD_ORDER.includes(key) || PUBLIC_URL_FIELDS.includes(key) || key.endsWith('_enabled'));
+        const rendered = Object.keys(serverErrors).some((key) => ERROR_FIELD_ORDER.includes(key) || key.endsWith('_enabled'));
         if (rendered) {
             return;
         }
@@ -309,13 +298,15 @@ export default class QuickbooksSettingsComponent extends Component {
         return DISPLAY_URLS.map((field) => {
             const [labelKey, hintKey] = URL_COPY[field.key];
 
+            const value = this.args.settings?.[field.key];
+
             return {
-                ...field,
+                key: field.key,
                 label: this.intl.t(labelKey),
                 hint: this.intl.t(hintKey),
-                value: this.displayedUrl(field.key),
-                // The server checks the saved address; an edited one is checked again on save.
-                notPublic: Boolean(field.readyKey) && !Object.hasOwn(this.draft, field.key) && this.args.settings?.[field.readyKey] === false,
+                value: typeof value === 'string' ? value : '',
+                notPublic: this.args.settings?.[field.readyKey] === false,
+                notPublicText: this.intl.t(field.notPublicKey),
             };
         });
     }
@@ -345,28 +336,6 @@ export default class QuickbooksSettingsComponent extends Component {
         presentation.verifier.visible = Boolean(presentation.verifier.value) && this.secretVisible('webhook_verifier');
 
         return presentation;
-    }
-
-    displayedUrl(key) {
-        if (Object.hasOwn(this.draft, key)) {
-            const drafted = this.draft[key];
-
-            return typeof drafted === 'string' ? drafted : '';
-        }
-
-        const value = this.args.settings?.[key];
-        if (typeof value === 'string' && value.trim() !== '') {
-            return value;
-        }
-
-        const field = DISPLAY_URLS.find((item) => item.key === key);
-        if (field?.fallback) {
-            const fallback = this.args.settings?.[field.fallback];
-
-            return typeof fallback === 'string' ? fallback : '';
-        }
-
-        return typeof value === 'string' ? value : '';
     }
 
     present(key) {
@@ -608,8 +577,6 @@ export default class QuickbooksSettingsComponent extends Component {
         if (this.draft.webhook_verifier) {
             auth.webhook_verifier = this.draft.webhook_verifier;
         }
-        auth.public_webhook_receiver_url = String(this.displayedUrl('public_webhook_receiver_url') || '').trim();
-        auth.public_oauth_redirect_url = String(this.displayedUrl('public_oauth_redirect_url') || '').trim();
 
         return auth;
     }

@@ -14,7 +14,6 @@ class FetchStubService extends Service {
     connection = null;
     credentialsConfigured = false;
     legacyKeys = false;
-    redirectUri = 'http://localhost:8000/quickbooks/int/v1/oauth/callback';
     failed = 0;
     posts = [];
     gets = [];
@@ -24,7 +23,6 @@ class FetchStubService extends Service {
         return {
             connection: this.connection,
             ...(this.legacyKeys ? { client_id: 'client-id', client_secret_set: true } : {}),
-            redirect_uri: this.redirectUri,
             credentials_configured: this.credentialsConfigured,
             queue: 0,
             failed: this.failed,
@@ -132,7 +130,6 @@ module('Integration | Component | widget/quickbooks-sync', function (hooks) {
 
         this.fetch.credentialsConfigured = false;
         this.fetch.legacyKeys = true;
-        this.fetch.redirectUri = 'http://localhost:8000/quickbooks/int/v1/oauth/callback';
         await render(hbs`<Widget::QuickbooksSync />`);
         assert.dom('[data-test-widget-sync]').isDisabled('only credentials_configured === true enables Sync now');
         assert.dom('[data-test-widget-credentials-missing]').exists();

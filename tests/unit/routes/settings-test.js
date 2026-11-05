@@ -55,55 +55,81 @@ module('Unit | Route | settings', function (hooks) {
         this.controller = this.owner.lookup('controller:quickbooks-settings');
     });
 
-    test('oauth_state completes the connection once and toasts success once', async function (assert) {
-        await this.route.model({ oauth_state: 'abc' });
-        await this.route.model({ oauth_state: 'abc' });
+    test('the Intuit return completes the connection once and toasts success once', async function (assert) {
+        const params = { code: 'the-code', state: 'abc', realmId: '1234567' };
+        await this.route.model(params);
+        await this.route.model(params);
 
-        assert.deepEqual(this.posts, [{ path: 'oauth/complete', body: { state: 'abc', company_uuid: 'company-uuid' }, options: { namespace: 'quickbooks/int/v1' } }]);
+        assert.deepEqual(this.posts, [
+            {
+                path: 'oauth/complete',
+                body: { state: 'abc', code: 'the-code', realmId: '1234567', company_uuid: 'company-uuid' },
+                options: { namespace: 'quickbooks/int/v1' },
+            },
+        ]);
         assert.deepEqual(this.messages, [['success', 'Connected to QuickBooks.']]);
     });
 
-    test('no oauth_state does not post', async function (assert) {
+    test('no code or state does not post', async function (assert) {
         assert.strictEqual(await this.route.model({}), null);
+        assert.strictEqual(await this.route.model({ code: 'the-code' }), null);
+        assert.strictEqual(await this.route.model({ state: 'abc' }), null);
         assert.deepEqual(this.posts, []);
     });
 
     test('a failed completion shows the server error and does not throw', async function (assert) {
         this.failPost = true;
 
-        assert.strictEqual(await this.route.model({ oauth_state: 'abc' }), null);
+        assert.strictEqual(await this.route.model({ code: 'the-code', state: 'abc', realmId: '1234567' }), null);
         assert.deepEqual(this.messages, [['serverError', 'This QuickBooks authorization link is not valid.']]);
     });
 
-    test('setupController clears oauth_state', async function (assert) {
-        this.controller.oauth_state = 'abc';
+    test('an Intuit error tells the server to drop the state, once, without a success toast', async function (assert) {
+        await this.route.model({ error: 'access_denied', state: 'abc' });
+        await this.route.model({ error: 'access_denied', state: 'abc' });
 
-        this.route.setupController(this.controller, null);
-        await settled();
-
-        assert.strictEqual(this.controller.oauth_state, null);
+        assert.deepEqual(this.posts, [
+            {
+                path: 'oauth/complete',
+                body: { state: 'abc', error: 'access_denied', company_uuid: 'company-uuid' },
+                options: { namespace: 'quickbooks/int/v1' },
+            },
+        ]);
         assert.deepEqual(this.messages, []);
     });
 
-    test('error=cancelled shows the fixed message once and clears the param', async function (assert) {
-        this.controller.error = 'cancelled';
+    test('a failed cancel post is not shown', async function (assert) {
+        this.failPost = true;
+
+        assert.strictEqual(await this.route.model({ error: 'access_denied', state: 'abc' }), null);
+        assert.deepEqual(this.messages, []);
+    });
+
+    test('setupController clears code, state and realmId from the address', async function (assert) {
+        this.controller.code = 'the-code';
+        this.controller.state = 'abc';
+        this.controller.realmId = '1234567';
+
         this.route.setupController(this.controller, null);
         await settled();
 
-        this.controller.error = 'cancelled';
+        assert.strictEqual(this.controller.code, null);
+        assert.strictEqual(this.controller.state, null);
+        assert.strictEqual(this.controller.realmId, null);
+        assert.deepEqual(this.messages, []);
+    });
+
+    test('error=access_denied shows the cancelled message once and clears the param', async function (assert) {
+        this.controller.error = 'access_denied';
+        this.route.setupController(this.controller, null);
+        await settled();
+
+        this.controller.error = 'access_denied';
         this.route.setupController(this.controller, null);
         await settled();
 
         assert.strictEqual(this.controller.error, null);
         assert.deepEqual(this.messages, [['error', 'QuickBooks connection was cancelled.']]);
-    });
-
-    test('error=state shows the expired message', async function (assert) {
-        this.controller.error = 'state';
-        this.route.setupController(this.controller, null);
-        await settled();
-
-        assert.deepEqual(this.messages, [['error', 'That QuickBooks authorization expired. Connect again from QuickBooks Setup.']]);
     });
 
     test('an unknown error code shows the generic message, never the raw text', async function (assert) {
@@ -116,15 +142,20 @@ module('Unit | Route | settings', function (hooks) {
     });
 
     test('resetController on exit clears params and the dedupe key', async function (assert) {
-        await this.route.model({ oauth_state: 'abc' });
-        this.controller.error = 'failed';
-        this.controller.oauth_state = 'abc';
+        const params = { code: 'the-code', state: 'abc', realmId: '1234567' };
+        await this.route.model(params);
+        this.controller.error = 'access_denied';
+        this.controller.code = 'the-code';
+        this.controller.state = 'abc';
+        this.controller.realmId = '1234567';
 
         this.route.resetController(this.controller, true);
-        await this.route.model({ oauth_state: 'abc' });
+        await this.route.model(params);
 
         assert.strictEqual(this.controller.error, null);
-        assert.strictEqual(this.controller.oauth_state, null);
+        assert.strictEqual(this.controller.code, null);
+        assert.strictEqual(this.controller.state, null);
+        assert.strictEqual(this.controller.realmId, null);
         assert.strictEqual(this.route.oauthResultKey, 'state:abc');
         assert.strictEqual(this.posts.length, 2);
     });

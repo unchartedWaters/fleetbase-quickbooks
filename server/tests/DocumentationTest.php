@@ -46,8 +46,7 @@ test('the setup guide gives the full path of every route Intuit calls without a 
         . '/' . trim($config['api.routing.internal_prefix'], '\'') . '/';
     $paths  = array_map(fn (string $uri): string => $base . ltrim($uri, '/'), $matches[1]);
 
-    expect($paths)->toContain('/quickbooks/int/v1/oauth/callback')
-        ->and($paths)->toContain('/quickbooks/int/v1/webhooks')
+    expect($paths)->toBe(['/quickbooks/int/v1/webhooks'])
         ->and(DocsSource::missing('docs/SETUP.md', $paths))->toBe([]);
 });
 

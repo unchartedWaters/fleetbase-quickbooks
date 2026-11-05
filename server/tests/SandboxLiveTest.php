@@ -201,10 +201,9 @@ test('starting a connection sends the browser to Intuit sign-in with the request
     session(['company' => 'sandbox-company', 'user' => 'sandbox-user']);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'                 => sandboxCredentials()['client_id'],
-        'client_secret'             => (new SecretCipher())->encrypt(sandboxCredentials()['client_secret']),
-        'environment'               => 'sandbox',
-        'public_oauth_redirect_url' => sandboxCredentials()['redirect_uri'],
+        'client_id'     => sandboxCredentials()['client_id'],
+        'client_secret' => (new SecretCipher())->encrypt(sandboxCredentials()['client_secret']),
+        'environment'   => 'sandbox',
     ];
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
@@ -213,7 +212,8 @@ test('starting a connection sends the browser to Intuit sign-in with the request
         $store,
         new ConnectionProbe(new QuickBooksClient())
     );
-    // Connect needs a console address to return to after the Intuit sign-in.
+    // Intuit returns to the console's QuickBooks page, so the console address is the redirect.
+    // Intuit checks the redirect against the app only after sign-in, so it need not be registered here.
     $consoleHost = config('quickbooks.console_host');
     config()->set('quickbooks.console_host', 'https://console.example.com');
 
@@ -230,7 +230,7 @@ test('starting a connection sends the browser to Intuit sign-in with the request
 
     expect(parse_url($url, PHP_URL_HOST))->toBe('appcenter.intuit.com')
         ->and($sent['client_id'] ?? null)->toBe(sandboxCredentials()['client_id'])
-        ->and($sent['redirect_uri'] ?? null)->toBe(sandboxCredentials()['redirect_uri'])
+        ->and($sent['redirect_uri'] ?? null)->toBe('https://console.example.com/quickbooks')
         ->and($sent['scope'] ?? null)->toBe('com.intuit.quickbooks.accounting')
         ->and($sent['response_type'] ?? null)->toBe('code')
         ->and($sent['code_challenge'] ?? '')->not->toBe('')

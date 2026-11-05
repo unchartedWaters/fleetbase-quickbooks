@@ -32,7 +32,6 @@ quickbooks:
     connected-toast: Connected to QuickBooks.
     connect-failed: Unable to start QuickBooks connection.
     oauth-cancelled: QuickBooks connection was cancelled.
-    oauth-expired: That QuickBooks authorization expired. Connect again from QuickBooks Setup.
     oauth-failed: QuickBooks could not connect. Try again from QuickBooks Setup.
   actions:
     sync-now: Sync now
@@ -168,15 +167,12 @@ quickbooks:
       retry-limit: Retries after a failure. Later tries wait longer.
       retry-delay: Seconds before the first retry. Later tries wait longer, up to 15 minutes.
     urls:
-      internal-webhook: Fleetbase webhook receiver
-      internal-webhook-hint: Fleetbase listens for webhooks here. Copy the Public Webhook Receiver URL into Intuit.
       public-webhook: Public Webhook Receiver URL
       public-webhook-hint: Paste this into the Intuit webhook Endpoint URL.
-      internal-oauth: Fleetbase OAuth redirect
-      internal-oauth-hint: Fleetbase receives the QuickBooks sign-in return here. Copy the Public OAuth Redirect URL into Intuit.
       public-oauth: Public OAuth Redirect URL
-      public-oauth-hint: Paste this into Intuit Redirect URIs.
-      not-public: This is not a public https:// address, so Intuit cannot reach it. Enter the address Fleetbase is reached at from the internet.
+      public-oauth-hint: Paste this into Intuit Redirect URIs. After sign-in, Intuit returns to this QuickBooks page on the console (CONSOLE_HOST).
+      not-public-webhook: This is not a public https:// address, so Intuit cannot reach it. Set APP_URL on the Fleetbase API to the address the API is reached at from the internet.
+      not-public-oauth: This is not a public https:// address, so Intuit cannot send you back to it. Set CONSOLE_HOST on the Fleetbase API to the console's public https:// address.
     options:
       sandbox: Sandbox
       production: Production
@@ -204,9 +200,6 @@ quickbooks:
     direction-invoice: Choose Both, To QuickBooks, or From QuickBooks for Invoices.
     direction-payment: Choose Both, To QuickBooks, or From QuickBooks for Payments.
     direction-wallet: Choose Both, To QuickBooks, or From QuickBooks for Accounts / Wallets.
-    redirect-uri: "Enter a full http:// or https:// address that is listed under Keys & credentials, Redirect URIs."
-    public-webhook-url: "Public Webhook Receiver URL must be an https:// address whose host resolves to a public IP address. Check the address, or try again if DNS is not answering. Nothing was saved."
-    public-oauth-url: "Public OAuth Redirect URL must be an https:// address whose host resolves to a public IP address. Check the address, or try again if DNS is not answering. Nothing was saved."
     batch-size: Enter a whole number from 1 to 100.
     on-off: Choose On or Off.
     primary-customer: Choose Fleetbase or QuickBooks as Primary for Customers.
@@ -219,13 +212,12 @@ quickbooks:
     unauthorized: This action is unauthorized.
     organization-required: Sign in to an organization to manage QuickBooks.
     organization-mismatch: You may only manage the QuickBooks connection for your own organization.
-    not-set-up: "QuickBooks is not set up yet. Ask an installation administrator to enter the Client ID, Client secret and Public OAuth Redirect URL in Admin → QuickBooks → Settings."
-    redirect-not-public: "QuickBooks cannot be connected yet: Intuit needs a public https:// address to send you back to. Ask an installation administrator to enter the Public OAuth Redirect URL in Admin → QuickBooks → Settings and add the same URL to the Intuit app."
+    not-set-up: "QuickBooks is not set up yet. Ask an installation administrator to enter the Client ID and Client secret in Admin → QuickBooks → Settings."
+    redirect-not-public: "QuickBooks cannot be connected yet: Intuit needs a public https:// address to send you back to. Ask an installation administrator to set CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API to the console's public https:// address, then add the Public OAuth Redirect URL shown in Admin → QuickBooks → Settings to the Intuit app."
     not-connected: QuickBooks is not connected.
     not-connected-connect: QuickBooks is not connected. Connect from QuickBooks Setup.
     not-connected-reconnect: QuickBooks is not connected. Connect again from QuickBooks Setup.
     connection-works: QuickBooks connection works.
-    console-host: Set CONSOLE_HOST so QuickBooks can return to the console.
     console-host-connect: "QuickBooks cannot be connected yet: Fleetbase does not know the console address to return to after sign-in. Ask an installation administrator to set CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API."
     reauth: QuickBooks needs to be connected again. Choose Connect to QuickBooks on QuickBooks Setup.
     import-reauth: QuickBooks needs to be connected again before import can continue. Choose Connect to QuickBooks on QuickBooks Setup.

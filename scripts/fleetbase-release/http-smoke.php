@@ -70,13 +70,12 @@ $report->check('routes need a signed-in user', $anonymous->status() === 401 ? []
 $unsigned = $api()->post('webhooks', ['eventNotifications' => []]);
 $report->check('an unsigned webhook is refused', $unsigned->status() === 401 ? [] : [$status($unsigned)]);
 
-// Without a code or state, the callback sends the browser back to the console with an error.
-$callback = $api()->withoutRedirecting()->get('oauth/callback');
-$location = (string) $callback->header('Location');
-$report->check('the OAuth callback without a code returns to the console', $callback->redirect()
-    && str_starts_with($location, $env('CONSOLE_HOST', 'http://localhost:4200'))
-    ? []
-    : [$status($callback) . ' Location ' . $location]);
+// Intuit returns the browser to the console's QuickBooks page, so finishing a connection needs a signed-in user.
+$complete = $api()->post('oauth/complete', ['state' => 'smoke', 'code' => 'smoke', 'realmId' => '123456789']);
+$report->check(
+    'finishing an OAuth connection needs a signed-in user',
+    $complete->status() === 401 ? [] : [$status($complete)]
+);
 
 $expected = ['connection' => 'connection', 'settings' => 'sync', 'summary' => 'queue', 'batches' => 'batches'];
 foreach ([1, 2] as $round) {

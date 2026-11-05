@@ -101,7 +101,7 @@ test('receive refuses a realm that is not 6 to 20 digits and burns the state', f
     }
 });
 
-test('the oauth callback sends a bad realm back to the console as a state error', function () {
+test('oauth complete refuses a bad realm before any token request', function () {
     $flow       = new OAuthFlow(realmClient());
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
@@ -110,15 +110,22 @@ test('the oauth callback sends a bad realm back to the console as a state error'
         new MemorySettingsStore(),
         new ConnectionProbe(new QuickBooksClient())
     );
-    $begun    = $flow->begin('company-uuid', 'user-uuid', realmCredentials());
-    $response = $controller->callback(Request::create('/oauth/callback', 'GET', [
-        'state'   => $begun['state'],
-        'code'    => 'code',
-        'realmId' => '1/../../admin',
-    ]));
+    $begun = $flow->begin('company-uuid', 'user-uuid', realmCredentials());
+    session(['company' => 'company-uuid', 'user' => 'user-uuid']);
 
-    expect($response->getTargetUrl())->toContain('error=state')
-        ->and($response->getTargetUrl())->not->toContain('oauth_state=');
+    try {
+        $response = $controller->complete(Request::create('/oauth/complete', 'POST', [
+            'state'   => $begun['state'],
+            'code'    => 'code',
+            'realmId' => '1/../../admin',
+        ]));
+    } finally {
+        session(['company' => null, 'user' => null]);
+    }
+
+    expect($response->getStatusCode())->toBe(422)
+        ->and($response->getData(true)['message'])->toBe('QuickBooks authorization state is invalid or expired.')
+        ->and($response->getContent())->not->toContain('admin');
 });
 
 test('the realm is url encoded when the API url is built', function () {

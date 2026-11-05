@@ -31,7 +31,7 @@ class OAuthFlow
         $state    = bin2hex(random_bytes(16));
         $verifier = $this->codeVerifier();
         // Intuit requires the token request to repeat the redirect_uri sent here exactly,
-        // so complete() uses this one even if the saved URL changes in between.
+        // so complete() uses this one even if CONSOLE_HOST changes in between.
         Cache::put($this->key($state), [
             'company_uuid'  => $companyUuid,
             'user_uuid'     => $userUuid,
@@ -48,7 +48,7 @@ class OAuthFlow
 
     /**
      * Keep the code from Intuit's redirect for complete(). The state was returned to whoever
-     * started the flow, so the code moves under a new handle that only this browser receives.
+     * started the flow, so the code moves under a new handle that never leaves the server.
      * The PKCE verifier on the pulled state is copied with the rest of the payload.
      *
      * @return string the handle to pass to complete()
@@ -74,15 +74,73 @@ class OAuthFlow
     }
 
     /**
-     * @return string|null the organization that started this state, if it is still known
+     * Intuit sends the browser back to the console's QuickBooks page with code, state and realmId,
+     * and the signed-in console posts them here. Only the user and organization that started the
+     * state can use it; anyone else is refused (oauth-other-user) and the state is left for its owner. Sending the
+     * same state again after it worked (a reload) returns null and does not exchange again.
+     *
+     * @param array{client_id: string, client_secret: string, redirect_uri: string, environment: string} $credentials
+     * @param (callable(string): bool)|null                                                              $realmAllowed
+     *
+     * @return array<string, mixed>|null null when the same user already completed this state
      */
-    public function forget(string $state): ?string
+    public function finish(
+        string $state,
+        #[\SensitiveParameter] string $code,
+        string $realmId,
+        string $companyUuid,
+        string $userUuid,
+        array $credentials,
+        ?callable $realmAllowed = null,
+    ): ?array {
+        $key    = $this->key($state);
+        $stored = Cache::get($key);
+        if (is_array($stored) === true && empty($stored['done']) === false) {
+            if ($this->startedBy($stored, $companyUuid, $userUuid) === false) {
+                throw new QuickBooksException(403, self::OTHER_USER_MESSAGE);
+            }
+
+            return null;
+        }
+        // Check the initiator before receive() pulls the state. A wrong user must not burn it.
+        if ($this->startedBy($this->validState($stored), $companyUuid, $userUuid) === false) {
+            throw new QuickBooksException(403, self::OTHER_USER_MESSAGE);
+        }
+
+        $connection = $this->complete(
+            $this->receive($state, $code, $realmId),
+            $companyUuid,
+            $userUuid,
+            $credentials,
+            $realmAllowed
+        );
+        Cache::put($key, [
+            'done'         => true,
+            'company_uuid' => $companyUuid,
+            'user_uuid'    => $userUuid,
+        ], 600);
+
+        return $connection;
+    }
+
+    /**
+     * Intuit answered with an error (for example the user chose Cancel). The state is dropped when
+     * the user and organization that started it say so.
+     *
+     * @return bool true when a state of this user and organization was dropped
+     */
+    public function cancel(string $state, string $companyUuid, string $userUuid): bool
     {
-        $stored = Cache::pull($this->key($state));
+        $key    = $this->key($state);
+        $stored = Cache::get($key);
+        if (is_array($stored) === false || empty($stored['done']) === false) {
+            return false;
+        }
+        if ($this->startedBy($stored, $companyUuid, $userUuid) === false) {
+            return false;
+        }
 
-        $company = is_array($stored) === true ? ($stored['company_uuid'] ?? null) : null;
-
-        return is_string($company) === true ? $company : null;
+        return Cache::pull($key) !== null;
     }
 
     /**
@@ -128,7 +186,7 @@ class OAuthFlow
 
         $connection = $this->withCompanyDetails($this->exchange($stored, $credentials));
 
-        // A reload of the console keeps ?oauth_state in the URL and calls complete() again.
+        // A second complete() of this handle by the same user returns null instead of exchanging again.
         Cache::put($key, [
             'done'         => true,
             'company_uuid' => $companyUuid,
