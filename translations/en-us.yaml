@@ -128,8 +128,9 @@ quickbooks:
     credentials-step-keys-link: developer.intuit.com
     credentials-step-keys-after: " and open Keys & credentials."
     credentials-step-form: Choose the Environment, then copy its Client ID and Client secret from Keys & credentials into the fields below.
-    credentials-step-redirect: Under Redirect URIs, paste the Public OAuth Redirect URL.
-    credentials-step-webhook: Paste the Public Webhook Receiver URL into Intuit and save the webhook verifier.
+    credentials-step-redirect: "Under Redirect URIs, add the Public OAuth Redirect URL:"
+    credentials-step-webhook: "Under Webhooks, set the Endpoint URL to the Public Webhook Receiver URL:"
+    credentials-step-webhook-verifier: Then copy that tab's Verifier Token into Webhook verifier token below.
     credentials-step-save: Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.
     schedule: Schedule
     data-resolution: Data Resolution
@@ -167,10 +168,6 @@ quickbooks:
       retry-limit: Retries after a failure. Later tries wait longer.
       retry-delay: Seconds before the first retry. Later tries wait longer, up to 15 minutes.
     urls:
-      public-webhook: Public Webhook Receiver URL
-      public-webhook-hint: Paste this into the Intuit webhook Endpoint URL.
-      public-oauth: Public OAuth Redirect URL
-      public-oauth-hint: Paste this into Intuit Redirect URIs. After sign-in, Intuit returns to this QuickBooks page on the console (CONSOLE_HOST).
       not-public-webhook: This is not a public https:// address, so Intuit cannot reach it. Set APP_URL on the Fleetbase API to the address the API is reached at from the internet.
       not-public-oauth: This is not a public https:// address, so Intuit cannot send you back to it. Set CONSOLE_HOST on the Fleetbase API to the console's public https:// address.
     options:

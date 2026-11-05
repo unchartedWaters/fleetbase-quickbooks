@@ -227,8 +227,8 @@ organizations. Credentials, the webhook verifier, environment, and URLs are
 global and admin-only.
 
 ![Admin, QuickBooks, Settings: the template note, then Authentication
-with Environment, Client ID, masked secret and verifier, and the read-only
-webhook and OAuth URLs][admin-settings]
+with the setup steps showing the OAuth and webhook URLs to copy, then
+Environment, Client ID, masked secret and verifier][admin-settings]
 
 Organization settings → QuickBooks Setup uses `scope=company` (the default). It
 shows the connection controls and the organization's own sync options. An
@@ -499,8 +499,9 @@ Keys come from [developer.intuit.com](https://developer.intuit.com) → your app
 
 The OAuth redirect is the console's QuickBooks page: `CONSOLE_HOST` plus
 `/quickbooks`. The webhook path is `/quickbooks/int/v1/webhooks` on the API
-address. Admin → QuickBooks → Settings shows both as Public OAuth Redirect URL
-and Public Webhook Receiver URL, as plain text to copy, not inputs. Neither is
+address. Admin → QuickBooks → Settings shows each one once, as plain text to
+copy inside the setup step that says where it goes in Intuit (Public OAuth
+Redirect URL, then Public Webhook Receiver URL). Neither is an input or is
 stored. Paste the OAuth URL into Intuit Redirect URIs and the webhook URL into
 the Intuit Endpoint URL. When an address is not a public https address, the page
 says which setting to change under it (`CONSOLE_HOST` for the redirect,

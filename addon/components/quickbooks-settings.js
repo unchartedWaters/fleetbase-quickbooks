@@ -88,19 +88,20 @@ function errorFieldSelector(key) {
 }
 
 // The server computes both addresses: the webhook receiver from the API address (APP_URL), the OAuth redirect from
-// the console's QuickBooks page (CONSOLE_HOST). They are shown as text to copy into Intuit, never edited here.
-const DISPLAY_URLS = [
-    {
-        key: 'public_webhook_receiver_url',
-        readyKey: 'public_webhook_receiver_ready',
-        notPublicKey: 'quickbooks.settings.urls.not-public-webhook',
-    },
-    {
+// the console's QuickBooks page (CONSOLE_HOST). Each is shown once, as text inside the guidance step that says where
+// it goes in Intuit, and is never edited here.
+const DISPLAY_URLS = {
+    redirect: {
         key: 'public_oauth_redirect_url',
         readyKey: 'public_oauth_redirect_ready',
         notPublicKey: 'quickbooks.settings.urls.not-public-oauth',
     },
-];
+    webhook: {
+        key: 'public_webhook_receiver_url',
+        readyKey: 'public_webhook_receiver_ready',
+        notPublicKey: 'quickbooks.settings.urls.not-public-webhook',
+    },
+};
 
 // The screen has one Primary. A blank one is the default, QuickBooks. Any other value than quickbooks is Fleetbase,
 // including a stored conflict of report.
@@ -141,11 +142,6 @@ const HINT_KEYS = {
     periodic_interval_hours: 'quickbooks.settings.hints.periodic-interval-hours',
     retry_limit: 'quickbooks.settings.hints.retry-limit',
     default_backoff_seconds: 'quickbooks.settings.hints.retry-delay',
-};
-
-const URL_COPY = {
-    public_webhook_receiver_url: ['quickbooks.settings.urls.public-webhook', 'quickbooks.settings.urls.public-webhook-hint'],
-    public_oauth_redirect_url: ['quickbooks.settings.urls.public-oauth', 'quickbooks.settings.urls.public-oauth-hint'],
 };
 
 export default class QuickbooksSettingsComponent extends Component {
@@ -295,20 +291,24 @@ export default class QuickbooksSettingsComponent extends Component {
     }
 
     get displayedUrls() {
-        return DISPLAY_URLS.map((field) => {
-            const [labelKey, hintKey] = URL_COPY[field.key];
+        const urls = {
+            redirect: this.displayedUrl(DISPLAY_URLS.redirect),
+            webhook: this.displayedUrl(DISPLAY_URLS.webhook),
+        };
 
-            const value = this.args.settings?.[field.key];
+        return urls;
+    }
 
-            return {
-                key: field.key,
-                label: this.intl.t(labelKey),
-                hint: this.intl.t(hintKey),
-                value: typeof value === 'string' ? value : '',
-                notPublic: this.args.settings?.[field.readyKey] === false,
-                notPublicText: this.intl.t(field.notPublicKey),
-            };
-        });
+    displayedUrl(field) {
+        const value = this.args.settings?.[field.key];
+        const url = {
+            key: field.key,
+            value: typeof value === 'string' ? value : '',
+            notPublic: this.args.settings?.[field.readyKey] === false,
+            notPublicText: this.intl.t(field.notPublicKey),
+        };
+
+        return url;
     }
 
     get secret() {
