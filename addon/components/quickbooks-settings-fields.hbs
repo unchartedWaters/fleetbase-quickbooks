@@ -17,8 +17,15 @@
                         class="quickbooks-guidance-link text-inherit cursor-pointer underline"
                     >{{t "quickbooks.settings.credentials-step-keys-link"}}</a>{{t "quickbooks.settings.credentials-step-keys-after"}}</li>
                 <li>{{t "quickbooks.settings.credentials-step-form"}}</li>
-                <li data-test-redirect-step>{{t "quickbooks.settings.credentials-step-redirect"}}</li>
-                <li data-test-webhook-step>{{t "quickbooks.settings.credentials-step-webhook"}}</li>
+                <li data-test-redirect-step>
+                    {{t "quickbooks.settings.credentials-step-redirect"}}
+                    <QuickbooksSettingsUrl @url={{@displayedUrls.redirect}} />
+                </li>
+                <li data-test-webhook-step>
+                    {{t "quickbooks.settings.credentials-step-webhook"}}
+                    <QuickbooksSettingsUrl @url={{@displayedUrls.webhook}} />
+                    <div class="mt-1">{{t "quickbooks.settings.credentials-step-webhook-verifier"}}</div>
+                </li>
                 <li data-test-credential-save-step>{{t "quickbooks.settings.credentials-step-save"}}</li>
             </ol>
         </InfoBlock>
@@ -143,18 +150,6 @@
         {{#if @secret.verifier.set}}
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-verifier-set>{{t "quickbooks.settings.verifier-saved"}}</p>
         {{/if}}
-        {{#each @displayedUrls key="key" as |url|}}
-            <div data-test-sync-field={{url.key}}>
-                <div class="mt-4 border-l-2 border-gray-200 pl-3 dark:border-gray-700">
-                    <p class="text-xs font-medium text-gray-500 dark:text-gray-400" data-test-url-label>{{url.label}}</p>
-                    <div class="mt-1 select-text break-all font-mono text-xs leading-5 text-gray-600 dark:text-gray-300" data-test-field={{url.key}}>{{url.value}}</div>
-                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400" data-test-field-help={{url.key}}>{{url.hint}}</p>
-                    {{#if url.notPublic}}
-                        <p class="mt-1 text-xs text-amber-700 dark:text-amber-400" data-test-url-not-public={{url.key}}>{{url.notPublicText}}</p>
-                    {{/if}}
-                </div>
-            </div>
-        {{/each}}
     </ContentPanel>
     {{/unless}}
 

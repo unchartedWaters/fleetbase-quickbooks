@@ -31,15 +31,13 @@ class CurrentUserStubService extends Service {
     companyId = 'company-uuid';
 }
 
-const URL_COPY = {
-    public_webhook_receiver_url: {
-        label: 'Public Webhook Receiver URL',
-        hint: 'Paste this into the Intuit webhook Endpoint URL.',
-    },
-    public_oauth_redirect_url: {
-        label: 'Public OAuth Redirect URL',
-        hint: 'Paste this into Intuit Redirect URIs. After sign-in, Intuit returns to this QuickBooks page on the console (CONSOLE_HOST).',
-    },
+// Each URL is shown once, inside the guidance step that says where it goes in Intuit.
+const REDIRECT_STEP = 'Under Redirect URIs, add the Public OAuth Redirect URL:';
+const WEBHOOK_STEP = 'Under Webhooks, set the Endpoint URL to the Public Webhook Receiver URL:';
+const VERIFIER_STEP = "Then copy that tab's Verifier Token into Webhook verifier token below.";
+const URL_STEP = {
+    public_webhook_receiver_url: { step: '[data-test-webhook-step]', text: WEBHOOK_STEP, label: 'Public Webhook Receiver URL' },
+    public_oauth_redirect_url: { step: '[data-test-redirect-step]', text: REDIRECT_STEP, label: 'Public OAuth Redirect URL' },
 };
 
 function saveButton() {
@@ -54,13 +52,19 @@ function bodyTextOutsideScripts() {
 }
 
 function assertSelectableUrl(assert, key, value) {
-    const copy = URL_COPY[key];
-    const field = `[data-test-sync-field="${key}"]`;
-    assert.dom(`${field} [data-test-url-label]`).hasText(copy.label);
-    assert.dom(`${field} label`).doesNotExist();
-    assert.dom(`${field} .input-group`).doesNotExist();
-    assert.dom(`${field} input`).doesNotExist();
-    assert.dom(`${field} textarea`).doesNotExist();
+    const copy = URL_STEP[key];
+    // The URL sits in its step, with no separate labelled row or hint repeating where to paste it.
+    assert.dom(`${copy.step} [data-test-field="${key}"]`).exists();
+    assert.dom(`${copy.step}`).includesText(copy.text);
+    assert.dom(`[data-test-sync-field="${key}"]`).doesNotExist();
+    assert.dom(`[data-test-field-help="${key}"]`).doesNotExist();
+    assert.dom('[data-test-url-label]').doesNotExist();
+    assert.dom(`${copy.step} label`).doesNotExist();
+    assert.dom(`${copy.step} .input-group`).doesNotExist();
+    assert.dom(`${copy.step} input`).doesNotExist();
+    assert.dom(`${copy.step} textarea`).doesNotExist();
+    assert.strictEqual(bodyTextOutsideScripts().split(copy.label).length - 1, 1, `${copy.label} is named once`);
+    assert.dom().doesNotIncludeText('Paste this into');
     assert.dom(`[data-test-field="${key}"]`).hasTagName('div');
     assert.dom(`[data-test-field="${key}"]`).hasClass('select-text');
     assert.dom(`[data-test-field="${key}"]`).doesNotHaveClass('form-input');
@@ -70,7 +74,6 @@ function assertSelectableUrl(assert, key, value) {
     assert.dom(`[data-test-field="${key}"]`).hasText(value);
     assert.dom(`[data-test-field="${key}"]`).doesNotHaveAttribute('readonly');
     assert.dom(`[data-test-field="${key}"]`).doesNotHaveAttribute('disabled');
-    assert.dom(`[data-test-field-help="${key}"]`).hasText(copy.hint);
 }
 
 function assertFieldError(assert, controlSelector, errorKey) {
@@ -200,8 +203,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert
             .dom('[data-test-credentials-guidance] li:nth-child(2)')
             .hasText('Choose the Environment, then copy its Client ID and Client secret from Keys & credentials into the fields below.');
-        assert.dom('[data-test-redirect-step]').hasText('Under Redirect URIs, paste the Public OAuth Redirect URL.');
-        assert.dom('[data-test-webhook-step]').hasText('Paste the Public Webhook Receiver URL into Intuit and save the webhook verifier.');
+        assert.dom('[data-test-redirect-step]').hasText(`${REDIRECT_STEP} https://console.example/quickbooks`);
+        assert.dom('[data-test-webhook-step]').hasText(`${WEBHOOK_STEP} http://internal.example/quickbooks/int/v1/webhooks ${VERIFIER_STEP}`);
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
@@ -387,7 +390,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-credentials-guidance]').hasClass('ui-input-info-block');
         assert.dom('[data-test-credentials-guidance]').includesText('Getting your QuickBooks credentials');
         assert.dom('[data-test-credential-save-step]').hasText('Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.');
-        assert.dom('[data-test-redirect-step]').hasText('Under Redirect URIs, paste the Public OAuth Redirect URL.');
+        assert.dom('[data-test-redirect-step]').includesText(REDIRECT_STEP);
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
         assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
         assert.dom("[data-test-field-help='environment']").hasClass('text-gray-500');
@@ -398,7 +401,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom(this.element.querySelector("[data-test-field='client_secret']").closest('.input-group').querySelector('label')).hasClass('required');
         assert.dom("[data-test-field-help='webhook_verifier']").includesText('Intuit signs webhooks with this token. Stored encrypted.');
         assert.dom("[data-test-field-help='webhook_verifier']").doesNotIncludeText('Leave blank');
-        assert.dom('[data-test-webhook-step]').hasText('Paste the Public Webhook Receiver URL into Intuit and save the webhook verifier.');
+        assert.dom('[data-test-webhook-step]').includesText(WEBHOOK_STEP);
 
         await click(saveButton());
         assert.dom("[data-test-error='client_id']").exists();
@@ -427,7 +430,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
 
-        const order = [...this.element.querySelectorAll('[data-test-field]')].map((element) => element.dataset.testField);
+        const order = [...this.element.querySelectorAll('[data-test-field]')].map((element) => element.dataset.testField).filter((key) => !key.startsWith('public_'));
         assert.deepEqual(order.slice(0, 4), ['environment', 'client_id', 'client_secret', 'webhook_verifier']);
     });
 
@@ -448,6 +451,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert
             .dom("[data-test-url-not-public='public_oauth_redirect_url']")
             .hasText("This is not a public https:// address, so Intuit cannot send you back to it. Set CONSOLE_HOST on the Fleetbase API to the console's public https:// address.");
+        assert.dom("[data-test-redirect-step] [data-test-url-not-public='public_oauth_redirect_url']").exists();
+        assert.dom("[data-test-url-not-public='public_oauth_redirect_url'] svg").exists('the warning has an icon');
         assert.dom("[data-test-url-not-public='public_webhook_receiver_url']").doesNotExist();
         assert.dom('input[data-test-field="public_oauth_redirect_url"]').doesNotExist();
 
@@ -936,8 +941,9 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         assert.dom("[data-test-field='environment']").hasValue('production');
         assert.dom("[data-test-sync='batch_size']").doesNotExist();
-        assertSelectableUrl(assert, 'public_webhook_receiver_url', '');
-        assertSelectableUrl(assert, 'public_oauth_redirect_url', '');
+        // No URL yet: the step does not end in an empty line.
+        assert.dom('[data-test-field="public_webhook_receiver_url"]').doesNotExist();
+        assert.dom('[data-test-field="public_oauth_redirect_url"]').doesNotExist();
         await click(saveButton());
         assert.strictEqual(this.saved.auth.environment, 'production');
         assertUrlsStayOutOfPayload(assert, this.saved);
