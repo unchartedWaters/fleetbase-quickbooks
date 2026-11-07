@@ -120,7 +120,7 @@ quickbooks:
     turn-on-confirm-title: Start syncing these records?
     turn-on-confirm: "Saving sends every existing record of these types to QuickBooks in the background: {entities}. Accounts / Wallets create one QuickBooks account per wallet."
     authentication: Authentication
-    credentials-title: Getting your QuickBooks credentials
+    credentials-title: Configuring QuickBooks
     credentials-create-app-before: "No QuickBooks app yet? Start with "
     credentials-create-app-link: Intuit's guide to creating a QuickBooks app
     credentials-create-app-after: "."
@@ -168,8 +168,10 @@ quickbooks:
       retry-limit: Retries after a failure. Later tries wait longer.
       retry-delay: Seconds before the first retry. Later tries wait longer, up to 15 minutes.
     urls:
-      not-public-webhook: This is not a public https:// address, so Intuit cannot reach it. Set APP_URL on the Fleetbase API to the address the API is reached at from the internet.
-      not-public-oauth: This is not a public https:// address, so Intuit cannot send you back to it. Set CONSOLE_HOST on the Fleetbase API to the console's public https:// address.
+      not-public-webhook-title: Intuit cannot send webhooks to Fleetbase.
+      not-public-webhook: The Public Webhook Receiver URL is not a public https:// address, so changes made in QuickBooks are not brought into Fleetbase for record types that sync From QuickBooks or Both. Set APP_URL on the Fleetbase API to the public https:// address the API is reached at from the internet, then clear the API's config cache and restart the API, its queue workers and scheduler.
+      not-public-oauth-title: Organizations cannot connect or reconnect to QuickBooks.
+      not-public-oauth: The Public OAuth Redirect URL is not set or is not a public https:// address, so Intuit cannot send people back to Fleetbase after they sign in. Existing connections keep syncing. Set CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API to the console's public https:// address, then clear the API's config cache and restart the API, its queue workers and scheduler.
     options:
       sandbox: Sandbox
       production: Production

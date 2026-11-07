@@ -185,7 +185,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom().doesNotIncludeText("Enable to use this organization's QuickBooks keys.");
         assert.dom('[data-test-settings-scope]').includesText('Authentication');
         assert.dom('[data-test-credentials-guidance]').hasClass('ui-input-info-block');
-        assert.dom('[data-test-credentials-guidance]').includesText('Getting your QuickBooks credentials');
+        assert.dom('[data-test-credentials-guidance-title]').hasText('Configuring QuickBooks');
+        assert.dom('[data-test-credentials-guidance]').doesNotIncludeText('Getting your QuickBooks credentials');
         assert.dom('[data-test-credentials-guidance]').includesText('Sign in at developer.intuit.com and open Keys & credentials.');
         assert.dom('[data-test-keys-step] a').hasAttribute('href', 'https://developer.intuit.com');
         assert.dom('[data-test-keys-step] a').hasAttribute('target', '_blank');
@@ -388,7 +389,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-settings-scope]').hasAttribute('data-test-settings-scope', 'admin');
         assert.dom().doesNotIncludeText('Admin → QuickBooks');
         assert.dom('[data-test-credentials-guidance]').hasClass('ui-input-info-block');
-        assert.dom('[data-test-credentials-guidance]').includesText('Getting your QuickBooks credentials');
+        assert.dom('[data-test-credentials-guidance-title]').hasText('Configuring QuickBooks');
+        assert.dom('[data-test-credentials-guidance]').doesNotIncludeText('Getting your QuickBooks credentials');
         assert.dom('[data-test-credential-save-step]').hasText('Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.');
         assert.dom('[data-test-redirect-step]').includesText(REDIRECT_STEP);
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
@@ -434,7 +436,50 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.deepEqual(order.slice(0, 4), ['environment', 'client_id', 'client_secret', 'webhook_verifier']);
     });
 
-    test('a URL that is not a public https address says which setting to change', async function (assert) {
+    test('the Configuring QuickBooks steps are collapsed by default and open from their title', async function (assert) {
+        this.set('settings', {
+            client_id: 'id',
+            environment: 'sandbox',
+            client_secret_set: true,
+            public_oauth_redirect_url: 'https://fleet.example.com/quickbooks',
+            public_oauth_redirect_ready: true,
+            public_webhook_receiver_url: 'https://fleet.example.com/quickbooks/int/v1/webhooks',
+            public_webhook_receiver_ready: true,
+        });
+        this.set('sync', { interval_minutes: 5, retry_limit: 5, default_backoff_seconds: 30 });
+
+        await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
+
+        // A native disclosure: the title is the summary, so it is a keyboard-focusable button for assistive technology.
+        assert.dom('[data-test-credentials-guidance] details').exists({ count: 1 });
+        assert.dom('[data-test-credentials-guidance] details').doesNotHaveAttribute('open', 'collapsed by default');
+        assert.dom('[data-test-credentials-guidance] details > summary[data-test-credentials-guidance-title]').hasText('Configuring QuickBooks');
+        // qunit-dom's isVisible counts layout boxes, which a closed <details> keeps; checkVisibility sees it is hidden.
+        const shown = (selector) => this.element.querySelector(selector).checkVisibility();
+        // The whole section folds away: the app guide link and every step sit inside the disclosure.
+        ['[data-test-create-app-step]', '[data-test-keys-step]', '[data-test-redirect-step]', '[data-test-webhook-step]', '[data-test-credential-save-step]'].forEach((selector) => {
+            assert.dom(`[data-test-credentials-guidance] details ${selector}`).exists(`${selector} is inside the collapsible section`);
+            assert.false(shown(selector), `${selector} is hidden while collapsed`);
+        });
+        assert.true(shown('[data-test-credentials-guidance-title]'), 'the title shows while collapsed');
+        // The credential fields stay outside the section, so collapsing it never hides an input.
+        assert.dom('[data-test-credentials-guidance] [data-test-field="client_id"]').doesNotExist();
+        assert.true(shown('[data-test-field="client_id"]'), 'the fields show while collapsed');
+
+        await click('[data-test-credentials-guidance-title]');
+        assert.dom('[data-test-credentials-guidance] details').hasAttribute('open');
+        assert.true(shown('[data-test-redirect-step]'), 'the steps show once opened');
+        assert.true(shown('[data-test-redirect-step] [data-test-field="public_oauth_redirect_url"]'), 'the URL shows once opened');
+
+        // Typing in a field re-renders the form; the opened steps stay open.
+        await fillIn('[data-test-field="client_id"]', 'other-id');
+        assert.true(this.element.querySelector('[data-test-credentials-guidance] details').open, 'still open after a re-render');
+
+        await click('[data-test-credentials-guidance-title]');
+        assert.dom('[data-test-credentials-guidance] details').doesNotHaveAttribute('open');
+    });
+
+    test('a URL that is not a public https address is warned about at the top, outside the collapsed steps', async function (assert) {
         this.set('settings', {
             client_id: 'id',
             environment: 'sandbox',
@@ -448,12 +493,29 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
 
+        const redirectWarning = "[data-test-url-not-public='public_oauth_redirect_url']";
+        const webhookWarning = "[data-test-url-not-public='public_webhook_receiver_url']";
         assert
-            .dom("[data-test-url-not-public='public_oauth_redirect_url']")
-            .hasText("This is not a public https:// address, so Intuit cannot send you back to it. Set CONSOLE_HOST on the Fleetbase API to the console's public https:// address.");
-        assert.dom("[data-test-redirect-step] [data-test-url-not-public='public_oauth_redirect_url']").exists();
-        assert.dom("[data-test-url-not-public='public_oauth_redirect_url'] svg").exists('the warning has an icon');
-        assert.dom("[data-test-url-not-public='public_webhook_receiver_url']").doesNotExist();
+            .dom(redirectWarning)
+            .hasText(
+                "Organizations cannot connect or reconnect to QuickBooks. The Public OAuth Redirect URL is not set or is not a public https:// address, so Intuit cannot send people back to Fleetbase after they sign in. Existing connections keep syncing. Set CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API to the console's public https:// address, then clear the API's config cache and restart the API, its queue workers and scheduler."
+            );
+        assert.dom(redirectWarning).hasClass('ui-input-info-block');
+        assert.dom(redirectWarning).hasClass('warning');
+        assert.dom(`${redirectWarning} svg`).exists('the warning has an icon');
+        assert.dom(`${redirectWarning} [data-test-url-warning-lead]`).hasText('Organizations cannot connect or reconnect to QuickBooks.');
+        assert.dom(`${redirectWarning} [data-test-url-warning-lead]`).hasClass('font-semibold');
+        // At the top of Authentication, before the collapsible steps, so it shows while they are collapsed.
+        assert.dom(`[data-test-credentials-guidance] ${redirectWarning}`).doesNotExist();
+        assert.dom(`[data-test-redirect-step] ${redirectWarning}`).doesNotExist();
+        assert.true(this.element.querySelector(redirectWarning).checkVisibility(), 'the warning shows while the steps are collapsed');
+        const authentication = this.element.querySelector('[data-test-authentication]');
+        assert.strictEqual(
+            authentication.querySelector('[data-test-url-not-public], [data-test-credentials-guidance], [data-test-field]'),
+            authentication.querySelector(redirectWarning),
+            'the warning is the first thing in Authentication'
+        );
+        assert.dom(webhookWarning).doesNotExist();
         assert.dom('input[data-test-field="public_oauth_redirect_url"]').doesNotExist();
 
         this.set('settings', {
@@ -463,10 +525,23 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             public_webhook_receiver_url: 'http://10.0.0.5:8000/quickbooks/int/v1/webhooks',
             public_webhook_receiver_ready: false,
         });
-        assert.dom("[data-test-url-not-public='public_oauth_redirect_url']").doesNotExist();
+        assert.dom(redirectWarning).doesNotExist();
         assert
-            .dom("[data-test-url-not-public='public_webhook_receiver_url']")
-            .hasText('This is not a public https:// address, so Intuit cannot reach it. Set APP_URL on the Fleetbase API to the address the API is reached at from the internet.');
+            .dom(webhookWarning)
+            .hasText(
+                "Intuit cannot send webhooks to Fleetbase. The Public Webhook Receiver URL is not a public https:// address, so changes made in QuickBooks are not brought into Fleetbase for record types that sync From QuickBooks or Both. Set APP_URL on the Fleetbase API to the public https:// address the API is reached at from the internet, then clear the API's config cache and restart the API, its queue workers and scheduler."
+            );
+        assert.dom(`${webhookWarning} [data-test-url-warning-lead]`).hasText('Intuit cannot send webhooks to Fleetbase.');
+        assert.dom(`[data-test-credentials-guidance] ${webhookWarning}`).doesNotExist();
+        assert.true(this.element.querySelector(webhookWarning).checkVisibility(), 'the warning shows while the steps are collapsed');
+
+        this.set('settings', { ...this.settings, public_oauth_redirect_ready: false });
+        const warnings = [...this.element.querySelectorAll('[data-test-url-not-public]')].map((element) => element.dataset.testUrlNotPublic);
+        assert.deepEqual(warnings, ['public_oauth_redirect_url', 'public_webhook_receiver_url'], 'both warnings show, in step order');
+
+        // The organization screen has no Authentication, so it never shows them.
+        await render(hbs`<QuickbooksSettings @syncOnly={{true}} @settings={{this.settings}} @sync={{this.sync}} />`);
+        assert.dom('[data-test-url-not-public]').doesNotExist();
     });
 
     test('a changed Client ID needs its Client secret, and an unchanged one keeps the saved secret', async function (assert) {

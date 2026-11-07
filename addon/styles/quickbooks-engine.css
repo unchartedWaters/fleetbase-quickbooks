@@ -105,3 +105,13 @@ body[data-theme] a.quickbooks-guidance-link:hover {
     cursor: pointer;
     text-decoration-line: underline;
 }
+
+/*
+ * The console removes focus outlines app-wide. The Configuring QuickBooks title
+ * is the only control in its block, so it shows one for keyboard users.
+ */
+.quickbooks-guidance-summary:focus-visible {
+    border-radius: 0.25rem;
+    outline: 2px solid currentcolor;
+    outline-offset: 2px;
+}

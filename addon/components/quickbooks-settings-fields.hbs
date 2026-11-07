@@ -1,8 +1,17 @@
 <div class="space-y-6">
     {{#unless @syncOnly}}
+    <div data-test-authentication>
     <ContentPanel @title={{t "quickbooks.settings.authentication"}} @open={{true}} @wrapperClass="bordered-classic">
+        {{#each @urlWarnings key="key" as |warning|}}
+            <InfoBlock @type="warning" @icon="triangle-exclamation" class="mb-4" data-test-url-not-public={{warning.key}}>
+                <span class="font-semibold" data-test-url-warning-lead>{{warning.title}}</span>
+                {{warning.text}}
+            </InfoBlock>
+        {{/each}}
+        {{! Collapsed by default: the title is the toggle, and only the guidance folds away, never a field. }}
         <InfoBlock @type="info" @icon="circle-info" class="mb-4" data-test-credentials-guidance>
-            <div class="font-semibold">{{t "quickbooks.settings.credentials-title"}}</div>
+            <details>
+            <summary class="quickbooks-guidance-summary cursor-pointer font-semibold" data-test-credentials-guidance-title>{{t "quickbooks.settings.credentials-title"}}</summary>
             <p class="mt-1" data-test-create-app-step>{{t "quickbooks.settings.credentials-create-app-before"}}<a
                     href="https://developer.intuit.com/app/developer/qbo/docs/get-started/start-developing-your-app"
                     target="_blank"
@@ -28,6 +37,7 @@
                 </li>
                 <li data-test-credential-save-step>{{t "quickbooks.settings.credentials-step-save"}}</li>
             </ol>
+            </details>
         </InfoBlock>
         {{#each @authFields key="key" as |field|}}
             <div data-test-sync-field={{field.key}}>
@@ -151,6 +161,7 @@
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1" data-test-verifier-set>{{t "quickbooks.settings.verifier-saved"}}</p>
         {{/if}}
     </ContentPanel>
+    </div>
     {{/unless}}
 
     <ContentPanel @title={{t "quickbooks.settings.schedule"}} @open={{true}} @wrapperClass="bordered-classic">
