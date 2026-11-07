@@ -507,15 +507,17 @@ copy inside the setup step that says where it goes in Intuit (Public OAuth
 Redirect URL, then Public Webhook Receiver URL). The steps are under
 **Configuring QuickBooks** in Authentication, collapsed until you choose that
 title. Neither URL is an input or is stored. Paste the OAuth URL into Intuit
-Redirect URIs and the webhook URL into the Intuit Endpoint URL. When an address
-is not a public https address, a warning at the top of Authentication, shown
-while the steps are collapsed, says what does not work and which setting to
-change (`CONSOLE_HOST` for the redirect, `APP_URL` for the webhook receiver),
-and Connect answers that Intuit needs a public https address instead of saying
-QuickBooks is not set up. Changing either setting needs the API's config cache
-cleared and the application, queue and scheduler restarted. Connect sends
-Intuit the redirect URL in use when it started, and finishing the connection
-uses that same URL even if the setting changed in between.
+Redirect URIs and the webhook URL into the Intuit Endpoint URL. When either
+address is not a public https address, one collapsed warning at the top of
+Authentication, **Public URL not configured. Resolve to connect to
+QuickBooks**, shows while the steps are collapsed. Opened, it lists what does
+not work and which setting fixes it (`CONSOLE_HOST` for the redirect, `APP_URL`
+for the webhook receiver). Connect answers that Intuit needs a public https
+address instead of saying QuickBooks is not set up. Changing either setting
+needs the API's config cache cleared and the application, queue and scheduler
+restarted. Connect sends Intuit the redirect URL in use when it started, and
+finishing the connection uses that same URL even if the setting changed in
+between.
 
 The Connection card on QuickBooks Setup shows only the actions that apply.
 Before a company is connected it offers **Connect to QuickBooks**. Once

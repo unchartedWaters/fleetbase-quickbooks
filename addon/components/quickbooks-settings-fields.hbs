@@ -2,12 +2,22 @@
     {{#unless @syncOnly}}
     <div data-test-authentication>
     <ContentPanel @title={{t "quickbooks.settings.authentication"}} @open={{true}} @wrapperClass="bordered-classic">
-        {{#each @urlWarnings key="key" as |warning|}}
-            <InfoBlock @type="warning" @icon="triangle-exclamation" class="mb-4" data-test-url-not-public={{warning.key}}>
-                <span class="font-semibold" data-test-url-warning-lead>{{warning.title}}</span>
-                {{warning.text}}
+        {{#if @urlWarnings.length}}
+            {{! One warning for every URL that is not public, collapsed to its label until opened. }}
+            <InfoBlock @type="warning" @icon="triangle-exclamation" class="mb-4" data-test-url-warnings>
+                <details>
+                    <summary class="quickbooks-guidance-summary cursor-pointer font-semibold" data-test-url-warnings-title>{{t "quickbooks.settings.urls.not-configured-title"}}</summary>
+                    <p class="mt-1" data-test-url-warnings-intro>{{t "quickbooks.settings.urls.not-configured-intro"}}</p>
+                    <ul class="mt-1 list-disc space-y-1 pl-5">
+                        {{#each @urlWarnings key="key" as |warning|}}
+                            <li data-test-url-not-public={{warning.key}}><span class="font-semibold" data-test-url-warning-lead>{{warning.title}}</span>
+                                {{warning.text}}</li>
+                        {{/each}}
+                    </ul>
+                    <p class="mt-1" data-test-url-warnings-restart>{{t "quickbooks.settings.urls.restart"}}</p>
+                </details>
             </InfoBlock>
-        {{/each}}
+        {{/if}}
         {{! Collapsed by default: the title is the toggle, and only the guidance folds away, never a field. }}
         <InfoBlock @type="info" @icon="circle-info" class="mb-4" data-test-credentials-guidance>
             <details>

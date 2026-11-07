@@ -89,8 +89,8 @@ function errorFieldSelector(key) {
 
 // The server computes both addresses: the webhook receiver from the API address (APP_URL), the OAuth redirect from
 // the console's QuickBooks page (CONSOLE_HOST). Each is shown once, as text inside the guidance step that says where
-// it goes in Intuit, and is never edited here. One that is not a public https address is warned about at the top of
-// Authentication, where it shows while the steps are collapsed.
+// it goes in Intuit, and is never edited here. Every one that is not a public https address is listed in one warning at
+// the top of Authentication, outside the collapsed steps.
 const DISPLAY_URLS = {
     redirect: {
         key: 'public_oauth_redirect_url',

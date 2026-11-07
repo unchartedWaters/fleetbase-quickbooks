@@ -479,7 +479,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-credentials-guidance] details').doesNotHaveAttribute('open');
     });
 
-    test('a URL that is not a public https address is warned about at the top, outside the collapsed steps', async function (assert) {
+    test('URLs that are not public https addresses share one collapsed warning at the top that lists what breaks and the fix', async function (assert) {
         this.set('settings', {
             client_id: 'id',
             environment: 'sandbox',
@@ -493,30 +493,47 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
 
-        const redirectWarning = "[data-test-url-not-public='public_oauth_redirect_url']";
-        const webhookWarning = "[data-test-url-not-public='public_webhook_receiver_url']";
-        assert
-            .dom(redirectWarning)
-            .hasText(
-                "Organizations cannot connect or reconnect to QuickBooks. The Public OAuth Redirect URL is not set or is not a public https:// address, so Intuit cannot send people back to Fleetbase after they sign in. Existing connections keep syncing. Set CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API to the console's public https:// address, then clear the API's config cache and restart the API, its queue workers and scheduler."
-            );
-        assert.dom(redirectWarning).hasClass('ui-input-info-block');
-        assert.dom(redirectWarning).hasClass('warning');
-        assert.dom(`${redirectWarning} svg`).exists('the warning has an icon');
-        assert.dom(`${redirectWarning} [data-test-url-warning-lead]`).hasText('Organizations cannot connect or reconnect to QuickBooks.');
-        assert.dom(`${redirectWarning} [data-test-url-warning-lead]`).hasClass('font-semibold');
-        // At the top of Authentication, before the collapsible steps, so it shows while they are collapsed.
-        assert.dom(`[data-test-credentials-guidance] ${redirectWarning}`).doesNotExist();
-        assert.dom(`[data-test-redirect-step] ${redirectWarning}`).doesNotExist();
-        assert.true(this.element.querySelector(redirectWarning).checkVisibility(), 'the warning shows while the steps are collapsed');
+        const shown = (selector) => this.element.querySelector(selector).checkVisibility();
+        const block = '[data-test-url-warnings]';
+        const redirectItem = "[data-test-url-not-public='public_oauth_redirect_url']";
+        const webhookItem = "[data-test-url-not-public='public_webhook_receiver_url']";
+        const restart = "Then clear the API's config cache and restart the API, its queue workers and scheduler.";
+
+        assert.dom(block).exists({ count: 1 });
+        assert.dom(block).hasClass('ui-input-info-block');
+        assert.dom(block).hasClass('warning');
+        assert.dom(`${block} svg`).exists('the warning has an icon');
+        // Collapsed by default: only the label shows until it is opened.
+        assert.dom(`${block} details`).exists({ count: 1 });
+        assert.dom(`${block} details`).doesNotHaveAttribute('open', 'collapsed by default');
+        assert.dom(`${block} details > summary[data-test-url-warnings-title]`).hasText('Public URL not configured. Resolve to connect to QuickBooks');
+        assert.true(shown('[data-test-url-warnings-title]'), 'the label shows while collapsed');
+        assert.false(shown(redirectItem), 'the details are hidden while collapsed');
+        // At the top of Authentication, outside the collapsed steps.
+        assert.dom(`[data-test-credentials-guidance] ${block}`).doesNotExist();
         const authentication = this.element.querySelector('[data-test-authentication]');
         assert.strictEqual(
-            authentication.querySelector('[data-test-url-not-public], [data-test-credentials-guidance], [data-test-field]'),
-            authentication.querySelector(redirectWarning),
+            authentication.querySelector('[data-test-url-warnings], [data-test-credentials-guidance], [data-test-field]'),
+            authentication.querySelector(block),
             'the warning is the first thing in Authentication'
         );
-        assert.dom(webhookWarning).doesNotExist();
+
+        // Compact: what does not work, then how to fix it, one line per URL.
+        assert.dom(`${block} [data-test-url-warnings-intro]`).hasText('Until this is fixed, these do not work:');
+        assert
+            .dom(redirectItem)
+            .hasText(
+                "Connecting and reconnecting to QuickBooks (existing connections keep syncing): set CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API to the console's public https:// address."
+            );
+        assert.dom(`${redirectItem} [data-test-url-warning-lead]`).hasText('Connecting and reconnecting to QuickBooks (existing connections keep syncing):');
+        assert.dom(`${redirectItem} [data-test-url-warning-lead]`).hasClass('font-semibold');
+        assert.dom(webhookItem).doesNotExist();
+        assert.dom(`${block} [data-test-url-warnings-restart]`).hasText(restart);
         assert.dom('input[data-test-field="public_oauth_redirect_url"]').doesNotExist();
+
+        await click('[data-test-url-warnings-title]');
+        assert.true(shown(redirectItem), 'the details show once opened');
+        assert.true(shown('[data-test-url-warnings-restart]'), 'the restart step shows once opened');
 
         this.set('settings', {
             ...this.settings,
@@ -525,23 +542,27 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             public_webhook_receiver_url: 'http://10.0.0.5:8000/quickbooks/int/v1/webhooks',
             public_webhook_receiver_ready: false,
         });
-        assert.dom(redirectWarning).doesNotExist();
+        assert.dom(redirectItem).doesNotExist();
         assert
-            .dom(webhookWarning)
+            .dom(webhookItem)
             .hasText(
-                "Intuit cannot send webhooks to Fleetbase. The Public Webhook Receiver URL is not a public https:// address, so changes made in QuickBooks are not brought into Fleetbase for record types that sync From QuickBooks or Both. Set APP_URL on the Fleetbase API to the public https:// address the API is reached at from the internet, then clear the API's config cache and restart the API, its queue workers and scheduler."
+                'Changes made in QuickBooks, for record types that sync From QuickBooks or Both: set APP_URL on the Fleetbase API to the public https:// address the API is reached at from the internet.'
             );
-        assert.dom(`${webhookWarning} [data-test-url-warning-lead]`).hasText('Intuit cannot send webhooks to Fleetbase.');
-        assert.dom(`[data-test-credentials-guidance] ${webhookWarning}`).doesNotExist();
-        assert.true(this.element.querySelector(webhookWarning).checkVisibility(), 'the warning shows while the steps are collapsed');
+        assert.dom(`${webhookItem} [data-test-url-warning-lead]`).hasText('Changes made in QuickBooks, for record types that sync From QuickBooks or Both:');
 
         this.set('settings', { ...this.settings, public_oauth_redirect_ready: false });
-        const warnings = [...this.element.querySelectorAll('[data-test-url-not-public]')].map((element) => element.dataset.testUrlNotPublic);
-        assert.deepEqual(warnings, ['public_oauth_redirect_url', 'public_webhook_receiver_url'], 'both warnings show, in step order');
+        assert.dom(block).exists({ count: 1 }, 'both URLs share one warning');
+        const items = [...this.element.querySelectorAll('[data-test-url-not-public]')].map((element) => element.dataset.testUrlNotPublic);
+        assert.deepEqual(items, ['public_oauth_redirect_url', 'public_webhook_receiver_url'], 'both show, in step order');
+        assert.dom(`${block} [data-test-url-warnings-restart]`).exists({ count: 1 }, 'the restart step is listed once');
 
-        // The organization screen has no Authentication, so it never shows them.
+        this.set('settings', { ...this.settings, public_oauth_redirect_ready: true, public_webhook_receiver_ready: true });
+        assert.dom(block).doesNotExist('no warning when both URLs are public');
+
+        // The organization screen has no Authentication, so it never shows it.
+        this.set('settings', { ...this.settings, public_oauth_redirect_ready: false, public_webhook_receiver_ready: false });
         await render(hbs`<QuickbooksSettings @syncOnly={{true}} @settings={{this.settings}} @sync={{this.sync}} />`);
-        assert.dom('[data-test-url-not-public]').doesNotExist();
+        assert.dom(block).doesNotExist();
     });
 
     test('a changed Client ID needs its Client secret, and an unchanged one keeps the saved secret', async function (assert) {

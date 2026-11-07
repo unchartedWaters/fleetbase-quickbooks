@@ -168,10 +168,13 @@ quickbooks:
       retry-limit: Retries after a failure. Later tries wait longer.
       retry-delay: Seconds before the first retry. Later tries wait longer, up to 15 minutes.
     urls:
-      not-public-webhook-title: Intuit cannot send webhooks to Fleetbase.
-      not-public-webhook: The Public Webhook Receiver URL is not a public https:// address, so changes made in QuickBooks are not brought into Fleetbase for record types that sync From QuickBooks or Both. Set APP_URL on the Fleetbase API to the public https:// address the API is reached at from the internet, then clear the API's config cache and restart the API, its queue workers and scheduler.
-      not-public-oauth-title: Organizations cannot connect or reconnect to QuickBooks.
-      not-public-oauth: The Public OAuth Redirect URL is not set or is not a public https:// address, so Intuit cannot send people back to Fleetbase after they sign in. Existing connections keep syncing. Set CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API to the console's public https:// address, then clear the API's config cache and restart the API, its queue workers and scheduler.
+      not-configured-title: Public URL not configured. Resolve to connect to QuickBooks
+      not-configured-intro: "Until this is fixed, these do not work:"
+      not-public-oauth-title: "Connecting and reconnecting to QuickBooks (existing connections keep syncing):"
+      not-public-oauth: set CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API to the console's public https:// address.
+      not-public-webhook-title: "Changes made in QuickBooks, for record types that sync From QuickBooks or Both:"
+      not-public-webhook: set APP_URL on the Fleetbase API to the public https:// address the API is reached at from the internet.
+      restart: Then clear the API's config cache and restart the API, its queue workers and scheduler.
     options:
       sandbox: Sandbox
       production: Production
