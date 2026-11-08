@@ -136,10 +136,12 @@ jobs:
           path: quickbooks
           persist-credentials: false
 
-      - name: Setup Node.js 24
+      # The console builds on Node 22, as Fleetbase's own console/Dockerfile does. Its
+      # clean-css 3 calls util.isRegExp, which Node 23 removed.
+      - name: Setup Node.js 22
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 22
 
       # The console's packageManager field names the pnpm version its lockfile needs.
       - name: Setup pnpm
