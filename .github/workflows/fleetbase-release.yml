@@ -136,10 +136,10 @@ jobs:
           path: quickbooks
           persist-credentials: false
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 24
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
 
       # The console's packageManager field names the pnpm version its lockfile needs.
       - name: Setup pnpm
@@ -244,6 +244,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
 
       # The files the Fleetbase registry serves for this extension.
       - name: Pack the extension
