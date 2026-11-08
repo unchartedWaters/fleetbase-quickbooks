@@ -120,7 +120,7 @@ quickbooks:
     turn-on-confirm-title: Start syncing these records?
     turn-on-confirm: "Saving sends every existing record of these types to QuickBooks in the background: {entities}. Accounts / Wallets create one QuickBooks account per wallet."
     authentication: Authentication
-    credentials-title: Getting your QuickBooks credentials
+    credentials-title: Configuring QuickBooks
     credentials-create-app-before: "No QuickBooks app yet? Start with "
     credentials-create-app-link: Intuit's guide to creating a QuickBooks app
     credentials-create-app-after: "."
@@ -168,8 +168,13 @@ quickbooks:
       retry-limit: Retries after a failure. Later tries wait longer.
       retry-delay: Seconds before the first retry. Later tries wait longer, up to 15 minutes.
     urls:
-      not-public-webhook: This is not a public https:// address, so Intuit cannot reach it. Set APP_URL on the Fleetbase API to the address the API is reached at from the internet.
-      not-public-oauth: This is not a public https:// address, so Intuit cannot send you back to it. Set CONSOLE_HOST on the Fleetbase API to the console's public https:// address.
+      not-configured-title: Public URL not configured. Resolve to connect to QuickBooks
+      not-configured-intro: "Until this is fixed, these do not work:"
+      not-public-oauth-title: "Connecting and reconnecting to QuickBooks (existing connections keep syncing):"
+      not-public-oauth: set CONSOLE_HOST (or QUICKBOOKS_CONSOLE_HOST) on the Fleetbase API to the console's public https:// address.
+      not-public-webhook-title: "Changes made in QuickBooks, for record types that sync From QuickBooks or Both:"
+      not-public-webhook: set APP_URL on the Fleetbase API to the public https:// address the API is reached at from the internet.
+      restart: Then clear the API's config cache and restart the API, its queue workers and scheduler.
     options:
       sandbox: Sandbox
       production: Production

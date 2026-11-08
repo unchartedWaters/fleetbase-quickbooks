@@ -89,16 +89,19 @@ function errorFieldSelector(key) {
 
 // The server computes both addresses: the webhook receiver from the API address (APP_URL), the OAuth redirect from
 // the console's QuickBooks page (CONSOLE_HOST). Each is shown once, as text inside the guidance step that says where
-// it goes in Intuit, and is never edited here.
+// it goes in Intuit, and is never edited here. Every one that is not a public https address is listed in one warning at
+// the top of Authentication, outside the collapsed steps.
 const DISPLAY_URLS = {
     redirect: {
         key: 'public_oauth_redirect_url',
         readyKey: 'public_oauth_redirect_ready',
+        notPublicTitleKey: 'quickbooks.settings.urls.not-public-oauth-title',
         notPublicKey: 'quickbooks.settings.urls.not-public-oauth',
     },
     webhook: {
         key: 'public_webhook_receiver_url',
         readyKey: 'public_webhook_receiver_ready',
+        notPublicTitleKey: 'quickbooks.settings.urls.not-public-webhook-title',
         notPublicKey: 'quickbooks.settings.urls.not-public-webhook',
     },
 };
@@ -304,11 +307,16 @@ export default class QuickbooksSettingsComponent extends Component {
         const url = {
             key: field.key,
             value: typeof value === 'string' ? value : '',
-            notPublic: this.args.settings?.[field.readyKey] === false,
-            notPublicText: this.intl.t(field.notPublicKey),
         };
 
         return url;
+    }
+
+    // In step order: the redirect, then the webhook receiver.
+    get urlWarnings() {
+        return [DISPLAY_URLS.redirect, DISPLAY_URLS.webhook]
+            .filter((field) => this.args.settings?.[field.readyKey] === false)
+            .map((field) => ({ key: field.key, title: this.intl.t(field.notPublicTitleKey), text: this.intl.t(field.notPublicKey) }));
     }
 
     get secret() {

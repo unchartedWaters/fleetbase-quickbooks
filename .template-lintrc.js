@@ -12,5 +12,8 @@ module.exports = {
         'no-invalid-role': 'off',
         'no-positive-tabindex': 'off',
         'require-presentational-children': 'off',
+        // Links are valid in the body of a <details> (HTML allows flow content after its <summary>). This exempts
+        // <details> from the rule entirely, so keep links and buttons out of a <summary> by review.
+        'no-nested-interactive': ['error', { ignoredTags: ['details'] }],
     },
 };

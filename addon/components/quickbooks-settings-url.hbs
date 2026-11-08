@@ -2,8 +2,3 @@
 {{#if @url.value}}
     <div class="mt-1 select-text break-all font-mono text-sm" data-test-field={{@url.key}}>{{@url.value}}</div>
 {{/if}}
-{{#if @url.notPublic}}
-    <p class="mt-1 font-semibold" data-test-url-not-public={{@url.key}}>
-        <FaIcon @icon="triangle-exclamation" class="mr-1" />{{@url.notPublicText}}
-    </p>
-{{/if}}
