@@ -55,16 +55,7 @@ function activityId(batch) {
 }
 
 function countField(batch, name) {
-    if (batch[name] !== undefined && batch[name] !== null) {
-        return batch[name];
-    }
-
-    const counted = batch[`${name}_count`];
-    if (counted !== undefined && counted !== null) {
-        return counted;
-    }
-
-    return 0;
+    return batch[name] ?? 0;
 }
 
 function activityError(batch) {

@@ -52,39 +52,31 @@ module('Unit | Utility | activity-view characterization', () => {
         );
     });
 
-    test('each count prefers the plain field, then the _count field, then zero', (assert) => {
+    test('each count is the plain field, or zero when it is null or missing', (assert) => {
         const names = ['created', 'aligned', 'linked', 'skipped', 'updated', 'unmatched', 'voided', 'failed'];
         const plain = {};
-        const counted = {};
-        const zeroWins = {};
-        const nullFalls = {};
+        const zero = {};
+        const nulls = {};
         const missing = {};
         const kept = {};
         names.forEach((name, index) => {
             plain[name] = index + 1;
-            plain[`${name}_count`] = 100;
-            counted[`${name}_count`] = index + 10;
-            zeroWins[name] = 0;
-            zeroWins[`${name}_count`] = 7;
-            nullFalls[name] = null;
-            nullFalls[`${name}_count`] = index + 20;
+            zero[name] = 0;
+            nulls[name] = null;
             missing[name] = undefined;
-            missing[`${name}_count`] = null;
             kept[name] = '';
-            kept[`${name}_count`] = 9;
         });
-        const rows = activityRows([plain, counted, zeroWins, nullFalls, missing, kept, { created_count: '3', failed: false }]);
+        const rows = activityRows([plain, zero, nulls, missing, kept, { created: '3', failed: false }]);
         const counts = (row) => names.map((name) => row[name]);
 
         assert.deepEqual(counts(rows[0]), [1, 2, 3, 4, 5, 6, 7, 8]);
-        assert.deepEqual(counts(rows[1]), [10, 11, 12, 13, 14, 15, 16, 17]);
+        assert.deepEqual(counts(rows[1]), [0, 0, 0, 0, 0, 0, 0, 0]);
         assert.deepEqual(counts(rows[2]), [0, 0, 0, 0, 0, 0, 0, 0]);
-        assert.deepEqual(counts(rows[3]), [20, 21, 22, 23, 24, 25, 26, 27]);
-        assert.deepEqual(counts(rows[4]), [0, 0, 0, 0, 0, 0, 0, 0]);
-        assert.deepEqual(counts(rows[5]), ['', '', '', '', '', '', '', '']);
-        assert.strictEqual(rows[6].created, '3');
-        assert.false(rows[6].failed);
-        assert.strictEqual(rows[6].linked, 0);
+        assert.deepEqual(counts(rows[3]), [0, 0, 0, 0, 0, 0, 0, 0]);
+        assert.deepEqual(counts(rows[4]), ['', '', '', '', '', '', '', '']);
+        assert.strictEqual(rows[5].created, '3');
+        assert.false(rows[5].failed);
+        assert.strictEqual(rows[5].linked, 0);
     });
 
     test('an error is a non-empty string, any other truthy value, or null', (assert) => {

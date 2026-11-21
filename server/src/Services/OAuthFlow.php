@@ -206,7 +206,7 @@ class OAuthFlow
      */
     private function exchange(array $stored, array $credentials): array
     {
-        $credentials = $this->withStartedRedirect($credentials, $stored);
+        $credentials['redirect_uri'] = (string) ($stored['redirect_uri'] ?? '');
         try {
             $tokens = $this->client->exchangeCode($credentials, (string) $stored['code'], $this->storedVerifier($stored));
         } catch (QuickBooksException $exception) {
@@ -293,24 +293,6 @@ class OAuthFlow
     private function codeChallenge(string $verifier): string
     {
         return rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
-    }
-
-    /**
-     * A state saved before the redirect_uri was kept with it uses the current one.
-     *
-     * @param array{client_id: string, client_secret: string, redirect_uri: string, environment: string} $credentials
-     * @param array<string, mixed>                                                                       $stored
-     *
-     * @return array{client_id: string, client_secret: string, redirect_uri: string, environment: string}
-     */
-    private function withStartedRedirect(array $credentials, array $stored): array
-    {
-        $redirect = $stored['redirect_uri'] ?? null;
-        if (is_string($redirect) === true && $redirect !== '') {
-            $credentials['redirect_uri'] = $redirect;
-        }
-
-        return $credentials;
     }
 
     /**
