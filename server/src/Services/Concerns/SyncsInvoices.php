@@ -405,7 +405,6 @@ trait SyncsInvoices
         $matched = $this->invoiceHashesMatch(
             $invoice,
             $remote,
-            $conflict,
             $remoteCents,
             $localCents,
             $reference,
@@ -709,7 +708,6 @@ trait SyncsInvoices
     private function invoiceHashesMatch(
         array $invoice,
         array $remote,
-        string $conflict,
         int $remoteCents,
         int $localCents,
         string $reference,
@@ -885,7 +883,6 @@ trait SyncsInvoices
         return $this->invoiceHashesMatch(
             $invoice,
             $remote,
-            'fleetbase',
             $remoteCents,
             $localCents,
             $reference,
