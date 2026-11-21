@@ -66,8 +66,15 @@ trait BatchesInvoices
      * @param array<string, mixed>             $settings
      * @param array<string, mixed>             $batch
      */
-    private function syncInvoiceBlock(SyncLedger $ledger, array &$connection, array $rows, array $settings, array &$batch, int $now, string $trigger): bool
-    {
+    private function syncInvoiceBlock(
+        SyncLedger $ledger,
+        array &$connection,
+        array $rows,
+        array $settings,
+        array &$batch,
+        int $now,
+        string $trigger,
+    ): bool {
         if ($this->entityEnabled($settings, 'invoice') === false) {
             return $this->recordDisabledRows($ledger, $connection, $rows, $batch, $trigger, true);
         }
@@ -76,21 +83,20 @@ trait BatchesInvoices
             return true;
         }
 
-        $this->customersPrepared    = true;
-        $this->serviceItemByCompany = [];
-        $this->serviceItemErrors    = [];
-        $this->serviceItemChecked   = false;
-        $this->reservedDocNumbers   = null;
-        $this->salesTaxByCompany    = [];
-        $this->taxCustomers         = [];
-        $this->taxItems             = [];
         try {
-            $this->prefetchInvoices($connection, $ledger, $rows);
-            $this->prefetchTaxCustomers($connection, $ledger, $rows);
-            $this->prefetchPayments($connection, $ledger, $rows);
-            $this->reserveInvoiceDocNumbers($ledger, $connection, $rows, $settings);
+            $this->openInvoiceBlock($ledger, $connection, $rows, $settings);
 
-            return $this->syncBufferedBlock($ledger, $connection, $rows, $settings, $batch, $now, $trigger, true, 'invoice');
+            return $this->syncBufferedBlock(
+                $ledger,
+                $connection,
+                $rows,
+                $settings,
+                $batch,
+                $now,
+                $trigger,
+                true,
+                'invoice'
+            );
         } catch (QuickBooksException $exception) {
             if ($exception->isUnauthorized() === true) {
                 $this->tokenRejected($ledger, (string) $connection['company_uuid']);
@@ -100,7 +106,8 @@ trait BatchesInvoices
             }
             if ($exception->isRateLimit() === true) {
                 $this->failure($ledger, $connection, $rows[0], $exception, $settings, $now);
-                $this->recordRow($ledger, $connection, $rows[0], 'failed', $batch, $trigger, $this->exceptionError($exception));
+                $error = $this->exceptionError($exception);
+                $this->recordRow($ledger, $connection, $rows[0], 'failed', $batch, $trigger, $error);
 
                 return true;
             }
@@ -114,6 +121,29 @@ trait BatchesInvoices
     /**
      * Drop what one invoice block read and reserved.
      */
+    /**
+     * Open the per-block caches that forgetInvoiceBlock closes again, and read what the block needs.
+     *
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $rows
+     * @param array<string, mixed>             $settings
+     */
+    private function openInvoiceBlock(SyncLedger $ledger, array $connection, array $rows, array $settings): void
+    {
+        $this->customersPrepared    = true;
+        $this->serviceItemByCompany = [];
+        $this->serviceItemErrors    = [];
+        $this->serviceItemChecked   = false;
+        $this->reservedDocNumbers   = null;
+        $this->salesTaxByCompany    = [];
+        $this->taxCustomers         = [];
+        $this->taxItems             = [];
+        $this->prefetchInvoices($connection, $ledger, $rows);
+        $this->prefetchTaxCustomers($connection, $ledger, $rows);
+        $this->prefetchPayments($connection, $ledger, $rows);
+        $this->reserveInvoiceDocNumbers($ledger, $connection, $rows, $settings);
+    }
+
     private function forgetInvoiceBlock(): void
     {
         $this->invoiceById          = null;
@@ -235,23 +265,36 @@ trait BatchesInvoices
      * Invoice writes are durable before payment reads begin. A later payment failure
      * therefore cannot leave an invoice that QuickBooks created or updated unlinked.
      *
-     * @param array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool}>                                           $planned
-     * @param array<string, array{ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>, error: string|null, status: int, halt: bool}> $results
-     * @param array<string, mixed>                                                                                                                            $settings
+     * @param array<string, array{
+     *     row: array<string, mixed>, outcome: string, error: string|null, permanent: bool
+     * }> $planned
+     * @param array<string, array{
+     *     ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>,
+     *     error: string|null, status: int, halt: bool
+     * }> $results
+     * @param array<string, mixed> $settings
      */
-    private function persistSuccessfulInvoiceWrites(SyncLedger $ledger, array $connection, array $planned, array $results, array $settings): void
-    {
+    private function persistSuccessfulInvoiceWrites(
+        SyncLedger $ledger,
+        array $connection,
+        array $planned,
+        array $results,
+        array $settings,
+    ): void {
         $buffered               = $this->bufferedLineMaps;
         $this->bufferedLineMaps = [];
         $this->refusedTaxRows   = [];
         foreach ($planned as $uuid => $plan) {
             $result = $results['invoice:' . $uuid] ?? null;
-            if (is_array($result) === false || empty($result['ok']) === true || is_array($result['body'] ?? null) === false || ($result['body']['Id'] ?? '') === '') {
+            if (is_array($result) === false || empty($result['ok']) === true) {
+                continue;
+            }
+            $body = $result['body'] ?? null;
+            if (is_array($body) === false || ($body['Id'] ?? '') === '') {
                 continue;
             }
 
             $lines   = $buffered[(string) $uuid] ?? null;
-            $body    = $result['body'];
             $outcome = $plan['outcome'];
             $this->persistInvoiceWrite($ledger, $connection, (string) $uuid, $outcome, $body, $lines, $settings);
         }
@@ -391,7 +434,8 @@ trait BatchesInvoices
         }
 
         $status = (string) ($invoice['status'] ?? '');
-        if (in_array($status, ['void', 'voided', 'cancelled', 'canceled', 'deleted'], true) === true || empty($invoice['deleted_at']) === false) {
+        $closed = in_array($status, ['void', 'voided', 'cancelled', 'canceled', 'deleted'], true);
+        if ($closed === true || empty($invoice['deleted_at']) === false) {
             return false;
         }
 
@@ -408,35 +452,51 @@ trait BatchesInvoices
             return false;
         }
 
-        $number   = trim((string) ($invoice['number'] ?? ''));
-        $existing = ($number !== '' && $this->invoiceByDoc !== null) ? ($this->invoiceByDoc[$number] ?? null) : null;
-        if (is_array($existing) === true && $this->invoiceCustomerMatches($existing, (string) ($customerLink['qbo_id'] ?? '')) === true) {
+        $number     = trim((string) ($invoice['number'] ?? ''));
+        $existing   = ($number !== '' && $this->invoiceByDoc !== null) ? ($this->invoiceByDoc[$number] ?? null) : null;
+        $customerId = (string) ($customerLink['qbo_id'] ?? '');
+        if (is_array($existing) === true && $this->invoiceCustomerMatches($existing, $customerId) === true) {
             return false;
         }
 
         return true;
     }
 
-    private function prefetchInvoices(array $connection, SyncLedger $ledger, array $rows): void
+    /**
+     * The QuickBooks ids of linked invoices and the doc numbers of unlinked ones with a customer.
+     *
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $rows
+     *
+     * @return array{0: array<int, string>, 1: array<int, string>}
+     */
+    private function invoiceLookupKeys(array $connection, SyncLedger $ledger, array $rows): array
     {
-        $this->invoiceById  = [];
-        $this->invoiceByDoc = [];
-        $ids                = [];
-        $docs               = [];
-        $companyUuid        = (string) $connection['company_uuid'];
-        $realm              = (string) $connection['realm_id'];
+        $ids         = [];
+        $docs        = [];
+        $companyUuid = (string) $connection['company_uuid'];
+        $realm       = (string) $connection['realm_id'];
         foreach ($rows as $row) {
-            $uuid    = (string) ($row['local_uuid'] ?? '');
-            $invoice = $ledger->invoices[$uuid] ?? null;
-            $link    = $ledger->link($companyUuid, $realm, 'invoice', $uuid);
+            $uuid     = (string) ($row['local_uuid'] ?? '');
+            $invoice  = $ledger->invoices[$uuid] ?? null;
+            $link     = $ledger->link($companyUuid, $realm, 'invoice', $uuid);
+            $customer = is_array($invoice) === true ? trim((string) ($invoice['customer_uuid'] ?? '')) : '';
+            $number   = is_array($invoice) === true ? trim((string) ($invoice['number'] ?? '')) : '';
             if (is_array($link) === true && (string) ($link['qbo_id'] ?? '') !== '') {
                 $ids[] = (string) $link['qbo_id'];
-            } elseif (is_array($invoice) === true && trim((string) ($invoice['customer_uuid'] ?? '')) !== '' && trim((string) ($invoice['number'] ?? '')) !== '') {
-                $docs[] = trim((string) $invoice['number']);
+            } elseif ($customer !== '' && $number !== '') {
+                $docs[] = $number;
             }
         }
-        $ids                        = array_values(array_unique($ids));
-        $docs                       = array_values(array_unique($docs));
+
+        return [array_values(array_unique($ids)), array_values(array_unique($docs))];
+    }
+
+    private function prefetchInvoices(array $connection, SyncLedger $ledger, array $rows): void
+    {
+        $this->invoiceById          = [];
+        $this->invoiceByDoc         = [];
+        [$ids, $docs]               = $this->invoiceLookupKeys($connection, $ledger, $rows);
         $this->invoiceReadFailed    = [];
         $this->invoiceDocReadFailed = [];
         if ($ids !== []) {
