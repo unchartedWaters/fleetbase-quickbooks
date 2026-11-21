@@ -385,7 +385,8 @@ test('garbage input never decrypts: decrypt throws RuntimeException and reveal r
     ];
 
     foreach ($garbage as $payload) {
-        expect(fn () => $cipher->decrypt($payload))->toThrow(RuntimeException::class, 'Unable to decrypt QuickBooks secret.')
+        expect(fn () => $cipher->decrypt($payload))
+            ->toThrow(RuntimeException::class, 'Unable to decrypt QuickBooks secret.')
             ->and($cipher->reveal($payload))->toBeNull($payload);
     }
 
