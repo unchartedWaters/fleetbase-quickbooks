@@ -46,6 +46,9 @@ class FakeQuickBooks extends QuickBooksClient
     /** @var array<int, array<string, mixed>> */
     public array $paymentPayloads = [];
 
+    /** @var array<int, array<string, mixed>> account update payloads, as sent */
+    public array $accountPayloads = [];
+
     /** Applying a payment raises the SyncToken of each invoice it pays, as QuickBooks does. */
     public bool $paymentsBumpInvoices = false;
 
@@ -892,8 +895,9 @@ class FakeQuickBooks extends QuickBooksClient
      */
     public function updateAccount(array $connection, string $id, string $syncToken, array $payload): array
     {
-        $this->calls[]       = 'updateAccount';
-        $record              = array_merge($this->accounts[$id] ?? [], $payload, [
+        $this->calls[]           = 'updateAccount';
+        $this->accountPayloads[] = $payload;
+        $record                  = array_merge($this->accounts[$id] ?? [], $payload, [
             'Id'        => $id,
             'SyncToken' => (string) ((int) $syncToken + 1),
         ]);
