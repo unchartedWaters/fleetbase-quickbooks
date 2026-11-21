@@ -49,11 +49,11 @@ trait SyncsTax
             $ids[$index] = $lineItems[$index] ?? $itemId;
         }
         $known = $item === null ? [] : [$itemId => $item];
-        foreach (array_unique($ids) as $id) {
-            if (isset($known[$id]) === false) {
-                $read = $this->taxItem($ledger, $connection, $id, true, false);
+        foreach (array_unique($ids) as $lineItemId) {
+            if (isset($known[$lineItemId]) === false) {
+                $read = $this->taxItem($ledger, $connection, $lineItemId, true, false);
                 if ($read !== null) {
-                    $known[$id] = $read;
+                    $known[$lineItemId] = $read;
                 }
             }
         }
@@ -251,9 +251,9 @@ trait SyncsTax
             $link         = $customerUuid === ''
                 ? null
                 : $ledger->link($companyUuid, $realm, 'customer', $customerUuid);
-            $id           = is_array($link) === true ? trim((string) ($link['qbo_id'] ?? '')) : '';
-            if ($id !== '') {
-                $ids[$id] = $id;
+            $customerId           = is_array($link) === true ? trim((string) ($link['qbo_id'] ?? '')) : '';
+            if ($customerId !== '') {
+                $ids[$customerId] = $customerId;
             }
         }
         $loaded = $this->queryWhereIn(
@@ -261,17 +261,17 @@ trait SyncsTax
             'Customer',
             'Id',
             array_values($ids),
-            fn (string $id): ?array => $this->client->getCustomer($connection, $id)
+            fn (string $customerId): ?array => $this->client->getCustomer($connection, $customerId)
         );
         // The query leaves out inactive customers, so a customer it omits is read by id later.
         foreach ($loaded['rows'] as $remote) {
-            $id = trim((string) ($remote['Id'] ?? ''));
-            if (isset($ids[$id]) === true) {
-                $this->taxCustomers[$id] = $remote;
+            $customerId = trim((string) ($remote['Id'] ?? ''));
+            if (isset($ids[$customerId]) === true) {
+                $this->taxCustomers[$customerId] = $remote;
             }
         }
-        foreach ($loaded['failed'] as $id => $error) {
-            $this->taxCustomers[(string) $id] = $error;
+        foreach ($loaded['failed'] as $customerId => $error) {
+            $this->taxCustomers[(string) $customerId] = $error;
         }
     }
 
@@ -293,21 +293,12 @@ trait SyncsTax
         $items    = is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [];
         $codes    = $this->taxCodesFor($connection, $remote);
         $taxed    = $this->invoiceMapper($invoice)->quickBooksTax($remote, $items, $codes);
-        $subtotal = 0;
-        $changed  = false;
-        $replaced = false;
-        foreach ($taxed['items'] as $index => $item) {
-            $subtotal += (int) ($item['amount'] ?? 0);
-            $before    = is_array($items[$index] ?? null) === true ? $items[$index] : [];
-            $rate      = InvoiceMapper::taxRate($before['tax_rate'] ?? 0);
-            $changed   = $changed || $rate !== $item['tax_rate']
-                || (int) ($before['tax_amount'] ?? 0) !== $item['tax_amount'];
-            $replaced  = $replaced || ($rate !== '0.00' && $rate !== $item['tax_rate']);
-        }
+        $lines    = $this->taxedLineChanges($items, $taxed['items']);
+        $subtotal = $lines['subtotal'];
         $previous = (int) ($invoice['tax'] ?? 0);
         // The lines of a tax-inclusive invoice already hold the tax.
         $total = $taxed['inclusive'] === true ? $subtotal : $subtotal + $taxed['tax'];
-        if ($changed === false && $previous === $taxed['tax'] && (int) ($invoice['total'] ?? 0) === $total) {
+        if ($lines['changed'] === false && $previous === $taxed['tax'] && (int) ($invoice['total'] ?? 0) === $total) {
             return false;
         }
         foreach ($taxed['items'] as $index => $item) {
@@ -323,9 +314,35 @@ trait SyncsTax
         if ((int) ($invoice['amount_paid'] ?? 0) !== 0) {
             $this->applyPaymentStatus($ledger, $uuid);
         }
-        $this->noteCopiedTax($uuid, $total < (int) ($invoice['total'] ?? 0), $replaced);
+        $this->noteCopiedTax($uuid, $total < (int) ($invoice['total'] ?? 0), $lines['replaced']);
 
         return true;
+    }
+
+    /**
+     * Compare the lines QuickBooks taxed with the Fleetbase lines: the new subtotal, whether any
+     * line tax changed, and whether a non-zero Fleetbase rate was replaced.
+     *
+     * @param array<int|string, mixed>         $items
+     * @param array<int, array<string, mixed>> $taxedItems
+     *
+     * @return array{subtotal: int, changed: bool, replaced: bool}
+     */
+    private function taxedLineChanges(array $items, array $taxedItems): array
+    {
+        $subtotal = 0;
+        $changed  = false;
+        $replaced = false;
+        foreach ($taxedItems as $index => $item) {
+            $subtotal += (int) ($item['amount'] ?? 0);
+            $before    = is_array($items[$index] ?? null) === true ? $items[$index] : [];
+            $rate      = InvoiceMapper::taxRate($before['tax_rate'] ?? 0);
+            $changed   = $changed || $rate !== $item['tax_rate']
+                || (int) ($before['tax_amount'] ?? 0) !== $item['tax_amount'];
+            $replaced  = $replaced || ($rate !== '0.00' && $rate !== $item['tax_rate']);
+        }
+
+        return ['subtotal' => $subtotal, 'changed' => $changed, 'replaced' => $replaced];
     }
 
     /**
