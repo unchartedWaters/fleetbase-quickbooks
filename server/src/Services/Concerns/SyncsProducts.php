@@ -45,43 +45,77 @@ trait SyncsProducts
         try {
             $results = $this->productItemsFor($ledger, $connection, array_values(array_filter($keys, 'is_string')));
         } catch (QuickBooksException $exception) {
-            if ($exception->isUnauthorized() === true) {
-                $this->tokenRejected($ledger, $companyUuid);
-                $batch['failed']++;
-
-                return true;
-            }
-            if ($exception->isRateLimit() === true) {
-                $this->failure($ledger, $connection, $rows[0], $exception, $settings, $now);
-                $this->recordRow(
-                    $ledger,
-                    $connection,
-                    $rows[0],
-                    'failed',
-                    $batch,
-                    $trigger,
-                    $this->exceptionError($exception)
-                );
-
-                return true;
-            }
-
-            throw $exception;
+            return $this->productReadFailed($ledger, $connection, $rows[0], $exception, $settings, $batch, $now, $trigger);
         }
         $connection = $ledger->connection($companyUuid) ?? $connection;
-        $seen       = [];
+        $this->recordProductRows($ledger, $connection, $rows, $keys, $results, $settings, $batch, $now, $trigger);
+
+        return false;
+    }
+
+    /**
+     * The product item read failed. A 401 or rate limit stops the run; anything else is thrown.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $batch
+     */
+    private function productReadFailed(
+        SyncLedger $ledger,
+        array $connection,
+        array $row,
+        QuickBooksException $exception,
+        array $settings,
+        array &$batch,
+        int $now,
+        string $trigger,
+    ): bool {
+        if ($exception->isUnauthorized() === true) {
+            $this->tokenRejected($ledger, (string) $connection['company_uuid']);
+            $batch['failed']++;
+
+            return true;
+        }
+        if ($exception->isRateLimit() === true) {
+            $this->failure($ledger, $connection, $row, $exception, $settings, $now);
+            $this->recordRow($ledger, $connection, $row, 'failed', $batch, $trigger, $this->exceptionError($exception));
+
+            return true;
+        }
+
+        throw $exception;
+    }
+
+    /**
+     * Record each product row: the first row of a name gets its outcome, the others are aligned.
+     *
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $rows
+     * @param array<int, string|null>          $keys
+     * @param array<string, array{
+     *     id: string|null, item: array<string, mixed>|null, outcome: string, error: string|null,
+     *     transient: bool, note: string|null
+     * }> $results
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $batch
+     */
+    private function recordProductRows(
+        SyncLedger $ledger,
+        array $connection,
+        array $rows,
+        array $keys,
+        array $results,
+        array $settings,
+        array &$batch,
+        int $now,
+        string $trigger,
+    ): void {
+        $companyUuid = (string) $connection['company_uuid'];
+        $seen        = [];
         foreach ($rows as $index => $row) {
             $key    = $keys[$index];
-            $result = $key === null
-                ? [
-                    'id'        => null,
-                    'item'      => null,
-                    'outcome'   => 'failed',
-                    'error'     => Translation::encode('quickbooks.messages.products-unavailable'),
-                    'transient' => true,
-                    'note'      => null,
-                ]
-                : ($results[$key] ?? null);
+            $result = $key === null ? $this->productsUnavailable() : ($results[$key] ?? null);
             if ($key === '' || $result === null) {
                 $ledger->updatePending(
                     $companyUuid,
@@ -111,8 +145,23 @@ trait SyncsProducts
             $seen[$key] = true;
             $this->recordRow($ledger, $connection, $row, $outcome, $batch, $trigger, null);
         }
+    }
 
-        return false;
+    /**
+     * The result for a row whose product name could not be worked out.
+     *
+     * @return array{id: null, item: null, outcome: string, error: string, transient: bool, note: null}
+     */
+    private function productsUnavailable(): array
+    {
+        return [
+            'id'        => null,
+            'item'      => null,
+            'outcome'   => 'failed',
+            'error'     => Translation::encode('quickbooks.messages.products-unavailable'),
+            'transient' => true,
+            'note'      => null,
+        ];
     }
 
     /**
@@ -201,10 +250,10 @@ trait SyncsProducts
             }
             $this->managedItems = [];
             foreach ($prepared as $key => $result) {
-                $this->productResults[$key] = $result;
-                $id                         = trim((string) ($result['item']['Id'] ?? ''));
-                if ($id !== '' && is_array($result['item']) === true) {
-                    $this->itemRows[$id] = $result['item'];
+                $this->productResults[$key]     = $result;
+                $itemId                         = trim((string) ($result['item']['Id'] ?? ''));
+                if ($itemId !== '' && is_array($result['item']) === true) {
+                    $this->itemRows[$itemId] = $result['item'];
                 }
             }
         }
@@ -307,9 +356,9 @@ trait SyncsProducts
     {
         $items = [];
         foreach ($this->lineProducts as $key => $name) {
-            $id = trim((string) ($this->productResults[$key]['id'] ?? ''));
-            if ($id !== '') {
-                $items[$id] = ['name' => $name];
+            $itemId = trim((string) ($this->productResults[$key]['id'] ?? ''));
+            if ($itemId !== '') {
+                $items[$itemId] = ['name' => $name];
             }
         }
 
@@ -381,9 +430,9 @@ trait SyncsProducts
                     && ($link['local_type'] ?? '') === 'item'
                     && (string) ($link['company_uuid'] ?? '') === (string) $connection['company_uuid']
                     && (string) ($link['realm_id'] ?? '') === (string) $connection['realm_id'];
-                $id   = $ours === true ? trim((string) ($link['qbo_id'] ?? '')) : '';
-                if ($id !== '') {
-                    $this->managedItems[$scope][$id] = ProductMapper::key((string) ($link['name'] ?? ''));
+                $itemId   = $ours === true ? trim((string) ($link['qbo_id'] ?? '')) : '';
+                if ($itemId !== '') {
+                    $this->managedItems[$scope][$itemId] = ProductMapper::key((string) ($link['name'] ?? ''));
                 }
             }
         }
