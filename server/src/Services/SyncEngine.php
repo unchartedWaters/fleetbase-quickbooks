@@ -4,8 +4,11 @@ namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Services\Concerns\AppliesRemotePayments;
 use Fleetbase\Quickbooks\Services\Concerns\BatchesCustomers;
+use Fleetbase\Quickbooks\Services\Concerns\BatchesInvoices;
 use Fleetbase\Quickbooks\Services\Concerns\BatchesPayments;
 use Fleetbase\Quickbooks\Services\Concerns\BatchesWallets;
+use Fleetbase\Quickbooks\Services\Concerns\ComparesInvoices;
+use Fleetbase\Quickbooks\Services\Concerns\CopiesRemoteInvoices;
 use Fleetbase\Quickbooks\Services\Concerns\DeactivatesRemote;
 use Fleetbase\Quickbooks\Services\Concerns\StoresPaymentLinks;
 use Fleetbase\Quickbooks\Services\Concerns\SyncsCustomers;
@@ -14,6 +17,7 @@ use Fleetbase\Quickbooks\Services\Concerns\SyncsPayments;
 use Fleetbase\Quickbooks\Services\Concerns\SyncsProducts;
 use Fleetbase\Quickbooks\Services\Concerns\SyncsTax;
 use Fleetbase\Quickbooks\Services\Concerns\SyncsWallets;
+use Fleetbase\Quickbooks\Services\Concerns\UpdatesInvoices;
 use Fleetbase\Quickbooks\Support\Amounts;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
@@ -34,6 +38,38 @@ use Fleetbase\Quickbooks\Support\WalletMapper;
  *     mapped?: bool,
  *     codes?: array<string, array<int, string>>,
  *     fleetbase_tax?: bool
+ * }
+ * @phpstan-type InvoicePlan array{
+ *     settings: array<string, mixed>,
+ *     copy: bool,
+ *     push: bool,
+ *     reference: string,
+ *     conflict: string,
+ *     pushClears: bool,
+ *     itemId: string,
+ *     customerUuid: string,
+ *     customerLink: array<string, mixed>,
+ *     stored: array{removed: array<int, RemovedLine>, uuids: array<int, string>, mapped: bool},
+ *     lineItems: array<int, string>,
+ *     managed: array<string, string|true>,
+ *     payload: array<string, mixed>,
+ *     baseline: array<string, mixed>|null,
+ *     link: array<string, mixed>|null
+ * }
+ * @phpstan-type InvoiceState array{
+ *     leads: bool,
+ *     pushClears: bool,
+ *     clears: bool,
+ *     customerRef: string,
+ *     changed: bool,
+ *     remoteCents: int,
+ *     localCents: int,
+ *     currencyOk: bool,
+ *     suppliesLines: bool,
+ *     removed: array<int, RemovedLine>,
+ *     owns: bool,
+ *     ownTax: bool,
+ *     edited: bool
  * }
  * @phpstan-type BufferedWrite array{
  *     bId: string,
@@ -58,8 +94,11 @@ class SyncEngine
 {
     use AppliesRemotePayments;
     use BatchesCustomers;
+    use BatchesInvoices;
     use BatchesPayments;
     use BatchesWallets;
+    use ComparesInvoices;
+    use CopiesRemoteInvoices;
     use DeactivatesRemote;
     use StoresPaymentLinks;
     use SyncsCustomers;
@@ -68,6 +107,7 @@ class SyncEngine
     use SyncsProducts;
     use SyncsTax;
     use SyncsWallets;
+    use UpdatesInvoices;
 
     private const RATE_LIMITED_MESSAGE = 'quickbooks.messages.rate-limited';
 
