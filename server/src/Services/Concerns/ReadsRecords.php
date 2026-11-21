@@ -58,8 +58,42 @@ trait ReadsRecords
      */
     private function readProducts(SyncLedger $ledger, string $companyUuid): void
     {
-        $productIds = [];
         $keys       = [];
+        $productIds = $this->pendingProductIds($ledger, $companyUuid, $keys);
+        $keys += $this->invoiceLineKeys($ledger);
+        $class      = self::productClass();
+        if (($productIds === [] && $keys === []) || $class === null) {
+            return;
+        }
+
+        try {
+            $this->loadProducts($ledger, $class, $companyUuid, $productIds, $keys);
+        } catch (\Throwable $exception) {
+            if ($this->isAbsentTable($exception) === true) {
+                // Storefront is installed but its tables are not there: no products.
+                $ledger->products        = [];
+                $ledger->productsMissing = true;
+
+                return;
+            }
+            $ledger->productsUnavailable = true;
+            SafeLog::warning('QuickBooks could not read Storefront products; product rows are tried again later.', [
+                'exception' => $exception::class,
+            ]);
+        }
+    }
+
+    /**
+     * The product uuids of the pending product rows. The name of each pending product name row
+     * is added to $keys.
+     *
+     * @param array<string, true> $keys
+     *
+     * @return array<int, string>
+     */
+    private function pendingProductIds(SyncLedger $ledger, string $companyUuid, array &$keys): array
+    {
+        $productIds = [];
         foreach ($ledger->pending as $row) {
             $uuid = (string) ($row['local_uuid'] ?? '');
             if (($row['local_type'] ?? '') === 'product') {
@@ -77,6 +111,18 @@ trait ReadsRecords
                 }
             }
         }
+
+        return $productIds;
+    }
+
+    /**
+     * The name keys of every invoice line: its product name, or else its description.
+     *
+     * @return array<string, true>
+     */
+    private function invoiceLineKeys(SyncLedger $ledger): array
+    {
+        $keys = [];
         foreach ($ledger->invoices as $invoice) {
             foreach (is_array($invoice['items'] ?? null) === true ? $invoice['items'] : [] as $item) {
                 $description = is_array($item) === true ? trim((string) ($item['description'] ?? '')) : '';
@@ -86,40 +132,39 @@ trait ReadsRecords
                 }
             }
         }
-        $class = self::productClass();
-        if (($productIds === [] && $keys === []) || $class === null) {
-            return;
+
+        return $keys;
+    }
+
+    /**
+     * Read the pending products, then every live product whose name key is in $keys.
+     *
+     * @param class-string<Model> $class
+     * @param array<int, string>  $productIds
+     * @param array<string, true> $keys
+     */
+    private function loadProducts(
+        SyncLedger $ledger,
+        string $class,
+        string $companyUuid,
+        array $productIds,
+        array $keys,
+    ): void {
+        $pendingIds = array_values(array_unique($productIds));
+        foreach ($this->productRows($class, $companyUuid, $pendingIds, true) as $product) {
+            $ledger->products[$product['uuid']]                          = $product;
+            $keys[ProductMapper::key((string) ($product['name'] ?? ''))] = true;
         }
-
-        try {
-            $pendingIds = array_values(array_unique($productIds));
-            foreach ($this->productRows($class, $companyUuid, $pendingIds, true) as $product) {
-                $ledger->products[$product['uuid']]                          = $product;
-                $keys[ProductMapper::key((string) ($product['name'] ?? ''))] = true;
+        $live = [];
+        foreach ($this->productQuery($class, $companyUuid, false)->get(['uuid', 'name', 'status']) as $row) {
+            $row = (array) $row;
+            $key = ProductMapper::key((string) ($row['name'] ?? ''));
+            if (isset($keys[$key]) === true && strtolower(trim((string) ($row['status'] ?? ''))) !== 'draft') {
+                $live[] = (string) ($row['uuid'] ?? '');
             }
-            $live = [];
-            foreach ($this->productQuery($class, $companyUuid, false)->get(['uuid', 'name', 'status']) as $row) {
-                $row = (array) $row;
-                $key = ProductMapper::key((string) ($row['name'] ?? ''));
-                if (isset($keys[$key]) === true && strtolower(trim((string) ($row['status'] ?? ''))) !== 'draft') {
-                    $live[] = (string) ($row['uuid'] ?? '');
-                }
-            }
-            foreach ($this->productRows($class, $companyUuid, array_values(array_unique($live)), false) as $product) {
-                $ledger->products[$product['uuid']] = $product;
-            }
-        } catch (\Throwable $exception) {
-            if ($this->isAbsentTable($exception) === true) {
-                // Storefront is installed but its tables are not there: no products.
-                $ledger->products        = [];
-                $ledger->productsMissing = true;
-
-                return;
-            }
-            $ledger->productsUnavailable = true;
-            SafeLog::warning('QuickBooks could not read Storefront products; product rows are tried again later.', [
-                'exception' => $exception::class,
-            ]);
+        }
+        foreach ($this->productRows($class, $companyUuid, array_values(array_unique($live)), false) as $product) {
+            $ledger->products[$product['uuid']] = $product;
         }
     }
 
@@ -276,9 +321,9 @@ trait ReadsRecords
             });
         }
 
-        $rows  = [];
-        $dates = new LedgerPaymentDates();
-        $db    = (new $class())->getConnection();
+        $rows          = [];
+        $dates         = new LedgerPaymentDates();
+        $connection    = (new $class())->getConnection();
         /** @var Model $invoice */
         foreach ($query->get() as $invoice) {
             [$items, $removed]             = $this->readInvoiceItems($invoice);
@@ -296,7 +341,7 @@ trait ReadsRecords
                 'total'         => (int) $invoice->total_amount,
                 'amount_paid'   => (int) $invoice->amount_paid,
                 'status'        => (string) $invoice->status,
-                'paid_at'       => $dates->day($db, $companyUuid, $invoice->paid_at),
+                'paid_at'       => $dates->day($connection, $companyUuid, $invoice->paid_at),
                 'deleted_at'    => $invoice->deleted_at,
                 'items'         => $items,
             ];
@@ -305,7 +350,7 @@ trait ReadsRecords
             }
         }
 
-        return $this->withRecordedPaymentDays($rows, $dates, $db, $companyUuid);
+        return $this->withRecordedPaymentDays($rows, $dates, $connection, $companyUuid);
     }
 
     /**
@@ -319,7 +364,7 @@ trait ReadsRecords
     private function withRecordedPaymentDays(
         array $rows,
         LedgerPaymentDates $dates,
-        ConnectionInterface $db,
+        ConnectionInterface $connection,
         string $companyUuid,
     ): array {
         $undated = [];
@@ -328,14 +373,15 @@ trait ReadsRecords
                 $undated[] = (string) $uuid;
             }
         }
-        foreach ($dates->lastPaymentDays($db, $companyUuid, $undated) as $uuid => $day) {
+        foreach ($dates->lastPaymentDays($connection, $companyUuid, $undated) as $uuid => $day) {
             if (isset($rows[$uuid]) === true) {
                 $rows[$uuid]['payment_date'] = $day;
             }
         }
         // A new QuickBooks payment carries the reference and method of the last Ledger payment.
-        $paid = array_keys(array_filter($rows, static fn (array $row): bool => $row['amount_paid'] > 0));
-        foreach ($dates->lastPaymentDetails($db, $companyUuid, array_map('strval', $paid)) as $uuid => $detail) {
+        $paid    = array_keys(array_filter($rows, static fn (array $row): bool => $row['amount_paid'] > 0));
+        $details = $dates->lastPaymentDetails($connection, $companyUuid, array_map('strval', $paid));
+        foreach ($details as $uuid => $detail) {
             if (isset($rows[$uuid]) === true) {
                 $rows[$uuid]['payment_reference'] = $detail['reference'];
                 $rows[$uuid]['payment_method']    = $detail['method'];
@@ -517,16 +563,16 @@ trait ReadsRecords
     {
         $rows = [];
         foreach ($items as $item) {
-            $itemUuid = is_array($item) === true ? (string) ($item['uuid'] ?? '') : '';
-            $id       = is_array($item) === true ? trim((string) ($item['qbo_line_id'] ?? '')) : '';
-            if ($id === '' || array_key_exists($itemUuid, $live) === false) {
+            $itemUuid     = is_array($item) === true ? (string) ($item['uuid'] ?? '') : '';
+            $lineId       = is_array($item) === true ? trim((string) ($item['qbo_line_id'] ?? '')) : '';
+            if ($lineId === '' || array_key_exists($itemUuid, $live) === false) {
                 continue;
             }
             $meta  = $live[$itemUuid] ?? [];
             $value = [
                 'realm'   => (string) ($map['realm'] ?? ''),
                 'invoice' => (string) ($map['invoice'] ?? ''),
-                'id'      => $id,
+                'id'      => $lineId,
             ];
             // A json column can return keys in another order, so compare the normalised line.
             if (self::storedLine($meta) === $value) {

@@ -3,7 +3,6 @@
 namespace Fleetbase\Quickbooks\Services\Concerns;
 
 use Fleetbase\Quickbooks\Services\SyncLedger;
-use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\WalletMapper;
 
 /**
@@ -35,13 +34,43 @@ trait SyncsWallets
             return $this->deactivateRemote($ledger, $connection, 'wallet', $uuid, $this->pushesRemote($direction));
         }
 
-        $copy       = $this->copiesRemote($direction);
-        $push       = $this->pushesRemote($direction);
-        $reference  = (string) ($settings['wallet_reference'] ?? 'fleetbase');
-        $conflict   = (string) ($settings['wallet_conflict'] ?? 'fleetbase');
-        $pushClears = $this->sendsClears($conflict, $push, $copy);
-        $payload    = $this->wallets->toQuickBooks($wallet, $reference);
-        $link       = $ledger->link(
+        $plan      = $this->walletPlan($ledger, $connection, $uuid, $settings, $direction);
+        $payload   = $this->wallets->toQuickBooks($wallet, $plan['reference']);
+        $nameTaken = false;
+        $remote    = $this->walletRemote($ledger, $connection, $uuid, $wallet, $payload, $plan['baseline'], $nameTaken);
+        if ($remote !== null) {
+            return $this->updateWalletAccount($ledger, $connection, $uuid, $wallet, $payload, $remote, $plan);
+        }
+        if ($plan['baseline'] !== null) {
+            return 'aligned';
+        }
+
+        return $this->createWalletAccount($ledger, $connection, $uuid, $wallet, $payload, $plan, $nameTaken);
+    }
+
+    /**
+     * How this wallet syncs, and its link as it was before this sync.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $settings
+     *
+     * @return array{
+     *     settings: array<string, mixed>, copy: bool, push: bool, reference: string, conflict: string,
+     *     pushClears: bool, primary: bool, baseline: array<string, mixed>|null
+     * }
+     */
+    private function walletPlan(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $settings,
+        string $direction,
+    ): array {
+        $copy      = $this->copiesRemote($direction);
+        $push      = $this->pushesRemote($direction);
+        $reference = (string) ($settings['wallet_reference'] ?? 'fleetbase');
+        $conflict  = (string) ($settings['wallet_conflict'] ?? 'fleetbase');
+        $link      = $ledger->link(
             (string) $connection['company_uuid'],
             (string) $connection['realm_id'],
             'wallet',
@@ -50,152 +79,315 @@ trait SyncsWallets
         if ($link !== null && $link['realm_id'] !== $connection['realm_id']) {
             $link = null;
         }
-        $hadLink   = $link !== null;
-        $baseline  = $link;
-        $nameTaken = false;
-        // Same clear rule as customer notes. A Fleetbase clear is not filled back in from
-        // QuickBooks, and an empty QuickBooks description is copied only when QuickBooks changed
-        // the account since a known baseline.
-        $walletCopy = function (array $remoteAccount) use ($ledger, $uuid, $pushClears, $settings, $baseline): array {
-            $clears        = $this->copiesClears($settings, 'wallet', $baseline, $remoteAccount);
-            $remoteAccount = $this->withoutEmptyDescription($remoteAccount, $clears);
-            if ($pushClears === true && trim((string) ($ledger->wallets[$uuid]['description'] ?? '')) === '') {
-                unset($remoteAccount['Description']);
-            }
 
-            return $remoteAccount;
-        };
+        return [
+            'settings'   => $settings,
+            'copy'       => $copy,
+            'push'       => $push,
+            'reference'  => $reference,
+            'conflict'   => $conflict,
+            'pushClears' => $this->sendsClears($conflict, $push, $copy),
+            'primary'    => $reference === 'quickbooks' || $conflict === 'quickbooks',
+            'baseline'   => $link,
+        ];
+    }
 
+    /**
+     * The QuickBooks account for this wallet: by its link, by account number, or by a lost link
+     * that reattaches.
+     *
+     * @param array<string, mixed>      $connection
+     * @param array<string, mixed>      $wallet
+     * @param array<string, mixed>      $payload
+     * @param array<string, mixed>|null $link
+     *
+     * @return array<string, mixed>|null
+     */
+    private function walletRemote(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $wallet,
+        array $payload,
+        ?array $link,
+        bool &$nameTaken,
+    ): ?array {
         if ($link === null && empty($payload['AcctNum']) === false) {
-            $acctNum = (string) $payload['AcctNum'];
-            if (isset($this->accountFieldFailed['AcctNum:' . $acctNum]) === true) {
-                throw $this->accountFieldFailed['AcctNum:' . $acctNum];
-            }
-            $existing = $this->accountByAcctNum !== null
-                ? ($this->accountByAcctNum[$acctNum] ?? null)
-                : $this->client->findAccountByAcctNum($connection, $acctNum);
-            if ($existing !== null) {
-                $this->putMatchedLink($ledger, $connection, 'wallet', $uuid, 'Account', $existing);
-                $link = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'wallet', $uuid);
-            }
+            $link = $this->matchWalletByAcctNum($ledger, $connection, $uuid, (string) $payload['AcctNum']);
+        }
+        $remote = $link === null ? null : $this->readWalletAccount($connection, (string) $link['qbo_id']);
+        if ($remote !== null) {
+            return $remote;
         }
 
-        $quickbooksPrimary = $reference === 'quickbooks' || $conflict === 'quickbooks';
-        $remote            = null;
-        if ($link !== null) {
-            $accountId = (string) $link['qbo_id'];
-            if (isset($this->accountReadFailed[$accountId]) === true) {
-                throw $this->accountReadFailed[$accountId];
-            }
-            $remote = $this->accountById !== null
-                ? ($this->accountById[$accountId] ?? null)
-                : $this->client->getAccount($connection, $accountId);
+        $acctNum = trim((string) ($payload['AcctNum'] ?? ''));
+        $name    = trim((string) ($payload['Name'] ?? ''));
+        if ($link === null && $acctNum !== '' && isset($this->accountFieldFailed['AcctNum:' . $acctNum]) === true) {
+            throw $this->accountFieldFailed['AcctNum:' . $acctNum];
         }
-        if ($remote === null) {
-            $acctNum = trim((string) ($payload['AcctNum'] ?? ''));
-            $name    = trim((string) ($payload['Name'] ?? ''));
-            if ($link === null && $acctNum !== '' && isset($this->accountFieldFailed['AcctNum:' . $acctNum]) === true) {
-                throw $this->accountFieldFailed['AcctNum:' . $acctNum];
-            }
-            if ($name !== '' && isset($this->accountFieldFailed['Name:' . $name]) === true) {
-                throw $this->accountFieldFailed['Name:' . $name];
-            }
-            $remote = $this->reattachWallet($ledger, $connection, $uuid, $wallet, $payload, $nameTaken);
-            $link   = $remote === null ? null : $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'wallet', $uuid);
+        if ($name !== '' && isset($this->accountFieldFailed['Name:' . $name]) === true) {
+            throw $this->accountFieldFailed['Name:' . $name];
         }
-        if ($remote === null && $hadLink === true) {
-            return 'aligned';
-        }
-        if ($remote === null) {
-            if ($quickbooksPrimary === false) {
-                $this->lastError = $this->currencyError(
-                    $ledger,
-                    $connection,
-                    (string) ($wallet['currency'] ?? ''),
-                    'quickbooks.messages.wallet-currency-mismatch'
-                );
-                if ($this->lastError !== null) {
-                    return 'failed';
-                }
-            }
-            if ($push === false) {
-                $this->closeSkipped = true;
 
-                return 'skipped';
-            }
-            $payload = $this->newAccountName($wallet, $payload, $nameTaken);
-            if ($this->writeBuffer !== null) {
-                $this->writeBuffer[] = [
-                    'bId'       => 'wallet:' . $uuid,
-                    'operation' => 'create',
-                    'entity'    => 'Account',
-                    'payload'   => $payload,
-                ];
+        return $this->reattachWallet($ledger, $connection, $uuid, $wallet, $payload, $nameTaken);
+    }
 
-                return 'created';
+    /**
+     * Link the wallet to the QuickBooks account with its account number, if there is one.
+     *
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null the new link
+     */
+    private function matchWalletByAcctNum(SyncLedger $ledger, array $connection, string $uuid, string $acctNum): ?array
+    {
+        if (isset($this->accountFieldFailed['AcctNum:' . $acctNum]) === true) {
+            throw $this->accountFieldFailed['AcctNum:' . $acctNum];
+        }
+        $existing = $this->accountByAcctNum !== null
+            ? ($this->accountByAcctNum[$acctNum] ?? null)
+            : $this->client->findAccountByAcctNum($connection, $acctNum);
+        if ($existing === null) {
+            return null;
+        }
+        $this->putMatchedLink($ledger, $connection, 'wallet', $uuid, 'Account', $existing);
+
+        return $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'wallet', $uuid);
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     *
+     * @return array<string, mixed>|null
+     */
+    private function readWalletAccount(array $connection, string $accountId): ?array
+    {
+        if (isset($this->accountReadFailed[$accountId]) === true) {
+            throw $this->accountReadFailed[$accountId];
+        }
+
+        return $this->accountById !== null
+            ? ($this->accountById[$accountId] ?? null)
+            : $this->client->getAccount($connection, $accountId);
+    }
+
+    /**
+     * Same clear rule as customer notes. A Fleetbase clear is not filled back in from
+     * QuickBooks, and an empty QuickBooks description is copied only when QuickBooks changed
+     * the account since a known baseline.
+     *
+     * @param array{
+     *     settings: array<string, mixed>, pushClears: bool, baseline: array<string, mixed>|null
+     * } $plan
+     * @param array<string, mixed> $remoteAccount
+     *
+     * @return array<string, mixed>
+     */
+    private function walletRemoteCopy(SyncLedger $ledger, string $uuid, array $plan, array $remoteAccount): array
+    {
+        $clears        = $this->copiesClears($plan['settings'], 'wallet', $plan['baseline'], $remoteAccount);
+        $remoteAccount = $this->withoutEmptyDescription($remoteAccount, $clears);
+        if ($plan['pushClears'] === true && trim((string) ($ledger->wallets[$uuid]['description'] ?? '')) === '') {
+            unset($remoteAccount['Description']);
+        }
+
+        return $remoteAccount;
+    }
+
+    /**
+     * No QuickBooks account has this wallet: create one.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $wallet
+     * @param array<string, mixed> $payload
+     * @param array{
+     *     settings: array<string, mixed>, copy: bool, push: bool, reference: string, conflict: string,
+     *     pushClears: bool, primary: bool, baseline: array<string, mixed>|null
+     * } $plan
+     */
+    private function createWalletAccount(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $wallet,
+        array $payload,
+        array $plan,
+        bool $nameTaken,
+    ): string {
+        if ($plan['primary'] === false) {
+            $this->lastError = $this->currencyError(
+                $ledger,
+                $connection,
+                (string) ($wallet['currency'] ?? ''),
+                'quickbooks.messages.wallet-currency-mismatch'
+            );
+            if ($this->lastError !== null) {
+                return 'failed';
             }
-            $created = $this->client->createAccount($connection, $payload);
-            $ledger->putLink($this->linkFrom($connection, 'wallet', $uuid, 'Account', $created));
-            if ($copy === true) {
-                $this->applyWalletFromRemote($ledger, $uuid, $walletCopy($created), $reference);
-                if ($quickbooksPrimary === true) {
-                    $this->copyWalletCurrency($ledger, $connection, $uuid, $created);
-                }
-            }
+        }
+        if ($plan['push'] === false) {
+            $this->closeSkipped = true;
+
+            return 'skipped';
+        }
+        $payload = $this->newAccountName($wallet, $payload, $nameTaken);
+        if ($this->writeBuffer !== null) {
+            $this->writeBuffer[] = [
+                'bId'       => 'wallet:' . $uuid,
+                'operation' => 'create',
+                'entity'    => 'Account',
+                'payload'   => $payload,
+            ];
 
             return 'created';
         }
+        $created = $this->client->createAccount($connection, $payload);
+        $ledger->putLink($this->linkFrom($connection, 'wallet', $uuid, 'Account', $created));
+        if ($plan['copy'] === true) {
+            $copied = $this->walletRemoteCopy($ledger, $uuid, $plan, $created);
+            $this->applyWalletFromRemote($ledger, $uuid, $copied, $plan['reference']);
+            if ($plan['primary'] === true) {
+                $this->copyWalletCurrency($ledger, $connection, $uuid, $created);
+            }
+        }
 
+        return 'created';
+    }
+
+    /**
+     * The wallet has a QuickBooks account: copy it to Fleetbase or send the Fleetbase wallet,
+     * by the direction and conflict rule.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $wallet
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $remote
+     * @param array{
+     *     settings: array<string, mixed>, copy: bool, push: bool, reference: string, conflict: string,
+     *     pushClears: bool, primary: bool, baseline: array<string, mixed>|null
+     * } $plan
+     */
+    private function updateWalletAccount(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $wallet,
+        array $payload,
+        array $remote,
+        array $plan,
+    ): string {
         $before = $wallet;
         $active = $remote['Active'] ?? null;
-        $remote = $this->withKeptInactive($settings, $wallet, $remote);
+        $remote = $this->withKeptInactive($plan['settings'], $wallet, $remote);
         // QuickBooks wins only an account it changed since the last sync; otherwise Fleetbase is sent.
-        $leads  = $this->fleetbaseLeads($settings, 'wallet', $baseline, $remote);
-        if ($leads === true) {
-            $pushClears = true;
-        }
-        if ($quickbooksPrimary === true && $copy === true && $leads === false) {
+        $leads = $this->fleetbaseLeads($plan['settings'], 'wallet', $plan['baseline'], $remote);
+        if ($plan['primary'] === true && $plan['copy'] === true && $leads === false) {
             $differed = $this->wallets->matches($wallet, $payload, $remote) === false;
-            $this->applyWalletFromRemote($ledger, $uuid, $walletCopy($remote), $reference);
-            $this->copyWalletCurrency($ledger, $connection, $uuid, $remote);
+            $this->copyWalletRemote($ledger, $connection, $uuid, $remote, $plan, true);
             $wallet   = $ledger->wallets[$uuid];
-            $payload  = $this->wallets->toQuickBooks($wallet, $reference);
+            $payload  = $this->wallets->toQuickBooks($wallet, $plan['reference']);
             $replaced = $differed === true && $wallet !== $before;
-            $this->notePrimaryCopy('wallet', $uuid, $push === true && $conflict === 'quickbooks', $replaced);
+            $sends    = $plan['push'] === true && $plan['conflict'] === 'quickbooks';
+            $this->notePrimaryCopy('wallet', $uuid, $sends, $replaced);
         }
 
         if ($this->wallets->matches($wallet, $payload, $remote) === true) {
-            $inSync = $this->walletInSync($ledger, $uuid, $remote, $settings);
-
-            $changed = $wallet !== $before;
-
-            return $this->syncedIf($ledger, $connection, 'wallet', $uuid, $remote, $changed, $inSync, $baseline);
+            return $this->walletSynced($ledger, $connection, $uuid, $remote, $plan, $wallet !== $before);
         }
 
-        if ($conflict === 'quickbooks' && $copy === true && $leads === false) {
-            $before = $ledger->wallets[$uuid];
-            $this->applyWalletFromRemote($ledger, $uuid, $walletCopy($remote), $reference);
-            $this->copyWalletCurrency($ledger, $connection, $uuid, $remote);
-            $changed = $ledger->wallets[$uuid] !== $before;
-            $this->notePrimaryCopy('wallet', $uuid, $push, $changed);
-            $inSync = $this->walletInSync($ledger, $uuid, $remote, $settings);
+        if ($plan['conflict'] === 'quickbooks' && $plan['copy'] === true && $leads === false) {
+            $changed = $this->copyWalletRemote($ledger, $connection, $uuid, $remote, $plan, true);
+            $this->notePrimaryCopy('wallet', $uuid, $plan['push'], $changed);
 
-            return $this->syncedIf($ledger, $connection, 'wallet', $uuid, $remote, $changed, $inSync, $baseline);
+            return $this->walletSynced($ledger, $connection, $uuid, $remote, $plan, $changed);
         }
 
-        if ($push === false) {
-            if ($copy === true) {
-                $before = $ledger->wallets[$uuid];
-                $this->applyWalletFromRemote($ledger, $uuid, $walletCopy($remote), $reference);
-                $changed = $ledger->wallets[$uuid] !== $before;
-                $inSync  = $this->walletInSync($ledger, $uuid, $remote, $settings);
-
-                return $this->syncedIf($ledger, $connection, 'wallet', $uuid, $remote, $changed, $inSync, $baseline);
+        if ($plan['push'] === false) {
+            if ($plan['copy'] === false) {
+                return 'aligned';
             }
+            $changed = $this->copyWalletRemote($ledger, $connection, $uuid, $remote, $plan, false);
 
-            return 'aligned';
+            return $this->walletSynced($ledger, $connection, $uuid, $remote, $plan, $changed);
         }
 
+        $pushClears = $plan['pushClears'] === true || $leads === true;
+        $payload    = $this->walletUpdatePayload(
+            $ledger,
+            $uuid,
+            $payload,
+            $remote,
+            $plan['reference'],
+            $pushClears,
+            $active
+        );
+
+        return $this->writeWalletUpdate($ledger, $connection, $uuid, $payload, $remote);
+    }
+
+    /**
+     * Copy the QuickBooks account onto the wallet. True when the wallet changed.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $remote
+     * @param array{
+     *     settings: array<string, mixed>, reference: string, pushClears: bool, baseline: array<string, mixed>|null
+     * } $plan
+     */
+    private function copyWalletRemote(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $remote,
+        array $plan,
+        bool $withCurrency,
+    ): bool {
+        $before = $ledger->wallets[$uuid];
+        $copied = $this->walletRemoteCopy($ledger, $uuid, $plan, $remote);
+        $this->applyWalletFromRemote($ledger, $uuid, $copied, $plan['reference']);
+        if ($withCurrency === true) {
+            $this->copyWalletCurrency($ledger, $connection, $uuid, $remote);
+        }
+
+        return $ledger->wallets[$uuid] !== $before;
+    }
+
+    /**
+     * @param array<string, mixed>                                                       $connection
+     * @param array<string, mixed>                                                       $remote
+     * @param array{settings: array<string, mixed>, baseline: array<string, mixed>|null} $plan
+     */
+    private function walletSynced(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $remote,
+        array $plan,
+        bool $changed,
+    ): string {
+        $inSync = $this->walletInSync($ledger, $uuid, $remote, $plan['settings']);
+
+        return $this->syncedIf($ledger, $connection, 'wallet', $uuid, $remote, $changed, $inSync, $plan['baseline']);
+    }
+
+    /**
+     * The update sent for a wallet: under QuickBooks reference the Fleetbase name and number,
+     * and a cleared description when clears are sent.
+     *
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $remote
+     *
+     * @return array<string, mixed>
+     */
+    private function walletUpdatePayload(
+        SyncLedger $ledger,
+        string $uuid,
+        array $payload,
+        array $remote,
+        string $reference,
+        bool $pushClears,
+        mixed $active,
+    ): array {
         if ($reference === 'quickbooks') {
             $payload = $this->wallets->toQuickBooks($ledger->wallets[$uuid], 'fleetbase');
             $acctNum = trim((string) ($ledger->wallets[$uuid]['acct_num'] ?? $remote['AcctNum'] ?? ''));
@@ -217,6 +409,21 @@ trait SyncsWallets
             unset($payload['Active']);
         }
 
+        return $payload;
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $remote
+     */
+    private function writeWalletUpdate(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $payload,
+        array $remote,
+    ): string {
         if ($this->writeBuffer !== null) {
             $payload['Id']        = (string) $remote['Id'];
             $payload['SyncToken'] = (string) $remote['SyncToken'];
@@ -231,7 +438,12 @@ trait SyncsWallets
             return 'updated';
         }
 
-        $updated = $this->client->updateAccount($connection, (string) $remote['Id'], (string) $remote['SyncToken'], $payload);
+        $updated = $this->client->updateAccount(
+            $connection,
+            (string) $remote['Id'],
+            (string) $remote['SyncToken'],
+            $payload
+        );
         $ledger->putLink($this->linkFrom($connection, 'wallet', $uuid, 'Account', $updated));
 
         return 'updated';
@@ -431,210 +643,5 @@ trait SyncsWallets
         }
 
         $ledger->wallets[$uuid]['currency'] = $currency;
-    }
-
-    /**
-     * @param array<string, mixed>             $connection
-     * @param array<int, array<string, mixed>> $rows
-     * @param array<string, mixed>             $settings
-     * @param array<string, mixed>             $batch
-     */
-    private function syncWalletBlock(SyncLedger $ledger, array &$connection, array $rows, array $settings, array &$batch, int $now, string $trigger): bool
-    {
-        if ($this->entityEnabled($settings, 'wallet') === false) {
-            return $this->recordDisabledRows($ledger, $connection, $rows, $batch, $trigger, true);
-        }
-        try {
-            $this->prefetchWalletAccounts($connection, $ledger, $rows, $settings);
-
-            return $this->syncBufferedBlock($ledger, $connection, $rows, $settings, $batch, $now, $trigger, true, 'wallet');
-        } catch (QuickBooksException $exception) {
-            if ($exception->isUnauthorized() === true) {
-                $this->tokenRejected($ledger, (string) $connection['company_uuid']);
-                $batch['failed']++;
-
-                return true;
-            }
-            if ($exception->isRateLimit() === true) {
-                $this->failure($ledger, $connection, $rows[0], $exception, $settings, $now);
-                $this->recordRow($ledger, $connection, $rows[0], 'failed', $batch, $trigger, $this->exceptionError($exception));
-
-                return true;
-            }
-
-            throw $exception;
-        } finally {
-            $this->accountById        = null;
-            $this->accountByAcctNum   = null;
-            $this->accountsByName     = null;
-            $this->accountReadFailed  = [];
-            $this->accountFieldFailed = [];
-        }
-    }
-
-    /**
-     * @param array<string, mixed>             $connection
-     * @param array<int, array<string, mixed>> $rows
-     * @param array<string, mixed>             $settings
-     */
-    private function prefetchWalletAccounts(array $connection, SyncLedger $ledger, array $rows, array $settings): void
-    {
-        $this->accountById      = [];
-        $this->accountByAcctNum = [];
-        $this->accountsByName   = [];
-
-        $reference   = (string) ($settings['wallet_reference'] ?? 'fleetbase');
-        $companyUuid = (string) $connection['company_uuid'];
-        $realm       = (string) $connection['realm_id'];
-        $ids         = [];
-        /** @var array<string, array{acct: string, name: string, linked: string}> $plans */
-        $plans = [];
-        foreach ($rows as $row) {
-            $uuid   = (string) ($row['local_uuid'] ?? '');
-            $wallet = $ledger->wallets[$uuid] ?? null;
-            if ($uuid === '' || is_array($wallet) === false) {
-                continue;
-            }
-            $payload  = $this->wallets->toQuickBooks($wallet, $reference);
-            $link     = $ledger->link($companyUuid, $realm, 'wallet', $uuid);
-            $linkedId = '';
-            if (is_array($link) === true && (string) ($link['realm_id'] ?? '') === $realm) {
-                $linkedId = trim((string) ($link['qbo_id'] ?? ''));
-            }
-            if ($linkedId !== '') {
-                $ids[] = $linkedId;
-            }
-            // A deleted wallet without a link is never matched by number or name.
-            if ($linkedId === '' && empty($wallet['deleted_at']) === false) {
-                continue;
-            }
-            $name         = trim((string) ($payload['Name'] ?? ''));
-            $plans[$uuid] = [
-                'acct'   => trim((string) ($payload['AcctNum'] ?? '')),
-                'name'   => $name,
-                'unique' => $name === '' ? '' : $this->wallets->uniqueName($wallet, $name),
-                'linked' => $linkedId,
-            ];
-        }
-
-        $this->accountReadFailed = [];
-        if ($ids !== []) {
-            $loaded = $this->queryWhereIn(
-                $connection,
-                'Account',
-                'Id',
-                array_values(array_unique($ids)),
-                fn (string $id): ?array => $this->client->getAccount($connection, $id)
-            );
-            foreach ($loaded['rows'] as $account) {
-                $this->rememberAccount($account);
-            }
-            $this->accountReadFailed = $loaded['failed'];
-        }
-
-        $acctNums = [];
-        foreach ($plans as $plan) {
-            if ($plan['linked'] === '' && $plan['acct'] !== '') {
-                $acctNums[] = $plan['acct'];
-            }
-        }
-        $acctNums = array_values(array_unique($acctNums));
-        $loaded   = $this->readAccountsByField($connection, 'AcctNum', $acctNums);
-        foreach ($loaded as $account) {
-            $this->rememberAccount($account);
-        }
-        if (count($acctNums) === 1 && $loaded !== [] && isset($this->accountByAcctNum[$acctNums[0]]) === false) {
-            $this->accountByAcctNum[$acctNums[0]] = $loaded[0];
-        }
-
-        $names   = [];
-        $uniques = [];
-        foreach ($plans as $plan) {
-            $linkedFound  = $plan['linked'] !== '' && isset($this->accountById[$plan['linked']]) === true;
-            $linkedFailed = $plan['linked'] !== '' && isset($this->accountReadFailed[$plan['linked']]) === true;
-            $acctFound    = $plan['linked'] === '' && $plan['acct'] !== '' && isset($this->accountByAcctNum[$plan['acct']]) === true;
-            if ($linkedFound === true || $linkedFailed === true || $acctFound === true || $plan['name'] === '') {
-                continue;
-            }
-            $names[] = $plan['name'];
-            if (isset($plan['unique']) === true && $plan['unique'] !== '') {
-                $uniques[] = $plan['unique'];
-            }
-        }
-        $names   = array_values(array_unique($names));
-        $uniques = array_values(array_diff(array_unique($uniques), $names));
-        $found   = $this->readAccountsByField($connection, 'Name', array_merge($names, $uniques));
-        foreach ($found as $account) {
-            $name = trim((string) ($account['Name'] ?? ''));
-            if ($name === '') {
-                continue;
-            }
-            $this->accountsByName[$name][] = $account;
-        }
-        $uniqueFound = $uniques !== [] && isset($this->accountsByName[$uniques[0]]) === true;
-        $nameFound   = $names !== [] && isset($this->accountsByName[$names[0]]) === true;
-        if (count($names) === 1 && $found !== [] && $nameFound === false && $uniqueFound === false) {
-            $this->accountsByName[$names[0]] = $found;
-        }
-    }
-
-    /**
-     * @param array<string, mixed> $account
-     */
-    private function rememberAccount(array $account): void
-    {
-        if ($this->accountByAcctNum === null || $this->accountById === null) {
-            return;
-        }
-
-        $acct = trim((string) ($account['AcctNum'] ?? ''));
-        $id   = trim((string) ($account['Id'] ?? ''));
-        if ($acct !== '' && isset($this->accountByAcctNum[$acct]) === false) {
-            $this->accountByAcctNum[$acct] = $account;
-        }
-        if ($id !== '' && isset($this->accountById[$id]) === false) {
-            $this->accountById[$id] = $account;
-        }
-    }
-
-    /**
-     * One query when the set has one value. Larger sets go through the batch helper in chunks of 30.
-     *
-     * @param array<string, mixed> $connection
-     * @param array<int, string>   $values
-     *
-     * @return array<int, array<string, mixed>>
-     */
-    private function readAccountsByField(array $connection, string $field, array $values): array
-    {
-        $values = array_values(array_unique(array_filter(array_map(
-            static fn (string $value): string => trim($value),
-            $values
-        ), static fn (string $value): bool => $value !== '')));
-        if ($values === [] || ($field !== 'AcctNum' && $field !== 'Name')) {
-            return [];
-        }
-        if (count($values) === 1) {
-            if ($field === 'AcctNum') {
-                $one = $this->client->findAccountByAcctNum($connection, $values[0]);
-
-                return is_array($one) === true ? [$one] : [];
-            }
-
-            return array_values(array_filter($this->client->findAccountsByName($connection, $values[0]), 'is_array'));
-        }
-
-        $loaded = $this->queryWhereIn(
-            $connection,
-            'Account',
-            $field,
-            $values,
-            static fn (string $value): ?array => null
-        );
-        foreach ($loaded['failed'] as $value => $error) {
-            $this->accountFieldFailed[$field . ':' . $value] = $error;
-        }
-
-        return $loaded['rows'];
     }
 }

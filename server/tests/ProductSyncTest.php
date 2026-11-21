@@ -406,3 +406,35 @@ test('a connection that has not stored its home currency reads it before pricing
 
     expect($client->items[Products::linkOf($ledger, 'Mug')['qbo_id']]['UnitPrice'] ?? null)->toBe('12.00');
 });
+
+test('a 401 while writing products stops the run and asks to reconnect', function () {
+    [$engine, $client]       = qbEngine();
+    $ledger                  = Products::ledger($client);
+    $client->failItemCreate  = new QuickBooksException(401, qbRequestFailed(401));
+    $ledger->products['p-1'] = Products::product('p-1', 'Mug');
+    $ledger->pending[]       = Products::pending('product', 'p-1');
+
+    $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['failed'])->toBe(1)
+        ->and($ledger->connections[Products::COMPANY]['needs_reauth'])->toBeTrue()
+        ->and($ledger->pending[0]['status'])->toBe('pending')
+        ->and($ledger->pending[0]['attempts'])->toBe(0);
+});
+
+test('a rate limit while writing products fails the first row and stops the run', function () {
+    [$engine, $client]       = qbEngine();
+    $ledger                  = Products::ledger($client);
+    $client->failItemCreate  = new QuickBooksException(429, 'slow down', '30');
+    $ledger->products['p-1'] = Products::product('p-1', 'Mug');
+    $ledger->products['p-2'] = Products::product('p-2', 'Cup');
+    $ledger->pending[]       = Products::pending('product', 'p-1');
+    $ledger->pending[]       = Products::pending('product', 'p-2');
+
+    $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
+
+    expect($batch['failed'])->toBe(1)
+        ->and($ledger->connections[Products::COMPANY]['needs_reauth'] ?? false)->toBeFalse()
+        ->and(array_column($ledger->attempts, 'local_uuid'))->toBe(['p-1'])
+        ->and($ledger->pending[1]['status'])->toBe('pending');
+});

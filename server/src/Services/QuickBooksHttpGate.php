@@ -12,6 +12,8 @@ use Fleetbase\Quickbooks\Support\InvoiceTax;
  *
  * @phpstan-import-type Settings from InvoiceTax as InvoiceTaxSettings
  * @phpstan-import-type Rates from FleetbaseTax as FleetbaseTaxRates
+ *
+ * @SuppressWarnings("PHPMD.TooManyPublicMethods") It mirrors QuickBooksClient's public calls one to one.
  */
 class QuickBooksHttpGate extends QuickBooksClient
 {
@@ -53,14 +55,14 @@ class QuickBooksHttpGate extends QuickBooksClient
         return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createCustomer($connection, $payload));
     }
 
-    public function updateCustomer(array $connection, string $id, string $syncToken, array $payload): array
+    public function updateCustomer(array $connection, string $remoteId, string $syncToken, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateCustomer($connection, $id, $syncToken, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateCustomer($connection, $remoteId, $syncToken, $payload));
     }
 
-    public function getCustomer(array $connection, string $id): ?array
+    public function getCustomer(array $connection, string $remoteId): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getCustomer($connection, $id));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getCustomer($connection, $remoteId));
     }
 
     public function createInvoice(array $connection, array $payload): array
@@ -68,9 +70,9 @@ class QuickBooksHttpGate extends QuickBooksClient
         return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createInvoice($connection, $payload));
     }
 
-    public function updateInvoice(array $connection, string $id, string $syncToken, array $payload): array
+    public function updateInvoice(array $connection, string $remoteId, string $syncToken, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateInvoice($connection, $id, $syncToken, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateInvoice($connection, $remoteId, $syncToken, $payload));
     }
 
     public function nextInvoiceDocNumber(array $connection): ?string
@@ -88,14 +90,14 @@ class QuickBooksHttpGate extends QuickBooksClient
         return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->findInvoiceByDocNumber($connection, $docNumber));
     }
 
-    public function getInvoice(array $connection, string $id): ?array
+    public function getInvoice(array $connection, string $remoteId): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getInvoice($connection, $id));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getInvoice($connection, $remoteId));
     }
 
-    public function voidInvoice(array $connection, string $id, string $syncToken): array
+    public function voidInvoice(array $connection, string $remoteId, string $syncToken): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->voidInvoice($connection, $id, $syncToken));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->voidInvoice($connection, $remoteId, $syncToken));
     }
 
     public function createPayment(array $connection, array $payload): array
@@ -103,14 +105,14 @@ class QuickBooksHttpGate extends QuickBooksClient
         return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createPayment($connection, $payload));
     }
 
-    public function updatePayment(array $connection, string $id, string $syncToken, array $payload): array
+    public function updatePayment(array $connection, string $remoteId, string $syncToken, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updatePayment($connection, $id, $syncToken, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updatePayment($connection, $remoteId, $syncToken, $payload));
     }
 
-    public function getPayment(array $connection, string $id): ?array
+    public function getPayment(array $connection, string $remoteId): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getPayment($connection, $id));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getPayment($connection, $remoteId));
     }
 
     public function findPaymentForInvoice(array $connection, string $customerId, string $invoiceId): ?array
@@ -138,14 +140,14 @@ class QuickBooksHttpGate extends QuickBooksClient
         return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createAccount($connection, $payload));
     }
 
-    public function updateAccount(array $connection, string $id, string $syncToken, array $payload): array
+    public function updateAccount(array $connection, string $remoteId, string $syncToken, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateAccount($connection, $id, $syncToken, $payload));
+        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateAccount($connection, $remoteId, $syncToken, $payload));
     }
 
-    public function getAccount(array $connection, string $id): ?array
+    public function getAccount(array $connection, string $remoteId): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getAccount($connection, $id));
+        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getAccount($connection, $remoteId));
     }
 
     public function findAccountByAcctNum(array $connection, string $acctNum): ?array
@@ -185,12 +187,12 @@ class QuickBooksHttpGate extends QuickBooksClient
         return $rates;
     }
 
-    public function item(array $connection, string $id): ?array
+    public function item(array $connection, string $remoteId): ?array
     {
         /** @var array<string, mixed>|null $item */
         $item = $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?array => $this->inner->item($connection, $id)
+            fn (array $connection): ?array => $this->inner->item($connection, $remoteId)
         );
 
         return $item;
@@ -207,12 +209,12 @@ class QuickBooksHttpGate extends QuickBooksClient
         return $item;
     }
 
-    public function updateItem(array $connection, string $id, string $syncToken, array $payload): array
+    public function updateItem(array $connection, string $remoteId, string $syncToken, array $payload): array
     {
         /** @var array<string, mixed> $item */
         $item = $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->updateItem($connection, $id, $syncToken, $payload)
+            fn (array $connection): array => $this->inner->updateItem($connection, $remoteId, $syncToken, $payload)
         );
 
         return $item;
@@ -223,11 +225,11 @@ class QuickBooksHttpGate extends QuickBooksClient
         return $this->engine->runAuthorized($connection, fn (array $connection): string => $this->inner->ensureServiceItem($connection));
     }
 
-    public function itemActive(array $connection, string $id): bool
+    public function itemActive(array $connection, string $remoteId): bool
     {
         $active = $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): bool => $this->inner->itemActive($connection, $id)
+            fn (array $connection): bool => $this->inner->itemActive($connection, $remoteId)
         );
 
         return $active === true;
