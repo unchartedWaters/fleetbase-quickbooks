@@ -2,9 +2,7 @@
 
 namespace Fleetbase\Quickbooks\Services\Concerns;
 
-use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Models\Link;
-use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\PaymentTokens;
 use Illuminate\Support\Carbon;
@@ -180,137 +178,6 @@ trait StoresLinks
     }
 
     /**
-     * QuickBooks entity name to the ids named by this delivery.
-     *
-     * @param array<int, mixed> $entities
-     *
-     * @return array<string, array<string, true>>
-     */
-    private function remoteIdsByEntity(array $entities): array
-    {
-        $known = [
-            'Customer' => true,
-            'Invoice'  => true,
-            'Payment'  => true,
-            'Account'  => true,
-        ];
-        // A payment re-read is an invoice read, so it loads the invoice link.
-        $aliases = [SyncEngine::INVOICE_PAYMENTS => 'Invoice'];
-        $ids     = [];
-        foreach ($entities as $entity) {
-            if (is_array($entity) === false) {
-                continue;
-            }
-            $name = $entity['entity'] ?? null;
-            $name = is_string($name) === true ? ($aliases[$name] ?? $name) : $name;
-            if (is_string($name) === false || isset($known[$name]) === false) {
-                continue;
-            }
-            $id = $entity['id'] ?? null;
-            if (is_int($id) === true) {
-                $id = (string) $id;
-            }
-            if (is_string($id) === false || $id === '') {
-                continue;
-            }
-            $ids[$name][$id] = true;
-        }
-
-        return $ids;
-    }
-
-    /**
-     * Which of these QuickBooks ids this organization already links on that realm. With no
-     * organization, links from every organization on that realm count. A link of $exceptLocalUuid does not.
-     *
-     * @param array<int, string> $ids
-     *
-     * @return array<int, string>
-     */
-    public function linkedRemoteIds(
-        ?string $companyUuid,
-        string $realm,
-        string $entity,
-        array $ids,
-        ?string $exceptLocalUuid = null,
-    ): array {
-        $ids = array_values(array_unique(array_filter(array_map('strval', $ids))));
-        if ($ids === [] || $realm === '') {
-            return [];
-        }
-        if ($this->memory !== null) {
-            $wanted = array_flip($ids);
-            $linked = array_filter($this->memory->links, static fn (array $link): bool => ($companyUuid === null
-                    || ($link['company_uuid'] ?? null) === $companyUuid)
-                && ($exceptLocalUuid === null || ($link['local_uuid'] ?? null) !== $exceptLocalUuid)
-                && (string) ($link['realm_id'] ?? '') === $realm
-                && ($link['qbo_entity'] ?? null) === $entity
-                && isset($wanted[(string) ($link['qbo_id'] ?? '')]) === true);
-
-            return array_values(array_unique(array_map(
-                static fn (mixed $id): string => (string) $id,
-                array_column($linked, 'qbo_id')
-            )));
-        }
-
-        return array_values(array_map(static fn (mixed $id): string => (string) $id, Link::query()
-            ->when($companyUuid !== null, static fn ($query) => $query->where('company_uuid', $companyUuid))
-            ->when($exceptLocalUuid !== null, static fn ($query) => $query->where('local_uuid', '!=', $exceptLocalUuid))
-            ->where('realm_id', $realm)
-            ->where('qbo_entity', $entity)
-            ->whereIn('qbo_id', $ids)
-            ->pluck('qbo_id')
-            ->all()));
-    }
-
-    /**
-     * Which of these QuickBooks ids a Fleetbase record still syncs with, for the guard that keeps
-     * one QuickBooks record to one Fleetbase record. A link counts when its organization is
-     * $companyUuid or is connected to this realm: an organization that disconnected keeps its
-     * links for a reconnect, and they do not hold the record. A customer link of a deleted
-     * Fleet-Ops customer does not count either. One query reads the links; a second runs only
-     * when customer links were found, since Fleet-Ops may keep its tables on another connection.
-     *
-     * @param array<int, string> $ids
-     *
-     * @return array<int, string>
-     */
-    private function claimedRemoteIds(
-        string $companyUuid,
-        string $realm,
-        string $entity,
-        array $ids,
-        string $exceptLocalUuid,
-    ): array {
-        $ids = array_values(array_unique(array_filter(array_map('strval', $ids))));
-        if ($ids === [] || $realm === '') {
-            return [];
-        }
-        $connections = (new Connection())->newQuery()->select('company_uuid')->where('realm_id', $realm);
-        $links       = Link::query()
-            ->where('realm_id', $realm)
-            ->where('qbo_entity', $entity)
-            ->whereIn('qbo_id', $ids)
-            ->where('local_uuid', '!=', $exceptLocalUuid)
-            ->where(static function ($owner) use ($companyUuid, $connections): void {
-                $owner->where('company_uuid', $companyUuid)->orWhereIn('company_uuid', $connections);
-            })
-            ->get(['qbo_id', 'local_type', 'local_uuid']);
-        $deleted = $this->deletedCustomerUuids($links->where('local_type', 'customer')->pluck('local_uuid')->all());
-        $claimed = [];
-        foreach ($links as $link) {
-            if ($link instanceof Link === false) {
-                continue;
-            }
-            if ($link->local_type !== 'customer' || isset($deleted[(string) $link->local_uuid]) === false) {
-                $claimed[(string) $link->qbo_id] = (string) $link->qbo_id;
-            }
-        }
-
-        return array_values($claimed);
-    }
-
-    /**
      * Add this organization's stored customer links that a customer import page needs: those
      * to these QuickBooks customers and those of these Fleetbase customers. They count as
      * loaded, so the import's "already linked" checks see them and the save writes only what
@@ -391,101 +258,6 @@ trait StoresLinks
     }
 
     /**
-     * @param array<string, array<string, true>> $idsByEntity
-     *
-     * @return array<int, array<string, mixed>>
-     */
-    private function linksForRemoteIds(string $companyUuid, string $realm, array $idsByEntity): array
-    {
-        if ($idsByEntity === []) {
-            return [];
-        }
-
-        $query = (new Link())->newQuery()->where('company_uuid', $companyUuid);
-        if ($realm !== '') {
-            $query->where('realm_id', $realm);
-        }
-        $query->where(function ($scope) use ($idsByEntity): void {
-            $started = false;
-            foreach ($idsByEntity as $entity => $ids) {
-                $idList = array_keys($ids);
-                $method = $started === true ? 'orWhere' : 'where';
-                $scope->{$method}(function ($inner) use ($entity, $idList): void {
-                    $inner->where('qbo_entity', $entity)->whereIn('qbo_id', $idList);
-                });
-                $started = true;
-            }
-        });
-
-        $rows = [];
-        foreach ($query->get() as $link) {
-            if ($link instanceof Link) {
-                $rows[] = $link->toArray();
-            }
-        }
-
-        return $rows;
-    }
-
-    /**
-     * @param array<string, array<string, true>> $idsByEntity
-     *
-     * @return array<int, array<string, mixed>>
-     */
-    private function memoryLinksForRemoteIds(string $companyUuid, string $realm, array $idsByEntity): array
-    {
-        if ($this->memory === null || $idsByEntity === []) {
-            return [];
-        }
-
-        $rows = [];
-        foreach ($this->memory->links as $link) {
-            if (is_array($link) === false || (string) ($link['company_uuid'] ?? '') !== $companyUuid) {
-                continue;
-            }
-            if ($realm !== '' && (string) ($link['realm_id'] ?? '') !== $realm) {
-                continue;
-            }
-            $entity = (string) ($link['qbo_entity'] ?? '');
-            $id     = (string) ($link['qbo_id'] ?? '');
-            if (isset($idsByEntity[$entity][$id]) === false) {
-                continue;
-            }
-            $rows[] = $link;
-        }
-
-        return $rows;
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $links
-     *
-     * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, string>}
-     */
-    private function localIdsFromLinks(array $links): array
-    {
-        $customerIds = [];
-        $invoiceIds  = [];
-        $walletIds   = [];
-        foreach ($links as $link) {
-            $uuid = (string) ($link['local_uuid'] ?? '');
-            if ($uuid === '') {
-                continue;
-            }
-            $type = (string) ($link['local_type'] ?? '');
-            if ($type === 'customer') {
-                $customerIds[] = $uuid;
-            } elseif ($type === 'wallet') {
-                $walletIds[] = $uuid;
-            } elseif ($type === 'invoice' || $type === 'payment') {
-                $invoiceIds[] = $uuid;
-            }
-        }
-
-        return [$customerIds, $invoiceIds, $walletIds];
-    }
-
-    /**
      * Invoices for the linked ids, their customers, and the links for those rows.
      * A pending batch loads this same neighborhood once it knows the local ids.
      *
@@ -495,8 +267,14 @@ trait StoresLinks
      */
     private function attachLinkedRows(SyncLedger $ledger, string $companyUuid, array $customerIds, array $invoiceIds, array $walletIds): void
     {
-        $invoiceIds = array_values(array_unique(array_filter($invoiceIds, static fn (string $id): bool => $id !== '')));
-        $walletIds  = array_values(array_unique(array_filter($walletIds, static fn (string $id): bool => $id !== '')));
+        $invoiceIds = array_values(array_unique(array_filter(
+            $invoiceIds,
+            static fn (string $invoiceId): bool => $invoiceId !== ''
+        )));
+        $walletIds  = array_values(array_unique(array_filter(
+            $walletIds,
+            static fn (string $walletId): bool => $walletId !== ''
+        )));
         if ($this->memory !== null) {
             foreach ($invoiceIds as $uuid) {
                 $invoice = $this->memory->invoices[$uuid] ?? null;
@@ -550,7 +328,10 @@ trait StoresLinks
             }
         }
 
-        return array_values(array_unique(array_filter($customerIds, static fn (string $id): bool => $id !== '')));
+        return array_values(array_unique(array_filter(
+            $customerIds,
+            static fn (string $customerId): bool => $customerId !== ''
+        )));
     }
 
     /**
@@ -582,40 +363,6 @@ trait StoresLinks
         }
 
         return ($type === 'invoice' || $type === 'payment') && in_array($uuid, $invoiceIds, true) === true;
-    }
-
-    /**
-     * payment-invoice.local_uuid is the QuickBooks payment id and qbo_id is the Fleetbase invoice.
-     *
-     * @param array<int, array<string, mixed>> $links
-     * @param array<int, string>               $invoiceIds
-     *
-     * @return array<int, string>
-     */
-    private function paymentIdsRememberedFor(array $links, string $companyUuid, array $invoiceIds): array
-    {
-        if ($invoiceIds === [] || $links === []) {
-            return [];
-        }
-
-        $wanted = array_fill_keys($invoiceIds, true);
-        $ids    = [];
-        foreach ($links as $link) {
-            if (is_array($link) === false || (string) ($link['company_uuid'] ?? '') !== $companyUuid) {
-                continue;
-            }
-            if ((string) ($link['local_type'] ?? '') !== 'payment-invoice') {
-                continue;
-            }
-            $invoiceUuid = trim((string) ($link['qbo_id'] ?? ''));
-            $paymentId   = trim((string) ($link['local_uuid'] ?? ''));
-            if ($paymentId === '' || $invoiceUuid === '' || isset($wanted[$invoiceUuid]) === false) {
-                continue;
-            }
-            $ids[] = $paymentId;
-        }
-
-        return array_values(array_unique($ids));
     }
 
     /**
@@ -695,204 +442,6 @@ trait StoresLinks
                 }
             })->delete();
         }
-    }
-
-    /**
-     * One QuickBooks payment id is stored under that id. An older row that still
-     * uses the invoice uuid for the same payment is removed once the new key is stored.
-     *
-     * @param array<string, true> $skipped
-     */
-    private function dropStaleInvoicePaymentLinks(SyncLedger $ledger, array $skipped): void
-    {
-        $groups = [];
-        foreach ($ledger->links as $link) {
-            if (is_array($link) === false || isset($skipped[(string) ($link['company_uuid'] ?? '')]) === true) {
-                continue;
-            }
-            if ((string) ($link['local_type'] ?? '') !== 'payment') {
-                continue;
-            }
-            $local   = (string) ($link['local_uuid'] ?? '');
-            $qboId   = (string) ($link['qbo_id'] ?? '');
-            $company = (string) ($link['company_uuid'] ?? '');
-            $realm   = (string) ($link['realm_id'] ?? '');
-            if ($local === '' || $qboId === '' || $local !== $qboId || $company === '' || $realm === '') {
-                continue;
-            }
-            $groups[$company . '|' . $realm . '|' . $qboId] = [
-                'company' => $company,
-                'realm'   => $realm,
-                'qbo_id'  => $qboId,
-                'local'   => $local,
-            ];
-        }
-        if ($groups === []) {
-            return;
-        }
-
-        // The kept payment-id rows were inserted or updated above. One delete removes
-        // every invoice-uuid row for those payments.
-        foreach (array_chunk(array_values($groups), 200) as $chunk) {
-            Link::query()->where(function ($query) use ($chunk): void {
-                foreach ($chunk as $index => $group) {
-                    $method = $index === 0 ? 'where' : 'orWhere';
-                    $query->{$method}(function ($inner) use ($group): void {
-                        $inner->where('company_uuid', $group['company'])
-                            ->where('realm_id', $group['realm'])
-                            ->where('local_type', 'payment')
-                            ->where('qbo_id', $group['qbo_id'])
-                            ->where('local_uuid', '!=', $group['local']);
-                    });
-                }
-            })->delete();
-        }
-    }
-
-    /**
-     * A payment stored under the QuickBooks payment id remembers the Fleetbase invoice.
-     * A rekey still has that invoice on the older link. A first save whose line already
-     * names the invoice carries invoice_uuid, because a later delete cannot read the payment.
-     *
-     * @param array<string, true> $skipped
-     */
-    private function rememberPaymentInvoices(SyncLedger $ledger, array $skipped): void
-    {
-        $rows = $this->paymentInvoiceRows($ledger, $skipped, $this->invoiceUuidByPaymentLink($skipped));
-        if ($rows === []) {
-            return;
-        }
-        $this->storePaymentInvoiceRows($rows);
-    }
-
-    /**
-     * @param array<string, true> $skipped
-     *
-     * @return array<string, string>
-     */
-    private function invoiceUuidByPaymentLink(array $skipped): array
-    {
-        $invoiceByPayment = [];
-        foreach ($this->loaded['links'] as $loaded) {
-            $parts = $this->usablePaymentLink($loaded, $skipped, false);
-            if ($parts === null) {
-                continue;
-            }
-            [$local, $qboId, $company, $realm]                        = $parts;
-            $invoiceByPayment[$company . '|' . $realm . '|' . $qboId] = $local;
-        }
-
-        return $invoiceByPayment;
-    }
-
-    /**
-     * @param array<string, mixed>|mixed $link
-     * @param array<string, true>        $skipped
-     *
-     * @return array{0: string, 1: string, 2: string, 3: string}|null
-     */
-    private function usablePaymentLink(mixed $link, array $skipped, bool $localMatchesRemote): ?array
-    {
-        if (is_array($link) === false || (string) ($link['local_type'] ?? '') !== 'payment') {
-            return null;
-        }
-        $local   = (string) ($link['local_uuid'] ?? '');
-        $qboId   = (string) ($link['qbo_id'] ?? '');
-        $company = (string) ($link['company_uuid'] ?? '');
-        $realm   = (string) ($link['realm_id'] ?? '');
-        $same    = $local === $qboId;
-        if ($local === '' || $qboId === '' || $same !== $localMatchesRemote || $company === '' || $realm === '' || isset($skipped[$company]) === true) {
-            return null;
-        }
-
-        return [$local, $qboId, $company, $realm];
-    }
-
-    /**
-     * @param array<string, true>   $skipped
-     * @param array<string, string> $invoiceByPayment
-     *
-     * @return array<string, array{company_uuid: string, realm_id: string, local_uuid: string, qbo_id: string}>
-     */
-    private function paymentInvoiceRows(SyncLedger $ledger, array $skipped, array $invoiceByPayment): array
-    {
-        $rows = [];
-        foreach ($ledger->links as $link) {
-            $parts = $this->usablePaymentLink($link, $skipped, true);
-            if ($parts === null) {
-                continue;
-            }
-            [, $qboId, $company, $realm] = $parts;
-            $invoice                     = trim((string) ($link['invoice_uuid'] ?? ''));
-            if ($invoice === '' || $invoice === $qboId) {
-                $invoice = $invoiceByPayment[$company . '|' . $realm . '|' . $qboId] ?? '';
-            }
-            if ($invoice === '' || $invoice === $qboId) {
-                continue;
-            }
-            $rows[$company . '|' . $realm . '|' . $qboId] = [
-                'company_uuid' => $company,
-                'realm_id'     => $realm,
-                'local_uuid'   => $qboId,
-                'qbo_id'       => $invoice,
-            ];
-        }
-
-        return $rows;
-    }
-
-    /**
-     * @param array<string, array{company_uuid: string, realm_id: string, local_uuid: string, qbo_id: string}> $rows
-     */
-    private function storePaymentInvoiceRows(array $rows): void
-    {
-        $now       = Carbon::now()->toDateTimeString();
-        $existing  = [];
-        $byCompany = [];
-        foreach ($rows as $row) {
-            $byCompany[$row['company_uuid']][] = $row['local_uuid'];
-        }
-        // The company filter lets the (company_uuid, local_type, local_uuid) unique index serve the lookup.
-        foreach ($byCompany as $company => $localUuids) {
-            foreach (array_chunk($localUuids, 200) as $chunk) {
-                foreach (Link::query()->where('company_uuid', (string) $company)->where('local_type', 'payment-invoice')->whereIn('local_uuid', $chunk)->get(['uuid', 'company_uuid', 'realm_id', 'local_uuid', 'qbo_id']) as $link) {
-                    if (is_object($link) === false) {
-                        continue;
-                    }
-                    $existing[(string) $link->company_uuid . '|' . (string) $link->realm_id . '|' . (string) $link->local_uuid] = [
-                        'uuid'   => (string) $link->uuid,
-                        'qbo_id' => (string) $link->qbo_id,
-                    ];
-                }
-            }
-        }
-        $inserts = [];
-        $updates = [];
-        foreach ($rows as $key => $row) {
-            $stored = $existing[$key] ?? null;
-            if (is_array($stored) === true) {
-                if ($stored['qbo_id'] !== $row['qbo_id']) {
-                    $updates[] = ['uuid' => $stored['uuid'], 'columns' => ['qbo_id' => $row['qbo_id']]];
-                }
-                continue;
-            }
-            $inserts[] = [
-                'uuid'         => (string) Str::uuid(),
-                'company_uuid' => $row['company_uuid'],
-                'realm_id'     => $row['realm_id'],
-                'local_type'   => 'payment-invoice',
-                'local_uuid'   => $row['local_uuid'],
-                'qbo_entity'   => 'PaymentInvoice',
-                'qbo_id'       => $row['qbo_id'],
-                'sync_token'   => '0',
-                'created_at'   => $now,
-                'updated_at'   => $now,
-            ];
-        }
-        foreach (array_chunk($inserts, 200) as $chunk) {
-            Link::query()->insert($chunk);
-        }
-        $this->updateByUuid(new Link(), $updates, ['qbo_id']);
     }
 
     /**

@@ -7,12 +7,18 @@ use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
+use Fleetbase\Quickbooks\Services\Concerns\AppliesMemoryDeletes;
 use Fleetbase\Quickbooks\Services\Concerns\AppliesRemoteDeletes;
+use Fleetbase\Quickbooks\Services\Concerns\FindsClaimedRecords;
+use Fleetbase\Quickbooks\Services\Concerns\FindsDeletedLinks;
+use Fleetbase\Quickbooks\Services\Concerns\PersistsCustomerPlaces;
 use Fleetbase\Quickbooks\Services\Concerns\PersistsRecords;
 use Fleetbase\Quickbooks\Services\Concerns\QueuesPending;
 use Fleetbase\Quickbooks\Services\Concerns\ReadsRecords;
+use Fleetbase\Quickbooks\Services\Concerns\RetiresDeleteBatches;
 use Fleetbase\Quickbooks\Services\Concerns\StoresConnections;
 use Fleetbase\Quickbooks\Services\Concerns\StoresLinks;
+use Fleetbase\Quickbooks\Services\Concerns\StoresPaymentInvoiceRows;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Database\Eloquent\Model;
@@ -27,12 +33,18 @@ use Illuminate\Support\Str;
  */
 class FleetbaseDirectory
 {
+    use AppliesMemoryDeletes;
     use AppliesRemoteDeletes;
+    use FindsClaimedRecords;
+    use FindsDeletedLinks;
+    use PersistsCustomerPlaces;
     use PersistsRecords;
     use QueuesPending;
     use ReadsRecords;
+    use RetiresDeleteBatches;
     use StoresConnections;
     use StoresLinks;
+    use StoresPaymentInvoiceRows;
 
     public const CONNECTION_TIMES = ['token_expires_at', 'rate_limited_until', 'last_batch_at'];
 
