@@ -241,11 +241,6 @@ parameters:
 			path: server/src/Services/FleetbaseDirectory.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between mixed and null will always evaluate to false\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
 			message: "#^Argument of an invalid type mixed supplied for foreach, only iterables are supported\\.$#"
 			count: 1
 			path: server/src/Services/QuickBooksClient.php

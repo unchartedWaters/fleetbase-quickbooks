@@ -372,22 +372,6 @@ trait PersistsRecords
         $model->setRawAttributes($attributes);
     }
 
-    private static function minorAttribute(Model $model, string $field): int
-    {
-        $value = $model->getAttributes()[$field] ?? 0;
-        if ($value === null || $value === '' || is_bool($value) === true) {
-            return 0;
-        }
-        if (is_int($value) === true) {
-            return $value;
-        }
-        if (is_string($value) === true && preg_match('/^-?\d+$/', $value) === 1) {
-            return (int) $value;
-        }
-
-        return 0;
-    }
-
     /**
      * Replace every current line for one invoice with the inbound lines.
      * One delete of the current lines, then one insert. Integers are written
