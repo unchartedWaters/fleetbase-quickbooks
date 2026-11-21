@@ -465,7 +465,8 @@ trait CopiesRemoteInvoices
         if ($applied !== null) {
             return $applied;
         }
-        if ($this->paymentCoversOtherInvoices($remote, $invoiceId) === true || array_key_exists('TotalAmt', $remote) === false) {
+        $coversOthers = $this->paymentCoversOtherInvoices($remote, $invoiceId);
+        if ($coversOthers === true || array_key_exists('TotalAmt', $remote) === false) {
             return null;
         }
 
@@ -597,7 +598,8 @@ trait CopiesRemoteInvoices
             }
         }
         $currency = $this->remoteInvoiceCurrency($remote);
-        if ($currency !== '' && is_array($connection) === true && $this->invoiceCurrencyError($ledger, $connection, $currency) === null) {
+        $known    = $currency !== '' && is_array($connection) === true;
+        if ($known === true && $this->invoiceCurrencyError($ledger, $connection, $currency) === null) {
             $current = strtoupper(trim((string) ($ledger->invoices[$uuid]['currency'] ?? '')));
             if ($current !== $currency) {
                 $ledger->invoices[$uuid]['currency'] = $currency;

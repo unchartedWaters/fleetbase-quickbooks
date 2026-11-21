@@ -281,14 +281,15 @@ trait UpdatesInvoices
     private function fleetbaseChangedInvoice(array $invoice, array $plan, array $remote, array $state): bool
     {
         $stored = $plan['stored'];
-        if ($this->fleetbaseEditedInvoice(
+        $edited = $this->fleetbaseEditedInvoice(
             $invoice,
             $remote,
             $plan['reference'],
             $state['customerRef'],
             $stored,
             $state['ownTax']
-        ) === true) {
+        );
+        if ($edited === true) {
             return true;
         }
 
