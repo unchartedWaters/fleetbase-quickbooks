@@ -54,7 +54,8 @@ trait SyncsInvoices
     {
         $pending = [];
         foreach ($ledger->pending as $row) {
-            if (($row['company_uuid'] ?? '') !== $companyUuid || ($row['local_type'] ?? '') !== 'invoice' || ($row['status'] ?? '') !== 'pending') {
+            $otherKind = ($row['company_uuid'] ?? '') !== $companyUuid || ($row['local_type'] ?? '') !== 'invoice';
+            if ($otherKind === true || ($row['status'] ?? '') !== 'pending') {
                 continue;
             }
             $next = $row['next_attempt_at'] ?? null;
@@ -78,12 +79,19 @@ trait SyncsInvoices
         $rows = [];
         $seen = [];
         foreach ($ledger->invoices as $invoice) {
-            if (($invoice['company_uuid'] ?? '') !== $companyUuid || (string) ($invoice['status'] ?? 'draft') === 'draft') {
+            $draft = (string) ($invoice['status'] ?? 'draft') === 'draft';
+            if (($invoice['company_uuid'] ?? '') !== $companyUuid || $draft === true) {
                 continue;
             }
             $uuid        = (string) $invoice['uuid'];
             $seen[$uuid] = true;
-            $rows[]      = ['company_uuid' => $companyUuid, 'local_type' => 'invoice', 'local_uuid' => $uuid, 'status' => 'pending', 'attempts' => 0];
+            $rows[]      = [
+                'company_uuid' => $companyUuid,
+                'local_type'   => 'invoice',
+                'local_uuid'   => $uuid,
+                'status'       => 'pending',
+                'attempts'     => 0,
+            ];
         }
         foreach ($ledger->links as $link) {
             if (($link['company_uuid'] ?? '') !== $companyUuid || ($link['local_type'] ?? '') !== 'invoice') {
@@ -94,7 +102,13 @@ trait SyncsInvoices
                 continue;
             }
             $seen[$uuid] = true;
-            $rows[]      = ['company_uuid' => $companyUuid, 'local_type' => 'invoice', 'local_uuid' => $uuid, 'status' => 'pending', 'attempts' => 0];
+            $rows[]      = [
+                'company_uuid' => $companyUuid,
+                'local_type'   => 'invoice',
+                'local_uuid'   => $uuid,
+                'status'       => 'pending',
+                'attempts'     => 0,
+            ];
         }
 
         return $rows;
