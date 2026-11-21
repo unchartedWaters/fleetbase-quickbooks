@@ -166,7 +166,9 @@ trait UpdatesInvoices
         $suppliesLines = $plan['copy'] === true && ($plan['conflict'] === 'quickbooks' || $plan['push'] === false);
         $remoteCents   = $this->majorUnits($remote['TotalAmt'] ?? 0, $currency);
         $currencyOk    = $this->invoiceCurrencyError($ledger, $connection, $currency) === null;
-        $owns          = $this->ownsTax($settings, $plan['link']);
+        // When QuickBooks supplies the lines, a line Fleetbase deleted comes back instead of going.
+        $removed = $suppliesLines === true ? [] : $plan['stored']['removed'];
+        $owns    = $this->ownsTax($settings, $plan['link']);
         if ($owns === true && InvoiceMapper::taxInclusive($remote) === true) {
             // Fleetbase's tax is on amounts before tax, so nothing is copied or sent.
             $this->lastError = Translation::encode('quickbooks.messages.invoice-tax-inclusive');
@@ -184,8 +186,7 @@ trait UpdatesInvoices
             'localCents'    => (int) ($invoice['total'] ?? 0),
             'currencyOk'    => $currencyOk,
             'suppliesLines' => $suppliesLines,
-            // When QuickBooks supplies the lines, a line Fleetbase deleted comes back instead of going.
-            'removed'       => $suppliesLines === true ? [] : $plan['stored']['removed'],
+            'removed'       => $removed,
             'owns'          => $owns,
             'ownTax'        => $this->comparesOwnTax($connection, $owns),
             'edited'        => false,
@@ -231,7 +232,9 @@ trait UpdatesInvoices
         $invoice    = $ledger->invoices[$uuid];
         $pushClears = $state['pushClears'];
         $mapped     = $plan['stored']['mapped'];
-        $matched    = $this->invoiceHashesMatch(
+        // QuickBooks tax is compared only when QuickBooks supplies the lines.
+        $codes   = $state['suppliesLines'] === true ? $this->taxCodesFor($connection, $remote) : [];
+        $matched = $this->invoiceHashesMatch(
             $invoice,
             $remote,
             [
@@ -244,10 +247,9 @@ trait UpdatesInvoices
                 'linesOnly'   => $state['suppliesLines'] === false,
             ],
             [
-                'removed' => $state['removed'],
-                'mapped'  => $mapped,
-                // QuickBooks tax is compared only when QuickBooks supplies the lines.
-                'codes'         => $state['suppliesLines'] === true ? $this->taxCodesFor($connection, $remote) : [],
+                'removed'       => $state['removed'],
+                'mapped'        => $mapped,
+                'codes'         => $codes,
                 'fleetbase_tax' => $state['ownTax'],
             ]
         );

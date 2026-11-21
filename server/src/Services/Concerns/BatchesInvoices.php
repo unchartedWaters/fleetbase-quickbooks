@@ -250,42 +250,54 @@ trait BatchesInvoices
                 continue;
             }
 
-            $this->putInvoiceLink($ledger, $connection, (string) $uuid, $result['body'], $settings);
-            $this->rememberWrittenInvoice($result['body']);
-            $lines = $buffered[(string) $uuid] ?? null;
-            if ($lines !== null) {
-                $invoiceId = $lines['invoice'] !== '' ? $lines['invoice'] : (string) $result['body']['Id'];
-                $this->recordPushedLines(
-                    $ledger,
-                    (string) $uuid,
-                    $connection,
-                    $invoiceId,
-                    $lines['payload'],
-                    $result['body'],
-                    $lines['cleared']
-                );
-            }
-            if ($plan['outcome'] === 'created') {
-                $this->copyInvoiceNumber(
-                    $ledger,
-                    (string) $uuid,
-                    $result['body'],
-                    (string) ($settings['invoice_reference'] ?? 'fleetbase')
-                );
-            }
-            $edited = ($lines['edited'] ?? false) === true;
-            $owns   = ($lines['owns'] ?? false) === true;
-            $copies = $edited === true || $this->copiesTaxAfterPush($settings, $plan['outcome']) === true;
-            if ($owns === false && $copies === true) {
-                $this->copyQuickBooksTax($ledger, $connection, (string) $uuid, $result['body']);
-            }
-            if ($owns === true && $lines !== null) {
-                $this->markOwnTax($ledger, $connection, (string) $uuid);
-                $sent    = $lines['payload'];
-                $refused = $this->refusedOwnTax($ledger, $connection, (string) $uuid, $sent, $result['body']);
-                if ($refused !== null) {
-                    $this->refusedTaxRows[(string) $uuid] = $refused;
-                }
+            $lines   = $buffered[(string) $uuid] ?? null;
+            $body    = $result['body'];
+            $outcome = $plan['outcome'];
+            $this->persistInvoiceWrite($ledger, $connection, (string) $uuid, $outcome, $body, $lines, $settings);
+        }
+    }
+
+    /**
+     * Keep what one batched invoice write did: its link, its line ids, the QuickBooks invoice
+     * number of a create, and the tax.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $body
+     * @param array{
+     *     invoice: string, payload: array<string, mixed>, cleared: array<int, string>, edited?: bool, owns?: bool
+     * }|null $lines the line map buffered for this invoice
+     * @param array<string, mixed> $settings
+     */
+    private function persistInvoiceWrite(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        string $outcome,
+        array $body,
+        ?array $lines,
+        array $settings,
+    ): void {
+        $this->putInvoiceLink($ledger, $connection, $uuid, $body, $settings);
+        $this->rememberWrittenInvoice($body);
+        if ($lines !== null) {
+            $invoiceId = $lines['invoice'] !== '' ? $lines['invoice'] : (string) $body['Id'];
+            $cleared   = $lines['cleared'];
+            $this->recordPushedLines($ledger, $uuid, $connection, $invoiceId, $lines['payload'], $body, $cleared);
+        }
+        if ($outcome === 'created') {
+            $this->copyInvoiceNumber($ledger, $uuid, $body, (string) ($settings['invoice_reference'] ?? 'fleetbase'));
+        }
+        $edited = ($lines['edited'] ?? false) === true;
+        $owns   = ($lines['owns'] ?? false) === true;
+        $copies = $edited === true || $this->copiesTaxAfterPush($settings, $outcome) === true;
+        if ($owns === false && $copies === true) {
+            $this->copyQuickBooksTax($ledger, $connection, $uuid, $body);
+        }
+        if ($owns === true && $lines !== null) {
+            $this->markOwnTax($ledger, $connection, $uuid);
+            $refused = $this->refusedOwnTax($ledger, $connection, $uuid, $lines['payload'], $body);
+            if ($refused !== null) {
+                $this->refusedTaxRows[$uuid] = $refused;
             }
         }
     }
