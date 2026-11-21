@@ -2,6 +2,7 @@
 
 namespace Fleetbase\Quickbooks\Services\Concerns;
 
+use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\Translation;
 
@@ -9,6 +10,9 @@ use Fleetbase\Quickbooks\Support\Translation;
  * SyncEngine's payment sync: sending Fleetbase payments to QuickBooks, reading QuickBooks payments
  * back and keeping payment links. It shares the engine's state, so it lives here only to keep
  * SyncEngine.php readable.
+ *
+ * @phpstan-import-type AppliedPayments from SyncEngine
+ * @phpstan-import-type PaymentPlan from SyncEngine
  */
 trait SyncsPayments
 {
@@ -17,8 +21,14 @@ trait SyncsPayments
      * @param array<string, mixed> $invoice
      * @param array<string, mixed> $settings
      */
-    private function syncPayment(SyncLedger $ledger, array $connection, array $invoice, string $customerRef, string $invoiceId, array $settings): ?string
-    {
+    private function syncPayment(
+        SyncLedger $ledger,
+        array $connection,
+        array $invoice,
+        string $customerRef,
+        string $invoiceId,
+        array $settings,
+    ): ?string {
         if ($invoiceId === '') {
             return null;
         }
@@ -39,7 +49,7 @@ trait SyncsPayments
      * @param array<string, mixed> $settings
      * @param array<string, mixed> $invoice
      *
-     * @return array{copy: bool, push: bool, conflict: string, primary: bool, pushes: bool}|null
+     * @return PaymentPlan|null
      */
     private function paymentPlan(array $settings, array $invoice): ?array
     {
@@ -70,11 +80,11 @@ trait SyncsPayments
      * QuickBooks shows no payment for the invoice: create the Fleetbase payment there, or take
      * the amount paid from the QuickBooks balance.
      *
-     * @param array<string, mixed>                                                                                                $connection
-     * @param array<string, mixed>                                                                                                $invoice
-     * @param array<string, mixed>                                                                                                $settings
-     * @param array{copy: bool, push: bool, conflict: string, primary: bool, pushes: bool}                                        $plan
-     * @param array{payments: array<int, array<string, mixed>>, settled: bool, invoice: array<string, mixed>|null, missing: bool} $applied
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $invoice
+     * @param array<string, mixed> $settings
+     * @param PaymentPlan          $plan
+     * @param AppliedPayments      $applied
      */
     private function syncUnlinkedPayment(
         SyncLedger $ledger,
@@ -100,7 +110,15 @@ trait SyncsPayments
         $sends = $applied['missing'] === false && $applied['settled'] === false
             && $plan['pushes'] === true && $plan['push'] === true;
         if ($sends === true) {
-            $this->createRemotePayment($ledger, $connection, $invoice, $customerRef, $invoiceId, $settings, $remoteInvoice);
+            $this->createRemotePayment(
+                $ledger,
+                $connection,
+                $invoice,
+                $customerRef,
+                $invoiceId,
+                $settings,
+                $remoteInvoice
+            );
         }
 
         return null;
@@ -156,11 +174,11 @@ trait SyncsPayments
      * QuickBooks shows payments for the invoice: copy them to Fleetbase or send the Fleetbase
      * payment, by the direction and conflict rule.
      *
-     * @param array<string, mixed>                                                                                                $connection
-     * @param array<string, mixed>                                                                                                $invoice
-     * @param array<string, mixed>                                                                                                $settings
-     * @param array{copy: bool, push: bool, conflict: string, primary: bool, pushes: bool}                                        $plan
-     * @param array{payments: array<int, array<string, mixed>>, settled: bool, invoice: array<string, mixed>|null, missing: bool} $applied
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $invoice
+     * @param array<string, mixed> $settings
+     * @param PaymentPlan          $plan
+     * @param AppliedPayments      $applied
      */
     private function syncLinkedPayments(
         SyncLedger $ledger,
@@ -293,7 +311,12 @@ trait SyncsPayments
             return 'updated';
         }
 
-        $updated = $this->client->updatePayment($connection, (string) $remote['Id'], (string) $remote['SyncToken'], $payload);
+        $updated = $this->client->updatePayment(
+            $connection,
+            (string) $remote['Id'],
+            (string) $remote['SyncToken'],
+            $payload
+        );
         $this->storePaymentLink($ledger, $connection, $uuid, $invoiceId, $updated, $remoteInvoice);
         $this->rememberInvoicesAfterPayments($ledger, $connection, [$uuid => $invoiceId], $settings);
 
@@ -306,10 +329,14 @@ trait SyncsPayments
      *
      * @param array<string, mixed> $connection
      *
-     * @return array{payments: array<int, array<string, mixed>>, settled: bool, invoice: array<string, mixed>|null, missing: bool}
+     * @return AppliedPayments
      */
-    private function paymentsApplied(SyncLedger $ledger, array $connection, string $invoiceUuid, string $invoiceId): array
-    {
+    private function paymentsApplied(
+        SyncLedger $ledger,
+        array $connection,
+        string $invoiceUuid,
+        string $invoiceId,
+    ): array {
         $remoteInvoice  = $this->remoteInvoice($connection, $invoiceId);
         $remoteInvoice  = is_array($remoteInvoice) === true ? $remoteInvoice : null;
         [$ids, $listed] = $this->appliedPaymentIds($ledger, $connection, $invoiceUuid, $invoiceId, $remoteInvoice);
@@ -355,7 +382,12 @@ trait SyncsPayments
                 $listed[$paymentId] = true;
             }
         }
-        $legacy    = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'payment', $invoiceUuid);
+        $legacy    = $ledger->link(
+            (string) $connection['company_uuid'],
+            (string) $connection['realm_id'],
+            'payment',
+            $invoiceUuid
+        );
         $paymentId = is_array($legacy) === true ? trim((string) ($legacy['qbo_id'] ?? '')) : '';
         if ($paymentId !== '') {
             $listed[$paymentId] = true;

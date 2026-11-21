@@ -151,7 +151,14 @@ trait StoresPaymentInvoiceRows
         $company = (string) ($link['company_uuid'] ?? '');
         $realm   = (string) ($link['realm_id'] ?? '');
         $same    = $local === $qboId;
-        if ($local === '' || $qboId === '' || $same !== $localMatchesRemote || $company === '' || $realm === '' || isset($skipped[$company]) === true) {
+        if (
+            $local === ''
+            || $qboId === ''
+            || $same !== $localMatchesRemote
+            || $company === ''
+            || $realm === ''
+            || isset($skipped[$company]) === true
+        ) {
             return null;
         }
 
@@ -196,28 +203,10 @@ trait StoresPaymentInvoiceRows
      */
     private function storePaymentInvoiceRows(array $rows): void
     {
-        $now       = Carbon::now()->toDateTimeString();
-        $existing  = [];
-        $byCompany = [];
-        foreach ($rows as $row) {
-            $byCompany[$row['company_uuid']][] = $row['local_uuid'];
-        }
-        // The company filter lets the (company_uuid, local_type, local_uuid) unique index serve the lookup.
-        foreach ($byCompany as $company => $localUuids) {
-            foreach (array_chunk($localUuids, 200) as $chunk) {
-                foreach (Link::query()->where('company_uuid', (string) $company)->where('local_type', 'payment-invoice')->whereIn('local_uuid', $chunk)->get(['uuid', 'company_uuid', 'realm_id', 'local_uuid', 'qbo_id']) as $link) {
-                    if (is_object($link) === false) {
-                        continue;
-                    }
-                    $existing[(string) $link->company_uuid . '|' . (string) $link->realm_id . '|' . (string) $link->local_uuid] = [
-                        'uuid'   => (string) $link->uuid,
-                        'qbo_id' => (string) $link->qbo_id,
-                    ];
-                }
-            }
-        }
-        $inserts = [];
-        $updates = [];
+        $now      = Carbon::now()->toDateTimeString();
+        $existing = $this->storedPaymentInvoiceLinks($rows);
+        $inserts  = [];
+        $updates  = [];
         foreach ($rows as $key => $row) {
             $stored = $existing[$key] ?? null;
             if (is_array($stored) === true) {
@@ -243,5 +232,44 @@ trait StoresPaymentInvoiceRows
             Link::query()->insert($chunk);
         }
         $this->updateByUuid(new Link(), $updates, ['qbo_id']);
+    }
+
+    /**
+     * The payment-invoice links already stored for these rows, keyed company|realm|local uuid.
+     *
+     * @param array<string, array{company_uuid: string, realm_id: string, local_uuid: string, qbo_id: string}> $rows
+     *
+     * @return array<string, array{uuid: string, qbo_id: string}>
+     */
+    private function storedPaymentInvoiceLinks(array $rows): array
+    {
+        $existing  = [];
+        $byCompany = [];
+        foreach ($rows as $row) {
+            $byCompany[$row['company_uuid']][] = $row['local_uuid'];
+        }
+        // The company filter lets the (company_uuid, local_type, local_uuid) unique index serve the lookup.
+        foreach ($byCompany as $company => $localUuids) {
+            foreach (array_chunk($localUuids, 200) as $chunk) {
+                $found = Link::query()
+                    ->where('company_uuid', (string) $company)
+                    ->where('local_type', 'payment-invoice')
+                    ->whereIn('local_uuid', $chunk)
+                    ->get(['uuid', 'company_uuid', 'realm_id', 'local_uuid', 'qbo_id']);
+                foreach ($found as $link) {
+                    if (is_object($link) === false) {
+                        continue;
+                    }
+                    $key            = (string) $link->company_uuid . '|' . (string) $link->realm_id
+                        . '|' . (string) $link->local_uuid;
+                    $existing[$key] = [
+                        'uuid'   => (string) $link->uuid,
+                        'qbo_id' => (string) $link->qbo_id,
+                    ];
+                }
+            }
+        }
+
+        return $existing;
     }
 }

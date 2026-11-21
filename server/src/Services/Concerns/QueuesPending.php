@@ -22,7 +22,9 @@ trait QueuesPending
      */
     private function updatePendingRows(array $changedPending): void
     {
-        $pendingColumns = ['company_uuid', 'local_type', 'local_uuid', 'reason', 'status', 'attempts', 'next_attempt_at'];
+        $pendingColumns = [
+            'company_uuid', 'local_type', 'local_uuid', 'reason', 'status', 'attempts', 'next_attempt_at',
+        ];
         if ($this->claimsSupported() === true) {
             // A row flagged again during this run stays pending for the next run, but still records
             // the attempt and backoff, so a row that keeps failing cannot skip its backoff. An
@@ -169,7 +171,11 @@ trait QueuesPending
             ->where('company_uuid', $companyUuid)
             ->where('status', 'pending')
             ->where(function ($query) use ($now): void {
-                $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', Carbon::createFromTimestamp($now));
+                $query->whereNull('next_attempt_at')->orWhere(
+                    'next_attempt_at',
+                    '<=',
+                    Carbon::createFromTimestamp($now)
+                );
             });
         // A row another run holds is not due work for this one.
         if ($this->claimsSupported() === true) {
@@ -234,7 +240,11 @@ trait QueuesPending
     private function markReflagged(PendingSync $pending): void
     {
         $holder = (string) ($pending->claimed_by ?? '');
-        if ($holder === '' || str_starts_with($holder, self::REFLAG_PREFIX) === true || $this->claimsSupported() === false) {
+        if (
+            $holder === ''
+            || str_starts_with($holder, self::REFLAG_PREFIX) === true
+            || $this->claimsSupported() === false
+        ) {
             return;
         }
 
@@ -288,7 +298,8 @@ trait QueuesPending
 
         try {
             $schema = $connection->getSchemaBuilder();
-            $has    = $schema->hasColumn($model->getTable(), 'claimed_until') === true && $schema->hasColumn($model->getTable(), 'claimed_by') === true;
+            $has    = $schema->hasColumn($model->getTable(), 'claimed_until') === true
+                && $schema->hasColumn($model->getTable(), 'claimed_by') === true;
         } catch (\Throwable) {
             return false;
         }
@@ -374,7 +385,8 @@ trait QueuesPending
         }
         $this->claimTokens[] = $token;
 
-        $mine = array_flip(array_map(static fn (mixed $uuid): string => (string) $uuid, PendingSync::query()->where('claimed_by', $token)->pluck('uuid')->all()));
+        $claimed = PendingSync::query()->where('claimed_by', $token)->pluck('uuid')->all();
+        $mine    = array_flip(array_map(static fn (mixed $uuid): string => (string) $uuid, $claimed));
 
         return array_values(array_filter(
             $rows,

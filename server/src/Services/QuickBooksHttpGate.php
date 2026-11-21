@@ -37,132 +37,212 @@ class QuickBooksHttpGate extends QuickBooksClient
 
     public function homeCurrency(array $connection): ?string
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?string => $this->inner->homeCurrency($connection));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?string => $this->inner->homeCurrency($connection)
+        );
     }
 
     public function customTxnNumbers(array $connection): bool
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): bool => $this->inner->customTxnNumbers($connection));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): bool => $this->inner->customTxnNumbers($connection)
+        );
     }
 
     public function multiCurrencyEnabled(array $connection): bool
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): bool => $this->inner->multiCurrencyEnabled($connection)) === true;
+        $enabled = $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): bool => $this->inner->multiCurrencyEnabled($connection)
+        );
+
+        return $enabled === true;
     }
 
     public function createCustomer(array $connection, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createCustomer($connection, $payload));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->createCustomer($connection, $payload)
+        );
     }
 
     public function updateCustomer(array $connection, string $remoteId, string $syncToken, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateCustomer($connection, $remoteId, $syncToken, $payload));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->updateCustomer($connection, $remoteId, $syncToken, $payload)
+        );
     }
 
     public function getCustomer(array $connection, string $remoteId): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getCustomer($connection, $remoteId));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?array => $this->inner->getCustomer($connection, $remoteId)
+        );
     }
 
     public function createInvoice(array $connection, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createInvoice($connection, $payload));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->createInvoice($connection, $payload)
+        );
     }
 
     public function updateInvoice(array $connection, string $remoteId, string $syncToken, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateInvoice($connection, $remoteId, $syncToken, $payload));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->updateInvoice($connection, $remoteId, $syncToken, $payload)
+        );
     }
 
     public function nextInvoiceDocNumber(array $connection): ?string
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?string => $this->inner->nextInvoiceDocNumber($connection));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?string => $this->inner->nextInvoiceDocNumber($connection)
+        );
     }
 
     public function nextInvoiceDocNumbers(array $connection, int $count): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->nextInvoiceDocNumbers($connection, $count));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->nextInvoiceDocNumbers($connection, $count)
+        );
     }
 
     public function findInvoiceByDocNumber(array $connection, string $docNumber): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->findInvoiceByDocNumber($connection, $docNumber));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?array => $this->inner->findInvoiceByDocNumber($connection, $docNumber)
+        );
     }
 
     public function getInvoice(array $connection, string $remoteId): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getInvoice($connection, $remoteId));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?array => $this->inner->getInvoice($connection, $remoteId)
+        );
     }
 
     public function voidInvoice(array $connection, string $remoteId, string $syncToken): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->voidInvoice($connection, $remoteId, $syncToken));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->voidInvoice($connection, $remoteId, $syncToken)
+        );
     }
 
     public function createPayment(array $connection, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createPayment($connection, $payload));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->createPayment($connection, $payload)
+        );
     }
 
     public function updatePayment(array $connection, string $remoteId, string $syncToken, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updatePayment($connection, $remoteId, $syncToken, $payload));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->updatePayment($connection, $remoteId, $syncToken, $payload)
+        );
     }
 
     public function getPayment(array $connection, string $remoteId): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getPayment($connection, $remoteId));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?array => $this->inner->getPayment($connection, $remoteId)
+        );
     }
 
     public function findPaymentForInvoice(array $connection, string $customerId, string $invoiceId): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->findPaymentForInvoice($connection, $customerId, $invoiceId));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?array => $this->inner->findPaymentForInvoice($connection, $customerId, $invoiceId)
+        );
     }
 
     public function findPaymentsForCustomers(array $connection, array $customerIds, bool $asBatch = false): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->findPaymentsForCustomers($connection, $customerIds, $asBatch));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->findPaymentsForCustomers($connection, $customerIds, $asBatch)
+        );
     }
 
     public function findCustomerByDisplayName(array $connection, string $name): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->findCustomerByDisplayName($connection, $name));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?array => $this->inner->findCustomerByDisplayName($connection, $name)
+        );
     }
 
     public function findCustomerByEmail(array $connection, string $email): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->findCustomerByEmail($connection, $email));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?array => $this->inner->findCustomerByEmail($connection, $email)
+        );
     }
 
     public function createAccount(array $connection, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->createAccount($connection, $payload));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->createAccount($connection, $payload)
+        );
     }
 
     public function updateAccount(array $connection, string $remoteId, string $syncToken, array $payload): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->updateAccount($connection, $remoteId, $syncToken, $payload));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->updateAccount($connection, $remoteId, $syncToken, $payload)
+        );
     }
 
     public function getAccount(array $connection, string $remoteId): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->getAccount($connection, $remoteId));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?array => $this->inner->getAccount($connection, $remoteId)
+        );
     }
 
     public function findAccountByAcctNum(array $connection, string $acctNum): ?array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): ?array => $this->inner->findAccountByAcctNum($connection, $acctNum));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): ?array => $this->inner->findAccountByAcctNum($connection, $acctNum)
+        );
     }
 
     public function findAccountsByName(array $connection, string $name): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->findAccountsByName($connection, $name));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->findAccountsByName($connection, $name)
+        );
     }
 
     public function batch(array $connection, array $items): array
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): array => $this->inner->batch($connection, $items));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): array => $this->inner->batch($connection, $items)
+        );
     }
 
     public function salesTax(array $connection): array
@@ -222,7 +302,10 @@ class QuickBooksHttpGate extends QuickBooksClient
 
     public function ensureServiceItem(array $connection): string
     {
-        return $this->engine->runAuthorized($connection, fn (array $connection): string => $this->inner->ensureServiceItem($connection));
+        return $this->engine->runAuthorized(
+            $connection,
+            fn (array $connection): string => $this->inner->ensureServiceItem($connection)
+        );
     }
 
     public function itemActive(array $connection, string $remoteId): bool

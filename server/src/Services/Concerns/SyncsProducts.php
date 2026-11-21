@@ -45,7 +45,16 @@ trait SyncsProducts
         try {
             $results = $this->productItemsFor($ledger, $connection, array_values(array_filter($keys, 'is_string')));
         } catch (QuickBooksException $exception) {
-            return $this->productReadFailed($ledger, $connection, $rows[0], $exception, $settings, $batch, $now, $trigger);
+            return $this->productReadFailed(
+                $ledger,
+                $connection,
+                $rows[0],
+                $exception,
+                $settings,
+                $batch,
+                $now,
+                $trigger
+            );
         }
         $connection = $ledger->connection($companyUuid) ?? $connection;
         $this->recordProductRows($ledger, $connection, $rows, $keys, $results, $settings, $batch, $now, $trigger);
@@ -458,7 +467,10 @@ trait SyncsProducts
         if ($itemId !== '') {
             return $itemId;
         }
-        if ($this->serviceItemByCompany !== null && array_key_exists($companyUuid, $this->serviceItemByCompany) === true) {
+        if (
+            $this->serviceItemByCompany !== null
+            && array_key_exists($companyUuid, $this->serviceItemByCompany) === true
+        ) {
             return $this->serviceItemByCompany[$companyUuid];
         }
         if (isset($this->serviceItemErrors[$companyUuid]) === true) {

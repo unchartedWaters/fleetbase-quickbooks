@@ -13,8 +13,14 @@ trait AppliesMemoryDeletes
     /**
      * @param array<int, string> $relatedInvoiceUuids
      */
-    private function releaseMemoryRemoteDelete(string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid, array $relatedInvoiceUuids = []): void
-    {
+    private function releaseMemoryRemoteDelete(
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $quickbooksId,
+        ?string $localUuid,
+        array $relatedInvoiceUuids = [],
+    ): void {
         $memory = $this->memory;
         if ($memory === null) {
             return;
@@ -24,7 +30,15 @@ trait AppliesMemoryDeletes
         [$uuids, $kept] = $this->droppedMemoryLinks($companyUuid, $realmId, $localType, $quickbooksId, $localUuid);
         $memory->links  = $kept;
         foreach (array_values(array_unique($uuids)) as $uuid) {
-            $this->applyMemoryRemoteDelete($companyUuid, $realmId, $localType, $quickbooksId, $uuid, $relatedInvoiceUuids, $mappedInvoices);
+            $this->applyMemoryRemoteDelete(
+                $companyUuid,
+                $realmId,
+                $localType,
+                $quickbooksId,
+                $uuid,
+                $relatedInvoiceUuids,
+                $mappedInvoices
+            );
         }
         $memory->rebuildIndex();
     }
@@ -32,8 +46,12 @@ trait AppliesMemoryDeletes
     /**
      * @return array<int, string>
      */
-    private function mappedMemoryInvoices(string $companyUuid, string $realmId, string $localType, string $quickbooksId): array
-    {
+    private function mappedMemoryInvoices(
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $quickbooksId,
+    ): array {
         $mappedInvoices = [];
         $memory         = $this->memory;
         if ($localType !== 'payment' || $quickbooksId === '' || $memory === null) {
@@ -55,8 +73,13 @@ trait AppliesMemoryDeletes
     /**
      * @return array{0: array<int, string>, 1: array<int, array<string, mixed>>}
      */
-    private function droppedMemoryLinks(string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid): array
-    {
+    private function droppedMemoryLinks(
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $quickbooksId,
+        ?string $localUuid,
+    ): array {
         $uuids  = [];
         $kept   = [];
         $memory = $this->memory;
@@ -67,7 +90,14 @@ trait AppliesMemoryDeletes
             if (is_array($link) === false) {
                 continue;
             }
-            $dropped = $this->droppedMemoryLinkUuid($link, $companyUuid, $realmId, $localType, $quickbooksId, $localUuid);
+            $dropped = $this->droppedMemoryLinkUuid(
+                $link,
+                $companyUuid,
+                $realmId,
+                $localType,
+                $quickbooksId,
+                $localUuid
+            );
             if ($dropped === null) {
                 $kept[] = $link;
                 continue;
@@ -87,8 +117,15 @@ trait AppliesMemoryDeletes
      * @param array<int, string> $relatedInvoiceUuids
      * @param array<int, string> $mappedInvoices
      */
-    private function applyMemoryRemoteDelete(string $companyUuid, string $realmId, string $localType, string $quickbooksId, string $uuid, array $relatedInvoiceUuids, array $mappedInvoices): void
-    {
+    private function applyMemoryRemoteDelete(
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $quickbooksId,
+        string $uuid,
+        array $relatedInvoiceUuids,
+        array $mappedInvoices,
+    ): void {
         $memory = $this->memory;
         if ($memory === null) {
             return;
@@ -97,7 +134,14 @@ trait AppliesMemoryDeletes
         if ($localType === 'invoice') {
             $this->voidMemoryInvoice($companyUuid, $realmId, $uuid);
         } elseif ($localType === 'payment') {
-            $pendingUuids = $this->unpayMemoryInvoices($companyUuid, $realmId, $quickbooksId, $uuid, $relatedInvoiceUuids, $mappedInvoices);
+            $pendingUuids = $this->unpayMemoryInvoices(
+                $companyUuid,
+                $realmId,
+                $quickbooksId,
+                $uuid,
+                $relatedInvoiceUuids,
+                $mappedInvoices
+            );
         } elseif ($localType === 'customer') {
             unset($memory->customers[$uuid]);
         } elseif ($localType === 'wallet') {
@@ -113,9 +157,18 @@ trait AppliesMemoryDeletes
      *
      * @param array<string, mixed> $link
      */
-    private function droppedMemoryLinkUuid(array $link, string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid): ?string
-    {
-        if ($localType === 'payment' && $this->memoryPaymentInvoiceLink($link, $companyUuid, $realmId, $quickbooksId) === true) {
+    private function droppedMemoryLinkUuid(
+        array $link,
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $quickbooksId,
+        ?string $localUuid,
+    ): ?string {
+        if (
+            $localType === 'payment'
+            && $this->memoryPaymentInvoiceLink($link, $companyUuid, $realmId, $quickbooksId) === true
+        ) {
             return '';
         }
         if ($this->memoryLinkMatches($link, $companyUuid, $realmId, $localType, $quickbooksId, $localUuid) === false) {
@@ -125,8 +178,12 @@ trait AppliesMemoryDeletes
         return (string) ($link['local_uuid'] ?? '');
     }
 
-    private function memoryPaymentInvoiceLink(mixed $link, string $companyUuid, string $realmId, string $quickbooksId): bool
-    {
+    private function memoryPaymentInvoiceLink(
+        mixed $link,
+        string $companyUuid,
+        string $realmId,
+        string $quickbooksId,
+    ): bool {
         if (is_array($link) === false) {
             return false;
         }
@@ -140,15 +197,26 @@ trait AppliesMemoryDeletes
     /**
      * @param array<string, mixed> $link
      */
-    private function memoryLinkMatches(array $link, string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid): bool
-    {
+    private function memoryLinkMatches(
+        array $link,
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $quickbooksId,
+        ?string $localUuid,
+    ): bool {
         $sameCompany = (string) ($link['company_uuid'] ?? '') === $companyUuid;
         $sameRealm   = $realmId === '' || (string) ($link['realm_id'] ?? '') === $realmId;
         $sameType    = (string) ($link['local_type'] ?? '') === $localType;
         $sameRemote  = $quickbooksId !== '' && (string) ($link['qbo_id'] ?? '') === $quickbooksId;
-        $sameLocal   = is_string($localUuid) === true && $localUuid !== '' && (string) ($link['local_uuid'] ?? '') === $localUuid;
+        $sameLocal   = is_string($localUuid) === true
+            && $localUuid !== ''
+            && (string) ($link['local_uuid'] ?? '') === $localUuid;
 
-        return $sameCompany === true && $sameRealm === true && $sameType === true && ($sameRemote === true || $sameLocal === true);
+        return $sameCompany === true
+            && $sameRealm === true
+            && $sameType === true
+            && ($sameRemote === true || $sameLocal === true);
     }
 
     private function voidMemoryInvoice(string $companyUuid, string $realmId, string $uuid): void
@@ -187,15 +255,30 @@ trait AppliesMemoryDeletes
      *
      * @return array<int, string>
      */
-    private function unpayMemoryInvoices(string $companyUuid, string $realmId, string $quickbooksId, string $uuid, array $relatedInvoiceUuids, array $mappedInvoices): array
-    {
-        $pendingUuids = $this->paymentInvoiceTargets($companyUuid, $realmId, $quickbooksId, $uuid, array_merge($relatedInvoiceUuids, $mappedInvoices));
+    private function unpayMemoryInvoices(
+        string $companyUuid,
+        string $realmId,
+        string $quickbooksId,
+        string $uuid,
+        array $relatedInvoiceUuids,
+        array $mappedInvoices,
+    ): array {
+        $pendingUuids = $this->paymentInvoiceTargets(
+            $companyUuid,
+            $realmId,
+            $quickbooksId,
+            $uuid,
+            array_merge($relatedInvoiceUuids, $mappedInvoices)
+        );
         $memory       = $this->memory;
         if ($memory === null) {
             return $pendingUuids;
         }
         foreach ($pendingUuids as $invoiceUuid) {
-            if (isset($memory->invoices[$invoiceUuid]) === false || is_array($memory->invoices[$invoiceUuid]) === false) {
+            if (
+                isset($memory->invoices[$invoiceUuid]) === false
+                || is_array($memory->invoices[$invoiceUuid]) === false
+            ) {
                 continue;
             }
             $status = strtolower((string) ($memory->invoices[$invoiceUuid]['status'] ?? ''));
@@ -211,8 +294,12 @@ trait AppliesMemoryDeletes
     /**
      * @param array<int, string> $pendingUuids
      */
-    private function finishMemoryPending(string $companyUuid, string $localType, string $quickbooksId, array $pendingUuids): void
-    {
+    private function finishMemoryPending(
+        string $companyUuid,
+        string $localType,
+        string $quickbooksId,
+        array $pendingUuids,
+    ): void {
         $memory = $this->memory;
         if ($memory === null) {
             return;

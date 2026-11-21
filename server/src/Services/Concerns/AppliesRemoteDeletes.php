@@ -5,6 +5,7 @@ namespace Fleetbase\Quickbooks\Services\Concerns;
 use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncBatch;
+use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
@@ -14,6 +15,8 @@ use Illuminate\Support\Str;
  * FleetbaseDirectory's handling of QuickBooks deletes and merges: retiring local records and
  * links, invoice status after a lost payment, and the in-memory directory's version of the same.
  * It shares the directory's state, so it lives here only to keep FleetbaseDirectory.php readable.
+ *
+ * @phpstan-import-type RemoteDelete from FleetbaseDirectory
  */
 trait AppliesRemoteDeletes
 {
@@ -25,13 +28,26 @@ trait AppliesRemoteDeletes
      *
      * @param array<int, string> $relatedInvoiceUuids Invoices a payment-id link applied to
      */
-    public function releaseRemoteDelete(string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid, array $relatedInvoiceUuids = []): void
-    {
+    public function releaseRemoteDelete(
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $quickbooksId,
+        ?string $localUuid,
+        array $relatedInvoiceUuids = [],
+    ): void {
         if ($companyUuid === '' || $localType === '') {
             return;
         }
         if ($this->memory !== null) {
-            $this->releaseMemoryRemoteDelete($companyUuid, $realmId, $localType, $quickbooksId, $localUuid, $relatedInvoiceUuids);
+            $this->releaseMemoryRemoteDelete(
+                $companyUuid,
+                $realmId,
+                $localType,
+                $quickbooksId,
+                $localUuid,
+                $relatedInvoiceUuids
+            );
 
             return;
         }
@@ -39,15 +55,16 @@ trait AppliesRemoteDeletes
         $wasPaused = SyncSuppressor::paused();
         SyncSuppressor::pause();
         try {
-            $uuids = $this->linkedLocalUuids($companyUuid, $realmId, $localType, $quickbooksId, $localUuid);
-            if (is_string($localUuid) === true && $localUuid !== '' && in_array($localUuid, $uuids, true) === false) {
-                $uuids[] = $localUuid;
-            }
+            $uuids = $this->deletedLocalUuids($companyUuid, $realmId, $localType, $quickbooksId, $localUuid);
             foreach ($uuids as $uuid) {
-                $this->applyRemoteDelete($companyUuid, $realmId, $localType, $quickbooksId, $uuid, $relatedInvoiceUuids);
-            }
-            if ($uuids === [] && $localType === 'payment') {
-                $this->applyRemoteDelete($companyUuid, $realmId, $localType, $quickbooksId, (string) $localUuid, $relatedInvoiceUuids);
+                $this->applyRemoteDelete(
+                    $companyUuid,
+                    $realmId,
+                    $localType,
+                    $quickbooksId,
+                    $uuid,
+                    $relatedInvoiceUuids
+                );
             }
             $this->dropRemoteLinks($companyUuid, $realmId, $localType, $quickbooksId);
             if ($localType === 'payment' && $quickbooksId !== '') {
@@ -61,11 +78,35 @@ trait AppliesRemoteDeletes
     }
 
     /**
+     * The local records a QuickBooks delete reaches: the linked ones and the named one.
+     * A payment with no local record still runs once, under the given id.
+     *
+     * @return array<int, string>
+     */
+    private function deletedLocalUuids(
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $quickbooksId,
+        ?string $localUuid,
+    ): array {
+        $uuids = $this->linkedLocalUuids($companyUuid, $realmId, $localType, $quickbooksId, $localUuid);
+        if (is_string($localUuid) === true && $localUuid !== '' && in_array($localUuid, $uuids, true) === false) {
+            $uuids[] = $localUuid;
+        }
+        if ($uuids === [] && $localType === 'payment') {
+            $uuids = [(string) $localUuid];
+        }
+
+        return $uuids;
+    }
+
+    /**
      * Retire every delete or void in one delivery. One link select, one invoice
      * status update, one link delete, and one pending update. A payment id is not
      * applied to an invoice, customer, or wallet that merely shares that id.
      *
-     * @param array<int, array{realm_id?: string, local_type?: string, qbo_id?: string, local_uuid?: string|null, invoice_uuids?: array<int, string>, invoices_from_payment?: bool}> $deletions
+     * @param array<int, RemoteDelete> $deletions
      */
     public function releaseRemoteDeletes(string $companyUuid, array $deletions): void
     {
@@ -214,8 +255,14 @@ trait AppliesRemoteDeletes
     /**
      * @param array<int, string> $relatedInvoiceUuids
      */
-    private function applyRemoteDelete(string $companyUuid, string $realmId, string $localType, string $quickbooksId, string $localUuid, array $relatedInvoiceUuids = []): void
-    {
+    private function applyRemoteDelete(
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $quickbooksId,
+        string $localUuid,
+        array $relatedInvoiceUuids = [],
+    ): void {
         if ($localType === 'invoice') {
             $this->setInvoiceStatus($companyUuid, $localUuid, 'void');
             $this->dropLocalLinks($companyUuid, $realmId, 'invoice', $localUuid);
@@ -228,7 +275,14 @@ trait AppliesRemoteDeletes
             if ($localUuid !== '') {
                 $this->dropLocalLinks($companyUuid, $realmId, 'payment', $localUuid);
             }
-            foreach ($this->paymentInvoiceTargets($companyUuid, $realmId, $quickbooksId, $localUuid, $relatedInvoiceUuids) as $invoiceUuid) {
+            $targets = $this->paymentInvoiceTargets(
+                $companyUuid,
+                $realmId,
+                $quickbooksId,
+                $localUuid,
+                $relatedInvoiceUuids
+            );
+            foreach ($targets as $invoiceUuid) {
                 $this->settleInvoiceAfterPaymentRemoved($companyUuid, $invoiceUuid);
             }
 
@@ -261,8 +315,13 @@ trait AppliesRemoteDeletes
      *
      * @return array<int, string>
      */
-    private function paymentInvoiceTargets(string $companyUuid, string $realmId, string $quickbooksId, string $localUuid, array $relatedInvoiceUuids): array
-    {
+    private function paymentInvoiceTargets(
+        string $companyUuid,
+        string $realmId,
+        string $quickbooksId,
+        string $localUuid,
+        array $relatedInvoiceUuids,
+    ): array {
         $targets = [];
         if ($localUuid !== '' && $localUuid !== $quickbooksId) {
             $targets[] = $localUuid;
@@ -366,7 +425,10 @@ trait AppliesRemoteDeletes
             if (is_string($current) === false) {
                 return;
             }
-            if ($status === 'void' && in_array(strtolower($current), ['void', 'voided', 'cancelled', 'canceled'], true) === true) {
+            if (
+                $status === 'void'
+                && in_array(strtolower($current), ['void', 'voided', 'cancelled', 'canceled'], true) === true
+            ) {
                 return;
             }
             if ($current === $status) {
@@ -467,8 +529,12 @@ trait AppliesRemoteDeletes
         }
     }
 
-    private function dropRemoteLinks(string $companyUuid, string $realmId, string $localType, string $quickbooksId): void
-    {
+    private function dropRemoteLinks(
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $quickbooksId,
+    ): void {
         if ($companyUuid === '' || $localType === '' || $quickbooksId === '') {
             return;
         }

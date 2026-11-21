@@ -17,15 +17,32 @@ trait BatchesWallets
      * @param array<string, mixed>             $settings
      * @param array<string, mixed>             $batch
      */
-    private function syncWalletBlock(SyncLedger $ledger, array &$connection, array $rows, array $settings, array &$batch, int $now, string $trigger): bool
-    {
+    private function syncWalletBlock(
+        SyncLedger $ledger,
+        array &$connection,
+        array $rows,
+        array $settings,
+        array &$batch,
+        int $now,
+        string $trigger,
+    ): bool {
         if ($this->entityEnabled($settings, 'wallet') === false) {
             return $this->recordDisabledRows($ledger, $connection, $rows, $batch, $trigger, true);
         }
         try {
             $this->prefetchWalletAccounts($connection, $ledger, $rows, $settings);
 
-            return $this->syncBufferedBlock($ledger, $connection, $rows, $settings, $batch, $now, $trigger, true, 'wallet');
+            return $this->syncBufferedBlock(
+                $ledger,
+                $connection,
+                $rows,
+                $settings,
+                $batch,
+                $now,
+                $trigger,
+                true,
+                'wallet'
+            );
         } catch (QuickBooksException $exception) {
             if ($exception->isUnauthorized() === true) {
                 $this->tokenRejected($ledger, (string) $connection['company_uuid']);
@@ -35,7 +52,8 @@ trait BatchesWallets
             }
             if ($exception->isRateLimit() === true) {
                 $this->failure($ledger, $connection, $rows[0], $exception, $settings, $now);
-                $this->recordRow($ledger, $connection, $rows[0], 'failed', $batch, $trigger, $this->exceptionError($exception));
+                $error = $this->exceptionError($exception);
+                $this->recordRow($ledger, $connection, $rows[0], 'failed', $batch, $trigger, $error);
 
                 return true;
             }

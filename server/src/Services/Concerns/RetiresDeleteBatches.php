@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Services\Concerns;
 
 use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Models\PendingSync;
+use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Support\Carbon;
@@ -12,11 +13,13 @@ use Illuminate\Support\Carbon;
  * FleetbaseDirectory's batched QuickBooks deletes: collect the records a batch of deletes
  * touches, then retire them, drop their links and set invoice statuses in a few queries. Split
  * from AppliesRemoteDeletes to keep each file readable.
+ *
+ * @phpstan-import-type RemoteDelete from FleetbaseDirectory
  */
 trait RetiresDeleteBatches
 {
     /**
-     * @param array<int, array{realm_id?: string, local_type?: string, qbo_id?: string, local_uuid?: string|null, invoice_uuids?: array<int, string>, invoices_from_payment?: bool}> $deletions
+     * @param array<int, RemoteDelete> $deletions
      */
     private function retireDeleteBatch(string $companyUuid, array $deletions): void
     {
@@ -71,8 +74,13 @@ trait RetiresDeleteBatches
      * @param array<string, mixed> $deletion
      * @param array<string, mixed> $state
      */
-    private function collectPaymentDeletion(array $deletion, string $realm, string $qbo, string $local, array &$state): void
-    {
+    private function collectPaymentDeletion(
+        array $deletion,
+        string $realm,
+        string $qbo,
+        string $local,
+        array &$state,
+    ): void {
         if (empty($deletion['invoices_from_payment']) === false && $qbo !== '') {
             // The payment was read. Its lines name every invoice to unmark.
             // A stored fallback for a different invoice must not be applied.
@@ -93,9 +101,9 @@ trait RetiresDeleteBatches
     }
 
     /**
-     * @param array<int, array<string, mixed>>                                                                                                         $links
-     * @param array<int, array{realm_id?: string, local_type?: string, qbo_id?: string, local_uuid?: string|null, invoice_uuids?: array<int, string>}> $deletions
-     * @param array<string, mixed>                                                                                                                     $state
+     * @param array<int, array<string, mixed>> $links
+     * @param array<int, RemoteDelete>         $deletions
+     * @param array<string, mixed>             $state
      */
     private function collectDeletionLinks(array $links, array $deletions, array &$state): void
     {
@@ -119,8 +127,13 @@ trait RetiresDeleteBatches
     /**
      * @param array<string, mixed> $state
      */
-    private function collectPaymentInvoiceLink(string $uuid, string $realm, string $local, string $qbo, array &$state): void
-    {
+    private function collectPaymentInvoiceLink(
+        string $uuid,
+        string $realm,
+        string $local,
+        string $qbo,
+        array &$state,
+    ): void {
         if ($uuid !== '') {
             $state['link_uuids'][] = $uuid;
         }
@@ -132,8 +145,14 @@ trait RetiresDeleteBatches
     /**
      * @param array<string, mixed> $state
      */
-    private function collectMatchedDeletionLink(string $type, string $realm, string $qbo, string $local, string $uuid, array &$state): void
-    {
+    private function collectMatchedDeletionLink(
+        string $type,
+        string $realm,
+        string $qbo,
+        string $local,
+        string $uuid,
+        array &$state,
+    ): void {
         if ($uuid !== '' && $type === 'wallet' && $local !== '') {
             // Dropped below only when the wallet is really closed.
             $state['wallet_links'][$local][]  = $uuid;
@@ -260,7 +279,17 @@ trait RetiresDeleteBatches
         }
         $grammar                      = $connection->getQueryGrammar();
         [$cases, $filters, $bindings] = $this->invoiceStatusCases($grammar, $voidUuids, $sentUuids);
-        $this->runInvoiceStatusUpdate($connection, $grammar, $model->getTable(), $companyUuid, $voidUuids, $sentUuids, $cases, $filters, $bindings);
+        $this->runInvoiceStatusUpdate(
+            $connection,
+            $grammar,
+            $model->getTable(),
+            $companyUuid,
+            $voidUuids,
+            $sentUuids,
+            $cases,
+            $filters,
+            $bindings
+        );
     }
 
     /**
@@ -269,8 +298,11 @@ trait RetiresDeleteBatches
      *
      * @return array{0: array<int, string>, 1: array<int, string>, 2: array<int, mixed>}
      */
-    private function invoiceStatusCases(\Illuminate\Database\Grammar $grammar, array $voidUuids, array $sentUuids): array
-    {
+    private function invoiceStatusCases(
+        \Illuminate\Database\Grammar $grammar,
+        array $voidUuids,
+        array $sentUuids,
+    ): array {
         $uuidColumn = $grammar->wrap('uuid');
         $status     = $grammar->wrap('status');
         $cases      = [];
@@ -278,16 +310,20 @@ trait RetiresDeleteBatches
         $filters    = [];
         if ($voidUuids !== []) {
             $placeholders = implode(', ', array_fill(0, count($voidUuids), '?'));
-            $cases[]      = 'WHEN ' . $uuidColumn . ' IN (' . $placeholders . ') AND lower(' . $status . ") NOT IN ('void', 'voided', 'cancelled', 'canceled') THEN 'void'";
-            $filters[]    = '(' . $uuidColumn . ' IN (' . $placeholders . ') AND lower(' . $status . ") NOT IN ('void', 'voided', 'cancelled', 'canceled'))";
+            $match        = $uuidColumn . ' IN (' . $placeholders . ') AND lower(' . $status . ')'
+                . " NOT IN ('void', 'voided', 'cancelled', 'canceled')";
+            $cases[]      = 'WHEN ' . $match . " THEN 'void'";
+            $filters[]    = '(' . $match . ')';
             foreach ($voidUuids as $uuid) {
                 $bindings[] = $uuid;
             }
         }
         if ($sentUuids !== []) {
             $placeholders = implode(', ', array_fill(0, count($sentUuids), '?'));
-            $cases[]      = 'WHEN ' . $uuidColumn . ' IN (' . $placeholders . ') AND lower(' . $status . ") IN ('paid', 'partial') THEN 'sent'";
-            $filters[]    = '(' . $uuidColumn . ' IN (' . $placeholders . ') AND lower(' . $status . ") IN ('paid', 'partial'))";
+            $match        = $uuidColumn . ' IN (' . $placeholders . ') AND lower(' . $status . ')'
+                . " IN ('paid', 'partial')";
+            $cases[]      = 'WHEN ' . $match . " THEN 'sent'";
+            $filters[]    = '(' . $match . ')';
             foreach ($sentUuids as $uuid) {
                 $bindings[] = $uuid;
             }
@@ -303,8 +339,17 @@ trait RetiresDeleteBatches
      * @param array<int, string> $filters
      * @param array<int, mixed>  $bindings
      */
-    private function runInvoiceStatusUpdate(\Illuminate\Database\Connection $connection, \Illuminate\Database\Grammar $grammar, string $tableName, string $companyUuid, array $voidUuids, array $sentUuids, array $cases, array $filters, array $bindings): void
-    {
+    private function runInvoiceStatusUpdate(
+        \Illuminate\Database\Connection $connection,
+        \Illuminate\Database\Grammar $grammar,
+        string $tableName,
+        string $companyUuid,
+        array $voidUuids,
+        array $sentUuids,
+        array $cases,
+        array $filters,
+        array $bindings,
+    ): void {
         $table           = $grammar->wrapTable($tableName);
         $uuidColumn      = $grammar->wrap('uuid');
         $status          = $grammar->wrap('status');
@@ -356,22 +401,29 @@ trait RetiresDeleteBatches
         try {
             $held = array_map(
                 static fn (mixed $uuid): string => (string) $uuid,
-                $class::query()->where('company_uuid', $companyUuid)->whereIn('uuid', $uuids)->where('balance', '!=', 0)->pluck('uuid')->all()
+                $class::query()
+                    ->where('company_uuid', $companyUuid)
+                    ->whereIn('uuid', $uuids)
+                    ->where('balance', '!=', 0)
+                    ->pluck('uuid')
+                    ->all()
             );
         } catch (\Throwable $exception) {
-            SafeLog::warning('QuickBooks deleted a wallet account, but the wallet balance could not be read, so the wallet stays open.', [
-                'company_uuid' => $companyUuid,
-                'wallet_uuids' => $uuids,
-                'exception'    => $exception::class,
-            ]);
+            SafeLog::warning('QuickBooks deleted a wallet account, but the wallet balance could not be read, '
+                . 'so the wallet stays open.', [
+                    'company_uuid' => $companyUuid,
+                    'wallet_uuids' => $uuids,
+                    'exception'    => $exception::class,
+                ]);
 
             return $uuids;
         }
         if ($held !== []) {
-            SafeLog::warning('QuickBooks deleted a wallet account, but the wallet still holds a balance, so it stays open and linked.', [
-                'company_uuid' => $companyUuid,
-                'wallet_uuids' => $held,
-            ]);
+            SafeLog::warning('QuickBooks deleted a wallet account, but the wallet still holds a balance, '
+                . 'so it stays open and linked.', [
+                    'company_uuid' => $companyUuid,
+                    'wallet_uuids' => $held,
+                ]);
         }
 
         return $held;
@@ -413,7 +465,8 @@ trait RetiresDeleteBatches
         }
 
         try {
-            Link::query()->where('company_uuid', $companyUuid)->where(function ($query) use ($linkUuids, $voidInvoicesByRealm): void {
+            $links = Link::query()->where('company_uuid', $companyUuid);
+            $links->where(function ($query) use ($linkUuids, $voidInvoicesByRealm): void {
                 $started = false;
                 if ($linkUuids !== []) {
                     $query->whereIn('uuid', $linkUuids);

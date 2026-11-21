@@ -1172,6 +1172,30 @@ test('a delete batch uses one link select and bulk status, link, and pending wri
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
+test('a single payment delete with no payment link still unmarks the invoices it paid', function () {
+    [$restore] = directorySqlite();
+    try {
+        directoryWebhookSchema(DB::connection('sqlite')->getSchemaBuilder());
+        $now = now();
+        DB::table('ledger_invoices')->insert([
+            'uuid'        => 'inv-paid', 'company_uuid' => 'company-uuid', 'status' => 'paid', 'total_amount' => 2500,
+            'amount_paid' => 2500, 'tax' => 0, 'created_at' => $now, 'updated_at' => $now,
+        ]);
+        DB::table('quickbooks_links')->insert([
+            'uuid'       => 'link-map', 'company_uuid' => 'company-uuid', 'realm_id' => 'realm-1',
+            'local_type' => 'payment-invoice', 'local_uuid' => '4', 'qbo_entity' => 'PaymentInvoice',
+            'qbo_id'     => 'inv-paid', 'sync_token' => '0', 'created_at' => $now, 'updated_at' => $now,
+        ]);
+
+        (new FleetbaseDirectory())->releaseRemoteDelete('company-uuid', 'realm-1', 'payment', '4', null);
+
+        expect((string) DB::table('ledger_invoices')->where('uuid', 'inv-paid')->value('status'))->toBe('sent')
+            ->and(DB::table('quickbooks_links')->where('uuid', 'link-map')->exists())->toBeFalse();
+    } finally {
+        $restore();
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
 test('reconcile pending inserts use one bulk insert', function () {
     [$restore] = directorySqlite();
     try {

@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Services\Concerns;
 
 use Fleetbase\Quickbooks\Models\Link;
+use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\PaymentTokens;
 use Illuminate\Support\Carbon;
@@ -12,6 +13,8 @@ use Illuminate\Support\Str;
  * FleetbaseDirectory's link storage: reading and writing QuickBooks links, which QuickBooks
  * records are already claimed, and the payment-to-invoice rows. It shares the directory's state,
  * so it lives here only to keep FleetbaseDirectory.php readable.
+ *
+ * @phpstan-import-type LinkWrites from FleetbaseDirectory
  */
 trait StoresLinks
 {
@@ -35,7 +38,7 @@ trait StoresLinks
             if (is_array($link) === false || isset($skipped[(string) ($link['company_uuid'] ?? '')]) === true) {
                 continue;
             }
-            $key     = (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '') . '|' . (string) ($link['local_uuid'] ?? '');
+            $key     = self::linkKey($link);
             $loaded  = $this->loadedLink($key, $link, $loadedByUuid);
             $changed = self::changedColumns($link, is_array($loaded) === true ? $loaded : null, $linkFields);
             if ($changed === [] && is_array($loaded) === true) {
@@ -265,8 +268,13 @@ trait StoresLinks
      * @param array<int, string> $invoiceIds
      * @param array<int, string> $walletIds
      */
-    private function attachLinkedRows(SyncLedger $ledger, string $companyUuid, array $customerIds, array $invoiceIds, array $walletIds): void
-    {
+    private function attachLinkedRows(
+        SyncLedger $ledger,
+        string $companyUuid,
+        array $customerIds,
+        array $invoiceIds,
+        array $walletIds,
+    ): void {
         $invoiceIds = array_values(array_unique(array_filter(
             $invoiceIds,
             static fn (string $invoiceId): bool => $invoiceId !== ''
@@ -276,32 +284,7 @@ trait StoresLinks
             static fn (string $walletId): bool => $walletId !== ''
         )));
         if ($this->memory !== null) {
-            foreach ($invoiceIds as $uuid) {
-                $invoice = $this->memory->invoices[$uuid] ?? null;
-                if (is_array($invoice) === true) {
-                    $ledger->invoices[$uuid] = $invoice;
-                }
-            }
-            $customerIds = $this->withInvoiceCustomers($ledger->invoices, $customerIds);
-            foreach ($customerIds as $uuid) {
-                $customer = $this->memory->customers[$uuid] ?? null;
-                if (is_array($customer) === true) {
-                    $ledger->customers[$uuid] = $customer;
-                }
-            }
-            foreach ($walletIds as $uuid) {
-                $wallet = $this->memory->wallets[$uuid] ?? null;
-                if (is_array($wallet) === true) {
-                    $ledger->wallets[$uuid] = $wallet;
-                }
-            }
-            $paymentIds = $this->paymentIdsRememberedFor($this->memory->links, $companyUuid, $invoiceIds);
-            foreach ($this->memory->links as $link) {
-                if (is_array($link) === false || $this->linkMatchesLocalIds($link, $companyUuid, $customerIds, $invoiceIds, $walletIds, $paymentIds) === false) {
-                    continue;
-                }
-                $this->rememberLoadedLink($ledger, $link);
-            }
+            $this->attachMemoryRows($this->memory, $ledger, $companyUuid, $customerIds, $invoiceIds, $walletIds);
 
             return;
         }
@@ -311,6 +294,60 @@ trait StoresLinks
         $ledger->customers = $this->readCustomers($companyUuid, $customerIds);
         $ledger->wallets   = $this->readWallets($companyUuid, $walletIds);
         $this->readLinksFor($ledger, $companyUuid, $customerIds, $invoiceIds, $walletIds);
+    }
+
+    /**
+     * attachLinkedRows when the directory keeps its rows in memory.
+     *
+     * @param array<int, string> $customerIds
+     * @param array<int, string> $invoiceIds
+     * @param array<int, string> $walletIds
+     */
+    private function attachMemoryRows(
+        SyncLedger $memory,
+        SyncLedger $ledger,
+        string $companyUuid,
+        array $customerIds,
+        array $invoiceIds,
+        array $walletIds,
+    ): void {
+        foreach ($invoiceIds as $uuid) {
+            $invoice = $memory->invoices[$uuid] ?? null;
+            if (is_array($invoice) === true) {
+                $ledger->invoices[$uuid] = $invoice;
+            }
+        }
+        $customerIds = $this->withInvoiceCustomers($ledger->invoices, $customerIds);
+        foreach ($customerIds as $uuid) {
+            $customer = $memory->customers[$uuid] ?? null;
+            if (is_array($customer) === true) {
+                $ledger->customers[$uuid] = $customer;
+            }
+        }
+        foreach ($walletIds as $uuid) {
+            $wallet = $memory->wallets[$uuid] ?? null;
+            if (is_array($wallet) === true) {
+                $ledger->wallets[$uuid] = $wallet;
+            }
+        }
+        $paymentIds = $this->paymentIdsRememberedFor($memory->links, $companyUuid, $invoiceIds);
+        foreach ($memory->links as $link) {
+            if (is_array($link) === false) {
+                continue;
+            }
+            $matches = $this->linkMatchesLocalIds(
+                $link,
+                $companyUuid,
+                $customerIds,
+                $invoiceIds,
+                $walletIds,
+                $paymentIds
+            );
+            if ($matches === false) {
+                continue;
+            }
+            $this->rememberLoadedLink($ledger, $link);
+        }
     }
 
     /**
@@ -341,8 +378,14 @@ trait StoresLinks
      * @param array<int, string>   $walletIds
      * @param array<int, string>   $paymentIds  QuickBooks payment ids remembered for $invoiceIds
      */
-    private function linkMatchesLocalIds(array $link, string $companyUuid, array $customerIds, array $invoiceIds, array $walletIds, array $paymentIds = []): bool
-    {
+    private function linkMatchesLocalIds(
+        array $link,
+        string $companyUuid,
+        array $customerIds,
+        array $invoiceIds,
+        array $walletIds,
+        array $paymentIds = [],
+    ): bool {
         if ((string) ($link['company_uuid'] ?? '') !== $companyUuid) {
             return false;
         }
@@ -355,7 +398,10 @@ trait StoresLinks
         if ($type === 'wallet' && in_array($uuid, $walletIds, true) === true) {
             return true;
         }
-        if ($type === 'payment-invoice' && in_array(trim((string) ($link['qbo_id'] ?? '')), $invoiceIds, true) === true) {
+        if (
+            $type === 'payment-invoice'
+            && in_array(trim((string) ($link['qbo_id'] ?? '')), $invoiceIds, true) === true
+        ) {
             return true;
         }
         if ($type === 'payment' && $paymentIds !== [] && in_array($uuid, $paymentIds, true) === true) {
@@ -368,10 +414,19 @@ trait StoresLinks
     /**
      * @param array<string, mixed> $link
      */
+    private static function linkKey(array $link): string
+    {
+        return (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '')
+            . '|' . (string) ($link['local_uuid'] ?? '');
+    }
+
+    /**
+     * @param array<string, mixed> $link
+     */
     private function rememberLoadedLink(SyncLedger $ledger, array $link): void
     {
         $ledger->links[]             = $link;
-        $key                         = (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '') . '|' . (string) ($link['local_uuid'] ?? '');
+        $key                         = self::linkKey($link);
         $this->loaded['links'][$key] = $link;
     }
 
@@ -450,7 +505,7 @@ trait StoresLinks
      *
      * @param array<int, array<string, mixed>> $links
      *
-     * @return array{releases: array<int, array{link: array<string, mixed>, keep: string}>, updates: array<int, array{uuid: string, columns: array<string, mixed>}>}
+     * @return LinkWrites
      */
     private function insertLinks(array $links): array
     {
@@ -519,7 +574,7 @@ trait StoresLinks
      * @param array<int, array<string, mixed>> $rows
      * @param array<string, true>              $existing
      *
-     * @return array{releases: array<int, array{link: array<string, mixed>, keep: string}>, updates: array<int, array{uuid: string, columns: array<string, mixed>}>}
+     * @return LinkWrites
      */
     private function partitionLinkRows(array $rows, array $existing): array
     {

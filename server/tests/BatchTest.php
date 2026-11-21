@@ -149,6 +149,29 @@ test('a 401 mid batch stops the batch keeps the rows pending without using attem
 
     expect(count($client->calls))->toBe($calls);
 });
+test('a 401 on a lone row stops the batch before the next lone row of another type', function () {
+    [$engine, $client]                 = qbEngine();
+    $client->failOnCreate              = 1;
+    $client->failWith                  = new QuickBooksException(401, qbRequestFailed(401));
+    $ledger                            = batchLedger();
+    $ledger->customers['cust-1']       = array_merge(customerRow('cust-1'), ['name' => 'Ada']);
+    $ledger->customers['cust-2']       = customerRow('cust-2');
+    $ledger->links[]                   = linkRow('customer', 'cust-2', 'qbo-customer');
+    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Grace'];
+    $invoice                           = invoiceFixture('inv-1', 1000, 'open', 'INV-1');
+    $ledger->invoices['inv-1']         = array_merge($invoice, ['customer_uuid' => 'cust-2']);
+    $ledger->pending[]                 = pendingRow('customer', 'cust-1');
+    $ledger->pending[]                 = pendingRow('invoice', 'inv-1');
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+    $rows = array_column($ledger->pending, null, 'local_uuid');
+
+    expect($client->calls)->toContain('createCustomer')
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and($rows['inv-1']['status'])->toBe('pending')
+        ->and($rows['inv-1']['attempts'])->toBe(0)
+        ->and($ledger->connections['company-uuid']['needs_reauth'])->toBeTrue();
+});
 
 test('a timeout or http 500 uses the default backoff and does not set a rate limit', function () {
     [$engine, $client]           = qbEngine();

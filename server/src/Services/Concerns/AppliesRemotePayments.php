@@ -34,7 +34,14 @@ trait AppliesRemotePayments
         }
         $invoiceLink = $ledger->link($companyUuid, (string) $connection['realm_id'], 'invoice', $invoiceUuid);
         $invoiceId   = is_array($invoiceLink) === true ? trim((string) ($invoiceLink['qbo_id'] ?? '')) : '';
-        $payments    = $this->paymentsTouchingInvoice($ledger, $connection, $invoiceUuid, $invoiceId, $remote, $remotes);
+        $payments    = $this->paymentsTouchingInvoice(
+            $ledger,
+            $connection,
+            $invoiceUuid,
+            $invoiceId,
+            $remote,
+            $remotes
+        );
         $this->applyPaymentsFromRemote($ledger, $invoiceUuid, $payments, $invoiceId);
         $this->applyPaymentStatus($ledger, $invoiceUuid);
         // Only this invoice took the payment: another invoice it pays still sees the change.
@@ -79,13 +86,22 @@ trait AppliesRemotePayments
      *
      * @return array<int, array<string, mixed>>
      */
-    private function paymentsTouchingInvoice(SyncLedger $ledger, array $connection, string $invoiceUuid, string $invoiceId, array $changed, array $alreadyRead): array
-    {
+    private function paymentsTouchingInvoice(
+        SyncLedger $ledger,
+        array $connection,
+        string $invoiceUuid,
+        string $invoiceId,
+        array $changed,
+        array $alreadyRead,
+    ): array {
         $payments = $this->seedPaymentsTouchingInvoice($changed, $alreadyRead, $invoiceId);
         $missing  = $this->missingPaymentLinks($ledger, $connection, $invoiceUuid, $payments);
         foreach ($this->readRemoteIds($connection, 'Payment', array_keys($missing)) as $remoteId => $remote) {
             $local = $missing[$remoteId] ?? '';
-            if ($local === $invoiceUuid || ($invoiceId !== '' && $this->linkedLineCents($remote, $invoiceId) !== null)) {
+            if (
+                $local === $invoiceUuid
+                || ($invoiceId !== '' && $this->linkedLineCents($remote, $invoiceId) !== null)
+            ) {
                 $payments[$remoteId] = $remote;
             }
         }
@@ -237,7 +253,10 @@ trait AppliesRemotePayments
     {
         $invoice = $ledger->invoices[$uuid];
         $status  = (string) ($invoice['status'] ?? '');
-        if (in_array($status, ['void', 'voided', 'cancelled', 'canceled', 'deleted'], true) === true || empty($invoice['deleted_at']) === false) {
+        if (
+            in_array($status, ['void', 'voided', 'cancelled', 'canceled', 'deleted'], true) === true
+            || empty($invoice['deleted_at']) === false
+        ) {
             return;
         }
 

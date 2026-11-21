@@ -22,7 +22,12 @@ trait PersistsCustomerPlaces
     private function customerPlaceUuid(?array $store, bool $canPlace, array $customer, string $uuid): ?string
     {
         $address = $customer['address'] ?? null;
-        if ($canPlace === false || $store === null || is_array($address) === false || $this->billingAddressHasContent($address) === false) {
+        if (
+            $canPlace === false
+            || $store === null
+            || is_array($address) === false
+            || $this->billingAddressHasContent($address) === false
+        ) {
             return null;
         }
 
@@ -161,7 +166,12 @@ trait PersistsCustomerPlaces
             return;
         }
 
-        $created = $this->insertCustomerPlace($store, (string) $customer->company_uuid, (string) $customer->uuid, $address);
+        $created = $this->insertCustomerPlace(
+            $store,
+            (string) $customer->company_uuid,
+            (string) $customer->uuid,
+            $address
+        );
         if ($created === null || $this->customerColumnExists($customer::class, 'place_uuid') === false) {
             return;
         }
@@ -188,7 +198,10 @@ trait PersistsCustomerPlaces
             'updated_at'   => $now,
         ]);
         $connection = $store['connection'];
-        if ($connection->getDriverName() === 'mysql' && $connection->getSchemaBuilder()->hasColumn($store['table'], 'location') === true) {
+        if (
+            $connection->getDriverName() === 'mysql'
+            && $connection->getSchemaBuilder()->hasColumn($store['table'], 'location') === true
+        ) {
             $row['location'] = $connection->raw("(ST_PointFromText('POINT(0 0)', 0, 'axis-order=long-lat'))");
         }
         $connection->table($store['table'])->insert($row);

@@ -18,15 +18,33 @@ trait BatchesCustomers
      * @param array<string, mixed>             $settings
      * @param array<string, mixed>             $batch
      */
-    private function syncCustomerBlock(SyncLedger $ledger, array &$connection, array $rows, array $settings, array &$batch, int $now, string $trigger, bool $record): bool
-    {
+    private function syncCustomerBlock(
+        SyncLedger $ledger,
+        array &$connection,
+        array $rows,
+        array $settings,
+        array &$batch,
+        int $now,
+        string $trigger,
+        bool $record,
+    ): bool {
         if ($this->entityEnabled($settings, 'customer') === false) {
             return $this->recordDisabledRows($ledger, $connection, $rows, $batch, $trigger, $record);
         }
         try {
             $this->prefetchCustomers($connection, $ledger, $rows);
 
-            return $this->syncBufferedBlock($ledger, $connection, $rows, $settings, $batch, $now, $trigger, $record, 'customer');
+            return $this->syncBufferedBlock(
+                $ledger,
+                $connection,
+                $rows,
+                $settings,
+                $batch,
+                $now,
+                $trigger,
+                $record,
+                'customer'
+            );
         } catch (QuickBooksException $exception) {
             if ($exception->isUnauthorized() === true) {
                 $this->tokenRejected($ledger, (string) $connection['company_uuid']);
@@ -37,7 +55,8 @@ trait BatchesCustomers
             if ($exception->isRateLimit() === true) {
                 $this->failure($ledger, $connection, $rows[0], $exception, $settings, $now);
                 if ($record === true) {
-                    $this->recordRow($ledger, $connection, $rows[0], 'failed', $batch, $trigger, $this->exceptionError($exception));
+                    $error = $this->exceptionError($exception);
+                    $this->recordRow($ledger, $connection, $rows[0], 'failed', $batch, $trigger, $error);
                 }
 
                 return true;
@@ -239,8 +258,11 @@ trait BatchesCustomers
         $nameQueries = [];
         foreach ($queries as $query) {
             $uuid = $query['uuid'];
-            if ($query['by'] !== 'email' || isset($this->customerLookupFailed[$uuid]) === true
-                || array_key_exists($uuid, $this->customerRemoteCache) === false) {
+            if (
+                $query['by'] !== 'email'
+                || isset($this->customerLookupFailed[$uuid]) === true
+                || array_key_exists($uuid, $this->customerRemoteCache) === false
+            ) {
                 continue;
             }
             $remote = $this->customerRemoteCache[$uuid];
