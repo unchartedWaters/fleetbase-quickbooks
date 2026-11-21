@@ -114,14 +114,6 @@ test('another organization connection does not sync this organization and a miss
         ->and($ledger->pending[0]['status'])->toBe('pending');
 });
 
-test('one connection schedules only the organization that owns the row', function () {
-    expect(SyncQuickbooks::companiesToSchedule(['owner-company'], ['owner-company', 'other-company']))
-        ->toBe(['owner-company'])
-        ->and(SyncQuickbooks::companiesToSchedule(['owner-company', 'second-company'], ['other-company']))
-        ->toEqualCanonicalizing(['owner-company', 'second-company'])
-        ->and(SyncQuickbooks::companiesToSchedule([], ['other-company']))->toBe([]);
-});
-
 test('a connected organization still syncs when due even if sync enabled is stored false', function () {
     $now                         = time();
     $ledger                      = gateConnectedLedger($now - 400);

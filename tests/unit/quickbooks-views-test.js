@@ -233,7 +233,7 @@ module('Unit | QuickBooks views', function (hooks) {
     test('activity rows keep outbound batches and inbound counts', function (assert) {
         const rows = activityRows([
             { uuid: '1', trigger: 'scheduled', direction: 'outbound', created: 2, error: 'timeout' },
-            { uuid: '2', trigger: 'import', direction: 'inbound', created_count: 4, linked_count: 3 },
+            { uuid: '2', trigger: 'import', direction: 'inbound', created: 4, linked: 3 },
             { uuid: '3', trigger: 'catalog', direction: 'outbound' },
             { uuid: '4', trigger: 'drain', direction: 'outbound' },
         ]);

@@ -403,7 +403,7 @@ function pctAttempt(string $uuid, ?string $batchUuid, ?string $error, string $cr
     $attempt->save();
 }
 
-test('sync activity presents each batch with paired counts, its first three distinct errors and iso times', function () {
+test('sync activity presents each batch with its counts, its first three distinct errors and iso times', function () {
     pctWithBatchTables(function () {
         pctBatch([
             'uuid'            => 'batch-errors',
@@ -464,30 +464,22 @@ test('sync activity presents each batch with paired counts, its first three dist
         ])
             ->and(array_column($body['batches'], 'uuid'))->toBe(['batch-errors', 'batch-counted', 'batch-clean'])
             ->and($body['batches'][0])->toBe([
-                'uuid'            => 'batch-errors',
-                'trigger'         => 'scheduled',
-                'direction'       => 'inbound',
-                'status'          => 'failed',
-                'created'         => 1,
-                'created_count'   => 1,
-                'updated'         => 2,
-                'updated_count'   => 2,
-                'aligned'         => 3,
-                'aligned_count'   => 3,
-                'voided'          => 4,
-                'voided_count'    => 4,
-                'unmatched'       => 5,
-                'unmatched_count' => 5,
-                'failed'          => 6,
-                'failed_count'    => 6,
-                'linked'          => 7,
-                'linked_count'    => 7,
-                'skipped'         => 8,
-                'skipped_count'   => 8,
-                'error'           => 'first. second. third.',
-                'started_at'      => Carbon::parse('2026-03-01 10:00:00')->toIso8601String(),
-                'finished_at'     => Carbon::parse('2026-03-01 10:05:00')->toIso8601String(),
-                'created_at'      => Carbon::parse('2026-03-01 10:00:00')->toIso8601String(),
+                'uuid'        => 'batch-errors',
+                'trigger'     => 'scheduled',
+                'direction'   => 'inbound',
+                'status'      => 'failed',
+                'created'     => 1,
+                'updated'     => 2,
+                'aligned'     => 3,
+                'voided'      => 4,
+                'unmatched'   => 5,
+                'failed'      => 6,
+                'linked'      => 7,
+                'skipped'     => 8,
+                'error'       => 'first. second. third.',
+                'started_at'  => Carbon::parse('2026-03-01 10:00:00')->toIso8601String(),
+                'finished_at' => Carbon::parse('2026-03-01 10:05:00')->toIso8601String(),
+                'created_at'  => Carbon::parse('2026-03-01 10:00:00')->toIso8601String(),
             ])
             ->and($body['batches'][1]['error'])->toBe('2 failed.')
             ->and($body['batches'][1]['failed'])->toBe(2)

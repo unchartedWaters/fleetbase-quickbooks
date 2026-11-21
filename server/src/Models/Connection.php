@@ -32,24 +32,6 @@ class Connection extends QuickbooksModel
         'last_batch_at'      => 'datetime',
     ];
 
-    protected static function boot(): void
-    {
-        parent::boot();
-
-        static::saving(function (self $connection): void {
-            $connection->upgradeLegacyAttribute('access_token');
-            $connection->upgradeLegacyAttribute('refresh_token');
-        });
-    }
-
-    public function save(array $options = []): bool
-    {
-        $this->upgradeLegacyAttribute('access_token');
-        $this->upgradeLegacyAttribute('refresh_token');
-
-        return parent::save($options);
-    }
-
     public function setAccessTokenAttribute(?string $value): void
     {
         $this->attributes['access_token'] = $this->seal($value);
@@ -57,7 +39,7 @@ class Connection extends QuickbooksModel
 
     public function getAccessTokenAttribute(?string $value): ?string
     {
-        return $this->open($value, 'access_token');
+        return $this->open($value);
     }
 
     public function setRefreshTokenAttribute(?string $value): void
@@ -67,7 +49,7 @@ class Connection extends QuickbooksModel
 
     public function getRefreshTokenAttribute(?string $value): ?string
     {
-        return $this->open($value, 'refresh_token');
+        return $this->open($value);
     }
 
     private function seal(?string $value): ?string
@@ -79,53 +61,12 @@ class Connection extends QuickbooksModel
         return (new SecretCipher())->encrypt($value);
     }
 
-    private function open(?string $value, string $attribute): ?string
+    private function open(?string $value): ?string
     {
         if ($value === null || $value === '') {
             return $value;
         }
 
-        $opened = (new SecretCipher())->read($value);
-        if ($opened === null) {
-            return null;
-        }
-        if ($opened['stored'] !== $value) {
-            $this->attributes[$attribute] = $opened['stored'];
-            $this->persistUpgradedAttribute($attribute, $opened['stored']);
-        }
-
-        return $opened['plain'];
-    }
-
-    /**
-     * Write the Crypt ciphertext as soon as a stored legacy token is read.
-     * A model that is not saved yet keeps the upgrade in memory for the next insert.
-     */
-    private function persistUpgradedAttribute(string $attribute, string $sealed): void
-    {
-        if ($this->exists === false || $this->getKey() === null) {
-            return;
-        }
-
-        try {
-            (new self())->newQuery()->where($this->getKeyName(), $this->getKey())->update([$attribute => $sealed]);
-            $this->syncOriginalAttribute($attribute);
-        } catch (\Throwable) {
-            // The plaintext still opens. A later read retries the write.
-        }
-    }
-
-    /**
-     * Replace a plaintext or pre-Crypt AES-256-CBC token with Laravel Crypt before the row is written.
-     * A Crypt payload is left as stored.
-     */
-    private function upgradeLegacyAttribute(string $attribute): void
-    {
-        $value = $this->attributes[$attribute] ?? null;
-        if (is_string($value) === false || $value === '') {
-            return;
-        }
-
-        $this->attributes[$attribute] = (new SecretCipher())->seal($value);
+        return (new SecretCipher())->reveal($value);
     }
 }

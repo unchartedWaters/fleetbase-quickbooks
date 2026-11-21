@@ -772,15 +772,7 @@ test('a blank webhook verifier is not returned and storeAuth encrypts a new toke
         ->and($settings->forBrowser($plain))->not->toHaveKey('webhook_verifier')
         ->and($settings->resolveAuth(['webhook_verifier' => 'company-verifier'], [], [])['webhook_verifier'])->toBe('');
 
-    $appKey   = (string) config('app.key');
-    $key      = substr(hash('sha256', base64_decode(substr($appKey, 7), true), true), 0, 32);
-    $iv       = random_bytes(16);
-    $legacy   = base64_encode($iv . openssl_encrypt('old-verifier', 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
-    $upgraded = $settings->storeAuth(['webhook_verifier' => ''], ['webhook_verifier' => $legacy]);
-
-    expect($cipher->decrypt($upgraded['webhook_verifier']))->toBe('old-verifier')
-        ->and($cipher->isLegacyCiphertext($upgraded['webhook_verifier']))->toBeFalse()
-        ->and($settings->storeAuth([], []))->not->toHaveKey('webhook_verifier');
+    expect($settings->storeAuth([], []))->not->toHaveKey('webhook_verifier');
 });
 
 test('normalizeAuth keeps a client secret result unchanged when webhook_verifier is absent', function () {

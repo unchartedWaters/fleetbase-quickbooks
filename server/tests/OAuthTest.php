@@ -92,114 +92,7 @@ test('the client secret is encrypted at rest and is not returned by the settings
     expect(fn () => $controller->save($request))->toThrow(HttpException::class);
 });
 
-test('secrets saved with the old cipher still open and a missing app key is refused', function () {
-    $cipher = new SecretCipher();
-
-    // Build a payload the way the old AES-256-CBC cipher did.
-    $appKey = (string) config('app.key');
-    $key    = substr(hash('sha256', base64_decode(substr($appKey, 7), true), true), 0, 32);
-    $iv     = random_bytes(16);
-    $legacy = base64_encode($iv . openssl_encrypt('old-secret', 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
-
-    $settings = new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), $cipher);
-    $upgraded = $settings->storeAuth(['client_secret' => ''], ['client_secret' => $legacy]);
-    $kept     = $settings->storeAuth(['client_secret' => ''], ['client_secret' => $upgraded['client_secret']]);
-
-    expect($cipher->decrypt($legacy))->toBe('old-secret')
-        ->and($cipher->isLegacyCiphertext($legacy))->toBeTrue()
-        ->and($cipher->decrypt($cipher->encrypt('new-secret')))->toBe('new-secret')
-        ->and($cipher->isLegacyCiphertext($cipher->encrypt('kept-secret')))->toBeFalse()
-        ->and($upgraded['client_secret'])->not->toBe($legacy)
-        ->and($cipher->isLegacyCiphertext($upgraded['client_secret']))->toBeFalse()
-        ->and($cipher->decrypt($upgraded['client_secret']))->toBe('old-secret')
-        ->and($kept['client_secret'])->toBe($upgraded['client_secret'])
-        ->and(fn () => $cipher->decrypt('not-a-secret'))->toThrow(RuntimeException::class);
-
-    config()->set('app.key', '');
-    try {
-        expect(fn () => $cipher->encrypt('x'))->toThrow(RuntimeException::class);
-    } finally {
-        config()->set('app.key', $appKey);
-    }
-});
-
-test('a long base64 secret is not legacy ciphertext', function () {
-    $cipher  = new SecretCipher();
-    $plain   = 'client-secret-value-not-ciphertext';
-    $encoded = base64_encode($plain);
-
-    expect(strlen($plain))->toBeGreaterThan(17)
-        ->and($cipher->isLegacyCiphertext($encoded))->toBeFalse()
-        ->and($cipher->upgrade($encoded))->toBe($encoded)
-        ->and(fn () => $cipher->decrypt($encoded))->toThrow(function (RuntimeException $exception) {
-            expect($exception->getMessage())->toBe('Unable to decrypt QuickBooks secret.');
-        });
-});
-
-test('reading a legacy secret re-encrypts it and a crypt payload stays put', function () {
-    $cipher = new SecretCipher();
-    $key    = substr(hash('sha256', base64_decode(substr((string) config('app.key'), 7), true), true), 0, 32);
-    $iv     = random_bytes(16);
-    $legacy = base64_encode($iv . openssl_encrypt('old-secret', 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
-    $crypt  = $cipher->encrypt('kept-secret');
-
-    $opened = $cipher->read($legacy);
-
-    expect($opened)->toBeArray()
-        ->and($opened['plain'])->toBe('old-secret')
-        ->and($opened['stored'])->not->toBe($legacy)
-        ->and($cipher->isLegacyCiphertext($opened['stored']))->toBeFalse()
-        ->and($cipher->decrypt($opened['stored']))->toBe('old-secret')
-        ->and($cipher->read($crypt))->toBe(['plain' => 'kept-secret', 'stored' => $crypt])
-        ->and($cipher->reveal($legacy))->toBe('old-secret');
-});
-
-test('reading a connection re-encrypts a legacy token without waiting for save', function () {
-    $cipher = new SecretCipher();
-    $key    = substr(hash('sha256', base64_decode(substr((string) config('app.key'), 7), true), true), 0, 32);
-    $iv     = random_bytes(16);
-    $legacy = base64_encode($iv . openssl_encrypt('old-access', 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
-
-    $connection = new Fleetbase\Quickbooks\Models\Connection();
-    $connection->setRawAttributes([
-        'access_token' => $legacy,
-    ]);
-
-    expect($connection->access_token)->toBe('old-access')
-        ->and($cipher->isLegacyCiphertext($connection->getAttributes()['access_token']))->toBeFalse()
-        ->and($cipher->decrypt($connection->getAttributes()['access_token']))->toBe('old-access');
-});
-
-test('saving a connection re-encrypts a legacy token and leaves a crypt token alone', function () {
-    $cipher = new SecretCipher();
-    $key    = substr(hash('sha256', base64_decode(substr((string) config('app.key'), 7), true), true), 0, 32);
-    $iv     = random_bytes(16);
-    $legacy = base64_encode($iv . openssl_encrypt('old-access', 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
-    $crypt  = $cipher->encrypt('refresh-plain');
-
-    $connection = new Fleetbase\Quickbooks\Models\Connection();
-    $connection->setRawAttributes([
-        'access_token'  => $legacy,
-        'refresh_token' => $crypt,
-    ]);
-
-    try {
-        $connection->save();
-    } catch (Throwable) {
-        // The row is not written in this harness. The upgrade runs before the query.
-    }
-
-    $stored = $connection->getAttributes();
-
-    expect($stored['access_token'])->not->toBe($legacy)
-        ->and($cipher->isLegacyCiphertext($stored['access_token']))->toBeFalse()
-        ->and($cipher->decrypt($stored['access_token']))->toBe('old-access')
-        ->and($stored['refresh_token'])->toBe($crypt)
-        ->and($connection->access_token)->toBe('old-access')
-        ->and($connection->refresh_token)->toBe('refresh-plain');
-});
-
-test('an unrecognized token is not a live secret and plaintext is encrypted on the next save', function () {
+test('an unrecognized token is not a live secret and a plaintext setting is encrypted on the next save', function () {
     $cipher                                 = new SecretCipher();
     $settings                               = new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), $cipher);
     $store                                  = new MemorySettingsStore();
@@ -254,24 +147,9 @@ test('an unrecognized token is not a live secret and plaintext is encrypted on t
 
     expect($connection->access_token)->toBeNull()
         ->and($connection->refresh_token)->toBeNull();
-
-    try {
-        $connection->save();
-    } catch (Throwable) {
-        // The row is not written in this harness. The upgrade runs before the query.
-    }
-
-    $tokens = $connection->getAttributes();
-
-    expect($tokens['access_token'])->not->toBe('plain-access')
-        ->and($cipher->decrypt($tokens['access_token']))->toBe('plain-access')
-        ->and($tokens['refresh_token'])->not->toBe('plain-refresh')
-        ->and($cipher->decrypt($tokens['refresh_token']))->toBe('plain-refresh')
-        ->and($connection->access_token)->toBe('plain-access')
-        ->and($connection->refresh_token)->toBe('plain-refresh');
 });
 
-test('a failed decrypt or unrecognized secret is missing and legacy ciphertext still opens', function () {
+test('a failed decrypt, an unrecognized secret or old AES ciphertext is missing', function () {
     $cipher      = new SecretCipher();
     $settings    = new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), $cipher);
     $payload     = $cipher->encrypt('real-secret');
@@ -301,10 +179,10 @@ test('a failed decrypt or unrecognized secret is missing and legacy ciphertext s
         ->and($unrecognized['client_secret'])->not->toBe('not-a-secret')
         ->and($unrecognized['webhook_verifier'])->toBe('')
         ->and($unrecognized['webhook_verifier'])->not->toBe($tampered)
-        ->and($opened['client_secret'])->toBe('old-secret')
+        ->and($opened['client_secret'])->toBe('')
         ->and($opened['webhook_verifier'])->toBe('verifier-token')
         ->and($connection->access_token)->toBeNull()
-        ->and($connection->refresh_token)->toBe('old-secret');
+        ->and($connection->refresh_token)->toBeNull();
 });
 
 test('saving settings without an installation administrator returns 403', function () {

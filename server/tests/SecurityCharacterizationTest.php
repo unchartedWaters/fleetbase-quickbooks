@@ -4,7 +4,7 @@ use Fleetbase\Quickbooks\Support\PublicHttps;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 
 /*
- * Characterization tests for internal-address detection and legacy secret decryption.
+ * Characterization tests for internal-address detection and secret encryption.
  * Every URL here is an IP literal or is rejected before any DNS lookup.
  */
 
@@ -14,18 +14,6 @@ function sctPrivate(string $method, mixed ...$args): mixed
     $reflection->setAccessible(true);
 
     return $reflection->invoke(null, ...$args);
-}
-
-function sctLegacyBlob(string $plain, ?string $appKey = null, ?string $iv = null): string
-{
-    $configured = $appKey ?? (string) config('app.key');
-    if (str_starts_with($configured, 'base64:') === true) {
-        $configured = base64_decode(substr($configured, 7), true);
-    }
-    $key = substr(hash('sha256', $configured, true), 0, 32);
-    $iv ??= random_bytes(16);
-
-    return base64_encode($iv . openssl_encrypt($plain, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
 }
 
 test('ipv4 literals in short, octal, hex and decimal forms normalize to dotted quads', function () {
@@ -346,7 +334,7 @@ test('url shape rules: https only, no credentials, bracketed ipv6, ports and cas
     }
 });
 
-test('secret cipher round trips and a crypt payload is not legacy', function () {
+test('secret cipher round trips and seal leaves a crypt payload alone', function () {
     $cipher = new SecretCipher();
 
     foreach (['', 'a', 'secret with spaces', str_repeat('x', 1000), "multi\nline\0nul", 'ünïcödé'] as $plain) {
@@ -354,57 +342,16 @@ test('secret cipher round trips and a crypt payload is not legacy', function () 
 
         expect($payload)->not->toBe($plain)
             ->and($cipher->decrypt($payload))->toBe($plain)
-            ->and($cipher->isLegacyCiphertext($payload))->toBeFalse()
-            ->and($cipher->upgrade($payload))->toBe($payload)
             ->and($cipher->seal($payload))->toBe($payload);
     }
 
     $first  = $cipher->encrypt('same');
     $second = $cipher->encrypt('same');
     expect($first)->not->toBe($second)
-        ->and($cipher->read($first))->toBe(['plain' => 'same', 'stored' => $first])
         ->and($cipher->reveal($second))->toBe('same');
 });
 
-test('legacy ciphertext is detected, decrypts, and upgrades through every entry point', function () {
-    $cipher = new SecretCipher();
-    $legacy = sctLegacyBlob('old-value');
-    $empty  = sctLegacyBlob('');
-
-    $upgraded = $cipher->upgrade($legacy);
-    $sealed   = $cipher->seal($legacy);
-    $opened   = $cipher->read($legacy);
-
-    expect($cipher->isLegacyCiphertext($legacy))->toBeTrue()
-        ->and($cipher->decrypt($legacy))->toBe('old-value')
-        ->and($upgraded)->not->toBe($legacy)
-        ->and($cipher->isLegacyCiphertext($upgraded))->toBeFalse()
-        ->and($cipher->decrypt($upgraded))->toBe('old-value')
-        ->and($sealed)->not->toBe($legacy)
-        ->and($cipher->decrypt($sealed))->toBe('old-value')
-        ->and($opened['plain'])->toBe('old-value')
-        ->and($cipher->decrypt($opened['stored']))->toBe('old-value')
-        ->and($cipher->reveal($legacy))->toBe('old-value')
-        ->and($cipher->isLegacyCiphertext($empty))->toBeTrue()
-        ->and($cipher->decrypt($empty))->toBe('');
-});
-
-test('legacy key derivation uses the raw app key when it is not base64 prefixed', function () {
-    $cipher   = new SecretCipher();
-    $original = (string) config('app.key');
-
-    config()->set('app.key', 'plain-legacy-app-key');
-    try {
-        $legacy = sctLegacyBlob('plain-key-secret', 'plain-legacy-app-key');
-
-        expect($cipher->isLegacyCiphertext($legacy))->toBeTrue()
-            ->and($cipher->decrypt($legacy))->toBe('plain-key-secret');
-    } finally {
-        config()->set('app.key', $original);
-    }
-});
-
-test('garbage input never decrypts: decrypt throws RuntimeException and read/reveal return null', function () {
+test('garbage input never decrypts: decrypt throws RuntimeException and reveal returns null', function () {
     $cipher = new SecretCipher();
 
     $crypt       = $cipher->encrypt('real');
@@ -414,6 +361,9 @@ test('garbage input never decrypts: decrypt throws RuntimeException and read/rev
     $json        = json_decode(base64_decode($crypt), true);
     $json['value'] .= 'AA';
     $badValue    = base64_encode((string) json_encode($json));
+    $iv          = random_bytes(16);
+    $key         = substr(hash('sha256', (string) config('app.key'), true), 0, 32);
+    $oldCbc      = base64_encode($iv . openssl_encrypt('old-value', 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
 
     $garbage = [
         'not-a-secret',
@@ -430,22 +380,19 @@ test('garbage input never decrypts: decrypt throws RuntimeException and read/rev
         $badMac,
         $badValue,
         substr($crypt, 0, -4),
+        // The pre-Crypt AES-256-CBC format is no longer opened.
+        $oldCbc,
     ];
 
     foreach ($garbage as $payload) {
-        expect($cipher->isLegacyCiphertext($payload))->toBeFalse($payload)
-            ->and(fn () => $cipher->decrypt($payload))->toThrow(RuntimeException::class, 'Unable to decrypt QuickBooks secret.')
-            ->and($cipher->read($payload))->toBeNull($payload)
-            ->and($cipher->reveal($payload))->toBeNull($payload)
-            ->and($cipher->upgrade($payload))->toBe($payload);
+        expect(fn () => $cipher->decrypt($payload))
+            ->toThrow(RuntimeException::class, 'Unable to decrypt QuickBooks secret.')
+            ->and($cipher->reveal($payload))->toBeNull($payload);
     }
 
     expect(fn () => $cipher->decrypt(''))->toThrow(RuntimeException::class, 'Unable to decrypt QuickBooks secret.')
-        ->and($cipher->isLegacyCiphertext(''))->toBeFalse()
-        ->and($cipher->read(''))->toBe(['plain' => '', 'stored' => ''])
         ->and($cipher->reveal(''))->toBe('')
-        ->and($cipher->seal(''))->toBe('')
-        ->and($cipher->upgrade(''))->toBe('');
+        ->and($cipher->seal(''))->toBe('');
 });
 
 test('seal encrypts unrecognized values as plaintext and leaves crypt payloads alone', function () {
@@ -462,21 +409,18 @@ test('seal encrypts unrecognized values as plaintext and leaves crypt payloads a
     // A crypt-shaped payload that fails its mac is kept as-is by seal, and unreadable.
     $fake = base64_encode('{"iv":"a","value":"b","mac":"c"}');
     expect($cipher->seal($fake))->toBe($fake)
-        ->and($cipher->read($fake))->toBeNull();
+        ->and($cipher->reveal($fake))->toBeNull();
 });
 
 test('a missing app key refuses every operation that touches key material', function () {
     $cipher   = new SecretCipher();
     $original = (string) config('app.key');
     $crypt    = $cipher->encrypt('kept');
-    $legacy   = sctLegacyBlob('kept-legacy');
 
     config()->set('app.key', '');
     try {
         expect(fn () => $cipher->encrypt('x'))->toThrow(RuntimeException::class, 'APP_KEY must be set')
             ->and(fn () => $cipher->decrypt($crypt))->toThrow(RuntimeException::class, 'APP_KEY must be set')
-            ->and(fn () => $cipher->decrypt($legacy))->toThrow(RuntimeException::class, 'APP_KEY must be set')
-            ->and($cipher->read($crypt))->toBeNull()
             ->and($cipher->reveal($crypt))->toBeNull();
     } finally {
         config()->set('app.key', $original);

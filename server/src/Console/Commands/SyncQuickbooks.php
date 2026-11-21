@@ -93,36 +93,7 @@ class SyncQuickbooks extends Command
             $this->connections[$companyUuid] = FleetbaseDirectory::connectionToArray($row);
         }
 
-        return self::companiesToSchedule($connected);
-    }
-
-    /**
-     * Schedule the organization that owns each connection row.
-     * A pending row for another organization does not borrow that connection.
-     *
-     * @param array<int, string> $connected
-     * @param array<int, string> $dueCompanies
-     *
-     * @return array<int, string>
-     */
-    public static function companiesToSchedule(array $connected, array $dueCompanies = []): array
-    {
-        $owners = [];
-        foreach ($connected as $companyUuid) {
-            $companyUuid = trim((string) $companyUuid);
-            if ($companyUuid !== '') {
-                $owners[$companyUuid] = true;
-            }
-        }
-        // Pending rows do not add an organization that does not own a connection.
-        foreach ($dueCompanies as $companyUuid) {
-            $companyUuid = trim((string) $companyUuid);
-            if ($companyUuid !== '' && isset($owners[$companyUuid]) === true) {
-                $owners[$companyUuid] = true;
-            }
-        }
-
-        return array_keys($owners);
+        return array_values(array_unique($connected));
     }
 
     /**
