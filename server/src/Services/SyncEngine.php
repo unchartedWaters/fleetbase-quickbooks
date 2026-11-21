@@ -1530,6 +1530,8 @@ class SyncEngine
      * The invoice mapper for this Fleetbase invoice's currency.
      *
      * @param array<string, mixed> $invoice
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Syncs* traits.
      */
     private function invoiceMapper(array $invoice): InvoiceMapper
     {
@@ -1797,6 +1799,8 @@ class SyncEngine
      * @param array<string, mixed>      $settings
      * @param array<string, mixed>|null $baseline the link as it was before this sync
      * @param array<string, mixed>      $remote
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Syncs* traits.
      */
     private function fleetbaseLeads(array $settings, string $kind, ?array $baseline, array $remote): bool
     {
@@ -1837,6 +1841,8 @@ class SyncEngine
     /**
      * A two-way copy under QuickBooks Primary replaced a Fleetbase difference because QuickBooks
      * had also changed the record. Activity says so when Fleetbase queued the row.
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Syncs* traits.
      */
     private function notePrimaryCopy(string $type, string $uuid, bool $push, bool $changed = true): void
     {
