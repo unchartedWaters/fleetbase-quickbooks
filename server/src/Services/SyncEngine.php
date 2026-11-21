@@ -2,6 +2,9 @@
 
 namespace Fleetbase\Quickbooks\Services;
 
+use Fleetbase\Quickbooks\Services\Concerns\AppliesRemotePayments;
+use Fleetbase\Quickbooks\Services\Concerns\BatchesPayments;
+use Fleetbase\Quickbooks\Services\Concerns\StoresPaymentLinks;
 use Fleetbase\Quickbooks\Services\Concerns\SyncsCustomers;
 use Fleetbase\Quickbooks\Services\Concerns\SyncsInvoices;
 use Fleetbase\Quickbooks\Services\Concerns\SyncsPayments;
@@ -50,6 +53,9 @@ use Fleetbase\Quickbooks\Support\WalletMapper;
  */
 class SyncEngine
 {
+    use AppliesRemotePayments;
+    use BatchesPayments;
+    use StoresPaymentLinks;
     use SyncsCustomers;
     use SyncsInvoices;
     use SyncsPayments;
@@ -1524,6 +1530,16 @@ class SyncEngine
         }
 
         return Amounts::toMinorUnits($amount, $currency);
+    }
+
+    /**
+     * The QuickBooks id linked to a Fleetbase record, or '' when it has no link.
+     */
+    private function linkedQuickBooksId(SyncLedger $ledger, string $company, string $realm, string $type, string $uuid): string
+    {
+        $link = $uuid === '' ? null : $ledger->link($company, $realm, $type, $uuid);
+
+        return is_array($link) === true ? trim((string) ($link['qbo_id'] ?? '')) : '';
     }
 
     /**
