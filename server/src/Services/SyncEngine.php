@@ -3,8 +3,10 @@
 namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Services\Concerns\AppliesRemotePayments;
+use Fleetbase\Quickbooks\Services\Concerns\BatchesCustomers;
 use Fleetbase\Quickbooks\Services\Concerns\BatchesPayments;
 use Fleetbase\Quickbooks\Services\Concerns\BatchesWallets;
+use Fleetbase\Quickbooks\Services\Concerns\DeactivatesRemote;
 use Fleetbase\Quickbooks\Services\Concerns\StoresPaymentLinks;
 use Fleetbase\Quickbooks\Services\Concerns\SyncsCustomers;
 use Fleetbase\Quickbooks\Services\Concerns\SyncsInvoices;
@@ -55,8 +57,10 @@ use Fleetbase\Quickbooks\Support\WalletMapper;
 class SyncEngine
 {
     use AppliesRemotePayments;
+    use BatchesCustomers;
     use BatchesPayments;
     use BatchesWallets;
+    use DeactivatesRemote;
     use StoresPaymentLinks;
     use SyncsCustomers;
     use SyncsInvoices;

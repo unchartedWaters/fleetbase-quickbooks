@@ -2,13 +2,10 @@
 
 namespace Fleetbase\Quickbooks\Services\Concerns;
 
-use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Fleetbase\Quickbooks\Services\SyncLedger;
-use Fleetbase\Quickbooks\Support\Amounts;
 use Fleetbase\Quickbooks\Support\ContentHash;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksChanges;
-use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\Translation;
 
 /**
@@ -41,24 +38,95 @@ trait SyncsCustomers
             return $this->deactivateRemote($ledger, $connection, 'customer', $uuid, $this->pushesRemote($direction));
         }
 
-        $copy       = $this->copiesRemote($direction);
-        $push       = $this->pushesRemote($direction);
-        $reference  = (string) ($settings['customer_reference'] ?? 'fleetbase');
-        $conflict   = (string) ($settings['customer_conflict'] ?? 'fleetbase');
-        $pushClears = $this->sendsClears($conflict, $push, $copy);
-        $payload    = $this->customers->toQuickBooks($this->customers->fromParty($customer));
-        $email      = trim((string) ($customer['email'] ?? ''));
-        $link       = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'customer', $uuid);
+        $plan    = $this->customerPlan($ledger, $connection, $uuid, $settings, $direction);
+        $payload = $this->customers->toQuickBooks($this->customers->fromParty($customer));
+        $email   = trim((string) ($customer['email'] ?? ''));
+        $found   = $this->customerRemote($ledger, $connection, $uuid, $plan, $payload, $email);
+        if ($found['outcome'] !== null) {
+            return $found['outcome'];
+        }
+        if ($found['remote'] !== null) {
+            return $this->updateRemoteCustomer($ledger, $connection, $uuid, $payload, $found['remote'], $plan);
+        }
+
+        if ($found['link'] !== null) {
+            return 'aligned';
+        }
+
+        return $this->createRemoteCustomer($ledger, $connection, $uuid, $payload, $plan);
+    }
+
+    /**
+     * How this customer syncs, and its link as it was before this sync.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $settings
+     *
+     * @return array{
+     *     settings: array<string, mixed>, copy: bool, push: bool, reference: string, conflict: string,
+     *     pushClears: bool, baseline: array<string, mixed>|null
+     * }
+     */
+    private function customerPlan(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $settings,
+        string $direction,
+    ): array {
+        $copy     = $this->copiesRemote($direction);
+        $push     = $this->pushesRemote($direction);
+        $conflict = (string) ($settings['customer_conflict'] ?? 'fleetbase');
+        $link     = $ledger->link(
+            (string) $connection['company_uuid'],
+            (string) $connection['realm_id'],
+            'customer',
+            $uuid
+        );
         if ($link !== null && $link['realm_id'] !== $connection['realm_id']) {
             $link = null;
         }
-        $baseline = $link;
+
+        return [
+            'settings'   => $settings,
+            'copy'       => $copy,
+            'push'       => $push,
+            'reference'  => (string) ($settings['customer_reference'] ?? 'fleetbase'),
+            'conflict'   => $conflict,
+            'pushClears' => $this->sendsClears($conflict, $push, $copy),
+            'baseline'   => $link,
+        ];
+    }
+
+    /**
+     * The QuickBooks customer for this customer: from the block lookup, by email or name when it
+     * has no link, or by its link. A first match under QuickBooks reference is copied at once and
+     * its outcome returned.
+     *
+     * @param array<string, mixed> $connection
+     * @param array{
+     *     settings: array<string, mixed>, copy: bool, push: bool, reference: string, conflict: string,
+     *     pushClears: bool, baseline: array<string, mixed>|null
+     * } $plan
+     * @param array<string, mixed> $payload
+     *
+     * @return array{remote: array<string, mixed>|null, link: array<string, mixed>|null, outcome: string|null}
+     */
+    private function customerRemote(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $plan,
+        array $payload,
+        string $email,
+    ): array {
         if (isset($this->customerLookupFailed[$uuid]) === true) {
             throw $this->customerLookupFailed[$uuid];
         }
 
-        $remote    = null;
-        $cacheHit  = $this->customerRemoteCache !== null && array_key_exists($uuid, $this->customerRemoteCache) === true;
+        $link     = $plan['baseline'];
+        $remote   = null;
+        $cacheHit = $this->customerRemoteCache !== null && array_key_exists($uuid, $this->customerRemoteCache) === true;
         if ($cacheHit === true && is_array($this->customerRemoteCache[$uuid]) === true) {
             $cached = $this->customerRemoteCache[$uuid];
             $remote = $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $cached, $link);
@@ -68,69 +136,128 @@ trait SyncsCustomers
             $remote = $this->findRemoteCustomer($ledger, $connection, $uuid, $email, $name);
             if ($remote !== null) {
                 $this->putMatchedLink($ledger, $connection, 'customer', $uuid, 'Customer', $remote);
-                if ($reference === 'quickbooks' && $copy === true) {
-                    $before = $ledger->customers[$uuid];
-                    $this->applyCustomerFromRemote($ledger, $uuid, $remote);
-                    $inSync = $this->customerInSync($ledger, $uuid, $remote);
-                    $token  = $this->tokenAfterSync(null, $remote, $inSync, 'customer', $settings);
-                    $first  = $this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote);
-                    $ledger->putLink(['sync_token' => $token] + $first);
-                    $this->followUpFirstLink($ledger, $connection, 'customer', $uuid, $token);
+                if ($plan['reference'] === 'quickbooks' && $plan['copy'] === true) {
+                    $outcome = $this->copyMatchedCustomer($ledger, $connection, $uuid, $remote, $plan['settings']);
 
-                    return $ledger->customers[$uuid] !== $before ? 'updated' : 'aligned';
+                    return ['remote' => $remote, 'link' => $link, 'outcome' => $outcome];
                 }
             }
         } elseif ($cacheHit === false && $link !== null) {
             $remote = $this->client->getCustomer($connection, (string) $link['qbo_id']);
         }
-        if ($remote === null && $link !== null) {
-            return 'aligned';
+
+        return ['remote' => $remote, 'link' => $link, 'outcome' => null];
+    }
+
+    /**
+     * A first match under QuickBooks reference: copy the QuickBooks customer and store its link.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $remote
+     * @param array<string, mixed> $settings
+     */
+    private function copyMatchedCustomer(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $remote,
+        array $settings,
+    ): string {
+        $before = $ledger->customers[$uuid];
+        $this->applyCustomerFromRemote($ledger, $uuid, $remote);
+        $inSync = $this->customerInSync($ledger, $uuid, $remote);
+        $token  = $this->tokenAfterSync(null, $remote, $inSync, 'customer', $settings);
+        $first  = $this->linkFrom($connection, 'customer', $uuid, 'Customer', $remote);
+        $ledger->putLink(['sync_token' => $token] + $first);
+        $this->followUpFirstLink($ledger, $connection, 'customer', $uuid, $token);
+
+        return $ledger->customers[$uuid] !== $before ? 'updated' : 'aligned';
+    }
+
+    /**
+     * No QuickBooks customer has this customer: create one.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     * @param array{
+     *     settings: array<string, mixed>, copy: bool, push: bool, reference: string, conflict: string,
+     *     pushClears: bool, baseline: array<string, mixed>|null
+     * } $plan
+     */
+    private function createRemoteCustomer(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $payload,
+        array $plan,
+    ): string {
+        if ($this->lastError !== null) {
+            return 'failed';
         }
-        if ($remote === null) {
-            if ($this->lastError !== null) {
-                return 'failed';
-            }
-            if ($push === false) {
-                $this->closeSkipped = true;
+        if ($plan['push'] === false) {
+            $this->closeSkipped = true;
 
-                return 'skipped';
-            }
-            $payload = $this->withCreateCurrency($ledger, $connection, $uuid, $payload);
-            if ($this->writeBuffer !== null) {
-                $this->writeBuffer[] = [
-                    'bId'       => 'customer:' . $uuid,
-                    'operation' => 'create',
-                    'entity'    => 'Customer',
-                    'payload'   => $payload,
-                ];
-
-                return 'created';
-            }
-            $created = $this->client->createCustomer($connection, $payload);
-            $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $created));
+            return 'skipped';
+        }
+        $payload = $this->withCreateCurrency($ledger, $connection, $uuid, $payload);
+        if ($this->writeBuffer !== null) {
+            $this->writeBuffer[] = [
+                'bId'       => 'customer:' . $uuid,
+                'operation' => 'create',
+                'entity'    => 'Customer',
+                'payload'   => $payload,
+            ];
 
             return 'created';
         }
+        $created = $this->client->createCustomer($connection, $payload);
+        $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $created));
 
+        return 'created';
+    }
+
+    /**
+     * The customer has a QuickBooks customer: done when both match, after the QuickBooks name is
+     * copied under QuickBooks reference; otherwise the difference is resolved.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $remote
+     * @param array{
+     *     settings: array<string, mixed>, copy: bool, push: bool, reference: string, conflict: string,
+     *     pushClears: bool, baseline: array<string, mixed>|null
+     * } $plan
+     */
+    private function updateRemoteCustomer(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $payload,
+        array $remote,
+        array $plan,
+    ): string {
+        $baseline   = $plan['baseline'];
+        $pushClears = $plan['pushClears'];
         // QuickBooks did not change the customer since the last sync: Fleetbase leads, clears included.
-        if ($pushClears === false && $this->fleetbaseLeads($settings, 'customer', $baseline, $remote) === true) {
-            $pushClears = true;
+        if ($pushClears === false) {
+            $pushClears = $this->fleetbaseLeads($plan['settings'], 'customer', $baseline, $remote);
         }
         if ($pushClears === true) {
             $payload = $this->customers->toQuickBooks($this->customers->fromParty($ledger->customers[$uuid]), true);
         }
 
         if ($this->customerMatches($payload, $remote) === true) {
-            $copied = $copy === true && $pushClears === false
+            $copied = $plan['copy'] === true && $pushClears === false
                 && $this->copyCustomerNotesAndAddress($ledger, $uuid, $remote) === true;
             $inSync = $this->customerInSync($ledger, $uuid, $remote);
 
             return $this->syncedIf($ledger, $connection, 'customer', $uuid, $remote, $copied, $inSync, $baseline);
         }
 
-        if ($reference === 'quickbooks' && $copy === true) {
+        if ($plan['reference'] === 'quickbooks' && $plan['copy'] === true) {
             $this->copyCustomerName($ledger, $uuid, $remote);
-            $payload = $this->customers->toQuickBooks($this->customers->fromParty($ledger->customers[$uuid]), $pushClears);
+            $party   = $this->customers->fromParty($ledger->customers[$uuid]);
+            $payload = $this->customers->toQuickBooks($party, $pushClears);
         }
 
         if ($this->customerMatches($payload, $remote) === true) {
@@ -139,7 +266,31 @@ trait SyncsCustomers
             return $this->synced($ledger, $connection, 'customer', $uuid, $remote, 'updated', $inSync, $baseline);
         }
 
-        if ($push === false && $copy === true) {
+        return $this->resolveCustomerDifference($ledger, $connection, $uuid, $payload, $remote, $plan);
+    }
+
+    /**
+     * The customer differs from QuickBooks: copy QuickBooks, or send Fleetbase, by the direction
+     * and conflict rule.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $remote
+     * @param array{
+     *     settings: array<string, mixed>, copy: bool, push: bool, reference: string, conflict: string,
+     *     pushClears: bool, baseline: array<string, mixed>|null
+     * } $plan
+     */
+    private function resolveCustomerDifference(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $payload,
+        array $remote,
+        array $plan,
+    ): string {
+        $baseline = $plan['baseline'];
+        if ($plan['push'] === false && $plan['copy'] === true) {
             $before = $ledger->customers[$uuid];
             $this->applyCustomerFromRemote($ledger, $uuid, $remote);
             $changed = $ledger->customers[$uuid] !== $before;
@@ -149,9 +300,10 @@ trait SyncsCustomers
         }
 
         // QuickBooks wins only a record it changed since the last sync; otherwise Fleetbase is sent.
-        if ($conflict === 'quickbooks' && $copy === true && QuickBooksChanges::since($baseline, $remote) === true) {
+        $remoteChanged = QuickBooksChanges::since($baseline, $remote);
+        if ($plan['conflict'] === 'quickbooks' && $plan['copy'] === true && $remoteChanged === true) {
             $before = $ledger->customers[$uuid];
-            $clears = $this->copiesClears($settings, 'customer', $baseline, $remote);
+            $clears = $this->copiesClears($plan['settings'], 'customer', $baseline, $remote);
             $this->applyCustomerFromRemote($ledger, $uuid, $remote, $clears);
             $changed = $ledger->customers[$uuid] !== $before;
             $this->notePrimaryCopy('customer', $uuid, true, $changed);
@@ -160,15 +312,31 @@ trait SyncsCustomers
             return $this->syncedIf($ledger, $connection, 'customer', $uuid, $remote, $changed, $inSync, $baseline);
         }
 
-        if ($reference === 'quickbooks') {
+        if ($plan['reference'] === 'quickbooks') {
             $payload['DisplayName'] = (string) ($remote['DisplayName'] ?? $payload['DisplayName'] ?? '');
         }
 
-        if ($push === false) {
+        if ($plan['push'] === false) {
             return 'aligned';
         }
 
         $this->keepBillAddrId($payload, $remote);
+
+        return $this->writeCustomerUpdate($ledger, $connection, $uuid, $payload, $remote);
+    }
+
+    /**
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $remote
+     */
+    private function writeCustomerUpdate(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $payload,
+        array $remote,
+    ): string {
         if ($this->writeBuffer !== null) {
             $payload['Id']        = (string) $remote['Id'];
             $payload['SyncToken'] = (string) $remote['SyncToken'];
@@ -183,133 +351,13 @@ trait SyncsCustomers
             return 'updated';
         }
 
-        $updated = $this->client->updateCustomer($connection, (string) $remote['Id'], (string) $remote['SyncToken'], $payload);
+        $updated = $this->client->updateCustomer(
+            $connection,
+            (string) $remote['Id'],
+            (string) $remote['SyncToken'],
+            $payload
+        );
         $ledger->putLink($this->linkFrom($connection, 'customer', $uuid, 'Customer', $updated));
-
-        return 'updated';
-    }
-
-    /**
-     * A customer or wallet deleted in Fleetbase makes its linked QuickBooks record inactive
-     * (QuickBooks keeps names and accounts). Nothing is looked up or created without a link,
-     * so an unrelated QuickBooks record that only shares a name or number is never touched.
-     *
-     * @param array<string, mixed> $connection
-     */
-    private function deactivateRemote(
-        SyncLedger $ledger,
-        array $connection,
-        string $kind,
-        string $uuid,
-        bool $push,
-    ): string {
-        $link = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], $kind, $uuid);
-        if ($link === null || $push === false) {
-            return 'aligned';
-        }
-        $remoteId = (string) $link['qbo_id'];
-        if ($kind === 'customer') {
-            if ($this->remoteTakenOver($ledger, $connection, $uuid, $remoteId) === true) {
-                return 'aligned';
-            }
-            if (isset($this->customerLookupFailed[$uuid]) === true) {
-                throw $this->customerLookupFailed[$uuid];
-            }
-            $cached = $this->customerRemoteCache[$uuid] ?? null;
-            $remote = is_array($cached) === true && (string) ($cached['Id'] ?? '') === $remoteId
-                ? $cached
-                : $this->client->getCustomer($connection, $remoteId);
-        } else {
-            if (isset($this->accountReadFailed[$remoteId]) === true) {
-                throw $this->accountReadFailed[$remoteId];
-            }
-            $remote = $this->accountById !== null
-                ? ($this->accountById[$remoteId] ?? null)
-                : $this->client->getAccount($connection, $remoteId);
-        }
-        if ($remote === null || (array_key_exists('Active', $remote) === true && $remote['Active'] === false)) {
-            return 'aligned';
-        }
-        if ($kind === 'customer' && $this->keepsOpenBalance($uuid, $remote) === true) {
-            return 'skipped';
-        }
-
-        return $this->writeInactive($ledger, $connection, $kind, $uuid, $remote);
-    }
-
-    /**
-     * A live Fleetbase customer, of this organization or of another one on the same QuickBooks
-     * company, may link the QuickBooks customer a deleted customer kept. It is not made inactive.
-     *
-     * @param array<string, mixed> $connection
-     */
-    private function remoteTakenOver(SyncLedger $ledger, array $connection, string $uuid, string $remoteId): bool
-    {
-        return $ledger->remoteIdsLinked((string) $connection['realm_id'], 'Customer', [$remoteId], $uuid) !== [];
-    }
-
-    /**
-     * Making a customer with an open balance inactive can write that balance off in QuickBooks
-     * (its own screens add a credit memo), so a deleted Fleetbase customer whose QuickBooks
-     * balance is not zero stays active, and the row says why.
-     *
-     * @param array<string, mixed> $remote
-     */
-    private function keepsOpenBalance(string $uuid, array $remote): bool
-    {
-        $ref      = $remote['CurrencyRef'] ?? null;
-        $currency = is_array($ref) === true ? (string) ($ref['value'] ?? '') : '';
-        $balance  = $remote['BalanceWithJobs'] ?? $remote['Balance'] ?? '0';
-        try {
-            $minor = Amounts::toMinorUnits(is_int($balance) === true ? $balance : (string) $balance, $currency);
-        } catch (\Throwable) {
-            // An amount that cannot be read is not taken as zero: the customer stays active.
-            $minor = 1;
-        }
-        if ($minor === 0) {
-            return false;
-        }
-        $note = Translation::encode('quickbooks.messages.customer-inactive-open-balance', [
-            'name'   => (string) ($remote['DisplayName'] ?? ''),
-            'amount' => Amounts::centsToDecimal($minor, $currency),
-        ]);
-        $this->closeSkipped                  = true;
-        $this->rowNotes['customer:' . $uuid] = $note;
-
-        return true;
-    }
-
-    /**
-     * Marks the linked QuickBooks customer or account inactive, in the batch when one is open.
-     *
-     * @param array<string, mixed> $connection
-     * @param array<string, mixed> $remote
-     */
-    private function writeInactive(
-        SyncLedger $ledger,
-        array $connection,
-        string $kind,
-        string $uuid,
-        array $remote,
-    ): string {
-        $entity    = $kind === 'customer' ? 'Customer' : 'Account';
-        $payload   = ['Active' => false];
-        $id        = (string) $remote['Id'];
-        $syncToken = (string) $remote['SyncToken'];
-        if ($this->writeBuffer !== null) {
-            $this->writeBuffer[] = [
-                'bId'       => $kind . ':' . $uuid,
-                'operation' => 'update',
-                'entity'    => $entity,
-                'payload'   => $payload + ['Id' => $id, 'SyncToken' => $syncToken, 'sparse' => true],
-            ];
-
-            return 'updated';
-        }
-        $updated = $kind === 'customer'
-            ? $this->client->updateCustomer($connection, $id, $syncToken, $payload)
-            : $this->client->updateAccount($connection, $id, $syncToken, $payload);
-        $ledger->putLink($this->linkFrom($connection, $kind, $uuid, $entity, $updated));
 
         return 'updated';
     }
@@ -582,320 +630,6 @@ trait SyncsCustomers
         $found = $this->client->findCustomerByDisplayName($connection, $name);
 
         return $this->unclaimedRemoteCustomer($ledger, $connection, $uuid, $found, null);
-    }
-
-    /**
-     * @param array<string, mixed>             $connection
-     * @param array<int, array<string, mixed>> $rows
-     * @param array<string, mixed>             $settings
-     * @param array<string, mixed>             $batch
-     */
-    private function syncCustomerBlock(SyncLedger $ledger, array &$connection, array $rows, array $settings, array &$batch, int $now, string $trigger, bool $record): bool
-    {
-        if ($this->entityEnabled($settings, 'customer') === false) {
-            return $this->recordDisabledRows($ledger, $connection, $rows, $batch, $trigger, $record);
-        }
-        try {
-            $this->prefetchCustomers($connection, $ledger, $rows);
-
-            return $this->syncBufferedBlock($ledger, $connection, $rows, $settings, $batch, $now, $trigger, $record, 'customer');
-        } catch (QuickBooksException $exception) {
-            if ($exception->isUnauthorized() === true) {
-                $this->tokenRejected($ledger, (string) $connection['company_uuid']);
-                $batch['failed']++;
-
-                return true;
-            }
-            if ($exception->isRateLimit() === true) {
-                $this->failure($ledger, $connection, $rows[0], $exception, $settings, $now);
-                if ($record === true) {
-                    $this->recordRow($ledger, $connection, $rows[0], 'failed', $batch, $trigger, $this->exceptionError($exception));
-                }
-
-                return true;
-            }
-
-            throw $exception;
-        } finally {
-            $this->customerRemoteCache = null;
-            if ($record === true) {
-                $this->customerLookupFailed = [];
-            }
-        }
-    }
-
-    /**
-     * @param array<string, mixed>             $connection
-     * @param array<int, array<string, mixed>> $rows
-     */
-    private function prefetchCustomers(array $connection, SyncLedger $ledger, array $rows): void
-    {
-        $this->customerRemoteCache  = [];
-        $this->customerLookupFailed = [];
-        $companyUuid                = (string) $connection['company_uuid'];
-        $realm                      = (string) $connection['realm_id'];
-        /** @var array<int, array{bId: string, query: string, uuid: string, by: string, value: string}> $queries */
-        $queries = [];
-        /** @var array<int, array{bId: string, query: string, uuid: string, email: string, name: string}> $nameOnly */
-        $nameOnly = [];
-        foreach ($rows as $row) {
-            $uuid = (string) ($row['local_uuid'] ?? '');
-            if ($uuid === '') {
-                continue;
-            }
-            $customer = $ledger->customers[$uuid] ?? null;
-            $link     = $ledger->link($companyUuid, $realm, 'customer', $uuid);
-            if (is_array($link) === true && (string) ($link['qbo_id'] ?? '') !== '') {
-                $queries[] = [
-                    'bId'   => 'customer:' . $uuid,
-                    'query' => "select * from Customer where Id = '" . QuickBooksClient::escapeQuery((string) $link['qbo_id']) . "'",
-                    'uuid'  => $uuid,
-                    'by'    => 'id',
-                    'value' => (string) $link['qbo_id'],
-                ];
-                continue;
-            }
-            // A deleted customer without a link is never matched or created.
-            if (is_array($customer) === false || empty($customer['deleted_at']) === false) {
-                continue;
-            }
-            $email = trim((string) ($customer['email'] ?? ''));
-            if ($email !== '') {
-                $queries[] = [
-                    'bId'   => 'customer:' . $uuid,
-                    'query' => "select * from Customer where PrimaryEmailAddr = '" . QuickBooksClient::escapeQuery($email) . "' maxresults 1",
-                    'uuid'  => $uuid,
-                    'by'    => 'email',
-                    'value' => $email,
-                ];
-                continue;
-            }
-            $payload = $this->customers->toQuickBooks($this->customers->fromParty($customer));
-            $name    = trim((string) ($payload['DisplayName'] ?? ''));
-            if ($name !== '') {
-                $nameOnly[] = [
-                    'bId'   => 'customer-name:' . $uuid,
-                    'query' => "select * from Customer where DisplayName = '" . QuickBooksClient::escapeQuery($name) . "' maxresults 1",
-                    'uuid'  => $uuid,
-                    'email' => '',
-                    'name'  => $name,
-                ];
-            }
-        }
-        if ($queries === [] && $nameOnly === []) {
-            return;
-        }
-        if ($queries !== [] && count($queries) === 1) {
-            $this->prefetchOneCustomer($connection, $queries[0]);
-        } elseif ($queries !== []) {
-            $items = [];
-            foreach ($queries as $query) {
-                $items[] = ['bId' => $query['bId'], 'query' => $query['query']];
-            }
-            try {
-                $results = $this->client->batch($connection, $items);
-            } catch (QuickBooksException $exception) {
-                if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
-                    throw $exception;
-                }
-                foreach ($queries as $query) {
-                    $this->customerLookupFailed[$query['uuid']] = $exception;
-                }
-                $results = [];
-            }
-            $seen = [];
-            foreach ($results as $bId => $result) {
-                $uuid = substr((string) $bId, strlen('customer:'));
-                if ($uuid === '' || $uuid === (string) $bId) {
-                    continue;
-                }
-                $seen[$uuid] = true;
-                if (is_array($result) === true && empty($result['halt']) === false) {
-                    throw new QuickBooksException((int) ($result['status'] ?? 0), (string) ($result['error'] ?? ''));
-                }
-                if (is_array($result) === false || empty($result['ok']) === true) {
-                    $message                           = is_array($result) === true ? (string) ($result['error'] ?? '') : '';
-                    $status                            = is_array($result) === true ? (int) ($result['status'] ?? 0) : 0;
-                    $this->customerLookupFailed[$uuid] = $this->batchItemFailure($message, $status);
-                    continue;
-                }
-                $remote                           = $result['rows'][0] ?? null;
-                $this->customerRemoteCache[$uuid] = is_array($remote) === true ? $remote : null;
-            }
-            foreach ($queries as $query) {
-                $uuid = $query['uuid'];
-                if (isset($seen[$uuid]) === false && isset($this->customerLookupFailed[$uuid]) === false) {
-                    $this->customerLookupFailed[$uuid] = $this->batchItemFailure(self::SYNC_FAILED_MESSAGE, 500);
-                }
-            }
-        }
-
-        $nameQueries = $this->nameQueriesAfterEmail($connection, $ledger, $queries);
-        foreach ($nameOnly as $query) {
-            if (isset($this->customerLookupFailed[$query['uuid']]) === false) {
-                $nameQueries[] = $query;
-            }
-        }
-        $this->prefetchCustomerNames($connection, $nameQueries);
-    }
-
-    /**
-     * A display-name lookup for each customer whose email found no QuickBooks customer, or found
-     * one another Fleetbase customer already syncs with: a free name match is the same customer.
-     *
-     * @param array<string, mixed>                                                                   $connection
-     * @param array<int, array{bId: string, query: string, uuid: string, by: string, value: string}> $queries
-     *
-     * @return array<int, array{bId: string, query: string, uuid: string, email: string, name: string}>
-     */
-    private function nameQueriesAfterEmail(array $connection, SyncLedger $ledger, array $queries): array
-    {
-        $taken       = $this->takenEmailMatches($connection, $ledger, $queries);
-        $nameQueries = [];
-        foreach ($queries as $query) {
-            $uuid = $query['uuid'];
-            if ($query['by'] !== 'email' || isset($this->customerLookupFailed[$uuid]) === true
-                || array_key_exists($uuid, $this->customerRemoteCache) === false) {
-                continue;
-            }
-            $remote = $this->customerRemoteCache[$uuid];
-            if ($remote !== null && isset($taken[(string) ($remote['Id'] ?? '')]) === false) {
-                continue;
-            }
-            $customer = $ledger->customers[$uuid] ?? null;
-            if (is_array($customer) === false) {
-                continue;
-            }
-            $payload = $this->customers->toQuickBooks($this->customers->fromParty($customer));
-            $name    = trim((string) ($payload['DisplayName'] ?? ''));
-            if ($name !== '') {
-                $nameQueries[] = [
-                    'bId'   => 'customer-name:' . $uuid,
-                    'query' => "select * from Customer where DisplayName = '" . QuickBooksClient::escapeQuery($name) . "' maxresults 1",
-                    'uuid'  => $uuid,
-                    'email' => trim((string) ($customer['email'] ?? '')),
-                    'name'  => $name,
-                ];
-            }
-        }
-
-        return $nameQueries;
-    }
-
-    /**
-     * The QuickBooks ids, as keys, that the email lookups found and that some Fleetbase customer
-     * already syncs with. One read covers the whole block. These customers have no link on this
-     * realm, so no link of their own needs excluding.
-     *
-     * @param array<string, mixed>                                                                   $connection
-     * @param array<int, array{bId: string, query: string, uuid: string, by: string, value: string}> $queries
-     *
-     * @return array<string, true>
-     */
-    private function takenEmailMatches(array $connection, SyncLedger $ledger, array $queries): array
-    {
-        $ids = [];
-        foreach ($queries as $query) {
-            $remote = $query['by'] === 'email' ? ($this->customerRemoteCache[$query['uuid']] ?? null) : null;
-            $id     = is_array($remote) === true ? (string) ($remote['Id'] ?? '') : '';
-            if ($id !== '') {
-                $ids[$id] = $id;
-            }
-        }
-        if ($ids === []) {
-            return [];
-        }
-        $taken = $ledger->remoteIdsLinked((string) $connection['realm_id'], 'Customer', array_values($ids), '');
-
-        return array_fill_keys($taken, true);
-    }
-
-    /**
-     * @param array<string, mixed>                                                       $connection
-     * @param array{bId: string, query: string, uuid: string, by: string, value: string} $query
-     */
-    private function prefetchOneCustomer(array $connection, array $query): void
-    {
-        try {
-            $remote = $query['by'] === 'id'
-                ? $this->client->getCustomer($connection, $query['value'])
-                : $this->client->findCustomerByEmail($connection, $query['value']);
-        } catch (QuickBooksException $exception) {
-            if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
-                throw $exception;
-            }
-            $this->customerLookupFailed[$query['uuid']] = $exception;
-
-            return;
-        }
-        $this->customerRemoteCache[$query['uuid']] = is_array($remote) === true ? $remote : null;
-    }
-
-    /**
-     * @param array<string, mixed>                                                                     $connection
-     * @param array<int, array{bId: string, query: string, uuid: string, email: string, name: string}> $queries
-     */
-    private function prefetchCustomerNames(array $connection, array $queries): void
-    {
-        foreach (array_chunk($queries, QuickBooksClient::BATCH_LIMIT) as $chunk) {
-            if ($chunk === []) {
-                continue;
-            }
-            if (count($chunk) === 1) {
-                $query = $chunk[0];
-                try {
-                    $remote = $this->client->findCustomerByDisplayName($connection, $query['name']);
-                } catch (QuickBooksException $exception) {
-                    if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
-                        throw $exception;
-                    }
-                    $this->customerLookupFailed[$query['uuid']] = $exception;
-                    continue;
-                }
-                $this->rememberCustomerByName($query, is_array($remote) === true ? $remote : null);
-                continue;
-            }
-            try {
-                $results = $this->client->batch($connection, array_map(
-                    static fn (array $query): array => ['bId' => $query['bId'], 'query' => $query['query']],
-                    $chunk
-                ));
-            } catch (QuickBooksException $exception) {
-                if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
-                    throw $exception;
-                }
-                foreach ($chunk as $query) {
-                    $this->customerLookupFailed[$query['uuid']] = $exception;
-                }
-                continue;
-            }
-            foreach ($chunk as $query) {
-                $result = $results[$query['bId']] ?? null;
-                if (is_array($result) === true && empty($result['halt']) === false) {
-                    throw new QuickBooksException((int) ($result['status'] ?? 0), (string) ($result['error'] ?? ''));
-                }
-                if (is_array($result) === false || empty($result['ok']) === true) {
-                    $message                                    = is_array($result) === true ? (string) ($result['error'] ?? '') : '';
-                    $status                                     = is_array($result) === true ? (int) ($result['status'] ?? 0) : 0;
-                    $this->customerLookupFailed[$query['uuid']] = $this->batchItemFailure($message, $status);
-                    continue;
-                }
-                $remote = $result['rows'][0] ?? null;
-                $this->rememberCustomerByName($query, is_array($remote) === true ? $remote : null);
-            }
-        }
-    }
-
-    /**
-     * A display-name match is the same customer whatever the emails say. A miss is cached too,
-     * so the row is not queried again one name at a time.
-     *
-     * @param array{bId: string, query: string, uuid: string, email: string, name: string} $query
-     * @param array<string, mixed>|null                                                    $remote
-     */
-    private function rememberCustomerByName(array $query, ?array $remote): void
-    {
-        $this->customerRemoteCache[$query['uuid']] = $remote;
     }
 
     /**
