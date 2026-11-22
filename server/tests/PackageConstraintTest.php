@@ -24,7 +24,7 @@ test('the Fleetbase package ranges accept the next releases of the same series',
 })->with([
     'ledger'   => ['fleetbase/ledger-api', '0.1.0', ['0.1.1', '0.1.30'], ['0.0.13', '0.2.0']],
     'fleetops' => ['fleetbase/fleetops-api', '0.7.1', ['0.7.2', '0.7.99'], ['0.6.75', '0.8.0']],
-    'core'     => ['fleetbase/core-api', '2.0.3', ['2.0.4', '2.1.0'], ['1.6.74', '3.0.0']],
+    'core'     => ['fleetbase/core-api', '2.0.2', ['2.0.4', '2.1.0'], ['2.0.1', '1.6.74', '3.0.0']],
 ]);
 
 // A package the engine imports at runtime must come with it; a devDependency is only there for its own tests.

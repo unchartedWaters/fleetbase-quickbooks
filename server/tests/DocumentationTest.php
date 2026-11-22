@@ -126,8 +126,8 @@ test('a needed phrase is found when a line wrap splits it', function () {
     expect(DocsSource::absentFrom($text, [
         '`fleetbase/fleetops-api` `^0.7.1`',
         '`fleetbase/ledger-api` `^0.1.0`',
-        '`fleetbase/core-api` `^2.0.3`',
-    ]))->toBe(['`fleetbase/core-api` `^2.0.3`']);
+        '`fleetbase/core-api` `^2.0.2`',
+    ]))->toBe(['`fleetbase/core-api` `^2.0.2`']);
 });
 
 test('the link check reports a missing file, heading or reference', function () {

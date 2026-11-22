@@ -65,7 +65,7 @@
 
 ## Stack
 
-- PHP 8.2 (CI), Laravel 12 via `fleetbase/core-api ^2.0.3`,
+- PHP 8.2 (CI), Laravel 12 via `fleetbase/core-api ^2.0.2`,
   `fleetbase/fleetops-api ^0.7.1`, `fleetbase/ledger-api ^0.1.0`. Fleetbase
   0.7 and core-api 1.x are not supported.
   QuickBooks HTTP goes through Laravel's `Http` client in `QuickBooksClient`.

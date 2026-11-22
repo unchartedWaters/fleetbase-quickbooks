@@ -18,7 +18,7 @@
     ],
     "require": {
         "php": "^8.2",
-        "fleetbase/core-api": "^2.0.3",
+        "fleetbase/core-api": "^2.0.2",
         "fleetbase/fleetops-api": "^0.7.1",
         "fleetbase/ledger-api": "^0.1.0",
         "php-http/guzzle7-adapter": "^1.0",
