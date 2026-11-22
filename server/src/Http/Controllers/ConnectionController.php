@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
+use Fleetbase\Quickbooks\Services\CompanyReset;
 use Fleetbase\Quickbooks\Services\ConnectionProbe;
 use Fleetbase\Quickbooks\Services\ConnectionTokens;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
@@ -27,6 +28,7 @@ use Fleetbase\Quickbooks\Support\ConsoleHost;
 use Fleetbase\Quickbooks\Support\PublicHttps;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
+use Fleetbase\Quickbooks\Support\SwitchChoiceRequired;
 use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -56,6 +58,7 @@ class ConnectionController extends QuickbooksController
         return response()->json([
             'connection'      => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
             'can_connect_new' => $this->mayConnectFirst($request, $companyUuid),
+            'linked'          => $this->reset()->linkCounts($companyUuid),
         ]);
     }
 
@@ -264,16 +267,11 @@ class ConnectionController extends QuickbooksController
             return response()->json(['connected' => false]);
         }
 
+        $level = $this->chosenLevel($request, $companyUuid);
         try {
-            $connection = $this->oauth->finish(
-                $state,
-                (string) $request->input('code'),
-                (string) $request->input('realmId'),
-                $companyUuid,
-                $userUuid,
-                $this->credentials($companyUuid),
-                fn (string $realmId): bool => $this->mayConnectRealm($request, $companyUuid, $realmId)
-            );
+            $connection = $this->finishOAuth($request, $companyUuid, $userUuid, $level);
+        } catch (SwitchChoiceRequired $required) {
+            return $this->choiceRequired($request, $companyUuid, $userUuid, $required->handle);
         } catch (QuickBooksException $exception) {
             $this->releaseCooldown($companyUuid, 'start');
             $status = $exception->getMessage() === OAuthFlow::CHANGE_COMPANY_MESSAGE ? 403 : 422;
@@ -294,6 +292,10 @@ class ConnectionController extends QuickbooksController
             return response()->json(['connected' => true]);
         }
 
+        if ($level !== null && $this->leavesLinksBehind($companyUuid, (string) $connection['realm_id']) === true) {
+            // The confirmed answer for records that belong to the company being left.
+            $this->reset()->clear($companyUuid, $level, true);
+        }
         $this->persist($connection);
         // The webhook endpoint is set in the Intuit developer portal. This does not call Intuit.
         app(WebhookSubscriptions::class)->apply('admin', $companyUuid);
@@ -308,15 +310,58 @@ class ConnectionController extends QuickbooksController
         return response()->json(['connected' => true]);
     }
 
+    /**
+     * Nothing was exchanged or changed. The user answers with the handle, a level and the code shown here.
+     */
+    private function choiceRequired(
+        Request $request,
+        string $companyUuid,
+        string $userUuid,
+        string $handle,
+    ): JsonResponse {
+        return response()->json([
+            'connected'       => false,
+            'choice_required' => true,
+            'handle'          => $handle,
+            'code'            => $this->reset()->issueCode($companyUuid, $userUuid),
+            'code_rejected'   => $request->filled('level'),
+            'linked'          => $this->reset()->linkCounts($companyUuid),
+        ]);
+    }
+
+    /**
+     * A random code to type before data is cleared, for a signed-in user who may change the company.
+     */
+    public function resetCode(Request $request): JsonResponse
+    {
+        $this->authorizeQuickbooks('quickbooks change-company connection', $request);
+
+        return response()->json([
+            'code'   => $this->reset()->issueCode($this->companyUuid($request), (string) session('user', '')),
+            'linked' => $this->reset()->linkCounts($this->companyUuid($request)),
+        ]);
+    }
+
+    /**
+     * Disconnect, keeping the links by default so a reconnect to the same company picks them up. With `level`
+     * and the typed `confirm` code the organization's QuickBooks data is cleared too (CompanyReset).
+     */
     public function disconnect(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks disconnect connection', $request);
         $companyUuid = $this->companyUuid($request);
+        $level       = (string) $request->input('level', CompanyReset::KEEP);
+        if ($level !== CompanyReset::KEEP && $this->chosenLevel($request, $companyUuid) === null) {
+            return response()->json(['message' => Translation::get('quickbooks.messages.reset-code-rejected')], 422);
+        }
         // Intuit has no webhook unsubscribe API. The refresh token is revoked first, best effort,
-        // then this organization's connection and its queued work are removed. Links stay for a reconnect.
+        // then this organization's connection and its queued work are removed.
         $this->revokeAtIntuit($companyUuid);
         Connection::query()->where('company_uuid', $companyUuid)->delete();
         PendingSync::query()->where('company_uuid', $companyUuid)->where('status', 'pending')->delete();
+        if ($level !== CompanyReset::KEEP) {
+            $this->reset()->clear($companyUuid, $level, false);
+        }
 
         return response()->json(['disconnected' => true]);
     }
@@ -499,14 +544,91 @@ class ConnectionController extends QuickbooksController
      * to it, so that needs `quickbooks change-company connection` (QuickBooks Administrator).
      * Anyone who may connect may reconnect the company the organization already uses.
      */
-    private function mayConnectRealm(Request $request, string $companyUuid, string $realmId): bool
+    private function mayConnectRealm(Request $request, string $companyUuid, string $realmId, ?string $level): bool
     {
         if ($this->authorizer->can('quickbooks change-company connection', $request) === true) {
+            // Linked records of another company need an answer first, so nothing is exchanged yet.
+            if ($level === null && $this->leavesLinksBehind($companyUuid, $realmId) === true) {
+                throw new SwitchChoiceRequired();
+            }
+
             return true;
         }
         $lastRealm = $this->lastRealm($companyUuid);
 
         return $lastRealm !== null && $lastRealm === $realmId;
+    }
+
+    /**
+     * Whether connecting $realmId would leave the organization's links pointing at another QuickBooks
+     * company, or at the same company in the other environment (sandbox or production).
+     */
+    protected function leavesLinksBehind(string $companyUuid, string $realmId): bool
+    {
+        $reset = $this->reset();
+        if ($reset->linksOutsideRealm($companyUuid, $realmId) > 0) {
+            return true;
+        }
+
+        return $this->environmentChanged($companyUuid) === true && $reset->linkCounts($companyUuid)['total'] > 0;
+    }
+
+    /**
+     * The connection was made in another environment than the one the settings name now.
+     */
+    protected function environmentChanged(string $companyUuid): bool
+    {
+        $existing = $this->latestConnection($companyUuid);
+        $stored   = $existing instanceof Connection === true ? trim((string) $existing->environment) : '';
+
+        return $stored !== '' && $stored !== $this->credentials($companyUuid)['environment'];
+    }
+
+    /**
+     * The level the user chose, when they may change the company and typed the code shown to them.
+     */
+    private function chosenLevel(Request $request, string $companyUuid): ?string
+    {
+        $level = (string) $request->input('level');
+        if (CompanyReset::isLevel($level) === false
+            || $this->authorizer->can('quickbooks change-company connection', $request) === false
+        ) {
+            return null;
+        }
+        $typed = (string) $request->input('confirm');
+
+        return $this->reset()->consumeCode($companyUuid, (string) session('user', ''), $typed) === true ? $level : null;
+    }
+
+    /**
+     * Finish the authorization, either from Intuit's redirect (state, code, realmId) or from the user's answer
+     * to a switch question (handle).
+     *
+     * @return array<string, mixed>|null
+     */
+    private function finishOAuth(Request $request, string $companyUuid, string $userUuid, ?string $level): ?array
+    {
+        $allowed     = fn (string $realmId): bool => $this->mayConnectRealm($request, $companyUuid, $realmId, $level);
+        $credentials = $this->credentials($companyUuid);
+        $handle      = (string) $request->input('handle');
+        if ($handle !== '') {
+            return $this->oauth->complete($handle, $companyUuid, $userUuid, $credentials, $allowed);
+        }
+
+        return $this->oauth->finish(
+            (string) $request->input('state'),
+            (string) $request->input('code'),
+            (string) $request->input('realmId'),
+            $companyUuid,
+            $userUuid,
+            $credentials,
+            $allowed
+        );
+    }
+
+    protected function reset(): CompanyReset
+    {
+        return new CompanyReset($this->store);
     }
 
     /**

@@ -1,0 +1,61 @@
+<div class="space-y-3 mb-4" data-test-data-choice={{@mode}}>
+    <p class="text-sm font-semibold text-gray-900 dark:text-gray-100" data-test-choice-title>
+        {{#if this.isSwitch}}{{t "quickbooks.choice.title-switch"}}{{else}}{{t "quickbooks.choice.title-disconnect"}}{{/if}}
+    </p>
+    <p class="text-sm text-gray-500 dark:text-gray-400">
+        {{#if this.isSwitch}}{{t "quickbooks.choice.intro-switch"}}{{else}}{{t "quickbooks.choice.intro-disconnect"}}{{/if}}
+    </p>
+    <p class="text-sm text-gray-500 dark:text-gray-400" data-test-choice-counts>
+        {{t "quickbooks.choice.linked" customers=this.counts.customers invoices=this.counts.invoices wallets=this.counts.wallets products=this.counts.products}}
+    </p>
+    <div class="space-y-2" role="radiogroup">
+        {{#each this.options as |option|}}
+            <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-200">
+                <input
+                    type="radio"
+                    name="quickbooks-data-choice"
+                    class="mt-1"
+                    checked={{eq this.level option.level}}
+                    {{on "change" (fn this.choose option.level)}}
+                    data-test-choice-option={{option.level}}
+                />
+                <span>
+                    <span class="font-medium">{{t option.title}}</span><br />
+                    <span class="text-gray-500 dark:text-gray-400">{{t option.detail imported=this.counts.imported}}</span>
+                </span>
+            </label>
+        {{/each}}
+    </div>
+    {{#if this.needsCode}}
+        <div class="space-y-1">
+            <p class="text-sm text-gray-700 dark:text-gray-200">
+                {{t "quickbooks.choice.type-code"}}
+                <strong class="font-mono tracking-widest select-none" data-test-choice-code>{{@code}}</strong>
+            </p>
+            {{#if @codeRejected}}
+                <p class="text-sm text-red-600 dark:text-red-400" data-test-choice-code-rejected>{{t "quickbooks.choice.code-rejected"}}</p>
+            {{/if}}
+            <input
+                type="text"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                class="form-input w-40 font-mono uppercase"
+                value={{this.typed}}
+                {{on "input" this.type}}
+                data-test-choice-input
+            />
+        </div>
+    {{/if}}
+    <div class="flex flex-wrap gap-2">
+        <Button
+            @type="primary"
+            @size="sm"
+            @text={{if this.isSwitch (t "quickbooks.choice.confirm-switch") (t "quickbooks.choice.confirm-disconnect")}}
+            @disabled={{this.confirmDisabled}}
+            @onClick={{this.confirm}}
+            data-test-choice-confirm
+        />
+        <Button @type="default" @size="sm" @text={{t "quickbooks.choice.cancel"}} @disabled={{@busy}} @onClick={{@onCancel}} data-test-choice-cancel />
+    </div>
+</div>

@@ -654,6 +654,11 @@ class CustomerImporter
             'email'        => $remote['PrimaryEmailAddr']['Address'] ?? null,
             'phone'        => $remote['PrimaryPhone']['FreeFormNumber'] ?? null,
             'notes'        => $remote['Notes'] ?? null,
+            // Marks it as made by this import, so it can be told apart from customers that were already in Fleetbase.
+            'meta'         => CompanyReset::importMarker(
+                (string) ($connection['realm_id'] ?? ''),
+                (string) ($remote['Id'] ?? '')
+            ),
         ];
         $bill = $remote['BillAddr'] ?? null;
         if (is_array($bill) === true) {

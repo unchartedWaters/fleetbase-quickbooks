@@ -14,6 +14,7 @@ use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
+use Fleetbase\Quickbooks\Tests\Support\DetachedController;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Fleetbase\Quickbooks\Tests\Support\PersistingController;
 use Fleetbase\TestSupport\LoggerManager;
@@ -89,7 +90,7 @@ function revokeWithDatabase(callable $work): void
 
 function revokeController(MemorySettingsStore $store, ?Authorizer $authorizer = null): ConnectionController
 {
-    return new ConnectionController(
+    return new DetachedController(
         $authorizer ?? new Authorizer(static fn () => true),
         new OAuthFlow(new QuickBooksClient()),
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
@@ -401,7 +402,9 @@ test('connection show tells an operator whether it may make a first connection',
         revokeSeed();
         $connected = $show($authorizer);
 
-        expect($neverConnected)->toBe(['connection' => null, 'can_connect_new' => false])
+        $nothingLinked = ['customers' => 0, 'invoices' => 0, 'wallets' => 0, 'products' => 0, 'total' => 0, 'imported' => 0];
+
+        expect($neverConnected)->toBe(['connection' => null, 'can_connect_new' => false, 'linked' => $nothingLinked])
             ->and($administrator['can_connect_new'])->toBeTrue()
             ->and($connected['can_connect_new'])->toBeTrue()
             ->and($connected['connection']['realm_id'])->toBe('9341453000000001');

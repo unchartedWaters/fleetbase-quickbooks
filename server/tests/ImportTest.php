@@ -2,6 +2,7 @@
 
 use Fleetbase\Quickbooks\Jobs\ImportCustomers;
 use Fleetbase\Quickbooks\Services\BatchRunner;
+use Fleetbase\Quickbooks\Services\CompanyReset;
 use Fleetbase\Quickbooks\Services\ConnectionTokens;
 use Fleetbase\Quickbooks\Services\CustomerImporter;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
@@ -54,7 +55,7 @@ test('an imported customer keeps notes and the billing address', function () {
             'postal_code' => 'SW1',
             'country'     => 'UK',
         ])
-        ->and($created)->not->toHaveKey('meta');
+        ->and($created['meta'])->toBe(CompanyReset::importMarker('realm-1', '1'));
 });
 
 test('a quickbooks customer with no fleetbase match creates a contact', function () {

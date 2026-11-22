@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\SwitchChoiceRequired;
 use Illuminate\Support\Facades\Cache;
 
 class OAuthFlow
@@ -145,7 +146,8 @@ class OAuthFlow
 
     /**
      * $realmAllowed sees the QuickBooks company (realm) Intuit returned before the code is
-     * exchanged. When it says no, the handle is dropped and no token is requested.
+     * exchanged. When it says no, the handle is dropped and no token is requested. When it throws
+     * SwitchChoiceRequired the handle is kept, and the exception carries it for the user's answer.
      *
      * @param array{client_id: string, client_secret: string, redirect_uri: string, environment: string} $credentials
      * @param (callable(string): bool)|null                                                              $realmAllowed
@@ -180,8 +182,15 @@ class OAuthFlow
         if (isset($stored['code']) === false) {
             throw new QuickBooksException(400, self::INVALID_LINK_MESSAGE);
         }
-        if ($realmAllowed !== null && $realmAllowed((string) $stored['realm_id']) !== true) {
-            throw new QuickBooksException(403, self::CHANGE_COMPANY_MESSAGE);
+        try {
+            if ($realmAllowed !== null && $realmAllowed((string) $stored['realm_id']) !== true) {
+                throw new QuickBooksException(403, self::CHANGE_COMPANY_MESSAGE);
+            }
+        } catch (SwitchChoiceRequired) {
+            // Nothing was exchanged. Keep the code so the answer can finish this same connection.
+            Cache::put($key, $stored, max(1, (int) $stored['expires_at'] - time()));
+
+            throw new SwitchChoiceRequired($handle);
         }
 
         $connection = $this->withCompanyDetails($this->exchange($stored, $credentials));

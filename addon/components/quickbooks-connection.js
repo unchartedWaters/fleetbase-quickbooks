@@ -1,4 +1,5 @@
 import Component from '@glimmer/component';
+import { tracked } from '@glimmer/tracking';
 import { action } from '@ember/object';
 import { inject as service } from '@ember/service';
 import { connectionState } from '../utils/connection-view';
@@ -8,6 +9,9 @@ export default class QuickbooksConnectionComponent extends Component {
     @service intl;
     @service modalsManager;
     @service abilities;
+
+    // Set while the disconnect question (keep the data, or clear it at a level) is open: its code and the counts.
+    @tracked disconnecting = null;
 
     get loadFailed() {
         return this.args.loadFailed === true;
@@ -164,10 +168,21 @@ export default class QuickbooksConnectionComponent extends Component {
     }
 
     // Setup owns the disconnect request. This does not unsubscribe Intuit.
+    // With linked records, an administrator is first asked what happens to them.
     @action
-    disconnect() {
+    async disconnect() {
         if (this.disconnectDisabled) {
             return;
+        }
+
+        const linked = this.args.linked?.total > 0;
+        if (linked && canChangeCompany(this.abilities) && typeof this.args.onRequestCode === 'function') {
+            const issued = await this.args.onRequestCode();
+            if (issued?.code) {
+                this.disconnecting = { code: issued.code, linked: issued.linked ?? this.args.linked };
+
+                return;
+            }
         }
 
         this.modalsManager.confirm({
@@ -176,6 +191,20 @@ export default class QuickbooksConnectionComponent extends Component {
             acceptButtonText: this.intl.t('quickbooks.connection.disconnect'),
             confirm: () => this.performDisconnect(),
         });
+    }
+
+    // The panel stays open when the server refuses the code, which it keeps valid for another try.
+    @action
+    async chooseDisconnect(level, code) {
+        const done = await this.args.onDisconnect?.({ level, confirm: code });
+        if (done !== false) {
+            this.disconnecting = null;
+        }
+    }
+
+    @action
+    cancelDisconnect() {
+        this.disconnecting = null;
     }
 
     async performDisconnect() {

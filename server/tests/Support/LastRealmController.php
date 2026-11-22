@@ -19,6 +19,8 @@ use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
  */
 class LastRealmController extends ConnectionController
 {
+    use NoLinkedData;
+
     public ?string $last = null;
 
     /** @var array<string, mixed>|null */

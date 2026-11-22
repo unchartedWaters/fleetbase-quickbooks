@@ -59,6 +59,26 @@
 
             {{#unless this.isLoading}}
                 {{#unless this.loadFailed}}
+                    {{#if @choice}}
+                        <QuickbooksDataChoice
+                            @mode="switch"
+                            @linked={{@choice.linked}}
+                            @code={{@choice.code}}
+                            @codeRejected={{@choice.code_rejected}}
+                            @busy={{this.busy}}
+                            @onConfirm={{@onChoose}}
+                            @onCancel={{@onCancelChoice}}
+                        />
+                    {{else if this.disconnecting}}
+                        <QuickbooksDataChoice
+                            @mode="disconnect"
+                            @linked={{this.disconnecting.linked}}
+                            @code={{this.disconnecting.code}}
+                            @busy={{this.busy}}
+                            @onConfirm={{this.chooseDisconnect}}
+                            @onCancel={{this.cancelDisconnect}}
+                        />
+                    {{else}}
                     {{! Only the actions that apply to this state are shown. }}
                     <div class="flex flex-wrap gap-2" data-test-connection-actions>
                         {{#if this.showSyncNow}}
@@ -126,6 +146,7 @@
                             </p>
                         {{/if}}
                     </div>
+                    {{/if}}
                 {{/unless}}
             {{/unless}}
         </ContentPanel>

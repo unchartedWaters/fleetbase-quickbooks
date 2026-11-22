@@ -22,6 +22,10 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     @tracked connectionLoading = true;
     // False when only a QuickBooks Administrator may make this organization's first connection.
     @tracked canConnectNew = true;
+    // How many records are linked to QuickBooks, by kind. Null until the connection request answers.
+    @tracked linked = null;
+    // Set when Intuit returned a different company than the linked records belong to: the handle, the code and the counts.
+    @tracked choice = null;
     @tracked settingsLoadFailed = false;
     @tracked settingsLoaded = false;
     @tracked canEdit = false;
@@ -29,6 +33,8 @@ export default class QuickbooksCompanySettingsComponent extends Component {
 
     constructor() {
         super(...arguments);
+        // The OAuth return can already ask what to do with the old company's data (the settings route passes it in).
+        this.choice = this.args.choice ?? null;
         this.load();
     }
 
@@ -61,6 +67,7 @@ export default class QuickbooksCompanySettingsComponent extends Component {
             const result = await this.fetch.get('connection', { company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
             this.connection = result?.connection ?? null;
             this.canConnectNew = result?.can_connect_new !== false;
+            this.linked = result?.linked ?? null;
             this.connectionLoadFailed = false;
         } catch (error) {
             this.connection = null;
@@ -128,18 +135,64 @@ export default class QuickbooksCompanySettingsComponent extends Component {
         }
     }
 
+    // Returns false when the server refused, so the question stays open for another try.
     @action
-    async disconnect() {
+    async disconnect(options = {}) {
         this.busy = true;
         try {
-            await this.fetch.post('disconnect', { company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
+            await this.fetch.post('disconnect', { company_uuid: this.currentUser.companyId, ...options }, { namespace: NAMESPACE });
             this.connection = null;
+            if (options.level && options.level !== 'keep') {
+                this.linked = null;
+            }
             this.notifications.success(this.intl.t('quickbooks.connection.disconnected-toast'));
+
+            return true;
+        } catch (error) {
+            this.notifications.serverError(error);
+
+            return false;
+        } finally {
+            this.busy = false;
+        }
+    }
+
+    // A random code to type before data is cleared, and the counts to show next to it.
+    @action
+    async requestCode() {
+        try {
+            return await this.fetch.post('reset-code', { company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
+        } catch (error) {
+            this.notifications.serverError(error);
+
+            return null;
+        }
+    }
+
+    // The answer to "what happens to the old company's data": finishes the connection Intuit just returned.
+    @action
+    async choose(level, code) {
+        this.busy = true;
+        try {
+            const result = await this.fetch.post('oauth/complete', { handle: this.choice.handle, level, confirm: code, company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
+            if (result?.choice_required) {
+                this.choice = result;
+
+                return;
+            }
+            this.choice = null;
+            this.notifications.success(this.intl.t('quickbooks.connection.connected-toast'));
+            await this.loadConnection();
         } catch (error) {
             this.notifications.serverError(error);
         } finally {
             this.busy = false;
         }
+    }
+
+    @action
+    cancelChoice() {
+        this.choice = null;
     }
 
     get configured() {
