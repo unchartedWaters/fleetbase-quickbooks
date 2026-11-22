@@ -118,6 +118,20 @@ accounts), and products with QuickBooks Online.
 
 PHP 8.2 is the supported and CI version, matching Fleetbase.
 
+Back end versions follow Fleetbase. Its API requires PHP `>=8.2 <8.5` and the
+v0.8.1 image runs PHP 8.2.35, so `composer.json` requires the same range and
+resolves the lock for PHP 8.2 (`config.platform.php`). `composer.lock` pins
+every package that Fleetbase's API also ships to the version in the
+`/fleetbase/api/composer.lock` of the `fleetbase/fleetbase-api` image for the
+newest supported release (v0.8.1 now). Fleetbase installs `laravel/framework`
+12.72.0, which replaces the `illuminate/*` packages, so those are locked at
+v12.72.0. One package differs: `composer/pcre` stays at 3.3.2, because 3.4.0,
+which Fleetbase ships, conflicts with PHPStan 1 (it needs PHPStan 2.2.2 or
+later, which reports hundreds of new errors on this code). When Fleetbase
+moves a shared package, take its lock file from the new image and run a
+partial `composer update` of only the packages that image does not lock. A
+plain `composer update` drifts from Fleetbase.
+
 Back end: run `composer install`, then `composer test`. `composer test` runs lint, PHPStan, and Pest. The parts can run alone:
 
 ```bash
@@ -148,6 +162,17 @@ once a day and the old one then stops working. When a run fails with
 `invalid_grant`, get a new refresh token from the Playground.
 
 Front end: run `pnpm install --frozen-lockfile`, then `pnpm lint` and `pnpm test:ember`. Ember tests need Chrome. Skip them when Chrome is not installed.
+
+## Third-party licenses
+
+`THIRD-PARTY-LICENSES.md` lists every package in `composer.lock` with its
+version and license. After a `composer.lock` change, refresh it:
+
+```bash
+php scripts/third-party-licenses.php > THIRD-PARTY-LICENSES.md
+```
+
+A test fails when the file is out of date.
 
 ## Fleetbase release check
 
