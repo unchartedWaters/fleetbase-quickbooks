@@ -670,7 +670,8 @@ test('a disabled import records one empty batch and does not touch the cursor', 
         ->and($batch->companyUuid)->toBe('company-uuid')
         ->and($batch->trigger)->toBe('import')
         ->and($batch->status)->toBe('finished')
-        ->and([$batch->created, $batch->linked, $batch->skipped, $batch->failed, $batch->continue])->toBe([0, 0, 0, 0, false])
+        ->and([$batch->created, $batch->linked, $batch->skipped, $batch->failed])->toBe([0, 0, 0, 0])
+        ->and($batch->continue)->toBeFalse()
         ->and($ledger->connections['company-uuid'][CustomerImporter::CURSOR_COLUMN])->toBe(9);
 });
 
@@ -680,8 +681,14 @@ test('the import job passes the settings page size, a lock based deadline and an
         /** @var array<int, mixed> */
         public array $captured = [];
 
-        public function import(SyncLedger $ledger, array $connection, array $fleetbaseCustomers, bool $enabled, int $pageSize = self::MAX_PAGE_SIZE, ?int $deadline = null): Batch
-        {
+        public function import(
+            SyncLedger $ledger,
+            array $connection,
+            array $fleetbaseCustomers,
+            bool $enabled,
+            int $pageSize = self::MAX_PAGE_SIZE,
+            ?int $deadline = null,
+        ): Batch {
             $this->captured[] = [$fleetbaseCustomers, $enabled, $pageSize, $deadline - time()];
 
             return new Batch('import');
@@ -815,8 +822,14 @@ test('a deadline stop in the job queues one continuation after the lock is relea
     $client                = new CicQuickBooks();
     $client->customerPages = [1 => cicPage(1, 2)];
     $importer              = new class($client, cicCreator()) extends CustomerImporter {
-        public function import(SyncLedger $ledger, array $connection, array $fleetbaseCustomers, bool $enabled, int $pageSize = self::MAX_PAGE_SIZE, ?int $deadline = null): Batch
-        {
+        public function import(
+            SyncLedger $ledger,
+            array $connection,
+            array $fleetbaseCustomers,
+            bool $enabled,
+            int $pageSize = self::MAX_PAGE_SIZE,
+            ?int $deadline = null,
+        ): Batch {
             return parent::import($ledger, $connection, $fleetbaseCustomers, $enabled, 2, time() - 1);
         }
     };

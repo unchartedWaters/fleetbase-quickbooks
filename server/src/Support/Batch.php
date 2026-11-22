@@ -49,8 +49,14 @@ final class Batch
     /**
      * A batch for a company, with the times it started and finished.
      */
-    public static function forCompany(string $companyUuid, string $trigger, string $status, string $direction, ?int $startedAt, ?int $finishedAt): self
-    {
+    public static function forCompany(
+        string $companyUuid,
+        string $trigger,
+        string $status,
+        string $direction,
+        ?int $startedAt,
+        ?int $finishedAt,
+    ): self {
         $batch              = new self($trigger, $status, $direction);
         $batch->companyUuid = $companyUuid;
         $batch->startedAt   = $startedAt;

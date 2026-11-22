@@ -86,7 +86,9 @@ test('email and name matches link instead of creating', function () {
 test('a phone-only match creates a new customer', function () {
     $phone = importWith(
         [remoteCustomer('2', 'Other', 'nope@example.test', '(555) 010-0')],
-        [['uuid' => 'local-2', 'company_uuid' => 'company-uuid', 'name' => 'Kept', 'phone' => '5550100']], $ledger);
+        [['uuid' => 'local-2', 'company_uuid' => 'company-uuid', 'name' => 'Kept', 'phone' => '5550100']],
+        $ledger
+    );
 
     expect($phone->created)->toBe(1)
         ->and($phone->linked)->toBe(0)
@@ -317,8 +319,14 @@ test('a deadline continuation dispatches after lock release and resumes the stor
         }
     };
     $deadlineImporter = new class($client) extends CustomerImporter {
-        public function import(SyncLedger $ledger, array $connection, array $fleetbaseCustomers, bool $enabled, int $pageSize = self::MAX_PAGE_SIZE, ?int $deadline = null): Batch
-        {
+        public function import(
+            SyncLedger $ledger,
+            array $connection,
+            array $fleetbaseCustomers,
+            bool $enabled,
+            int $pageSize = self::MAX_PAGE_SIZE,
+            ?int $deadline = null,
+        ): Batch {
             return parent::import($ledger, $connection, $fleetbaseCustomers, $enabled, 2, 1);
         }
     };

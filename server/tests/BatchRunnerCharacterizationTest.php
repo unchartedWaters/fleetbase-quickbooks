@@ -145,8 +145,14 @@ class BrcEngine extends SyncEngine
     /** @var array<int, string> */
     public array $httpLock = [];
 
-    public function runScheduled(SyncLedger $ledger, string $companyUuid, array $settings, int $now, bool $force = false, bool $ignoreInterval = false): Batch
-    {
+    public function runScheduled(
+        SyncLedger $ledger,
+        string $companyUuid,
+        array $settings,
+        int $now,
+        bool $force = false,
+        bool $ignoreInterval = false,
+    ): Batch {
         $this->calls[] = 'runScheduled:' . ($force === true ? 'force' : 'normal') . ':' . ($ignoreInterval === true ? 'ignore' : 'interval');
 
         return $this->brcWork($ledger, $force === true ? 'now' : 'scheduled');

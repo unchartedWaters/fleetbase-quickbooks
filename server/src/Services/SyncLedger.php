@@ -487,8 +487,14 @@ class SyncLedger
     /**
      * A batch that ended as $status ('skipped' or 'failed') with one connection attempt carrying the reason.
      */
-    private function recordStopped(string $status, string $companyUuid, string $trigger, string $direction, string $message, int $now): Batch
-    {
+    private function recordStopped(
+        string $status,
+        string $companyUuid,
+        string $trigger,
+        string $direction,
+        string $message,
+        int $now,
+    ): Batch {
         $batch            = Batch::forCompany($companyUuid, $trigger, $status, $direction, $now, $now);
         $this->batches[]  = $batch;
         $this->attempts[] = [

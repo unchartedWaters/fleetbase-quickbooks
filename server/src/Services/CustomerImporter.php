@@ -76,8 +76,14 @@ class CustomerImporter
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $fleetbaseCustomers
      */
-    public function import(SyncLedger $ledger, array $connection, array $fleetbaseCustomers, bool $enabled, int $pageSize = self::MAX_PAGE_SIZE, ?int $deadline = null): Batch
-    {
+    public function import(
+        SyncLedger $ledger,
+        array $connection,
+        array $fleetbaseCustomers,
+        bool $enabled,
+        int $pageSize = self::MAX_PAGE_SIZE,
+        ?int $deadline = null,
+    ): Batch {
         $batch = Batch::forCompany((string) $connection['company_uuid'], 'import', 'finished', 'inbound', null, time());
 
         if ($enabled === false) {
@@ -195,8 +201,16 @@ class CustomerImporter
      * @param array<int, mixed>                $page
      * @param array<int, array<string, mixed>> $fleetbaseCustomers
      */
-    private function importFetchedPage(SyncLedger $ledger, array &$connection, array $page, Batch $batch, array &$fleetbaseCustomers, int $start, int $pageSize, ?int $deadline): ?int
-    {
+    private function importFetchedPage(
+        SyncLedger $ledger,
+        array &$connection,
+        array $page,
+        Batch $batch,
+        array &$fleetbaseCustomers,
+        int $start,
+        int $pageSize,
+        ?int $deadline,
+    ): ?int {
         $failedAt = $this->tallyImportedPage($ledger, $connection, $page, $batch, $fleetbaseCustomers);
         if ($failedAt !== null) {
             $next = $start + $failedAt;
@@ -228,8 +242,13 @@ class CustomerImporter
      * @param array<int, mixed>                $page
      * @param array<int, array<string, mixed>> $fleetbaseCustomers
      */
-    private function tallyImportedPage(SyncLedger $ledger, array $connection, array $page, Batch $batch, array &$fleetbaseCustomers): ?int
-    {
+    private function tallyImportedPage(
+        SyncLedger $ledger,
+        array $connection,
+        array $page,
+        Batch $batch,
+        array &$fleetbaseCustomers,
+    ): ?int {
         $failedAt = null;
         $position = 0;
         foreach ($page as $remote) {
