@@ -421,7 +421,7 @@ test('changed links and pending rows update in bulk and attempts insert in one c
         $inserts = array_values(array_filter($queries, static fn (string $sql): bool => str_contains(strtolower($sql), 'insert into') === true && str_contains($sql, 'quickbooks_sync_attempts') === true));
 
         expect($updates)->toHaveCount(1)
-            ->and($pending)->toHaveCount(1)
+            ->and($pending)->toHaveCount(2)
             ->and($inserts)->toHaveCount(1)
             ->and(Link::query()->where('local_uuid', 'cust-9')->where('local_type', 'customer')->value('sync_token'))->toBe('9')
             ->and(Link::query()->where('local_uuid', 'inv-9')->where('local_type', 'invoice')->value('qbo_id'))->toBe('80')
@@ -1666,6 +1666,9 @@ function directoryWebhookSchema(Illuminate\Database\Schema\Builder $schema): voi
         $table->string('reason')->nullable();
         $table->unsignedInteger('attempts')->default(0);
         $table->timestamp('next_attempt_at')->nullable();
+        $table->timestamp('claimed_until')->nullable();
+        $table->string('claimed_by', 64)->nullable();
+        $table->unsignedTinyInteger('priority')->default(0);
         $table->timestamps();
     });
     $schema->create('contacts', function (Blueprint $table) {

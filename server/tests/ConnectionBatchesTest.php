@@ -479,6 +479,9 @@ test('connecting one organization leaves the other organization connection in pl
         $table->char('local_uuid', 36);
         $table->string('reason')->nullable();
         $table->string('status')->default('pending');
+        $table->timestamp('claimed_until')->nullable();
+        $table->string('claimed_by', 64)->nullable();
+        $table->unsignedTinyInteger('priority')->default(0);
         $table->unsignedInteger('attempts')->default(0);
         $table->timestamp('next_attempt_at')->nullable();
         $table->timestamps();

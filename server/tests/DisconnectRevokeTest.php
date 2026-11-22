@@ -68,6 +68,9 @@ function revokeWithDatabase(callable $work): void
         $table->string('status')->default('pending');
         $table->unsignedInteger('attempts')->default(0);
         $table->timestamp('next_attempt_at')->nullable();
+        $table->timestamp('claimed_until')->nullable();
+        $table->string('claimed_by', 64)->nullable();
+        $table->unsignedTinyInteger('priority')->default(0);
         $table->timestamps();
     });
     $schema->create('quickbooks_links', function (Blueprint $table) {

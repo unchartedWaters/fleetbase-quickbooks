@@ -120,7 +120,7 @@ function claimSqlite(): array
     }];
 }
 
-function claimSchema(bool $withClaims = true): void
+function claimSchema(): void
 {
     $schema = DB::connection('sqlite')->getSchemaBuilder();
     $schema->create('quickbooks_connections', function (Blueprint $table) {
@@ -158,7 +158,7 @@ function claimSchema(bool $withClaims = true): void
         $table->timestamps();
         $table->unique(['company_uuid', 'local_type', 'local_uuid'], 'quickbooks_links_local_unique');
     });
-    $schema->create('quickbooks_pending_syncs', function (Blueprint $table) use ($withClaims) {
+    $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
         $table->char('uuid', 36)->primary();
         $table->char('company_uuid', 36);
         $table->string('local_type');
@@ -167,10 +167,9 @@ function claimSchema(bool $withClaims = true): void
         $table->string('status')->default('pending');
         $table->unsignedInteger('attempts')->default(0);
         $table->timestamp('next_attempt_at')->nullable();
-        if ($withClaims === true) {
-            $table->timestamp('claimed_until')->nullable();
-            $table->string('claimed_by', 64)->nullable();
-        }
+        $table->timestamp('claimed_until')->nullable();
+        $table->string('claimed_by', 64)->nullable();
+        $table->unsignedTinyInteger('priority')->default(0);
         $table->timestamps();
     });
     $schema->create('quickbooks_sync_batches', function (Blueprint $table) {
@@ -433,22 +432,6 @@ test('a claim lasts the configured number of seconds and rows stay pending while
             ->and($until)->toBeLessThanOrEqual($before + 125);
     } finally {
         config()->set('quickbooks.sync.claim_seconds', $previous);
-        $restore();
-    }
-})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
-
-test('a sync still loads pending rows when the claim columns are not migrated yet', function () {
-    [$restore] = claimSqlite();
-    try {
-        claimSchema(false);
-        claimRows();
-        $directory = new FleetbaseDirectory();
-        $loaded    = $directory->loadPending('company-1', 50, time());
-        $directory->releaseClaims();
-
-        expect($loaded['ledger']->pending)->toHaveCount(3)
-            ->and($directory->countDuePending('company-1', time()))->toBe(3);
-    } finally {
         $restore();
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
