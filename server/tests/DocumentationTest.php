@@ -168,7 +168,12 @@ test('the link check reports a missing file, heading or reference', function () 
 });
 
 test('the third-party license list matches composer.lock', function () {
-    $script = escapeshellarg(DocsSource::path('scripts/third-party-licenses.php'));
+    $listing = (static function (): string {
+        ob_start();
+        require DocsSource::path('scripts/third-party-licenses.php');
 
-    expect(shell_exec(PHP_BINARY . ' ' . $script))->toBe(DocsSource::text('THIRD-PARTY-LICENSES.md'));
+        return (string) ob_get_clean();
+    })();
+
+    expect($listing)->toBe(DocsSource::text('THIRD-PARTY-LICENSES.md'));
 });
