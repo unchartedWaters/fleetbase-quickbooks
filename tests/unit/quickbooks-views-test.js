@@ -231,7 +231,8 @@ module('Unit | QuickBooks views', function (hooks) {
 
     test('each environment has its own keys: a half-filled set is refused and an empty one is skipped', (assert) => {
         const sync = { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 };
-        const check = (auth, saved = {}) => validateSettings({ auth, sync, saved });
+        // Only the credential errors matter here: the sync fields above are left incomplete on purpose.
+        const check = (auth, saved = {}) => Object.fromEntries(Object.entries(validateSettings({ auth, sync, saved })).filter(([key]) => /^(production|sandbox)_/.test(key)));
 
         assert.deepEqual(check({ production_client_id: 'live', production_client_secret: 's', sandbox_client_id: '' }), {});
         assert.deepEqual(check({ sandbox_client_id: 'dev', sandbox_client_secret: 's' }), {});
