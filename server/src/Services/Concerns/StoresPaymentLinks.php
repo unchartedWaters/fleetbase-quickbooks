@@ -18,13 +18,21 @@ trait StoresPaymentLinks
      *
      * @return array<string, string>
      */
-    private function missingPaymentLinks(SyncLedger $ledger, array $connection, string $invoiceUuid, array $payments): array
-    {
+    private function missingPaymentLinks(
+        SyncLedger $ledger,
+        array $connection,
+        string $invoiceUuid,
+        array $payments,
+    ): array {
         $missing = [];
         foreach ($this->paymentLinkRows($ledger, $connection) as $link) {
             $remoteId = trim((string) ($link['qbo_id'] ?? ''));
             $local    = (string) ($link['local_uuid'] ?? '');
-            if ($remoteId === '' || isset($payments[$remoteId]) === true || ($local !== $invoiceUuid && $local !== $remoteId)) {
+            if (
+                $remoteId === ''
+                || isset($payments[$remoteId]) === true
+                || ($local !== $invoiceUuid && $local !== $remoteId)
+            ) {
                 continue;
             }
             $missing[$remoteId] = $local;
@@ -42,8 +50,14 @@ trait StoresPaymentLinks
      * @param array<string, mixed>      $remote
      * @param array<string, mixed>|null $remoteInvoice
      */
-    private function storePaymentLink(SyncLedger $ledger, array $connection, string $invoiceUuid, string $invoiceId, array $remote, ?array $remoteInvoice = null): void
-    {
+    private function storePaymentLink(
+        SyncLedger $ledger,
+        array $connection,
+        string $invoiceUuid,
+        string $invoiceId,
+        array $remote,
+        ?array $remoteInvoice = null,
+    ): void {
         $paymentId = trim((string) ($remote['Id'] ?? ''));
         if ($paymentId === '') {
             return;
@@ -55,9 +69,26 @@ trait StoresPaymentLinks
         $legacyId       = is_array($legacy) === true ? trim((string) ($legacy['qbo_id'] ?? '')) : '';
         $rediscoverable = $this->paymentRediscoverable($remote, $invoiceId, $remoteInvoice);
         $byPayment      = $this->storeByPaymentId($rediscoverable, $legacyId, $paymentId);
-        $attributes     = $this->paymentLinkAttributes($ledger, $connection, $invoiceUuid, $paymentId, $remote, $byPayment, $rediscoverable, $legacyId);
+        $attributes     = $this->paymentLinkAttributes(
+            $ledger,
+            $connection,
+            $invoiceUuid,
+            $paymentId,
+            $remote,
+            $byPayment,
+            $rediscoverable,
+            $legacyId
+        );
         $attributes     = $this->withInvoiceToken($ledger, $attributes, $invoiceUuid, $legacy, $remote);
-        $action         = $this->paymentLinkAction($ledger, $company, $realm, $paymentId, $byPayment, $legacy, $legacyId);
+        $action         = $this->paymentLinkAction(
+            $ledger,
+            $company,
+            $realm,
+            $paymentId,
+            $byPayment,
+            $legacy,
+            $legacyId
+        );
         if ($action === 'rekey') {
             $this->rekeyPaymentLink($ledger, $company, $realm, $invoiceUuid, $attributes);
 
@@ -90,7 +121,11 @@ trait StoresPaymentLinks
         foreach ($payments as $remote) {
             $paymentId   = trim((string) ($remote['Id'] ?? ''));
             $link        = $paymentId === '' ? null : $ledger->link($company, $realm, 'payment', $paymentId);
-            if ($link === null && is_array($legacy) === true && trim((string) ($legacy['qbo_id'] ?? '')) === $paymentId) {
+            if (
+                $link === null
+                && is_array($legacy) === true
+                && trim((string) ($legacy['qbo_id'] ?? '')) === $paymentId
+            ) {
                 $link = $legacy;
             }
             if (QuickBooksChanges::since(PaymentTokens::forInvoice($link, $invoiceUuid), $remote) === true) {
@@ -171,8 +206,15 @@ trait StoresPaymentLinks
     /**
      * @param array<string, mixed>|null $legacy
      */
-    private function paymentLinkAction(SyncLedger $ledger, string $company, string $realm, string $paymentId, bool $byPayment, ?array $legacy, string $legacyId): string
-    {
+    private function paymentLinkAction(
+        SyncLedger $ledger,
+        string $company,
+        string $realm,
+        string $paymentId,
+        bool $byPayment,
+        ?array $legacy,
+        string $legacyId,
+    ): string {
         if ($byPayment === false || is_array($legacy) === false || $legacyId !== $paymentId) {
             return 'keep';
         }
@@ -192,8 +234,16 @@ trait StoresPaymentLinks
      *
      * @return array<string, mixed>
      */
-    private function paymentLinkAttributes(SyncLedger $ledger, array $connection, string $invoiceUuid, string $paymentId, array $remote, bool $byPayment, bool $rediscoverable, string $legacyId): array
-    {
+    private function paymentLinkAttributes(
+        SyncLedger $ledger,
+        array $connection,
+        string $invoiceUuid,
+        string $paymentId,
+        array $remote,
+        bool $byPayment,
+        bool $rediscoverable,
+        string $legacyId,
+    ): array {
         $company    = (string) $connection['company_uuid'];
         $realm      = (string) $connection['realm_id'];
         $localUuid  = $byPayment === true ? $paymentId : $invoiceUuid;
@@ -271,7 +321,12 @@ trait StoresPaymentLinks
             }
             $invoiceUuid = trim((string) ($link['qbo_id'] ?? ''));
             $paymentId   = trim((string) ($link['local_uuid'] ?? ''));
-            if ($paymentId === '' || $invoiceUuid === '' || $paymentId === $invoiceUuid || isset($wanted[$invoiceUuid]) === false) {
+            if (
+                $paymentId === ''
+                || $invoiceUuid === ''
+                || $paymentId === $invoiceUuid
+                || isset($wanted[$invoiceUuid]) === false
+            ) {
                 continue;
             }
             $ids[$paymentId] = true;
@@ -309,8 +364,13 @@ trait StoresPaymentLinks
     /**
      * @param array<string, mixed> $attributes
      */
-    private function rekeyPaymentLink(SyncLedger $ledger, string $company, string $realm, string $fromUuid, array $attributes): void
-    {
+    private function rekeyPaymentLink(
+        SyncLedger $ledger,
+        string $company,
+        string $realm,
+        string $fromUuid,
+        array $attributes,
+    ): void {
         foreach ($ledger->links as $index => $link) {
             if (is_array($link) === false || $this->samePaymentLink($link, $company, $realm, $fromUuid) === false) {
                 continue;

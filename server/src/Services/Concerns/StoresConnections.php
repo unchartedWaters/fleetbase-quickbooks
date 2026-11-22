@@ -233,8 +233,12 @@ trait StoresConnections
      *
      * @return array<string, mixed>
      */
-    public static function reauthColumns(array $connection, array $columns, ?string $storedRefresh, ?string $storedAccess): array
-    {
+    public static function reauthColumns(
+        array $connection,
+        array $columns,
+        ?string $storedRefresh,
+        ?string $storedAccess,
+    ): array {
         if (empty($connection['needs_reauth']) === true) {
             return $columns;
         }
@@ -309,7 +313,10 @@ trait StoresConnections
         // written; another organization's row on the same realm is never used.
         $existing = (new Connection())->newQuery()->where('company_uuid', $companyUuid)->first();
         if ($existing instanceof Connection === false) {
-            SafeLog::debug('QuickBooks connection update skipped: the company has no connection.', ['company_uuid' => $companyUuid]);
+            SafeLog::debug(
+                'QuickBooks connection update skipped: the company has no connection.',
+                ['company_uuid' => $companyUuid]
+            );
 
             return;
         }
@@ -353,7 +360,10 @@ trait StoresConnections
             return;
         }
 
-        Notification::send($recipients, new QuickbooksNeedsReauth($companyUuid, (string) ($connection['realm_id'] ?? '')));
+        Notification::send(
+            $recipients,
+            new QuickbooksNeedsReauth($companyUuid, (string) ($connection['realm_id'] ?? ''))
+        );
         Cache::put($cacheKey, true, 3600);
     }
 

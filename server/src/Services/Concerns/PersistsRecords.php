@@ -186,7 +186,8 @@ trait PersistsRecords
             return;
         }
         $updates['updated_at'] = Carbon::now()->toDateTimeString();
-        // The invoice model eager-loads customer, items, template, and order. A table update writes the integers as stored.
+        // The invoice model eager-loads customer, items, template, and order.
+        // A table update writes the integers as stored.
         $this->invoiceTable($class, $companyUuid, $uuid)->update($updates);
     }
 
@@ -199,7 +200,8 @@ trait PersistsRecords
     private function invoiceColumnUpdates(array $invoice, ?array $loaded): array
     {
         $updates = [];
-        foreach (self::changedColumns($invoice, $loaded, ['number', 'notes', 'date', 'due_date', 'customer_uuid', 'currency']) as $field => $value) {
+        $fields  = ['number', 'notes', 'date', 'due_date', 'customer_uuid', 'currency'];
+        foreach (self::changedColumns($invoice, $loaded, $fields) as $field => $value) {
             if ($value === '' || $value === null) {
                 continue;
             }
@@ -216,14 +218,18 @@ trait PersistsRecords
      *
      * @return array<string, mixed>
      */
-    private function applyQuickBooksInvoiceReplacement(array $invoice, ?array $loaded, string $uuid, array $updates): array
-    {
+    private function applyQuickBooksInvoiceReplacement(
+        array $invoice,
+        ?array $loaded,
+        string $uuid,
+        array $updates,
+    ): array {
         $paid = array_key_exists('amount_paid', $invoice) === true
             ? (int) $invoice['amount_paid']
             : (int) (is_array($loaded) === true ? ($loaded['amount_paid'] ?? 0) : 0);
         $amounts = self::invoiceAmounts((int) ($invoice['total'] ?? 0), (int) ($invoice['tax'] ?? 0), $paid);
-        foreach (['tax' => 'tax', 'total_amount' => 'total_amount', 'subtotal' => 'subtotal', 'balance' => 'balance'] as $column => $key) {
-            $updates[$column] = $amounts[$key];
+        foreach (['tax', 'total_amount', 'subtotal', 'balance'] as $column) {
+            $updates[$column] = $amounts[$column];
         }
         if (empty($invoice['status']) === false) {
             $updates['status'] = (string) $invoice['status'];
@@ -276,8 +282,13 @@ trait PersistsRecords
      * @param array<string, mixed>      $invoice
      * @param array<string, mixed>|null $loaded
      */
-    private function storedInvoiceAmount(array $updates, array $invoice, ?array $loaded, string $updateKey, string $invoiceKey): int
-    {
+    private function storedInvoiceAmount(
+        array $updates,
+        array $invoice,
+        ?array $loaded,
+        string $updateKey,
+        string $invoiceKey,
+    ): int {
         if (array_key_exists($updateKey, $updates) === true) {
             return (int) $updates[$updateKey];
         }
@@ -305,17 +316,20 @@ trait PersistsRecords
             if (empty($wallet['uuid']) === true) {
                 continue;
             }
-            $loaded = $this->loaded['wallets'][(string) $wallet['uuid']] ?? null;
-            if (self::changedColumns($wallet, $loaded, ['name', 'description', 'currency', 'status', 'meta']) === [] && is_array($loaded) === true) {
+            $loaded  = $this->loaded['wallets'][(string) $wallet['uuid']] ?? null;
+            $changes = self::changedColumns($wallet, $loaded, ['name', 'description', 'currency', 'status', 'meta']);
+            if ($changes === [] && is_array($loaded) === true) {
                 continue;
             }
             /** @var Model|null $model */
-            $model = $class::query()->where('uuid', $wallet['uuid'])->where('company_uuid', $wallet['company_uuid'] ?? '')->first();
+            $model = $class::query()
+                ->where('uuid', $wallet['uuid'])
+                ->where('company_uuid', $wallet['company_uuid'] ?? '')
+                ->first();
             if ($model === null) {
                 continue;
             }
-            $loaded = $this->loaded['wallets'][(string) $wallet['uuid']] ?? null;
-            foreach (self::changedColumns($wallet, $loaded, ['name', 'description', 'currency', 'status', 'meta']) as $field => $value) {
+            foreach ($changes as $field => $value) {
                 if (in_array($field, ['currency', 'status'], true) === true && ($value === '' || $value === null)) {
                     continue;
                 }
@@ -333,12 +347,19 @@ trait PersistsRecords
      */
     private function invoiceNeedsWrite(array $invoice, ?array $loaded): bool
     {
-        if (empty($invoice['replace_from_quickbooks']) === false || empty($invoice['payment_from_quickbooks']) === false) {
+        if (
+            empty($invoice['replace_from_quickbooks']) === false
+            || empty($invoice['payment_from_quickbooks']) === false
+        ) {
             return true;
         }
 
-        return self::changedColumns($invoice, $loaded, ['number', 'notes', 'date', 'due_date', 'status', 'amount_paid', 'paid_at', 'tax', 'total', 'customer_uuid', 'currency']) !== []
-            || is_array($loaded) === false;
+        $fields = [
+            'number', 'notes', 'date', 'due_date', 'status', 'amount_paid',
+            'paid_at', 'tax', 'total', 'customer_uuid', 'currency',
+        ];
+
+        return self::changedColumns($invoice, $loaded, $fields) !== [] || is_array($loaded) === false;
     }
 
     /**

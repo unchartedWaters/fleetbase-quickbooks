@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Services\Concerns;
 
 use Fleetbase\Quickbooks\Models\Link;
+use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 
@@ -10,6 +11,8 @@ use Illuminate\Support\Carbon;
  * FleetbaseDirectory's lookups for QuickBooks deletes and merges: the links a delete matches,
  * and the local record a merged QuickBooks record now belongs to. Split from
  * AppliesRemoteDeletes to keep each file readable.
+ *
+ * @phpstan-import-type RemoteDelete from FleetbaseDirectory
  */
 trait FindsDeletedLinks
 {
@@ -172,8 +175,13 @@ trait FindsDeletedLinks
     /**
      * @return array<int, string>
      */
-    private function linkedLocalUuids(string $companyUuid, string $realmId, string $localType, string $quickbooksId, ?string $localUuid): array
-    {
+    private function linkedLocalUuids(
+        string $companyUuid,
+        string $realmId,
+        string $localType,
+        string $quickbooksId,
+        ?string $localUuid,
+    ): array {
         if ($quickbooksId === '' && ($localUuid === null || $localUuid === '')) {
             return [];
         }
@@ -213,10 +221,15 @@ trait FindsDeletedLinks
     }
 
     /**
-     * @param array<int, array{realm_id?: string, local_type?: string, qbo_id?: string, local_uuid?: string|null, invoice_uuids?: array<int, string>}> $deletions
+     * @param array<int, RemoteDelete> $deletions
      */
-    private function deletionMatchesLink(array $deletions, string $type, string $realm, string $qbo, string $local): bool
-    {
+    private function deletionMatchesLink(
+        array $deletions,
+        string $type,
+        string $realm,
+        string $qbo,
+        string $local,
+    ): bool {
         foreach ($deletions as $deletion) {
             if (is_array($deletion) === false || (string) ($deletion['local_type'] ?? '') !== $type) {
                 continue;
@@ -239,7 +252,7 @@ trait FindsDeletedLinks
     }
 
     /**
-     * @param array<int, array{realm_id?: string, local_type?: string, qbo_id?: string, local_uuid?: string|null, invoice_uuids?: array<int, string>}> $deletions
+     * @param array<int, RemoteDelete> $deletions
      *
      * @return array<int, array<string, mixed>>
      */
@@ -266,7 +279,10 @@ trait FindsDeletedLinks
     /**
      * @param array<int, array<string, mixed>> $deletions
      *
-     * @return array{0: array<int, array{type: string, realm: string, qbo: string, local: string}>, 1: array<int, string>}
+     * @return array{
+     *     0: array<int, array{type: string, realm: string, qbo: string, local: string}>,
+     *     1: array<int, string>
+     * }
      */
     private function deletionLookup(array $deletions): array
     {
@@ -312,8 +328,11 @@ trait FindsDeletedLinks
      * @param array<int, array{type: string, realm: string, qbo: string, local: string}> $clauses
      * @param array<int, string>                                                         $paymentIds
      */
-    private function constrainDeletionScope(\Illuminate\Database\Eloquent\Builder $scope, array $clauses, array $paymentIds): void
-    {
+    private function constrainDeletionScope(
+        \Illuminate\Database\Eloquent\Builder $scope,
+        array $clauses,
+        array $paymentIds,
+    ): void {
         $started = false;
         foreach ($clauses as $clause) {
             $method = $started === true ? 'orWhere' : 'where';

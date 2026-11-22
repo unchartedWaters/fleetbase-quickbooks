@@ -21,6 +21,7 @@ use Fleetbase\Quickbooks\Services\Concerns\StoresLinks;
 use Fleetbase\Quickbooks\Services\Concerns\StoresPaymentInvoiceRows;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Fleetbase\Quickbooks\Support\Translation;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -30,6 +31,18 @@ use Illuminate\Support\Str;
 /**
  * Loads and saves the SyncLedger through Eloquent. The engine compares times as
  * unix seconds, so datetime columns become ints on load and Carbon on save.
+ *
+ * @phpstan-type RemoteDelete array{
+ *     realm_id?: string, local_type?: string, qbo_id?: string, local_uuid?: string|null,
+ *     invoice_uuids?: array<int, string>, invoices_from_payment?: bool
+ * }
+ * @phpstan-type LoadedCompany array{
+ *     ledger: SyncLedger, connection: array<string, mixed>, customers: array<int, array<string, mixed>>
+ * }
+ * @phpstan-type LinkWrites array{
+ *     releases: array<int, array{link: array<string, mixed>, keep: string}>,
+ *     updates: array<int, array{uuid: string, columns: array<string, mixed>}>
+ * }
  */
 class FleetbaseDirectory
 {
@@ -140,9 +153,23 @@ class FleetbaseDirectory
     /**
      * Rows as loadLedger() read them, so save() writes only what the engine changed.
      *
-     * @var array{connections: array<string, array<string, mixed>>, pending: array<string, array<string, mixed>>, customers: array<string, array<string, mixed>>, invoices: array<string, array<string, mixed>>, wallets: array<string, array<string, mixed>>, links: array<string, array<string, mixed>>}
+     * @var array{
+     *     connections: array<string, array<string, mixed>>,
+     *     pending: array<string, array<string, mixed>>,
+     *     customers: array<string, array<string, mixed>>,
+     *     invoices: array<string, array<string, mixed>>,
+     *     wallets: array<string, array<string, mixed>>,
+     *     links: array<string, array<string, mixed>>
+     * }
      */
-    private array $loaded = ['connections' => [], 'pending' => [], 'customers' => [], 'invoices' => [], 'wallets' => [], 'links' => []];
+    private array $loaded = [
+        'connections' => [],
+        'pending'     => [],
+        'customers'   => [],
+        'invoices'    => [],
+        'wallets'     => [],
+        'links'       => [],
+    ];
 
     /**
      * Item meta as read, per invoice, so a stored QuickBooks line id is merged into it.
@@ -162,7 +189,7 @@ class FleetbaseDirectory
     private array $paymentRemoved = [];
 
     /**
-     * @return array{ledger: SyncLedger, connection: array<string, mixed>, customers: array<int, array<string, mixed>>}|null
+     * @return LoadedCompany|null
      */
     public function load(string $companyUuid): ?array
     {
@@ -186,7 +213,7 @@ class FleetbaseDirectory
      * Scheduled and Sync now load only the due pending rows, up to batch_size,
      * plus the customers, invoices, wallets, and links those rows need.
      *
-     * @return array{ledger: SyncLedger, connection: array<string, mixed>, customers: array<int, array<string, mixed>>}|null
+     * @return LoadedCompany|null
      */
     public function loadPending(string $companyUuid, int $limit, int $now): ?array
     {
@@ -218,7 +245,7 @@ class FleetbaseDirectory
      *
      * @param array<int, array{entity?: mixed, id?: mixed, operation?: mixed}> $entities
      *
-     * @return array{ledger: SyncLedger, connection: array<string, mixed>, customers: array<int, array<string, mixed>>}|null
+     * @return LoadedCompany|null
      */
     public function loadLinked(string $companyUuid, array $entities): ?array
     {
@@ -335,7 +362,7 @@ class FleetbaseDirectory
         $this->loaded['customers'] = $ledger->customers;
         $this->loaded['links']     = [];
         foreach ($ledger->links as $link) {
-            $key                         = (string) ($link['company_uuid'] ?? '') . '|' . (string) ($link['local_type'] ?? '') . '|' . (string) ($link['local_uuid'] ?? '');
+            $key                         = self::linkKey($link);
             $this->loaded['links'][$key] = $link;
         }
 
@@ -673,19 +700,34 @@ class FleetbaseDirectory
             if ($number === '' || $number === $kept) {
                 continue;
             }
-            if (isset($claimed[$number]) === false && $model->getConnection()->table($model->getTable())->where('number', $number)->where('uuid', '!=', $uuid)->exists() === false) {
+            $taken = isset($claimed[$number]) === true || $model->getConnection()->table($model->getTable())
+                ->where('number', $number)
+                ->where('uuid', '!=', $uuid)
+                ->exists() === true;
+            if ($taken === false) {
                 $claimed[$number] = $uuid;
                 continue;
             }
 
             $ledger->invoices[$key]['number'] = $kept;
             $ledger->rememberInvoice($uuid, $ledger->invoices[$key]);
-            $this->noteInvoiceNumberCollision($ledger, (string) ($invoice['company_uuid'] ?? ''), $uuid, $number, $kept);
+            $this->noteInvoiceNumberCollision(
+                $ledger,
+                (string) ($invoice['company_uuid'] ?? ''),
+                $uuid,
+                $number,
+                $kept
+            );
         }
     }
 
-    private function noteInvoiceNumberCollision(SyncLedger $ledger, string $companyUuid, string $uuid, string $number, string $kept): void
-    {
+    private function noteInvoiceNumberCollision(
+        SyncLedger $ledger,
+        string $companyUuid,
+        string $uuid,
+        string $number,
+        string $kept,
+    ): void {
         $note = Translation::encode('quickbooks.messages.invoice-number-taken', ['number' => $number]);
         if ($kept !== '') {
             $keeps = Translation::encode('quickbooks.messages.invoice-number-kept', ['number' => $kept]);
@@ -693,8 +735,11 @@ class FleetbaseDirectory
         }
         $noted = false;
         foreach ($ledger->attempts as $index => $attempt) {
-            if (empty($attempt['uuid']) === false
-                || (string) ($attempt['local_type'] ?? '') !== 'invoice' || (string) ($attempt['local_uuid'] ?? '') !== $uuid) {
+            if (
+                empty($attempt['uuid']) === false
+                || (string) ($attempt['local_type'] ?? '') !== 'invoice'
+                || (string) ($attempt['local_uuid'] ?? '') !== $uuid
+            ) {
                 continue;
             }
             $existing                          = trim((string) ($attempt['error'] ?? ''));
@@ -735,10 +780,9 @@ class FleetbaseDirectory
         $skipped = [];
         foreach (array_keys($companyUuids) as $companyUuid) {
             $ledgerConnection = $ledger->connections[$companyUuid] ?? null;
-            if (self::connectionStillCurrent(
-                $this->connection($companyUuid),
-                is_array($ledgerConnection) === true ? $ledgerConnection : null
-            ) === false) {
+            $stored           = is_array($ledgerConnection) === true ? $ledgerConnection : null;
+            $current          = self::connectionStillCurrent($this->connection($companyUuid), $stored);
+            if ($current === false) {
                 $skipped[$companyUuid] = true;
             }
         }
@@ -767,7 +811,12 @@ class FleetbaseDirectory
         if ($connection !== null) {
             $ledger->connections[$companyUuid] = $connection;
         }
-        [$customerIds, $invoiceIds, $walletIds, $flaggedInvoices] = $this->collectPendingIds($ledger, $companyUuid, $pendingLimit, $now);
+        [$customerIds, $invoiceIds, $walletIds, $flaggedInvoices] = $this->collectPendingIds(
+            $ledger,
+            $companyUuid,
+            $pendingLimit,
+            $now
+        );
         if ($pendingLimit === null) {
             $this->loadFullLedger($ledger, $companyUuid, $flaggedInvoices, $customerIds, $walletIds);
         } else {
@@ -887,8 +936,14 @@ class FleetbaseDirectory
      * @param array<int, string> $walletIds
      * @param array<int, string> $flaggedInvoices
      */
-    private function loadLimitedLedger(SyncLedger $ledger, string $companyUuid, array $customerIds, array $invoiceIds, array $walletIds, array $flaggedInvoices): void
-    {
+    private function loadLimitedLedger(
+        SyncLedger $ledger,
+        string $companyUuid,
+        array $customerIds,
+        array $invoiceIds,
+        array $walletIds,
+        array $flaggedInvoices,
+    ): void {
         $ledger->invoices = $this->readInvoices($companyUuid, $invoiceIds, $flaggedInvoices);
         $flaggedCustomers = $customerIds;
         foreach ($ledger->invoices as $invoice) {
@@ -912,7 +967,10 @@ class FleetbaseDirectory
      */
     private function loadPendingRows(string $companyUuid, ?int $pendingLimit, ?int $now): iterable
     {
-        $pendingQuery = (new PendingSync())->newQuery()->where('company_uuid', $companyUuid)->where('status', 'pending');
+        $pendingQuery = (new PendingSync())->newQuery()->where('company_uuid', $companyUuid)->where(
+            'status',
+            'pending'
+        );
         if ($pendingLimit === null) {
             return $pendingQuery->get();
         }
@@ -959,6 +1017,14 @@ class FleetbaseDirectory
     }
 
     /**
+     * A batch time in unix seconds as the batch table stores it, or null when unset.
+     */
+    private static function batchTime(mixed $time): ?string
+    {
+        return $time === null ? null : date('Y-m-d H:i:s', (int) $time);
+    }
+
+    /**
      * @param array<string, mixed> $batch
      *
      * @return array<string, mixed>
@@ -978,8 +1044,8 @@ class FleetbaseDirectory
             'failed_count'   => $batch['failed'] ?? 0,
             'linked_count'   => $batch['linked'] ?? 0,
             'skipped_count'  => $batch['skipped'] ?? 0,
-            'started_at'     => isset($batch['started_at']) === true ? date('Y-m-d H:i:s', (int) $batch['started_at']) : null,
-            'finished_at'    => isset($batch['finished_at']) === true ? date('Y-m-d H:i:s', (int) $batch['finished_at']) : null,
+            'started_at'     => self::batchTime($batch['started_at'] ?? null),
+            'finished_at'    => self::batchTime($batch['finished_at'] ?? null),
         ];
     }
 
@@ -1010,7 +1076,10 @@ class FleetbaseDirectory
         $ids          = [];
         $invoiceClass = 'Fleetbase\\Ledger\\Models\\Invoice';
         if (class_exists($invoiceClass) === true) {
-            $query = $invoiceClass::query()->where('company_uuid', $companyUuid)->where('status', '!=', 'draft')->orderBy('uuid');
+            $query = $invoiceClass::query()
+                ->where('company_uuid', $companyUuid)
+                ->where('status', '!=', 'draft')
+                ->orderBy('uuid');
             if ($afterUuid !== '') {
                 $query->where('uuid', '>', $afterUuid);
             }
@@ -1019,7 +1088,10 @@ class FleetbaseDirectory
             }
         }
 
-        $linkQuery = (new Link())->newQuery()->where('company_uuid', $companyUuid)->where('local_type', 'invoice')->orderBy('local_uuid');
+        $linkQuery = (new Link())->newQuery()
+            ->where('company_uuid', $companyUuid)
+            ->where('local_type', 'invoice')
+            ->orderBy('local_uuid');
         if ($afterUuid !== '') {
             $linkQuery->where('local_uuid', '>', $afterUuid);
         }
@@ -1145,13 +1217,19 @@ class FleetbaseDirectory
      * @param array<int, string> $invoiceIds
      * @param array<int, string> $walletIds
      */
-    private function readLinksFor(SyncLedger $ledger, string $companyUuid, array $customerIds, array $invoiceIds, array $walletIds): void
-    {
+    private function readLinksFor(
+        SyncLedger $ledger,
+        string $companyUuid,
+        array $customerIds,
+        array $invoiceIds,
+        array $walletIds,
+    ): void {
         if ($customerIds === [] && $invoiceIds === [] && $walletIds === []) {
             return;
         }
 
-        $query = (new Link())->newQuery()->where('company_uuid', $companyUuid)->where(function ($scope) use ($companyUuid, $customerIds, $invoiceIds, $walletIds): void {
+        $query = (new Link())->newQuery()->where('company_uuid', $companyUuid);
+        $query->where(function ($scope) use ($companyUuid, $customerIds, $invoiceIds, $walletIds): void {
             $started = false;
             if ($customerIds !== []) {
                 $scope->where(function ($inner) use ($customerIds): void {
@@ -1169,21 +1247,7 @@ class FleetbaseDirectory
             if ($invoiceIds !== []) {
                 $method = $started === true ? 'orWhere' : 'where';
                 $scope->{$method}(function ($inner) use ($invoiceIds, $companyUuid): void {
-                    $inner->where(function ($typed) use ($invoiceIds): void {
-                        $typed->whereIn('local_type', ['invoice', 'payment'])->whereIn('local_uuid', $invoiceIds);
-                    })->orWhere(function ($mapped) use ($invoiceIds): void {
-                        // qbo_id holds the Fleetbase invoice on a payment-invoice row.
-                        $mapped->where('local_type', 'payment-invoice')->whereIn('qbo_id', $invoiceIds);
-                    })->orWhere(function ($payments) use ($invoiceIds, $companyUuid): void {
-                        // The payment link itself is stored under the QuickBooks payment id.
-                        $payments->where('local_type', 'payment')->whereIn('local_uuid', function ($sub) use ($invoiceIds, $companyUuid): void {
-                            $sub->select('local_uuid')
-                                ->from((new Link())->getTable())
-                                ->where('company_uuid', $companyUuid)
-                                ->where('local_type', 'payment-invoice')
-                                ->whereIn('qbo_id', $invoiceIds);
-                        });
-                    });
+                    self::scopeInvoiceLinks($inner, $invoiceIds, $companyUuid);
                 });
             }
         });
@@ -1193,6 +1257,32 @@ class FleetbaseDirectory
                 $this->rememberLoadedLink($ledger, $link->toArray());
             }
         }
+    }
+
+    /**
+     * Links of these invoices: their invoice and payment rows, their payment-invoice rows,
+     * and the payment links those rows point at.
+     *
+     * @param array<int, string> $invoiceIds
+     */
+    private static function scopeInvoiceLinks(Builder $inner, array $invoiceIds, string $companyUuid): void
+    {
+        $inner->where(function ($typed) use ($invoiceIds): void {
+            $typed->whereIn('local_type', ['invoice', 'payment'])->whereIn('local_uuid', $invoiceIds);
+        })->orWhere(function ($mapped) use ($invoiceIds): void {
+            // qbo_id holds the Fleetbase invoice on a payment-invoice row.
+            $mapped->where('local_type', 'payment-invoice')->whereIn('qbo_id', $invoiceIds);
+        })->orWhere(function ($payments) use ($invoiceIds, $companyUuid): void {
+            // The payment link itself is stored under the QuickBooks payment id.
+            $payments->where('local_type', 'payment');
+            $payments->whereIn('local_uuid', function ($sub) use ($invoiceIds, $companyUuid): void {
+                $sub->select('local_uuid')
+                    ->from((new Link())->getTable())
+                    ->where('company_uuid', $companyUuid)
+                    ->where('local_type', 'payment-invoice')
+                    ->whereIn('qbo_id', $invoiceIds);
+            });
+        });
     }
 
     private function stampOwnedCompanies(SyncLedger $ledger): void
@@ -1223,8 +1313,12 @@ class FleetbaseDirectory
         }
     }
 
-    private function entityCompanyFor(SyncLedger $ledger, string $localType, string $localUuid, string $fallback): string
-    {
+    private function entityCompanyFor(
+        SyncLedger $ledger,
+        string $localType,
+        string $localUuid,
+        string $fallback,
+    ): string {
         $row = null;
         if ($localType === 'customer') {
             $row = $ledger->customers[$localUuid] ?? null;
@@ -1272,7 +1366,7 @@ class FleetbaseDirectory
      *
      * @param array<int, array{uuid: string, columns: array<string, mixed>}> $rows
      * @param array<int, string>                                             $allowed
-     * @param array{0: string, 1: array<int, mixed>}|null                    $guard   an extra WHERE condition and its bindings
+     * @param array{0: string, 1: array<int, mixed>}|null                    $guard   extra WHERE and its bindings
      */
     private function updateByUuid(Model $model, array $rows, array $allowed, ?array $guard = null): void
     {
@@ -1286,7 +1380,13 @@ class FleetbaseDirectory
 
         $connection = $model->getConnection();
         foreach (array_chunk($rows, 200) as $chunk) {
-            $statement = $this->chunkUpdate($connection->getQueryGrammar(), $model->getTable(), $chunk, $allowed, $guard);
+            $statement = $this->chunkUpdate(
+                $connection->getQueryGrammar(),
+                $model->getTable(),
+                $chunk,
+                $allowed,
+                $guard
+            );
             if ($statement !== null) {
                 $connection->update($statement[0], $statement[1]);
             }
@@ -1303,8 +1403,13 @@ class FleetbaseDirectory
      *
      * @return array{0: string, 1: array<int, mixed>}|null
      */
-    private function chunkUpdate(\Illuminate\Database\Grammar $grammar, string $tableName, array $chunk, array $allowed, ?array $guard): ?array
-    {
+    private function chunkUpdate(
+        \Illuminate\Database\Grammar $grammar,
+        string $tableName,
+        array $chunk,
+        array $allowed,
+        ?array $guard,
+    ): ?array {
         $uuidColumn  = $grammar->wrap('uuid');
         $assignments = [];
         $bindings    = [];
@@ -1318,7 +1423,9 @@ class FleetbaseDirectory
                 $bindings[] = $row['uuid'];
                 $bindings[] = $this->sqlValue($row['columns'][$column]);
             }
-            $assignments[] = $grammar->wrap($column) . ' = CASE ' . $uuidColumn . ' ' . implode(' ', $cases) . ' ELSE ' . $grammar->wrap($column) . ' END';
+            $wrapped       = $grammar->wrap($column);
+            $assignments[] = $wrapped . ' = CASE ' . $uuidColumn . ' ' . implode(' ', $cases)
+                . ' ELSE ' . $wrapped . ' END';
         }
         if ($assignments === []) {
             return null;

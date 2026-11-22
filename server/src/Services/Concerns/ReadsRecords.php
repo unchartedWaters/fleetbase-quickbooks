@@ -12,6 +12,7 @@ use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletingScope;
 
 /**
  * FleetbaseDirectory's reads of Fleetbase records: customers, invoices and their lines, wallets
@@ -196,7 +197,7 @@ trait ReadsRecords
         $query       = (new $class())->newQuery();
         $softDeletes = in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($class), true);
         if ($withTrashed === true && $softDeletes === true) {
-            $query->withoutGlobalScope(\Illuminate\Database\Eloquent\SoftDeletingScope::class);
+            $query->withoutGlobalScope(SoftDeletingScope::class);
         }
 
         return $query->toBase()->where('company_uuid', $companyUuid);
@@ -314,9 +315,9 @@ trait ReadsRecords
         };
         $query = $class::query()->where('company_uuid', $companyUuid)->withOnly(['items' => $withItems]);
         if ($onlyUuids !== null) {
-            $query->withoutGlobalScope(\Illuminate\Database\Eloquent\SoftDeletingScope::class)->whereIn('uuid', $onlyUuids);
+            $query->withoutGlobalScope(SoftDeletingScope::class)->whereIn('uuid', $onlyUuids);
         } elseif ($flaggedUuids !== []) {
-            $query->withoutGlobalScope(\Illuminate\Database\Eloquent\SoftDeletingScope::class)->where(function ($scope) use ($flaggedUuids): void {
+            $query->withoutGlobalScope(SoftDeletingScope::class)->where(function ($scope) use ($flaggedUuids): void {
                 $scope->whereNull('deleted_at')->orWhereIn('uuid', $flaggedUuids);
             });
         }
@@ -665,7 +666,7 @@ trait ReadsRecords
             return $query;
         }
 
-        return $query->withoutGlobalScope(\Illuminate\Database\Eloquent\SoftDeletingScope::class)
+        return $query->withoutGlobalScope(SoftDeletingScope::class)
             ->where(function ($scope) use ($flaggedUuids): void {
                 $scope->whereNull('deleted_at')->orWhereIn('uuid', $flaggedUuids);
             });

@@ -570,8 +570,12 @@ trait SyncsWallets
     {
         $inactive   = array_key_exists('Active', $remote) === true && (bool) $remote['Active'] === false;
         $holdsMoney = (int) ($wallet['balance'] ?? 0) !== 0;
-        if ($inactive === true && $holdsMoney === true && $this->wallets->isActive($wallet) === true
-            && $this->tokenDecides($settings, 'wallet') === true) {
+        if (
+            $inactive === true
+            && $holdsMoney === true
+            && $this->wallets->isActive($wallet) === true
+            && $this->tokenDecides($settings, 'wallet') === true
+        ) {
             unset($remote['Active']);
         }
 

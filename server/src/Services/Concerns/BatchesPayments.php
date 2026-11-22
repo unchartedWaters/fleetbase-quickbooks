@@ -2,12 +2,16 @@
 
 namespace Fleetbase\Quickbooks\Services\Concerns;
 
+use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 
 /**
  * SyncEngine's payment work in block mode: reading every payment a block needs up front,
  * and recording the payment writes it sends in one batch.
+ *
+ * @phpstan-import-type PaymentItem from SyncEngine
+ * @phpstan-import-type PlannedWrite from SyncEngine
  */
 trait BatchesPayments
 {
@@ -31,12 +35,20 @@ trait BatchesPayments
      * Record payment writes, then record each invoice. A failed payment is that invoice's result.
      * A 401 stops the block and leaves this invoice and every invoice after it pending.
      *
-     * @param array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool, planError: string|null}> $finished
-     * @param array<string, mixed>                                                                                                          $batch
-     * @param array<string, mixed>                                                                                                          $settings
+     * @param array<string, PaymentItem> $finished
+     * @param array<string, mixed>       $batch
+     * @param array<string, mixed>       $settings
      */
-    private function settlePaymentBuffer(SyncLedger $ledger, array $connection, array $finished, array &$batch, array $settings, int $now, string $trigger, bool $record): bool
-    {
+    private function settlePaymentBuffer(
+        SyncLedger $ledger,
+        array $connection,
+        array $finished,
+        array &$batch,
+        array $settings,
+        int $now,
+        string $trigger,
+        bool $record,
+    ): bool {
         $queued = $this->queuedPaymentUuids();
         if ($queued === []) {
             $this->writeBuffer = null;
@@ -67,12 +79,12 @@ trait BatchesPayments
     /**
      * The payment batch failed as a whole. A 401 or rate limit stops the block.
      *
-     * @param array<string, mixed>                                                                                                          $connection
-     * @param array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool, planError: string|null}> $finished
-     * @param array<string, true>                                                                                                           $queued
-     * @param array<string, mixed>                                                                                                          $settings
+     * @param array<string, mixed>       $connection
+     * @param array<string, PaymentItem> $finished
+     * @param array<string, true>        $queued
+     * @param array<string, mixed>       $settings
      *
-     * @return array{commit: array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool, planError: string|null}>, stop: bool, rejected: bool}
+     * @return array{commit: array<string, PaymentItem>, stop: bool, rejected: bool}
      */
     private function paymentFlushFailed(
         SyncLedger $ledger,
@@ -91,14 +103,30 @@ trait BatchesPayments
         if ($quickBooks === true && $exception->isRateLimit() === true) {
             $stop = $this->firstQueuedUuid($finished, $queued);
             if ($stop !== null && isset($finished[$stop]) === true) {
-                $finished[$stop] = $this->failedPaymentItem($ledger, $connection, $finished[$stop], $exception, $settings, $now, $error);
+                $finished[$stop] = $this->failedPaymentItem(
+                    $ledger,
+                    $connection,
+                    $finished[$stop],
+                    $exception,
+                    $settings,
+                    $now,
+                    $error
+                );
             }
 
             return ['commit' => $this->finishedThrough($finished, $stop), 'stop' => true, 'rejected' => false];
         }
         foreach (array_keys($queued) as $uuid) {
             if (isset($finished[$uuid]) === true) {
-                $finished[$uuid] = $this->failedPaymentItem($ledger, $connection, $finished[$uuid], $exception, $settings, $now, $error);
+                $finished[$uuid] = $this->failedPaymentItem(
+                    $ledger,
+                    $connection,
+                    $finished[$uuid],
+                    $exception,
+                    $settings,
+                    $now,
+                    $error
+                );
             }
         }
 
@@ -108,12 +136,12 @@ trait BatchesPayments
     /**
      * Apply each payment result to its invoice. A halted result stops the block there.
      *
-     * @param array<string, mixed>                                                                                                          $connection
-     * @param array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool, planError: string|null}> $finished
-     * @param array<string, mixed>                                                                                                          $paymentResults
-     * @param array<string, mixed>                                                                                                          $settings
+     * @param array<string, mixed>       $connection
+     * @param array<string, PaymentItem> $finished
+     * @param array<string, mixed>       $paymentResults
+     * @param array<string, mixed>       $settings
      *
-     * @return array{commit: array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool, planError: string|null}>, stop: bool, rejected: bool}
+     * @return array{commit: array<string, PaymentItem>, stop: bool, rejected: bool}
      */
     private function applyPaymentResults(
         SyncLedger $ledger,
@@ -132,26 +160,34 @@ trait BatchesPayments
             }
             $message = (string) ($result['error'] ?? '');
             $status  = (int) ($result['status'] ?? 0);
-            if (empty($result['halt']) === false) {
-                if ($status === 401) {
-                    return ['commit' => $this->finishedThrough($finished, $uuid, false), 'stop' => true, 'rejected' => true];
-                }
-                $exception       = new QuickBooksException($status, $message);
+            $halted  = empty($result['halt']) === false;
+            if ($halted === true && $status === 401) {
+                $commit = $this->finishedThrough($finished, $uuid, false);
+
+                return ['commit' => $commit, 'stop' => true, 'rejected' => true];
+            }
+            if ($halted === true || empty($result['ok']) === true) {
+                $code            = $halted === true ? $status : (int) ($result['status'] ?? 400);
+                $text            = ($halted === true || $message !== '') ? $message : self::ITEM_REJECTED_MESSAGE;
+                $exception       = new QuickBooksException($code, $text);
                 $error           = $this->batchItemAttemptError($message, $status);
-                $finished[$uuid] = $this->failedPaymentItem($ledger, $connection, $item, $exception, $settings, $now, $error);
+                $finished[$uuid] = $this->failedPaymentItem(
+                    $ledger,
+                    $connection,
+                    $item,
+                    $exception,
+                    $settings,
+                    $now,
+                    $error
+                );
+                if ($halted === false) {
+                    continue;
+                }
                 // The payments before this one were sent: their invoices keep the step they took.
                 $this->rememberInvoicesAfterPayments($ledger, $connection, $paidInvoices, $settings);
+                $commit = $this->finishedThrough($finished, $uuid, true);
 
-                return ['commit' => $this->finishedThrough($finished, $uuid, true), 'stop' => true, 'rejected' => false];
-            }
-            if (empty($result['ok']) === true) {
-                $exception       = new QuickBooksException(
-                    (int) ($result['status'] ?? 400),
-                    $message !== '' ? $message : self::ITEM_REJECTED_MESSAGE
-                );
-                $error           = $this->batchItemAttemptError($message, $status);
-                $finished[$uuid] = $this->failedPaymentItem($ledger, $connection, $item, $exception, $settings, $now, $error);
-                continue;
+                return ['commit' => $commit, 'stop' => true, 'rejected' => false];
             }
             if (is_array($result['body'] ?? null) === true && ($result['body']['Id'] ?? '') !== '') {
                 $paidInvoices[$uuid] = $this->storeSentPayment($ledger, $connection, $uuid, $result['body']);
@@ -170,7 +206,12 @@ trait BatchesPayments
      */
     private function storeSentPayment(SyncLedger $ledger, array $connection, string $uuid, array $payment): string
     {
-        $invoiceLink = $ledger->link((string) $connection['company_uuid'], (string) $connection['realm_id'], 'invoice', $uuid);
+        $invoiceLink = $ledger->link(
+            (string) $connection['company_uuid'],
+            (string) $connection['realm_id'],
+            'invoice',
+            $uuid
+        );
         $invoiceId   = is_array($invoiceLink) === true ? trim((string) ($invoiceLink['qbo_id'] ?? '')) : '';
         $this->storePaymentLink($ledger, $connection, $uuid, $invoiceId, $payment);
 
@@ -180,11 +221,11 @@ trait BatchesPayments
     /**
      * A finished invoice whose payment write failed: its result is the payment's failure.
      *
-     * @param array<string, mixed>                                                                                           $connection
-     * @param array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool, planError: string|null} $item
-     * @param array<string, mixed>                                                                                           $settings
+     * @param array<string, mixed> $connection
+     * @param PaymentItem          $item
+     * @param array<string, mixed> $settings
      *
-     * @return array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool, planError: string|null}
+     * @return PaymentItem
      */
     private function failedPaymentItem(
         SyncLedger $ledger,
@@ -203,10 +244,10 @@ trait BatchesPayments
     }
 
     /**
-     * @param array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool, planError: string|null}> $finished
-     * @param array<string, true>                                                                                                           $queued
+     * @param array<string, PaymentItem> $finished
+     * @param array<string, true>        $queued
      *
-     * @return array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool, planError: string|null}>
+     * @return array<string, PaymentItem>
      */
     private function finishedBeforePayment(array $finished, array $queued): array
     {
@@ -235,7 +276,9 @@ trait BatchesPayments
                 continue;
             }
             $customerUuid = (string) ($invoice['customer_uuid'] ?? '');
-            $customerLink = $customerUuid === '' ? null : $ledger->link($companyUuid, $realm, 'customer', $customerUuid);
+            $customerLink = $customerUuid === ''
+                ? null
+                : $ledger->link($companyUuid, $realm, 'customer', $customerUuid);
             $link         = $ledger->link($companyUuid, $realm, 'invoice', $uuid);
             $customerId   = is_array($customerLink) === true ? trim((string) ($customerLink['qbo_id'] ?? '')) : '';
             $invoiceId    = is_array($link) === true ? trim((string) ($link['qbo_id'] ?? '')) : '';
@@ -262,8 +305,8 @@ trait BatchesPayments
      * A DocNumber match can link an invoice after the block payment prefetch.
      * The invoice is already in memory, so its LinkedTxn ids are loaded once.
      *
-     * @param array<string, mixed>                                                                                  $connection
-     * @param array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool}> $planned
+     * @param array<string, mixed>        $connection
+     * @param array<string, PlannedWrite> $planned
      */
     private function resolveNewlyLinkedPayments(SyncLedger $ledger, array $connection, array $planned): void
     {
@@ -277,7 +320,11 @@ trait BatchesPayments
         $missing = [];
         foreach (array_keys($planned) as $uuid) {
             $invoiceId = $this->linkedQuickBooksId($ledger, $company, $realm, 'invoice', (string) $uuid);
-            if ($invoiceId === '' || isset($known[$invoiceId]) === true || isset($this->blockPayments[$invoiceId]) === true) {
+            if (
+                $invoiceId === ''
+                || isset($known[$invoiceId]) === true
+                || isset($this->blockPayments[$invoiceId]) === true
+            ) {
                 continue;
             }
             $customerUuid = (string) ($ledger->invoices[(string) $uuid]['customer_uuid'] ?? '');
@@ -341,7 +388,11 @@ trait BatchesPayments
         $missing = [];
         foreach ($ids as $paymentId) {
             $paymentId = trim($paymentId);
-            if ($paymentId === '' || array_key_exists($paymentId, $this->paymentById) === true || isset($this->paymentReadFailed[$paymentId]) === true) {
+            if (
+                $paymentId === ''
+                || array_key_exists($paymentId, $this->paymentById) === true
+                || isset($this->paymentReadFailed[$paymentId]) === true
+            ) {
                 continue;
             }
             $missing[] = $paymentId;
@@ -403,12 +454,16 @@ trait BatchesPayments
     }
 
     /**
-     * @param array<string, mixed>                                                                                  $connection
-     * @param array<string, array{row: array<string, mixed>, outcome: string, error: string|null, permanent: bool}> $planned
-     * @param array<string, mixed>                                                                                  $settings
+     * @param array<string, mixed>        $connection
+     * @param array<string, PlannedWrite> $planned
+     * @param array<string, mixed>        $settings
      */
-    private function prefetchLinkedPayments(array $connection, SyncLedger $ledger, array $planned, array $settings): void
-    {
+    private function prefetchLinkedPayments(
+        array $connection,
+        SyncLedger $ledger,
+        array $planned,
+        array $settings,
+    ): void {
         if ($this->entityPaused($settings, 'payment') === true) {
             $this->paymentById = [];
 

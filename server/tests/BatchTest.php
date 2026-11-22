@@ -149,6 +149,29 @@ test('a 401 mid batch stops the batch keeps the rows pending without using attem
 
     expect(count($client->calls))->toBe($calls);
 });
+test('a 401 on a lone row stops the batch before the next lone row of another type', function () {
+    [$engine, $client]                 = qbEngine();
+    $client->failOnCreate              = 1;
+    $client->failWith                  = new QuickBooksException(401, qbRequestFailed(401));
+    $ledger                            = batchLedger();
+    $ledger->customers['cust-1']       = array_merge(customerRow('cust-1'), ['name' => 'Ada']);
+    $ledger->customers['cust-2']       = customerRow('cust-2');
+    $ledger->links[]                   = linkRow('customer', 'cust-2', 'qbo-customer');
+    $client->customers['qbo-customer'] = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Grace'];
+    $invoice                           = invoiceFixture('inv-1', 1000, 'open', 'INV-1');
+    $ledger->invoices['inv-1']         = array_merge($invoice, ['customer_uuid' => 'cust-2']);
+    $ledger->pending[]                 = pendingRow('customer', 'cust-1');
+    $ledger->pending[]                 = pendingRow('invoice', 'inv-1');
+
+    $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
+    $rows = array_column($ledger->pending, null, 'local_uuid');
+
+    expect($client->calls)->toContain('createCustomer')
+        ->and($client->calls)->not->toContain('createInvoice')
+        ->and($rows['inv-1']['status'])->toBe('pending')
+        ->and($rows['inv-1']['attempts'])->toBe(0)
+        ->and($ledger->connections['company-uuid']['needs_reauth'])->toBeTrue();
+});
 
 test('a timeout or http 500 uses the default backoff and does not set a rate limit', function () {
     [$engine, $client]           = qbEngine();
@@ -746,6 +769,50 @@ test('a forced sync with no connection does not record a skipped batch', functio
         ->and($ledger->batches)->toBe([])
         ->and($ledger->attempts)->toBe([])
         ->and($client->calls)->toBe([]);
+});
+
+test('a 401 on a payment update sent with an invoice block keeps that invoice pending', function () {
+    $client = new class extends FakeQuickBooks {
+        public function updatePayment(array $connection, string $id, string $syncToken, array $payload): array
+        {
+            $this->calls[] = 'updatePayment';
+
+            throw new QuickBooksException(401, qbRequestFailed(401));
+        }
+    };
+    [$engine]                             = qbEngine($client);
+    $ledger                               = batchLedger();
+    $ledger->customers['cust-1']          = customerRow('cust-1');
+    $ledger->links[]                      = linkRow('customer', 'cust-1', 'qbo-customer');
+    $client->customers['qbo-customer']    = ['Id' => 'qbo-customer', 'SyncToken' => '0', 'DisplayName' => 'Ada'];
+    $ledger->invoices['inv-1']            = invoiceFixture('inv-1', 1000, 'paid', 'INV-PAID');
+    $ledger->invoices['inv-1']['paid_at'] = '2026-09-20';
+    $ledger->invoices['inv-2']            = invoiceFixture('inv-2', 1000, 'open', 'INV-OPEN');
+    $client->invoices['inv-id']           = [
+        'Id'   => 'inv-id', 'SyncToken' => '1', 'DocNumber' => 'INV-PAID', 'TotalAmt' => 10, 'TxnDate' => '2026-09-01',
+        'Line' => [[
+            'Amount'              => '10.00', 'DetailType' => 'SalesItemLineDetail', 'Description' => 'Delivery',
+            'SalesItemLineDetail' => ['Qty' => 1, 'UnitPrice' => '10.00'],
+        ]],
+    ];
+    $ledger->links[]                      = linkRow('invoice', 'inv-1', 'inv-id');
+    $client->payments['pay-9']            = ['Id' => 'pay-9', 'SyncToken' => '1', 'TotalAmt' => 5];
+    $ledger->links[]                      = linkRow('payment', 'inv-1', 'pay-9');
+    $ledger->pending[]                    = pendingRow('invoice', 'inv-1');
+    $ledger->pending[]                    = pendingRow('invoice', 'inv-2');
+    $settings                             = qbSettings(['interval_minutes' => 1, 'payment_conflict' => 'fleetbase']);
+
+    $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
+    $rows  = array_column($ledger->pending, null, 'local_uuid');
+
+    expect(array_count_values($client->calls)['updatePayment'] ?? 0)->toBe(1)
+        ->and(array_column($ledger->attempts, 'local_uuid'))->toBe(['company-uuid'])
+        ->and($rows['inv-1']['status'])->toBe('pending')
+        ->and($rows['inv-1']['attempts'])->toBe(0)
+        ->and($rows['inv-2']['status'])->toBe('pending')
+        ->and($rows['inv-2']['attempts'])->toBe(0)
+        ->and($batch['failed'])->toBe(1)
+        ->and($ledger->connections['company-uuid']['needs_reauth'])->toBeTrue();
 });
 
 test('a differing payment is compared and a quickbooks reference still creates a missing payment', function () {
