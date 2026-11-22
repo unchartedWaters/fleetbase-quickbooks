@@ -589,7 +589,7 @@ test('a drain run whose token refresh failed for now does not queue another drai
         $directory                              = new FleetbaseDirectory();
         $store                                  = new MemorySettingsStore();
         $store->rows[SettingsKeys::adminSync()] = ['batch_size' => 50];
-        $store->rows[SettingsKeys::adminAuth()] = ['sandbox_client_id' => 'id', 'sandbox_client_secret' => (new SecretCipher())->encrypt('secret'),];
+        $store->rows[SettingsKeys::adminAuth()] = ['sandbox_client_id' => 'id', 'sandbox_client_secret' => (new SecretCipher())->encrypt('secret')];
         $settings                               = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
         $tokens                                 = new ConnectionTokens(new TokenRefresher($client), $settings, $store, $directory);
         // As in production, where the container gives the engine the token service.
