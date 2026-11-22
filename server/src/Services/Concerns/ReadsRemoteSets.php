@@ -25,21 +25,21 @@ trait ReadsRemoteSets
      */
     private function readRemoteSet(array $connection, string $entity, array $ids): array
     {
-        $ids = array_values(array_unique(array_filter($ids, static fn (string $id): bool => $id !== '')));
+        $ids = array_values(array_unique(array_filter($ids, static fn (string $recordId): bool => $recordId !== '')));
         if ($ids === []) {
             return [];
         }
         if (count($ids) === 1) {
-            $id     = $ids[0];
-            $remote = match ($entity) {
-                'Customer' => $this->client->getCustomer($connection, $id),
-                'Invoice'  => $this->client->getInvoice($connection, $id),
-                'Payment'  => $this->client->getPayment($connection, $id),
-                'Account'  => $this->client->getAccount($connection, $id),
+            $recordId     = $ids[0];
+            $remote       = match ($entity) {
+                'Customer' => $this->client->getCustomer($connection, $recordId),
+                'Invoice'  => $this->client->getInvoice($connection, $recordId),
+                'Payment'  => $this->client->getPayment($connection, $recordId),
+                'Account'  => $this->client->getAccount($connection, $recordId),
                 default    => null,
             };
 
-            return is_array($remote) === true ? [$id => $remote] : [];
+            return is_array($remote) === true ? [$recordId => $remote] : [];
         }
 
         $mapped = [];
@@ -47,8 +47,8 @@ trait ReadsRemoteSets
             $found = count($chunk) === 1
                 ? $this->readRemoteSet($connection, $entity, $chunk)
                 : $this->readRemoteChunk($connection, $entity, $chunk, $chunkIndex);
-            foreach ($found as $id => $remote) {
-                $mapped[$id] = $remote;
+            foreach ($found as $recordId => $remote) {
+                $mapped[$recordId] = $remote;
             }
         }
 
@@ -72,9 +72,9 @@ trait ReadsRemoteSets
                 . ' startposition ' . $start . ' maxresults ' . self::QUERY_PAGE_SIZE;
             $rows  = $this->readRemotePage($connection, 'read-' . $chunkIndex . '-' . $start, $query);
             foreach ($rows as $remote) {
-                $id = (string) ($remote['Id'] ?? '');
-                if ($id !== '') {
-                    $mapped[$id] = $remote;
+                $recordId = (string) ($remote['Id'] ?? '');
+                if ($recordId !== '') {
+                    $mapped[$recordId] = $remote;
                 }
             }
             if (count($rows) < self::QUERY_PAGE_SIZE) {
