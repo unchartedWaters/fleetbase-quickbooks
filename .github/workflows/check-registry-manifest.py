@@ -71,8 +71,8 @@ def main() -> None:
     if composer.get("name") != "unchartedwaters/quickbooks-api":
         print("composer.json name must be unchartedwaters/quickbooks-api", file=sys.stderr)
         sys.exit(1)
-    if package.get("name") != "@unchartedwaters/quickbooks-engine":
-        print("package.json name must be @unchartedwaters/quickbooks-engine", file=sys.stderr)
+    if package.get("name") != "@unchartedwaters/fleetbase-quickbooks":
+        print("package.json name must be @unchartedwaters/fleetbase-quickbooks", file=sys.stderr)
         sys.exit(1)
 
     print(f"registry tarball includes {len(paths)} files")

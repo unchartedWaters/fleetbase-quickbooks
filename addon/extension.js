@@ -1,6 +1,6 @@
 import { MenuItem, ExtensionComponent, Widget } from '@fleetbase/ember-core/contracts';
 
-const ENGINE = '@unchartedwaters/quickbooks-engine';
+const ENGINE = '@unchartedwaters/fleetbase-quickbooks';
 
 // The organization settings page renders these engine components from the host app.
 const HOST_COMPONENTS = [

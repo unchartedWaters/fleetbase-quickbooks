@@ -1,11 +1,11 @@
 import { module, test } from 'qunit';
 import { setupTest } from 'dummy/tests/helpers';
-import { fieldState, normalizeSyncDirection, secretPresentation, validateSettings } from '@unchartedwaters/quickbooks-engine/utils/settings-form';
-import { connectionState } from '@unchartedwaters/quickbooks-engine/utils/connection-view';
-import { activityRows } from '@unchartedwaters/quickbooks-engine/utils/activity-view';
-import ConnectionRoute from '@unchartedwaters/quickbooks-engine/routes/connection';
-import ActionsRoute from '@unchartedwaters/quickbooks-engine/routes/actions';
-import ActivityRoute from '@unchartedwaters/quickbooks-engine/routes/activity';
+import { fieldState, normalizeSyncDirection, secretPresentation, validateSettings } from '@unchartedwaters/fleetbase-quickbooks/utils/settings-form';
+import { connectionState } from '@unchartedwaters/fleetbase-quickbooks/utils/connection-view';
+import { activityRows } from '@unchartedwaters/fleetbase-quickbooks/utils/activity-view';
+import ConnectionRoute from '@unchartedwaters/fleetbase-quickbooks/routes/connection';
+import ActionsRoute from '@unchartedwaters/fleetbase-quickbooks/routes/actions';
+import ActivityRoute from '@unchartedwaters/fleetbase-quickbooks/routes/activity';
 import Service from '@ember/service';
 
 module('Unit | QuickBooks views', function (hooks) {

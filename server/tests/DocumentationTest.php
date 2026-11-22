@@ -70,7 +70,7 @@ test('the setup guide names every console command and the install commands', fun
     expect($needed)->toContain('`quickbooks:sync`')
         ->and(DocsSource::missing('docs/SETUP.md', $needed))->toBe([])
         ->and(DocsSource::absentFrom($guide, $install))->toBe([])
-        ->and(DocsSource::absentFrom(DocsSource::section('README.md', 'Quick start'), $install))->toBe([]);
+        ->and(DocsSource::absentFrom(DocsSource::section('README.md', 'Install'), $install))->toBe([]);
 });
 
 test('the docs give the package names and the versions the host needs', function () {
@@ -88,8 +88,13 @@ test('the docs give the package names and the versions the host needs', function
         }
     }
 
+    // Fleetbase 0.8.1 is the oldest release the extension supports.
+    $oldest = ['Fleetbase 0.8.1 or later'];
+
     expect(DocsSource::missing('docs/SETUP.md', $needed))->toBe([])
-        ->and(DocsSource::missing('README.md', ['flb install ' . $package['name']]))->toBe([]);
+        ->and(DocsSource::missing('README.md', ['flb install ' . $package['name']]))->toBe([])
+        ->and(DocsSource::missing('README.md', $oldest))->toBe([])
+        ->and(DocsSource::missing('docs/SETUP.md', $oldest))->toBe([]);
 });
 
 test('the README lists products among what syncs', function () {

@@ -1,1 +1,1 @@
-export { default } from '@unchartedwaters/quickbooks-engine/components/quickbooks-connection';
+export { default } from '@unchartedwaters/fleetbase-quickbooks/components/quickbooks-connection';

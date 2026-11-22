@@ -126,12 +126,12 @@ test('the console is built at the release tag with the packed engine', function 
 
     expect($checkout)->toHaveCount(1)
         ->and($checkout[0]['with']['ref'])->toBe('${{ needs.resolve.outputs.version }}')
-        ->and($build[0]['env']['EXTENSIONS'] ?? '')->toContain('@unchartedwaters/quickbooks-engine')
+        ->and($build[0]['env']['EXTENSIONS'] ?? '')->toContain('@unchartedwaters/fleetbase-quickbooks')
         ->and($build[0]['env']['API_HOST'] ?? '')->toBe('http://localhost:8000')
         ->and($runs)->toContain('npm pack')
         ->and($runs)->toContain('pnpm add')
         ->and($runs)->toContain('pnpm build --environment production')
-        ->and($runs)->toContain('engines-dist/@unchartedwaters/quickbooks-engine');
+        ->and($runs)->toContain('engines-dist/@unchartedwaters/fleetbase-quickbooks');
 });
 
 test('a run that checked a Fleetbase version keeps its results, which mark the version checked', function () {
