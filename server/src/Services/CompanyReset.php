@@ -123,13 +123,13 @@ class CompanyReset
         foreach ($byType as $count) {
             $total += (int) $count;
         }
-        $of = static fn (string $type): int => (int) ($byType[$type] ?? 0);
+        $countOf = static fn (string $type): int => (int) ($byType[$type] ?? 0);
 
         return [
-            'customers' => $of('customer'),
-            'invoices'  => $of('invoice'),
-            'wallets'   => $of('wallet'),
-            'products'  => $of('item'),
+            'customers' => $countOf('customer'),
+            'invoices'  => $countOf('invoice'),
+            'wallets'   => $countOf('wallet'),
+            'products'  => $countOf('item'),
             'total'     => $total,
             'imported'  => $this->importedCustomers($companyUuid)?->count() ?? 0,
         ];
