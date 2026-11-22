@@ -82,6 +82,40 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-company-hint]').doesNotExist();
     });
 
+    test('the environment choice shows only for an administrator with keys for both environments', async function (assert) {
+        let permissions = ['quickbooks connect connection', 'quickbooks change-company connection'];
+        class AbilitiesStubService extends Service {
+            can(permission) {
+                return permissions.includes(permission);
+            }
+        }
+
+        this.owner.register('service:abilities', AbilitiesStubService);
+        this.set('environments', ['production', 'sandbox']);
+        this.set('chosen', []);
+        this.set('onEnvironment', (environment) => this.chosen.push(environment));
+
+        await render(
+            hbs`<QuickbooksConnection @variant="status" @connection={{null}} @configured={{true}} @environments={{this.environments}} @environment="production" @onEnvironment={{this.onEnvironment}} />`
+        );
+        assert.dom('[data-test-environment-select]').hasValue('production');
+        assert.dom('[data-test-environment-select] option[value="sandbox"]').hasText('Sandbox');
+        assert.dom('[data-test-environment-select] option[value="production"]').hasText('Production');
+        assert
+            .dom('[data-test-environment-help]')
+            .hasText('Sandbox and production are different QuickBooks companies. Connecting to the other one first asks what happens to the data already linked.');
+
+        await fillIn('[data-test-environment-select]', 'sandbox');
+        assert.deepEqual(this.chosen, ['sandbox']);
+
+        this.set('environments', ['sandbox']);
+        assert.dom('[data-test-environment]').doesNotExist('one environment is no choice');
+
+        permissions = ['quickbooks connect connection'];
+        this.set('environments', ['production', 'sandbox']);
+        assert.dom('[data-test-environment]').doesNotExist('an operator reconnects the environment the organization already uses');
+    });
+
     test('disconnect with linked records asks an administrator what happens to them', async function (assert) {
         class AdministratorAbilitiesStubService extends Service {
             can() {

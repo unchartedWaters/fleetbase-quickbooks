@@ -69,16 +69,18 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.deepEqual(secretPresentation({ client_secret_set: true }), { value: '', set: true, hint: '' });
         assert.deepEqual(secretPresentation({ client_secret_set: true, client_secret_hint: 'a1b2' }), { value: '', set: true, hint: 'a1b2' });
 
-        const withoutAuth = validateSettings({ auth: {}, sync: {}, secretSet: false });
-        assert.ok(withoutAuth.client_id);
+        assert.deepEqual(secretPresentation({ production_client_secret_set: true, production_client_secret_hint: 'z9' }, 'production_client_secret'), { value: '', set: true, hint: 'z9' });
+
+        const withoutAuth = validateSettings({ auth: {}, sync: {}, saved: {} });
+        assert.ok(withoutAuth.production_client_id);
         assert.strictEqual(withoutAuth.redirect_uri, undefined);
 
         const invalid = validateSettings({
-            auth: { client_id: '', redirect_uri: 'callback', environment: 'sandbox', client_secret: '' },
+            auth: { production_client_id: '', redirect_uri: 'callback', production_client_secret: '' },
             sync: { interval_minutes: 0, retry_limit: 5, default_backoff_seconds: 4 },
-            secretSet: false,
+            saved: {},
         });
-        assert.ok(invalid.client_id);
+        assert.ok(invalid.production_client_id);
         assert.strictEqual(invalid.redirect_uri, undefined);
         assert.ok(invalid.interval_minutes);
         assert.ok(invalid.default_backoff_seconds);
@@ -86,14 +88,14 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.strictEqual(invalid.customer_direction, 'quickbooks.validation.direction-customer');
 
         const badRetry = validateSettings({
-            auth: { client_id: 'id', environment: 'sandbox', client_secret: 'secret' },
+            auth: { production_client_id: 'id', production_client_secret: 'secret' },
             sync: { retry_limit: 0 },
-            secretSet: true,
+            saved: { production_client_secret_set: true },
         });
         assert.strictEqual(badRetry.retry_limit, 'quickbooks.validation.retry-limit');
 
-        const blankEnvironment = validateSettings({
-            auth: { client_id: 'id', environment: '', client_secret: 'secret' },
+        const sandboxOnly = validateSettings({
+            auth: { production_client_id: '', sandbox_client_id: 'id', sandbox_client_secret: 'secret' },
             sync: {
                 interval_minutes: 5,
                 periodic_interval_hours: 24,
@@ -112,15 +114,16 @@ module('Unit | QuickBooks views', function (hooks) {
                 wallet_reference: 'fleetbase',
                 wallet_direction: 'inbound',
             },
-            secretSet: true,
+            saved: {},
         });
-        assert.strictEqual(blankEnvironment.environment, undefined);
-        assert.strictEqual(blankEnvironment.customer_direction, undefined);
-        assert.strictEqual(blankEnvironment.redirect_uri, undefined);
-        assert.strictEqual(blankEnvironment.batch_size, undefined);
+        assert.strictEqual(sandboxOnly.production_client_id, undefined);
+        assert.strictEqual(sandboxOnly.sandbox_client_secret, undefined);
+        assert.strictEqual(sandboxOnly.customer_direction, undefined);
+        assert.strictEqual(sandboxOnly.redirect_uri, undefined);
+        assert.strictEqual(sandboxOnly.batch_size, undefined);
 
         const offDirection = validateSettings({
-            auth: { client_id: 'id', environment: 'production', client_secret: 'secret' },
+            auth: { production_client_id: 'id', production_client_secret: 'secret' },
             sync: {
                 interval_minutes: 5,
                 periodic_interval_hours: 24,
@@ -139,7 +142,7 @@ module('Unit | QuickBooks views', function (hooks) {
                 wallet_reference: 'fleetbase',
                 wallet_direction: 'inbound',
             },
-            secretSet: true,
+            saved: {},
         });
         assert.strictEqual(offDirection.customer_direction, 'quickbooks.validation.direction-customer');
         assert.strictEqual(normalizeSyncDirection('off'), 'both');
@@ -147,7 +150,7 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.strictEqual(normalizeSyncDirection(undefined), 'both');
 
         const disabledCustomer = validateSettings({
-            auth: { client_id: 'id', environment: 'production', client_secret: 'secret' },
+            auth: { production_client_id: 'id', production_client_secret: 'secret' },
             sync: {
                 interval_minutes: 5,
                 periodic_interval_hours: 24,
@@ -165,7 +168,7 @@ module('Unit | QuickBooks views', function (hooks) {
                 wallet_reference: 'fleetbase',
                 wallet_direction: 'inbound',
             },
-            secretSet: true,
+            saved: {},
         });
         assert.strictEqual(disabledCustomer.customer_conflict, undefined);
         assert.strictEqual(disabledCustomer.customer_reference, undefined);
@@ -192,7 +195,11 @@ module('Unit | QuickBooks views', function (hooks) {
     test('a saved Client secret is kept only for the Client ID it was saved with', (assert) => {
         const sync = { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 };
         const check = (clientId, savedClientId, secret = '') =>
-            validateSettings({ auth: { client_id: clientId, environment: 'sandbox', client_secret: secret }, sync, secretSet: true, savedClientId }).client_secret;
+            validateSettings({
+                auth: { production_client_id: clientId, production_client_secret: secret },
+                sync,
+                saved: { production_client_id: savedClientId, production_client_secret_set: true },
+            }).production_client_secret;
 
         assert.strictEqual(check('id', 'id'), undefined);
         assert.strictEqual(check(' id ', 'id'), undefined);
@@ -208,12 +215,10 @@ module('Unit | QuickBooks views', function (hooks) {
         const sync = { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 };
         const check = (clientId, savedClientId, verifier = '', verifierSet = true) =>
             validateSettings({
-                auth: { client_id: clientId, environment: 'sandbox', client_secret: 'secret', webhook_verifier: verifier },
+                auth: { production_client_id: clientId, production_client_secret: 'secret', production_webhook_verifier: verifier },
                 sync,
-                secretSet: true,
-                verifierSet,
-                savedClientId,
-            }).webhook_verifier;
+                saved: { production_client_id: savedClientId, production_client_secret_set: true, production_webhook_verifier_set: verifierSet },
+            }).production_webhook_verifier;
 
         assert.strictEqual(check('id', 'id'), undefined);
         assert.strictEqual(check('new-id', 'id'), 'quickbooks.validation.webhook-verifier');
@@ -222,6 +227,22 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.strictEqual(check('new-id', 'id', '', false), undefined);
         assert.strictEqual(check('', 'id'), undefined);
         assert.strictEqual(check('new-id', ''), undefined);
+    });
+
+    test('each environment has its own keys: a half-filled set is refused and an empty one is skipped', (assert) => {
+        const sync = { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 };
+        const check = (auth, saved = {}) => validateSettings({ auth, sync, saved });
+
+        assert.deepEqual(check({ production_client_id: 'live', production_client_secret: 's', sandbox_client_id: '' }), {});
+        assert.deepEqual(check({ sandbox_client_id: 'dev', sandbox_client_secret: 's' }), {});
+        assert.deepEqual(Object.keys(check({ production_client_id: 'live', production_client_secret: 's', sandbox_client_id: 'dev' })), ['sandbox_client_secret']);
+        assert.deepEqual(Object.keys(check({ sandbox_webhook_verifier: 'token' })), ['sandbox_client_id', 'sandbox_client_secret']);
+        // Nothing saved and nothing typed: one set is needed, and production is where it is asked for.
+        assert.deepEqual(Object.keys(check({ production_client_id: '', sandbox_client_id: '' })), ['production_client_id']);
+        // A saved secret of one environment does not satisfy the other.
+        assert.deepEqual(Object.keys(check({ production_client_id: 'live', sandbox_client_id: 'dev' }, { production_client_id: 'live', production_client_secret_set: true })), [
+            'sandbox_client_secret',
+        ]);
     });
 
     test('connection state treats a realm without reauth as connected', function (assert) {

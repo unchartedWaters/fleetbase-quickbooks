@@ -106,9 +106,8 @@ function revokeStore(bool $withCredentials = true): MemorySettingsStore
     $store = new MemorySettingsStore();
     if ($withCredentials === true) {
         $store->rows[SettingsKeys::adminAuth()] = [
-            'client_id'     => 'client-id',
-            'client_secret' => (new SecretCipher())->encrypt('client-secret'),
-            'environment'   => 'sandbox',
+            'sandbox_client_id'     => 'client-id',
+            'sandbox_client_secret' => (new SecretCipher())->encrypt('client-secret'),
         ];
     }
 
@@ -389,6 +388,35 @@ test('after a disconnect an operator may reconnect only the company the organiza
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
+test('disconnect revokes a production token with the production keys and skips an environment whose keys are gone', function () {
+    foreach ([['production', true, 'live-id:live-secret'], ['production', false, null]] as [$environment, $keysSaved, $basic]) {
+        revokeWithDatabase(function () use ($environment, $keysSaved, $basic) {
+            revokeSeed(false);
+            Connection::query()->where('company_uuid', 'company-uuid')->update(['environment' => $environment]);
+            Http::swap(new Illuminate\Http\Client\Factory());
+            Http::fake(['developer.api.intuit.com/*' => Http::response('', 200)]);
+            session(['company' => 'company-uuid']);
+            $store                                  = new MemorySettingsStore();
+            $store->rows[SettingsKeys::adminAuth()] = ['sandbox_client_id' => 'dev-id', 'sandbox_client_secret' => (new SecretCipher())->encrypt('dev-secret')];
+            if ($keysSaved === true) {
+                $store->rows[SettingsKeys::adminAuth()] += ['production_client_id' => 'live-id', 'production_client_secret' => (new SecretCipher())->encrypt('live-secret')];
+            }
+
+            $response = revokeController($store)->disconnect(Request::create('/disconnect', 'POST'));
+            $recorded = Http::recorded();
+
+            // The sandbox keys are never used for a production token; with no production keys nothing is sent, and the
+            // connection is removed all the same.
+            expect($response->getStatusCode())->toBe(200)
+                ->and($recorded)->toHaveCount($basic === null ? 0 : 1)
+                ->and(Connection::query()->where('company_uuid', 'company-uuid')->count())->toBe(0);
+            if ($basic !== null) {
+                expect($recorded[0][0]->header('Authorization'))->toBe(['Basic ' . base64_encode($basic)]);
+            }
+        });
+    }
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
 test('connection show tells an operator whether it may make a first connection', function () {
     revokeWithDatabase(function () {
         $operator   = (new Quickbooks())->policies[1]['permissions'];
@@ -405,7 +433,14 @@ test('connection show tells an operator whether it may make a first connection',
 
         $nothingLinked = (new EmptyReset(new MemorySettingsStore()))->linkCounts('company-uuid');
 
-        expect($neverConnected)->toBe(['connection' => null, 'can_connect_new' => false, 'linked' => $nothingLinked])
+        // Only the environment whose keys are saved is offered, and the organization's own comes first.
+        expect($neverConnected)->toBe([
+            'connection'      => null,
+            'can_connect_new' => false,
+            'linked'          => $nothingLinked,
+            'environments'    => ['sandbox'],
+            'environment'     => 'sandbox',
+        ])
             ->and($administrator['can_connect_new'])->toBeTrue()
             ->and($connected['can_connect_new'])->toBeTrue()
             ->and($connected['connection']['realm_id'])->toBe('9341453000000001');

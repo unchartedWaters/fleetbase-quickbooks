@@ -22,7 +22,7 @@ class FetchStubService extends Service {
         this.gets.push([path, query]);
         return {
             connection: this.connection,
-            ...(this.legacyKeys ? { client_id: 'client-id', client_secret_set: true } : {}),
+            ...(this.legacyKeys ? { production_client_id: 'client-id', production_client_secret_set: true } : {}),
             credentials_configured: this.credentialsConfigured,
             queue: 0,
             failed: this.failed,

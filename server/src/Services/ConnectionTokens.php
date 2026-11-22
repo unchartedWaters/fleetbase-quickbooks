@@ -124,7 +124,10 @@ class ConnectionTokens
      */
     private function requestRefresh(array $connection): array
     {
-        return $this->refresher->refresh($connection, $this->settings->credentialsFor($this->store, (string) ($connection['company_uuid'] ?? '')));
+        // Sandbox and production use different Intuit apps, so the token is refreshed with its own environment's keys.
+        $credentials = $this->settings->credentialsFor($this->store, (string) ($connection['environment'] ?? ''));
+
+        return $this->refresher->refresh($connection, $credentials);
     }
 
     /**

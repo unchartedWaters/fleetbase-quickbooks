@@ -32,6 +32,8 @@ quickbooks:
     change-company-confirm-title: Connect a different QuickBooks company?
     change-company-confirm: You choose the company on the Intuit sign-in page, and the current connection stays in place until you finish there. If the company you pick is not the one connected now, you are first asked what happens to the data already linked.
     company-hint: You choose which QuickBooks company to connect on the Intuit sign-in page.
+    environment-label: Connect to
+    environment-help: Sandbox and production are different QuickBooks companies. Connecting to the other one first asks what happens to the data already linked.
     disconnected-toast: QuickBooks disconnected.
     connected-toast: Connected to QuickBooks.
     connect-failed: Unable to start QuickBooks connection.
@@ -131,10 +133,10 @@ quickbooks:
     credentials-step-keys-before: "Sign in at "
     credentials-step-keys-link: developer.intuit.com
     credentials-step-keys-after: " and open Keys & credentials."
-    credentials-step-form: Choose the Environment, then copy its Client ID and Client secret from Keys & credentials into the fields below.
+    credentials-step-form: Copy the Production keys into Production keys below and the Development keys into Sandbox keys. Fill in one set or both; each organization chooses its environment when it connects.
     credentials-step-redirect: "Under Redirect URIs, add the Public OAuth Redirect URL:"
     credentials-step-webhook: "Under Webhooks, set the Endpoint URL to the Public Webhook Receiver URL:"
-    credentials-step-webhook-verifier: Then copy that tab's Verifier Token into Webhook verifier token below.
+    credentials-step-webhook-verifier: Then copy that tab's Verifier Token into the Webhook verifier token of the same set below.
     credentials-step-save: Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.
     schedule: Schedule
     data-resolution: Data Resolution
@@ -159,14 +161,12 @@ quickbooks:
     verifier-saved: A verifier token is already saved. Leave this blank to keep it.
     fields:
       client-id: Client ID
-      environment: Environment
       interval-minutes: Sync frequency (minutes)
       periodic-interval-hours: Full sync frequency (hours)
       retry-limit: Retry attempts
       retry-delay: Retry delay (seconds)
     hints:
-      client-id: "On Keys & credentials. Use the Development Client ID with Sandbox, and the Production Client ID with your live company."
-      environment: Sandbox uses the Development keys and a QuickBooks sandbox company. Production uses the Production keys and your live QuickBooks Online company.
+      client-id: "On Keys & credentials, for this set's environment."
       interval-minutes: Minutes between scheduled syncs of waiting changes. 20 or more waiting changes start one sooner.
       periodic-interval-hours: Hours between full passes over the customer catalog. Waiting changes use the minutes setting above.
       retry-limit: Retries after a failure. Later tries wait longer.
@@ -179,6 +179,11 @@ quickbooks:
       not-public-webhook-title: "Changes made in QuickBooks, for record types that sync From QuickBooks or Both:"
       not-public-webhook: set APP_URL on the Fleetbase API to the public https:// address the API is reached at from the internet.
       restart: Then clear the API's config cache and restart the API, its queue workers and scheduler.
+    sets:
+      production: Production keys
+      production-help: The Production keys, for your live QuickBooks Online company.
+      sandbox: Sandbox keys
+      sandbox-help: The Development keys, which work only with QuickBooks sandbox companies. Leave empty if no organization connects to a sandbox.
     options:
       sandbox: Sandbox
       production: Production
@@ -194,7 +199,6 @@ quickbooks:
       wallet: Accounts / Wallets
   validation:
     client-id: "Enter the Client ID from developer.intuit.com → your app → Keys & credentials."
-    environment: "Choose Sandbox for Development keys, or Production for your live company."
     client-secret: "Enter the Client secret shown next to the Client ID on Keys & credentials."
     webhook-verifier: "Enter the Verifier Token from developer.intuit.com → your app → Webhooks. A new Client ID needs its own token."
     interval-minutes: Enter a whole number of minutes, at least 1.

@@ -59,7 +59,7 @@ module('Integration | Component | quickbooks-settings present characterization',
     });
 
     test('blank values show and save the defaults', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: '', client_secret_set: true });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true });
         this.set('sync', { interval_minutes: '', periodic_interval_hours: null, retry_limit: 5, default_backoff_seconds: 30 });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
@@ -68,15 +68,15 @@ module('Integration | Component | quickbooks-settings present characterization',
             <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
         `);
 
-        assert.dom("[data-test-field='environment']").hasValue('production');
+        assert.dom("[data-test-field='environment']").doesNotExist();
         assert.dom("[data-test-sync='interval_minutes']").hasValue('5');
         assert.dom("[data-test-sync='periodic_interval_hours']").hasValue('24');
         assert.dom("[data-test-sync='customer_conflict']").hasValue('quickbooks');
         assert.dom("[data-test-sync='customer_direction']").hasValue('both');
 
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.environment, 'production');
-        assert.strictEqual(this.saved.auth.client_id, 'id');
+        assert.false(Object.hasOwn(this.saved.auth, 'environment'));
+        assert.strictEqual(this.saved.auth.production_client_id, 'id');
         assert.strictEqual(this.saved.sync.interval_minutes, 5);
         assert.strictEqual(this.saved.sync.periodic_interval_hours, 24);
         assert.strictEqual(this.saved.sync.retry_limit, 5);
@@ -90,7 +90,7 @@ module('Integration | Component | quickbooks-settings present characterization',
     });
 
     test('a loaded value is shown and a string number saves as a number', async function (assert) {
-        this.set('settings', { client_id: 'loaded-id', environment: 'sandbox', client_secret_set: true });
+        this.set('settings', { production_client_id: 'loaded-id', production_client_secret_set: true });
         this.set('sync', {
             interval_minutes: '7',
             periodic_interval_hours: 12,
@@ -106,15 +106,13 @@ module('Integration | Component | quickbooks-settings present characterization',
             <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
         `);
 
-        assert.dom("[data-test-field='client_id']").hasValue('loaded-id');
-        assert.dom("[data-test-field='environment']").hasValue('sandbox');
+        assert.dom("[data-test-field='production_client_id']").hasValue('loaded-id');
         assert.dom("[data-test-sync='interval_minutes']").hasValue('7');
         assert.dom("[data-test-sync='periodic_interval_hours']").hasValue('12');
         assert.dom("[data-test-sync='customer_conflict']").hasValue('quickbooks');
 
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.client_id, 'loaded-id');
-        assert.strictEqual(this.saved.auth.environment, 'sandbox');
+        assert.strictEqual(this.saved.auth.production_client_id, 'loaded-id');
         assert.strictEqual(this.saved.sync.interval_minutes, 7);
         assert.strictEqual(this.saved.sync.periodic_interval_hours, 12);
         assert.strictEqual(this.saved.sync.retry_limit, 3);
@@ -125,7 +123,7 @@ module('Integration | Component | quickbooks-settings present characterization',
     });
 
     test('a draft overrides the loaded value and the default, and a saved draft shows the loaded Primary again', async function (assert) {
-        this.set('settings', { client_id: 'loaded-id', environment: 'sandbox', client_secret_set: true });
+        this.set('settings', { production_client_id: 'loaded-id', production_client_secret_set: true });
         this.set('sync', {
             interval_minutes: 7,
             retry_limit: 5,
@@ -140,15 +138,15 @@ module('Integration | Component | quickbooks-settings present characterization',
             <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
         `);
 
-        await fillIn("[data-test-field='client_id']", ' drafted-id ');
-        await fillIn("[data-test-field='client_secret']", 'drafted-secret');
+        await fillIn("[data-test-field='production_client_id']", ' drafted-id ');
+        await fillIn("[data-test-field='production_client_secret']", 'drafted-secret');
         await fillIn("[data-test-sync='interval_minutes']", '9');
         await fillIn("[data-test-sync='periodic_interval_hours']", '6');
         await fillIn("[data-test-sync='customer_conflict']", 'fleetbase');
         assert.dom("[data-test-sync='customer_conflict']").hasValue('fleetbase');
 
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.client_id, 'drafted-id');
+        assert.strictEqual(this.saved.auth.production_client_id, 'drafted-id');
         assert.strictEqual(this.saved.sync.interval_minutes, 9);
         assert.strictEqual(this.saved.sync.periodic_interval_hours, 6);
         assert.strictEqual(this.saved.sync.customer_conflict, 'fleetbase');
@@ -161,7 +159,7 @@ module('Integration | Component | quickbooks-settings present characterization',
     });
 
     test('a blank draft is not replaced by the default and fails validation', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true });
         this.set('sync', { retry_limit: 5, default_backoff_seconds: 30 });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));

@@ -34,9 +34,11 @@ class SettingsStore
     }
 
     /**
-     * Auth holds the Intuit app credentials only. The OAuth redirect and webhook receiver URLs
-     * are computed, so a sent or older stored copy, and any sync field such as interval_minutes,
-     * is removed. A blank client secret or webhook verifier is omitted. A non-empty secret is kept unchanged.
+     * Auth holds the Intuit app credentials only, one set per environment (production_client_id,
+     * sandbox_client_id, ...).
+     * The OAuth redirect and webhook receiver URLs are computed, so a sent or older stored copy, and any sync field
+     * such as interval_minutes, is removed. A blank client secret or webhook verifier is omitted. A non-empty secret
+     * is kept unchanged.
      *
      * @param array<string, mixed> $auth
      *
@@ -45,17 +47,19 @@ class SettingsStore
     public function normalizeAuth(array $auth): array
     {
         $normalized = [];
-        $secrets    = ['client_secret', 'webhook_verifier'];
-        foreach (['client_id', 'client_secret', 'environment', 'webhook_verifier'] as $field) {
-            if (array_key_exists($field, $auth) === false) {
-                continue;
+        foreach (SettingsKeys::ENVIRONMENTS as $environment) {
+            foreach (SettingsKeys::CREDENTIAL_FIELDS as $name) {
+                $field = SettingsKeys::credentialField($environment, $name);
+                if (array_key_exists($field, $auth) === false) {
+                    continue;
+                }
+                $value = $auth[$field];
+                $blank = is_string($value) === false || trim($value) === '';
+                if ($name !== 'client_id' && $blank === true) {
+                    continue;
+                }
+                $normalized[$field] = $value;
             }
-            $value = $auth[$field];
-            $blank = is_string($value) === false || trim($value) === '';
-            if (in_array($field, $secrets, true) === true && $blank === true) {
-                continue;
-            }
-            $normalized[$field] = $value;
         }
 
         return $normalized;
@@ -75,30 +79,6 @@ class SettingsStore
     public function adminAuth(): array
     {
         return $this->normalizeAuth($this->get(SettingsKeys::adminAuth()));
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    public function envAuth(): array
-    {
-        return [
-            'environment' => $this->configuredEnvironment(),
-        ];
-    }
-
-    /**
-     * New setups use production when no environment is stored or configured.
-     * An explicit sandbox value in config is kept.
-     */
-    private function configuredEnvironment(): string
-    {
-        $environment = config('quickbooks.environment', 'production');
-        if (is_string($environment) === false || trim($environment) === '') {
-            return 'production';
-        }
-
-        return $environment;
     }
 
     /**

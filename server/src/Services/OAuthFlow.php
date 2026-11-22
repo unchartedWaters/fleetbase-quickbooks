@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Support\QuickBooksException;
+use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SwitchChoiceRequired;
 use Illuminate\Support\Facades\Cache;
 
@@ -38,6 +39,7 @@ class OAuthFlow
             'user_uuid'     => $userUuid,
             'code_verifier' => $verifier,
             'redirect_uri'  => $credentials['redirect_uri'],
+            'environment'   => $credentials['environment'],
             'expires_at'    => time() + 600,
         ], 600);
 
@@ -45,6 +47,20 @@ class OAuthFlow
             'url'   => $this->client->authorizationUrl($credentials, $state, $this->codeChallenge($verifier)),
             'state' => $state,
         ];
+    }
+
+    /**
+     * The Intuit environment a started flow (its state, or the handle made from it) is for. Without a live flow it is
+     * the first environment, and the flow then refuses the request for its own reason.
+     */
+    public function environmentOf(string $key): string
+    {
+        $stored = Cache::get($this->key($key));
+        if (is_array($stored) === false) {
+            return SettingsKeys::ENVIRONMENTS[0];
+        }
+
+        return SettingsKeys::environment((string) ($stored['environment'] ?? ''));
     }
 
     /**

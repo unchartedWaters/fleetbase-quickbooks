@@ -167,8 +167,8 @@ test('the sync command stays quiet when nothing is connected even if credentials
     $command->setOutput(new OutputStyle(new ArrayInput([]), $output));
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'     => 'saved-id',
-        'client_secret' => 'saved-secret',
+        'sandbox_client_id'     => 'saved-id',
+        'sandbox_client_secret' => 'saved-secret',
     ];
     [$runner] = gateRunnerWith(new SyncLedger(), $store);
 

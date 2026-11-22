@@ -30,9 +30,9 @@ class FetchStubService extends Service {
         return {
             can_edit: true,
             auth: {
-                client_id: 'id',
-                environment: 'sandbox',
-                client_secret_set: true,
+                production_client_id: 'id',
+                production_client_secret_set: true,
+                sandbox_client_id: '',
                 internal_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
                 public_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
                 public_oauth_redirect_url: 'https://console.example/quickbooks',
@@ -44,7 +44,7 @@ class FetchStubService extends Service {
     async post(path, body, options) {
         this.posts.push({ path, body, options });
 
-        return { auth: { client_id: body.auth.client_id, client_secret_set: true }, sync: body.sync };
+        return { auth: { production_client_id: body.auth.production_client_id, production_client_secret_set: true }, sync: body.sync };
     }
 }
 
@@ -60,7 +60,7 @@ class RefusingFetchStubService extends FetchStubService {
 
         throw {
             message: 'Some QuickBooks settings are missing or invalid.',
-            errors: { client_id: REFUSED_CLIENT_ID },
+            errors: { production_client_id: REFUSED_CLIENT_ID },
         };
     }
 }
@@ -95,10 +95,14 @@ module('Integration | Component | quickbooks-admin-settings', function (hooks) {
         await render(hbs`<QuickbooksAdminSettings />`);
 
         assert.deepEqual(fetch.gets, [{ path: 'settings', params: { scope: 'admin', company_uuid: 'company-uuid' } }]);
-        assert.dom('[data-test-field="client_id"]').hasValue('id');
-        assert.dom('[data-test-field="client_secret"]').exists();
-        assert.dom('[data-test-field="webhook_verifier"]').exists();
-        assert.dom('[data-test-field="environment"]').exists();
+        assert.dom('[data-test-field="production_client_id"]').hasValue('id');
+        assert.dom('[data-test-field="production_client_secret"]').exists();
+        assert.dom('[data-test-field="production_webhook_verifier"]').exists();
+        assert.dom('[data-test-field="sandbox_client_id"]').hasValue('');
+        assert.dom('[data-test-field="sandbox_client_secret"]').exists();
+        assert.dom('[data-test-field="sandbox_webhook_verifier"]').exists();
+        // The environment is chosen where the organization connects, not here.
+        assert.dom('[data-test-field="environment"]').doesNotExist();
         // The URLs are text to copy into Intuit, not inputs.
         assert.dom('[data-test-field="public_webhook_receiver_url"]').hasText('http://internal.example/quickbooks/int/v1/webhooks');
         assert.dom('[data-test-field="public_oauth_redirect_url"]').hasText('https://console.example/quickbooks');
@@ -121,16 +125,16 @@ module('Integration | Component | quickbooks-admin-settings', function (hooks) {
         const fetch = this.owner.lookup('service:fetch');
 
         await render(hbs`<QuickbooksAdminSettings />`);
-        await fillIn('[data-test-field="client_id"]', 'new-id');
-        await fillIn('[data-test-field="client_secret"]', 'new-secret');
+        await fillIn('[data-test-field="production_client_id"]', 'new-id');
+        await fillIn('[data-test-field="production_client_secret"]', 'new-secret');
         await click(document.querySelector('#next-view-section-subheader-actions [data-test-save]'));
 
         const post = fetch.posts.at(-1);
         assert.strictEqual(post.path, 'settings');
         assert.strictEqual(post.body.scope, 'admin');
         assert.strictEqual(post.body.company_uuid, 'company-uuid');
-        assert.strictEqual(post.body.auth.client_id, 'new-id');
-        assert.strictEqual(post.body.auth.client_secret, 'new-secret');
+        assert.strictEqual(post.body.auth.production_client_id, 'new-id');
+        assert.strictEqual(post.body.auth.production_client_secret, 'new-secret');
         assert.strictEqual(post.body.sync.interval_minutes, 5);
         assert.false(Object.hasOwn(post.body, 'override'));
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
@@ -145,8 +149,8 @@ module('Integration | Component | quickbooks-admin-settings', function (hooks) {
 
         assert.true(fetch.posts.at(-1).options.rawError);
         assert.false(Object.hasOwn(fetch.posts.at(-1).body.auth, 'public_oauth_redirect_url'));
-        assert.dom('[data-test-error="client_id"]').hasText(REFUSED_CLIENT_ID);
-        assert.dom('[data-test-field="client_id"]').hasValue('id');
+        assert.dom('[data-test-error="production_client_id"]').hasText(REFUSED_CLIENT_ID);
+        assert.dom('[data-test-field="production_client_id"]').hasValue('id');
         assert.false(this.notifications.messages.some((entry) => entry[0] === 'success'));
     });
 });

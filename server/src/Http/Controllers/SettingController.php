@@ -72,22 +72,24 @@ class SettingController extends QuickbooksController
         $incomingSync = $this->onlySyncKeys($incomingSync);
         $this->stripReadOnly($incomingAuth);
         $this->stripReadOnly($incomingSync);
-        unset($incomingAuth['sources'], $incomingAuth['client_secret_set'], $incomingAuth['webhook_verifier_set']);
         // The redirect and receiver URLs are computed, so normalizeAuth() drops any that are sent.
         $incomingAuth = $this->store->normalizeAuth($incomingAuth);
 
         [$mergedAuth, $incomingAuth, $mergedSync] = $this->mergeSavedSettings($existingAuth, $incomingAuth, $existingSync, $incomingSync);
 
-        $errors = (new SettingsValidator())->errors($mergedAuth, $mergedSync);
-        if (self::verifierNeeded($existingAuth, $incomingAuth, $mergedAuth) === true) {
-            $errors['webhook_verifier'] = 'quickbooks.validation.webhook-verifier';
-        }
+        $errors = (new SettingsValidator())->errors($mergedAuth, $mergedSync)
+            + self::verifierErrors($existingAuth, $incomingAuth, $mergedAuth);
         if ($errors !== []) {
             return $this->invalid($errors);
         }
 
         $storedAuth = $this->settings->storeAuth($incomingAuth, $existingAuth);
-        $this->store->put($authKey, $this->store->normalizeAuth(array_merge($existingAuth, $storedAuth)));
+        // A set left empty on the form sends a blank Client ID, which is not worth storing.
+        $authRow = array_filter(
+            $this->store->normalizeAuth(array_merge($existingAuth, $storedAuth)),
+            static fn (mixed $value): bool => $value !== ''
+        );
+        $this->store->put($authKey, $authRow);
         $this->stripReadOnly($mergedSync);
         $this->store->put($syncKey, $mergedSync);
         // The global row is only a template: no organization that has its own copy changes, so nothing is queued.
@@ -171,13 +173,16 @@ class SettingController extends QuickbooksController
     private function mergeSavedSettings(array $existingAuth, array $incomingAuth, array $existingSync, array $incomingSync): array
     {
         $mergedAuth = array_merge($existingAuth, $incomingAuth);
-        $secret     = $incomingAuth['client_secret'] ?? '';
-        if (is_string($secret) === false || $secret === '') {
-            // A saved secret belongs to the saved Client ID, so a changed Client ID needs its own secret.
-            $kept                        = self::clientChanged($existingAuth, $mergedAuth) === false;
-            $mergedAuth['client_secret'] = $kept === true ? ($existingAuth['client_secret'] ?? '') : '';
-        } else {
-            $mergedAuth['client_secret'] = $secret;
+        foreach (SettingsKeys::ENVIRONMENTS as $environment) {
+            $field  = SettingsKeys::credentialField($environment, 'client_secret');
+            $secret = $incomingAuth[$field] ?? '';
+            if (is_string($secret) === false || $secret === '') {
+                // A saved secret belongs to the saved Client ID, so a changed Client ID needs its own secret.
+                $kept               = self::clientChanged($existingAuth, $mergedAuth, $environment) === false;
+                $mergedAuth[$field] = $kept === true ? ($existingAuth[$field] ?? '') : '';
+            } else {
+                $mergedAuth[$field] = $secret;
+            }
         }
 
         $mergedSync = array_merge($this->onlySyncKeys($existingSync), $incomingSync);
@@ -188,15 +193,16 @@ class SettingController extends QuickbooksController
     }
 
     /**
-     * True when both Client IDs are filled in and differ. A blank one has its own error.
+     * True when both Client IDs of an environment are filled in and differ. A blank one has its own error.
      *
      * @param array<string, mixed> $existingAuth
      * @param array<string, mixed> $mergedAuth
      */
-    private static function clientChanged(array $existingAuth, array $mergedAuth): bool
+    private static function clientChanged(array $existingAuth, array $mergedAuth, string $environment): bool
     {
-        $savedClient = trim((string) ($existingAuth['client_id'] ?? ''));
-        $client      = trim((string) ($mergedAuth['client_id'] ?? ''));
+        $field       = SettingsKeys::credentialField($environment, 'client_id');
+        $savedClient = trim((string) ($existingAuth[$field] ?? ''));
+        $client      = trim((string) ($mergedAuth[$field] ?? ''));
 
         return $savedClient !== '' && $client !== '' && $client !== $savedClient;
     }
@@ -208,15 +214,25 @@ class SettingController extends QuickbooksController
      * @param array<string, mixed> $existingAuth
      * @param array<string, mixed> $incomingAuth
      * @param array<string, mixed> $mergedAuth
+     *
+     * @return array<string, string>
      */
-    private static function verifierNeeded(array $existingAuth, array $incomingAuth, array $mergedAuth): bool
+    private static function verifierErrors(array $existingAuth, array $incomingAuth, array $mergedAuth): array
     {
-        $saved    = $existingAuth['webhook_verifier'] ?? '';
-        $incoming = $incomingAuth['webhook_verifier'] ?? '';
-        $hasSaved = is_string($saved) === true && $saved !== '';
-        $hasNew   = is_string($incoming) === true && trim($incoming) !== '';
+        $errors = [];
+        foreach (SettingsKeys::ENVIRONMENTS as $environment) {
+            $field    = SettingsKeys::credentialField($environment, 'webhook_verifier');
+            $saved    = $existingAuth[$field] ?? '';
+            $incoming = $incomingAuth[$field] ?? '';
+            $hasSaved = is_string($saved) === true && $saved !== '';
+            $hasNew   = is_string($incoming) === true && trim($incoming) !== '';
+            $changed  = self::clientChanged($existingAuth, $mergedAuth, $environment);
+            if ($hasSaved === true && $hasNew === false && $changed === true) {
+                $errors[$field] = 'quickbooks.validation.webhook-verifier';
+            }
+        }
 
-        return $hasSaved === true && $hasNew === false && self::clientChanged($existingAuth, $mergedAuth) === true;
+        return $errors;
     }
 
     public function show(Request $request): JsonResponse
@@ -243,16 +259,15 @@ class SettingController extends QuickbooksController
     {
         $companySync = $this->store->adminSync();
         $companyAuth = $this->store->adminAuth();
-        $resolved    = $this->settings->resolveAuth(
-            [],
-            $companyAuth,
-            $this->store->envAuth()
-        );
-        $browser                                  = $this->settings->forBrowser($resolved);
-        $browser['client_secret_set']             = $this->secretIsSet($resolved);
-        $browser['client_secret_hint']            = self::secretHint($resolved['client_secret'] ?? null);
-        $browser['webhook_verifier_hint']         = self::secretHint($resolved['webhook_verifier'] ?? null);
-        $browser['sources']                       = is_array($resolved['sources'] ?? null) === true ? $resolved['sources'] : [];
+        $plain       = $this->settings->plainAuth($this->store);
+        $browser     = $this->settings->forBrowser($plain);
+        foreach (SettingsKeys::ENVIRONMENTS as $environment) {
+            $secret   = SettingsKeys::credentialField($environment, 'client_secret');
+            $verifier = SettingsKeys::credentialField($environment, 'webhook_verifier');
+
+            $browser[$secret . '_hint']      = self::secretHint($plain[$secret] ?? null);
+            $browser[$verifier . '_hint']    = self::secretHint($plain[$verifier] ?? null);
+        }
         $webhook                                  = self::internalWebhookReceiverUrl();
         $oauth                                    = ConsoleHost::oauthRedirectUrl();
         $browser['public_receiver_url']           = $webhook;
@@ -263,7 +278,6 @@ class SettingController extends QuickbooksController
         // Intuit needs public https addresses; the page warns when the one shown is not.
         $browser['public_webhook_receiver_ready'] = PublicHttps::isPublicHttpsUrl($webhook, false);
         $browser['public_oauth_redirect_ready']   = PublicHttps::isPublicHttpsUrl($oauth, false);
-        unset($browser['sources']['webhook_url']);
 
         return [
             'can_edit'                        => $this->authorizer->isInstallationAdmin($request),
@@ -541,16 +555,6 @@ class SettingController extends QuickbooksController
         }
 
         return substr($secret, -4);
-    }
-
-    /**
-     * @param array<string, mixed> $auth
-     */
-    private function secretIsSet(array $auth): bool
-    {
-        $secret = $auth['client_secret'] ?? null;
-
-        return is_string($secret) === true && trim($secret) !== '';
     }
 
     /**

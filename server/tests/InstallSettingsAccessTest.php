@@ -55,9 +55,8 @@ function accessSavePayload(): array
     return [
         'scope' => 'admin',
         'auth'  => [
-            'client_id'     => 'attacker-id',
-            'client_secret' => 'attacker-secret',
-            'environment'   => 'sandbox',
+            'production_client_id'     => 'attacker-id',
+            'production_client_secret' => 'attacker-secret',
         ],
         'sync'  => qbSettings(['customer_conflict' => 'quickbooks', 'customer_reference' => 'quickbooks']),
     ];
@@ -66,7 +65,7 @@ function accessSavePayload(): array
 test('an organization operator cannot save the install-wide settings', function () {
     session(['company' => 'company-uuid']);
     $store                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::adminAuth()] = ['client_id' => 'install-id', 'client_secret' => 'sealed', 'environment' => 'production'];
+    $store->rows[SettingsKeys::adminAuth()] = ['production_client_id' => 'install-id', 'production_client_secret' => 'sealed'];
     $store->rows[SettingsKeys::adminSync()] = qbSettings();
     $before                                 = $store->rows;
     $controller                             = accessSettingsController($store, accessOrganizationOperator());
@@ -103,7 +102,7 @@ test('an installation administrator can save the install-wide settings and is to
 
         expect($response->getStatusCode())->toBe(200)
             ->and($data['can_edit'])->toBeTrue()
-            ->and($store->rows[SettingsKeys::adminAuth()]['client_id'])->toBe('attacker-id')
+            ->and($store->rows[SettingsKeys::adminAuth()]['production_client_id'])->toBe('attacker-id')
             ->and($store->rows[SettingsKeys::adminSync()]['customer_conflict'])->toBe('quickbooks');
     } finally {
         session(['company' => null]);
@@ -117,11 +116,10 @@ test('global settings show is for installation administrators and never returns 
     $sealedSecret                           = $cipher->encrypt('super-secret-value');
     $sealedVerifier                         = $cipher->encrypt('verifier-token-value');
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'        => 'install-id',
-        'client_secret'    => $sealedSecret,
-        'webhook_verifier' => $sealedVerifier,
-        'environment'      => 'production',
-        'redirect_uri'     => 'https://example.com/quickbooks/int/v1/oauth/callback',
+        'production_client_id'        => 'install-id',
+        'production_client_secret'    => $sealedSecret,
+        'production_webhook_verifier' => $sealedVerifier,
+        'redirect_uri'                => 'https://example.com/quickbooks/int/v1/oauth/callback',
     ];
     $controller = accessSettingsController($store, accessOrganizationOperator());
 
@@ -137,10 +135,11 @@ test('global settings show is for installation administrators and never returns 
             ->and($content)->not->toContain('verifier-token-value')
             ->and($content)->not->toContain($sealedSecret)
             ->and($content)->not->toContain($sealedVerifier)
-            ->and($adminView->getData(true)['auth'])->not->toHaveKey('client_secret')
-            ->and($adminView->getData(true)['auth'])->not->toHaveKey('webhook_verifier')
-            ->and($adminView->getData(true)['auth']['client_secret_set'])->toBeTrue()
-            ->and($adminView->getData(true)['company_auth'])->not->toHaveKey('client_secret')
+            ->and($adminView->getData(true)['auth'])->not->toHaveKey('production_client_secret')
+            ->and($adminView->getData(true)['auth'])->not->toHaveKey('production_webhook_verifier')
+            ->and($adminView->getData(true)['auth']['production_client_secret_set'])->toBeTrue()
+            ->and($adminView->getData(true)['auth']['sandbox_client_secret_set'])->toBeFalse()
+            ->and($adminView->getData(true)['company_auth'])->not->toHaveKey('production_client_secret')
             ->and($adminView->getData(true)['can_edit'])->toBeTrue();
 
         // The organization view an operator does get carries no credential at all.

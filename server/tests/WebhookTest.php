@@ -133,7 +133,7 @@ function webhookAdminStore(SettingsService $settings, string $verifier): MemoryS
     $store = new MemorySettingsStore();
     if ($verifier !== '') {
         $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth([
-            'webhook_verifier' => $verifier,
+            'production_webhook_verifier' => $verifier,
         ], []);
     }
 
@@ -319,12 +319,12 @@ JSON;
 
     withoutWebhookVerifier(function () use ($settings, $body) {
         $store = webhookAdminStore($settings, 'verifier-token');
-        expect($store->rows[SettingsKeys::adminAuth()]['webhook_verifier'])->not->toBe('verifier-token');
+        expect($store->rows[SettingsKeys::adminAuth()]['production_webhook_verifier'])->not->toBe('verifier-token');
         $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth([
-            'webhook_verifier' => 'verifier-token',
+            'production_webhook_verifier' => 'verifier-token',
         ], []);
         $store->rows[SettingsKeys::companyAuth('company-b')] = $settings->storeAuth([
-            'webhook_verifier' => 'verifier-token',
+            'production_webhook_verifier' => 'verifier-token',
         ], []);
         $controller = webhookController($settings, $store, [
             'realm-1' => 'company-a',
@@ -374,10 +374,10 @@ JSON;
     withoutWebhookVerifier(function () use ($settings, $body) {
         $store                                               = webhookAdminStore($settings, 'verifier-token');
         $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth([
-            'webhook_verifier' => 'verifier-token',
+            'production_webhook_verifier' => 'verifier-token',
         ], []);
         $store->rows[SettingsKeys::companyAuth('company-b')] = $settings->storeAuth([
-            'webhook_verifier' => 'verifier-token',
+            'production_webhook_verifier' => 'verifier-token',
         ], []);
         $controller = webhookController($settings, $store, [
             'realm-shared' => ['company-a', 'company-b'],
@@ -458,7 +458,7 @@ test('an organization webhook verifier is rejected when the global verifier is n
     withoutWebhookVerifier(function () use ($settings, $body) {
         $store                                               = new MemorySettingsStore();
         $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth([
-            'webhook_verifier' => 'company-verifier',
+            'production_webhook_verifier' => 'company-verifier',
         ], []);
         $controller = webhookController($settings, $store, ['realm-1' => 'company-a']);
 
@@ -479,12 +479,12 @@ test('the global verifier is accepted and another organization verifier is rejec
     withoutWebhookVerifier(function () use ($settings, $body) {
         $store                                               = webhookAdminStore($settings, 'verifier-a');
         $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth([
-            'client_secret'    => 'secret-a',
-            'webhook_verifier' => 'verifier-a',
+            'client_secret'               => 'secret-a',
+            'production_webhook_verifier' => 'verifier-a',
         ], []);
         $store->rows[SettingsKeys::companyAuth('company-b')] = $settings->storeAuth([
-            'client_secret'    => 'secret-b',
-            'webhook_verifier' => 'verifier-b',
+            'client_secret'               => 'secret-b',
+            'production_webhook_verifier' => 'verifier-b',
         ], []);
         $controller = webhookController($settings, $store, ['realm-1' => 'company-a']);
 
@@ -519,10 +519,10 @@ test('a shared realm delivers to every connection when the global verifier match
     withoutWebhookVerifier(function () use ($settings, $body) {
         $store                                               = webhookAdminStore($settings, 'verifier-a');
         $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth([
-            'webhook_verifier' => 'verifier-a',
+            'production_webhook_verifier' => 'verifier-a',
         ], []);
         $store->rows[SettingsKeys::companyAuth('company-b')] = $settings->storeAuth([
-            'webhook_verifier' => 'verifier-b',
+            'production_webhook_verifier' => 'verifier-b',
         ], []);
         $controller = webhookController($settings, $store, [
             'realm-shared' => ['company-a', 'company-b'],
@@ -570,7 +570,7 @@ test('the global verifier authorizes every connection and an organization or env
 JSON;
         $store                                               = webhookAdminStore($settings, 'admin-verifier');
         $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth([
-            'webhook_verifier' => 'verifier-a',
+            'production_webhook_verifier' => 'verifier-a',
         ], []);
         $controller = webhookController($settings, $store, [
             'realm-1' => 'company-a',
@@ -631,20 +631,20 @@ test('a failed signature check does not decrypt every company client secret', fu
     withoutWebhookVerifier(function () use ($cipher, $settings, $body) {
         $store                                               = new MemorySettingsStore();
         $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth([
-            'client_secret'    => 'secret-a',
-            'webhook_verifier' => 'verifier-a',
+            'client_secret'               => 'secret-a',
+            'production_webhook_verifier' => 'verifier-a',
         ], []);
         $store->rows[SettingsKeys::companyAuth('company-b')] = $settings->storeAuth([
-            'client_secret'    => 'secret-b',
-            'webhook_verifier' => 'verifier-b',
+            'client_secret'               => 'secret-b',
+            'production_webhook_verifier' => 'verifier-b',
         ], []);
         $store->rows[SettingsKeys::companyAuth('company-c')] = $settings->storeAuth([
-            'client_secret'    => 'secret-c',
-            'webhook_verifier' => 'verifier-c',
+            'client_secret'               => 'secret-c',
+            'production_webhook_verifier' => 'verifier-c',
         ], []);
         $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth([
-            'client_secret'    => 'admin-secret',
-            'webhook_verifier' => 'admin-verifier',
+            'client_secret'               => 'admin-secret',
+            'production_webhook_verifier' => 'admin-verifier',
         ], []);
         $store->asked = [];
         $controller   = webhookController($settings, $store, [
@@ -666,13 +666,13 @@ test('a failed signature check does not decrypt every company client secret', fu
             expect($response->getStatusCode())->toBe(401)
                 ->and($events)->toBe([])
                 ->and($dispatcher->jobs)->toBe([])
-                ->and($cipher->decrypted)->toContain($auth['admin']['webhook_verifier'])
-                ->and($cipher->decrypted)->not->toContain($auth['a']['webhook_verifier'])
-                ->and($cipher->decrypted)->not->toContain($auth['b']['webhook_verifier'])
+                ->and($cipher->decrypted)->toContain($auth['admin']['production_webhook_verifier'])
+                ->and($cipher->decrypted)->not->toContain($auth['a']['production_webhook_verifier'])
+                ->and($cipher->decrypted)->not->toContain($auth['b']['production_webhook_verifier'])
                 ->and($cipher->decrypted)->not->toContain($auth['a']['client_secret'])
                 ->and($cipher->decrypted)->not->toContain($auth['b']['client_secret'])
                 ->and($cipher->decrypted)->not->toContain($auth['c']['client_secret'])
-                ->and($cipher->decrypted)->not->toContain($auth['c']['webhook_verifier'])
+                ->and($cipher->decrypted)->not->toContain($auth['c']['production_webhook_verifier'])
                 ->and($cipher->decrypted)->not->toContain($auth['admin']['client_secret'])
                 ->and($store->asked)->toContain(SettingsKeys::adminAuth())
                 ->and($store->asked)->not->toContain(SettingsKeys::companyAuth('company-a'))
@@ -734,68 +734,80 @@ test('a verifier carried in the body is not used to check the signature', functi
 test('a blank webhook verifier is not returned and storeAuth encrypts a new token and keeps the old one', function () {
     $cipher   = new SecretCipher();
     $settings = webhookSettings();
-    $blank    = $settings->forBrowser(['client_id' => 'id', 'webhook_verifier' => '']);
+    $blank    = $settings->forBrowser(['production_client_id' => 'id', 'production_webhook_verifier' => '']);
 
-    expect($blank)->not->toHaveKey('webhook_verifier')
-        ->and($blank['webhook_verifier_set'])->toBeFalse();
+    expect($blank)->not->toHaveKey('production_webhook_verifier')
+        ->and($blank['production_webhook_verifier_set'])->toBeFalse();
 
-    $stored  = $settings->storeAuth([
-        'client_id'        => 'id',
-        'client_secret'    => 'plain-secret',
-        'webhook_verifier' => 'new-token',
+    $stored = $settings->storeAuth([
+        'production_client_id'        => 'id',
+        'production_client_secret'    => 'plain-secret',
+        'production_webhook_verifier' => 'new-token',
     ], []);
     $browser = $settings->forBrowser($stored);
 
-    expect($stored['webhook_verifier'])->not->toBe('new-token')
-        ->and($cipher->decrypt($stored['webhook_verifier']))->toBe('new-token')
-        ->and($browser)->not->toHaveKey('webhook_verifier')
-        ->and($browser)->not->toHaveKey('client_secret')
-        ->and($browser['webhook_verifier_set'])->toBeTrue()
+    expect($stored['production_webhook_verifier'])->not->toBe('new-token')
+        ->and($cipher->decrypt($stored['production_webhook_verifier']))->toBe('new-token')
+        ->and($browser)->not->toHaveKey('production_webhook_verifier')
+        ->and($browser)->not->toHaveKey('production_client_secret')
+        ->and($browser['production_webhook_verifier_set'])->toBeTrue()
         ->and(json_encode($browser))->not->toContain('new-token');
 
-    $kept    = $settings->storeAuth(['webhook_verifier' => ''], $stored);
-    $omitted = $settings->storeAuth(['client_id' => 'id'], $stored);
+    $kept    = $settings->storeAuth(['production_webhook_verifier' => ''], $stored);
+    $omitted = $settings->storeAuth(['production_client_id' => 'id'], $stored);
 
-    expect($cipher->decrypt($kept['webhook_verifier']))->toBe('new-token')
-        ->and($cipher->decrypt($kept['client_secret']))->toBe('plain-secret')
-        ->and($cipher->decrypt($omitted['webhook_verifier']))->toBe('new-token');
+    expect($cipher->decrypt($kept['production_webhook_verifier']))->toBe('new-token')
+        ->and($cipher->decrypt($kept['production_client_secret']))->toBe('plain-secret')
+        ->and($cipher->decrypt($omitted['production_webhook_verifier']))->toBe('new-token');
 
-    $resolved = $settings->resolveAuth([], ['webhook_verifier' => $stored['webhook_verifier']], []);
-    $shown    = $settings->forBrowser($resolved);
+    $store                                               = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()]              = ['production_webhook_verifier' => $stored['production_webhook_verifier']];
+    $store->rows[SettingsKeys::companyAuth('company-a')] = ['production_webhook_verifier' => 'company-verifier'];
 
-    expect($resolved['webhook_verifier'])->toBe('new-token')
-        ->and($shown)->not->toHaveKey('webhook_verifier')
-        ->and($shown['webhook_verifier_set'])->toBeTrue();
+    expect($settings->webhookVerifiersFor($store))->toBe(['new-token'])
+        ->and($settings->forBrowser($settings->plainAuth($store)))->not->toHaveKey('production_webhook_verifier')
+        ->and($settings->forBrowser($settings->plainAuth($store))['production_webhook_verifier_set'])->toBeTrue();
 
-    $plain = $settings->resolveAuth(['webhook_verifier' => 'company-verifier'], ['webhook_verifier' => 'admin-verifier'], []);
-    expect($plain['webhook_verifier'])->toBe('')
-        ->and($settings->forBrowser($plain))->not->toHaveKey('webhook_verifier')
-        ->and($settings->resolveAuth(['webhook_verifier' => 'company-verifier'], [], [])['webhook_verifier'])->toBe('');
+    $only                                               = new MemorySettingsStore();
+    $only->rows[SettingsKeys::companyAuth('company-a')] = ['production_webhook_verifier' => 'company-verifier'];
 
-    expect($settings->storeAuth([], []))->not->toHaveKey('webhook_verifier');
+    expect($settings->webhookVerifiersFor($only))->toBe([])
+        ->and($settings->storeAuth([], []))->not->toHaveKey('production_webhook_verifier');
 });
 
-test('normalizeAuth keeps a client secret result unchanged when webhook_verifier is absent', function () {
+test('every saved webhook verifier is accepted, one per Intuit environment', function () {
+    $settings                               = webhookSettings();
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth([
+        'production_webhook_verifier' => 'live-verifier',
+        'sandbox_webhook_verifier'    => 'dev-verifier',
+    ], []);
+
+    expect($settings->webhookVerifiersFor($store))->toBe(['live-verifier', 'dev-verifier']);
+});
+
+test('normalizeAuth keeps only the credential fields of each environment', function () {
     $store = new MemorySettingsStore();
 
     expect($store->normalizeAuth([
-        'client_id'        => 'id',
-        'client_secret'    => 'secret',
-        'redirect_uri'     => 'https://example.test/callback',
-        'environment'      => 'sandbox',
+        'production_client_id'     => 'id',
+        'production_client_secret' => 'secret',
+        'redirect_uri'             => 'https://example.test/callback',
+        // An environment setting and an unprefixed key no longer exist.
+        'environment' => 'sandbox',
+        'client_id'   => 'old',
     ]))->toBe([
-        'client_id'     => 'id',
-        'client_secret' => 'secret',
-        'environment'   => 'sandbox',
+        'production_client_id'     => 'id',
+        'production_client_secret' => 'secret',
     ])
         ->and($store->normalizeAuth([
-            'client_secret'    => 'kept-secret',
-            'webhook_verifier' => '   ',
-            'interval_minutes' => '5',
-        ]))->toBe(['client_secret' => 'kept-secret'])
+            'sandbox_client_secret'       => 'kept-secret',
+            'production_webhook_verifier' => '   ',
+            'interval_minutes'            => '5',
+        ]))->toBe(['sandbox_client_secret' => 'kept-secret'])
         ->and($store->normalizeAuth([
-            'webhook_verifier' => 'token',
-        ]))->toBe(['webhook_verifier' => 'token']);
+            'production_webhook_verifier' => 'token',
+        ]))->toBe(['production_webhook_verifier' => 'token']);
 });
 
 test('saving a blank webhook verifier keeps the stored ciphertext and does not persist the set flag', function () {
@@ -803,11 +815,10 @@ test('saving a blank webhook verifier keeps the stored ciphertext and does not p
     $settings                                               = webhookSettings();
     $store                                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()]                 = $settings->storeAuth([
-        'client_id'        => 'client-id',
-        'client_secret'    => 'plain-secret',
-        'redirect_uri'     => 'https://example.com/callback',
-        'environment'      => 'sandbox',
-        'webhook_verifier' => 'verifier-token',
+        'production_client_id'        => 'client-id',
+        'production_client_secret'    => 'plain-secret',
+        'redirect_uri'                => 'https://example.com/callback',
+        'production_webhook_verifier' => 'verifier-token',
     ], []);
     $controller = new SettingController(
         new Authorizer(static fn () => true),
@@ -820,12 +831,11 @@ test('saving a blank webhook verifier keeps the stored ciphertext and does not p
         $response = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => [
-                'client_id'            => 'client-id',
-                'client_secret'        => '',
-                'redirect_uri'         => 'https://example.com/callback',
-                'environment'          => 'sandbox',
-                'webhook_verifier'     => '',
-                'webhook_verifier_set' => true,
+                'production_client_id'            => 'client-id',
+                'production_client_secret'        => '',
+                'redirect_uri'                    => 'https://example.com/callback',
+                'production_webhook_verifier'     => '',
+                'production_webhook_verifier_set' => true,
             ],
             'sync' => webhookSyncSettings(),
         ]));
@@ -834,9 +844,9 @@ test('saving a blank webhook verifier keeps the stored ciphertext and does not p
         expect($response->getStatusCode())->toBe(200)
             ->and($response->getContent())->not->toContain('verifier-token')
             ->and($response->getContent())->not->toContain('plain-secret')
-            ->and($stored)->not->toHaveKey('webhook_verifier_set')
-            ->and($cipher->decrypt($stored['webhook_verifier']))->toBe('verifier-token')
-            ->and($cipher->decrypt($stored['client_secret']))->toBe('plain-secret');
+            ->and($stored)->not->toHaveKey('production_webhook_verifier_set')
+            ->and($cipher->decrypt($stored['production_webhook_verifier']))->toBe('verifier-token')
+            ->and($cipher->decrypt($stored['production_client_secret']))->toBe('plain-secret');
     } finally {
         session(['company' => null]);
     }

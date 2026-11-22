@@ -70,11 +70,10 @@ function orgApiStore(): MemorySettingsStore
     $cipher                                 = new SecretCipher();
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'        => 'global-client-id',
-        'client_secret'    => $cipher->encrypt('global-secret-value'),
-        'webhook_verifier' => $cipher->encrypt('global-verifier-value'),
-        'environment'      => 'production',
-        'redirect_uri'     => 'https://example.com/quickbooks/int/v1/oauth/callback',
+        'production_client_id'        => 'global-client-id',
+        'production_client_secret'    => $cipher->encrypt('global-secret-value'),
+        'production_webhook_verifier' => $cipher->encrypt('global-verifier-value'),
+        'redirect_uri'                => 'https://example.com/quickbooks/int/v1/oauth/callback',
     ];
     $store->rows[SettingsKeys::adminSync()] = qbSettings(['interval_minutes' => 15, 'wallet_enabled' => false]);
 
@@ -113,17 +112,17 @@ test('the company view carries sync options only and never a global setting', fu
             ->and($data['sync']['interval_minutes'])->toBe(30)
             ->and(array_diff(array_keys($data['sync']), SettingsKeys::SYNC_FIELDS))->toBe([]);
 
-        foreach (['client_id', 'client_secret', 'webhook_verifier', 'environment', 'redirect_uri', 'auth', 'sources', 'override', 'global_sync', 'company_sync'] as $key) {
+        foreach (['client_id', 'client_secret', 'webhook_verifier', 'production_client_id', 'sandbox_client_id', 'environment', 'redirect_uri', 'auth', 'sources', 'override', 'global_sync', 'company_sync'] as $key) {
             expect($json)->not->toContain('"' . $key)
                 ->and($data['sync'])->not->toHaveKey($key);
         }
         expect($json)->not->toContain('_url')
-            ->and($json)->not->toContain('client_secret_set')
+            ->and($json)->not->toContain('production_client_secret_set')
             ->and($json)->not->toContain('global-client-id')
             ->and($json)->not->toContain('global-secret-value')
             ->and($json)->not->toContain('global-verifier-value')
-            ->and($json)->not->toContain($store->rows[SettingsKeys::adminAuth()]['client_secret'])
-            ->and($json)->not->toContain($store->rows[SettingsKeys::adminAuth()]['webhook_verifier']);
+            ->and($json)->not->toContain($store->rows[SettingsKeys::adminAuth()]['production_client_secret'])
+            ->and($json)->not->toContain($store->rows[SettingsKeys::adminAuth()]['production_webhook_verifier']);
     }
 });
 
@@ -140,7 +139,7 @@ test('an organization without a copy reads the current template and has_copy is 
 
 test('credentials_configured is false until the global client id and secret are both set', function () {
     $store                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::adminAuth()] = ['client_id' => 'only-an-id'];
+    $store->rows[SettingsKeys::adminAuth()] = ['sandbox_client_id' => 'only-an-id'];
     $controller                             = orgApiController($store, orgApiAuthorizer('QuickbooksOperator'));
 
     expect($controller->show(orgApiGet())->getData(true)['credentials_configured'])->toBeFalse();
@@ -387,7 +386,7 @@ test('the admin scope is for installation administrators only', function () {
     $store      = orgApiStore();
     $before     = $store->rows;
     $controller = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
-    $body       = ['scope' => 'admin', 'auth' => ['client_id' => 'hijack'], 'sync' => qbSettings()];
+    $body       = ['scope' => 'admin', 'auth' => ['production_client_id' => 'hijack'], 'sync' => qbSettings()];
 
     expect(orgApiStatus(fn () => $controller->show(orgApiGet(['scope' => 'admin']))))->toBe(403)
         ->and(orgApiStatus(fn () => $controller->save(orgApiPost($body))))->toBe(403)
@@ -396,8 +395,8 @@ test('the admin scope is for installation administrators only', function () {
     $shown = $controller->show(orgApiGet(['scope' => 'admin'], true))->getData(true);
 
     expect($shown['can_edit'])->toBeTrue()
-        ->and($shown['auth']['client_id'])->toBe('global-client-id')
-        ->and($shown['auth']['client_secret_set'])->toBeTrue()
+        ->and($shown['auth']['production_client_id'])->toBe('global-client-id')
+        ->and($shown['auth']['production_client_secret_set'])->toBeTrue()
         ->and($shown)->toHaveKeys(['sync', 'internal_webhook_receiver_url', 'public_oauth_redirect_url']);
 });
 
@@ -408,20 +407,20 @@ test('the admin view shows only the last four characters of a long saved secret'
     $response = $controller->show(orgApiGet(['scope' => 'admin'], true));
     $shown    = $response->getData(true);
 
-    expect($shown['auth']['client_secret_hint'])->toBe('alue')
-        ->and($shown['auth']['webhook_verifier_hint'])->toBe('alue')
+    expect($shown['auth']['production_client_secret_hint'])->toBe('alue')
+        ->and($shown['auth']['production_webhook_verifier_hint'])->toBe('alue')
         ->and($response->getContent())->not->toContain('global-secret-value')
         ->and($response->getContent())->not->toContain('global-verifier-value');
 
-    $store->rows[SettingsKeys::adminAuth()]['client_secret']    = (new SecretCipher())->encrypt('short-secret');
-    $store->rows[SettingsKeys::adminAuth()]['webhook_verifier'] = '';
+    $store->rows[SettingsKeys::adminAuth()]['production_client_secret']    = (new SecretCipher())->encrypt('short-secret');
+    $store->rows[SettingsKeys::adminAuth()]['production_webhook_verifier'] = '';
 
     $short = $controller->show(orgApiGet(['scope' => 'admin'], true))->getData(true);
 
     // A short value would give away too much of itself, so it gets no hint.
-    expect($short['auth']['client_secret_set'])->toBeTrue()
-        ->and($short['auth']['client_secret_hint'])->toBeNull()
-        ->and($short['auth']['webhook_verifier_hint'])->toBeNull();
+    expect($short['auth']['production_client_secret_set'])->toBeTrue()
+        ->and($short['auth']['production_client_secret_hint'])->toBeNull()
+        ->and($short['auth']['production_webhook_verifier_hint'])->toBeNull();
 
     $operator = orgApiController($store, orgApiAuthorizer('QuickbooksAdministrator'));
     $company  = $operator->show(orgApiGet())->getContent();
@@ -436,15 +435,15 @@ test('the admin scope saves the global rows and never an organization row', func
     $response = $controller->save(orgApiPost([
         'scope' => 'admin',
         'auth'  => [
-            'client_id'        => 'new-global-id',
-            'client_secret'    => 'new-global-secret',
-            'webhook_verifier' => 'new-global-verifier',
+            'production_client_id'        => 'new-global-id',
+            'production_client_secret'    => 'new-global-secret',
+            'production_webhook_verifier' => 'new-global-verifier',
         ],
         'sync'  => qbSettings(['interval_minutes' => 20]),
     ], true));
 
     expect($response->getStatusCode())->toBe(200)
-        ->and($store->rows[SettingsKeys::adminAuth()]['client_id'])->toBe('new-global-id')
+        ->and($store->rows[SettingsKeys::adminAuth()]['production_client_id'])->toBe('new-global-id')
         ->and($store->rows[SettingsKeys::adminSync()]['interval_minutes'])->toBe(20)
         ->and(array_key_exists(SettingsKeys::companySync('company-a'), $store->rows))->toBeFalse()
         ->and(array_key_exists(SettingsKeys::companyAuth('company-a'), $store->rows))->toBeFalse();
@@ -457,33 +456,33 @@ test('a changed Client ID needs its Client secret, and an unchanged one keeps th
 
     $refused = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => ''],
+        'auth'  => ['production_client_id' => 'new-global-id', 'production_client_secret' => ''],
         'sync'  => qbSettings(),
     ], true));
 
     expect($refused->getStatusCode())->toBe(422)
-        ->and(array_keys($refused->getData(true)['errors']))->toBe(['client_secret', 'webhook_verifier'])
+        ->and(array_keys($refused->getData(true)['errors']))->toBe(['production_client_secret', 'production_webhook_verifier'])
         ->and($store->rows)->toBe($before);
 
     $kept = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'global-client-id', 'client_secret' => ''],
+        'auth'  => ['production_client_id' => 'global-client-id', 'production_client_secret' => ''],
         'sync'  => qbSettings(),
     ], true));
 
     expect($kept->getStatusCode())->toBe(200)
-        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['client_secret']))
+        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['production_client_secret']))
         ->toBe('global-secret-value');
 
     // A blank Client ID reports only its own error, not one for the saved secret.
     $blank = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => '', 'client_secret' => ''],
+        'auth'  => ['production_client_id' => '', 'production_client_secret' => ''],
         'sync'  => qbSettings(),
     ], true));
 
     expect($blank->getStatusCode())->toBe(422)
-        ->and(array_keys($blank->getData(true)['errors']))->toBe(['client_id']);
+        ->and(array_keys($blank->getData(true)['errors']))->toBe(['production_client_id']);
 });
 
 test('a changed Client ID needs its webhook verifier too, when one is saved', function () {
@@ -493,83 +492,83 @@ test('a changed Client ID needs its webhook verifier too, when one is saved', fu
 
     $refused = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => 'new-secret-value', 'webhook_verifier' => ''],
+        'auth'  => ['production_client_id' => 'new-global-id', 'production_client_secret' => 'new-secret-value', 'production_webhook_verifier' => ''],
         'sync'  => qbSettings(),
     ], true));
 
     expect($refused->getStatusCode())->toBe(422)
-        ->and(array_keys($refused->getData(true)['errors']))->toBe(['webhook_verifier'])
-        ->and($refused->getData(true)['errors']['webhook_verifier'])->toContain('Verifier')
+        ->and(array_keys($refused->getData(true)['errors']))->toBe(['production_webhook_verifier'])
+        ->and($refused->getData(true)['errors']['production_webhook_verifier'])->toContain('Verifier')
         ->and($store->rows)->toBe($before);
 
     $saved = $controller->save(orgApiPost([
         'scope' => 'admin',
         'auth'  => [
-            'client_id'        => 'new-global-id',
-            'client_secret'    => 'new-secret-value',
-            'webhook_verifier' => 'new-verifier-value',
+            'production_client_id'        => 'new-global-id',
+            'production_client_secret'    => 'new-secret-value',
+            'production_webhook_verifier' => 'new-verifier-value',
         ],
         'sync'  => qbSettings(),
     ], true));
 
     expect($saved->getStatusCode())->toBe(200)
-        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['webhook_verifier']))
+        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['production_webhook_verifier']))
         ->toBe('new-verifier-value');
 
     // A verifier of spaces is blank.
     $spaces = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'third-id', 'client_secret' => 'third-secret-value', 'webhook_verifier' => '   '],
+        'auth'  => ['production_client_id' => 'third-id', 'production_client_secret' => 'third-secret-value', 'production_webhook_verifier' => '   '],
         'sync'  => qbSettings(),
     ], true));
 
     expect($spaces->getStatusCode())->toBe(422)
-        ->and(array_keys($spaces->getData(true)['errors']))->toBe(['webhook_verifier']);
+        ->and(array_keys($spaces->getData(true)['errors']))->toBe(['production_webhook_verifier']);
 
     // An unchanged Client ID keeps the saved verifier.
     $kept = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => '', 'webhook_verifier' => ''],
+        'auth'  => ['production_client_id' => 'new-global-id', 'production_client_secret' => '', 'production_webhook_verifier' => ''],
         'sync'  => qbSettings(),
     ], true));
 
     expect($kept->getStatusCode())->toBe(200)
-        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['webhook_verifier']))
+        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['production_webhook_verifier']))
         ->toBe('new-verifier-value');
 });
 
 test('a changed Client ID needs no webhook verifier when none is saved', function () {
-    $store                                                      = orgApiStore();
-    $store->rows[SettingsKeys::adminAuth()]['webhook_verifier'] = '';
-    $controller                                                 = orgApiController(
+    $store                                                                 = orgApiStore();
+    $store->rows[SettingsKeys::adminAuth()]['production_webhook_verifier'] = '';
+    $controller                                                            = orgApiController(
         $store,
         new Authorizer(static fn (): bool => false)
     );
 
     $saved = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'new-global-id', 'client_secret' => 'new-secret-value'],
+        'auth'  => ['production_client_id' => 'new-global-id', 'production_client_secret' => 'new-secret-value'],
         'sync'  => qbSettings(),
     ], true));
 
     expect($saved->getStatusCode())->toBe(200)
-        ->and($store->rows[SettingsKeys::adminAuth()])->not->toHaveKey('webhook_verifier');
+        ->and($store->rows[SettingsKeys::adminAuth()])->not->toHaveKey('production_webhook_verifier');
 });
 
 test('a secret saved before any Client ID is kept when a Client ID is first entered', function () {
     $store = orgApiStore();
-    unset($store->rows[SettingsKeys::adminAuth()]['client_id']);
+    unset($store->rows[SettingsKeys::adminAuth()]['production_client_id']);
     $controller = orgApiController($store, new Authorizer(static fn (): bool => false));
 
     $saved = $controller->save(orgApiPost([
         'scope' => 'admin',
-        'auth'  => ['client_id' => 'first-id', 'client_secret' => ''],
+        'auth'  => ['production_client_id' => 'first-id', 'production_client_secret' => ''],
         'sync'  => qbSettings(),
     ], true));
 
     expect($saved->getStatusCode())->toBe(200)
-        ->and($store->rows[SettingsKeys::adminAuth()]['client_id'])->toBe('first-id')
-        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['client_secret']))
+        ->and($store->rows[SettingsKeys::adminAuth()]['production_client_id'])->toBe('first-id')
+        ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['production_client_secret']))
         ->toBe('global-secret-value');
 });
 

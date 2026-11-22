@@ -136,18 +136,13 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
     test('company settings save the selected direction and show webhook and oauth urls as text', async function (assert) {
         this.set('settings', {
-            client_id: 'org-id',
+            production_client_id: 'org-id',
             redirect_uri: 'https://admin.example/callback',
-            environment: 'sandbox',
-            client_secret_set: true,
-            webhook_verifier_set: true,
+            production_client_secret_set: true,
+            production_webhook_verifier_set: true,
             internal_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
             public_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
             public_oauth_redirect_url: 'https://console.example/quickbooks',
-            sources: {
-                client_id: 'admin',
-                environment: 'admin',
-            },
         });
         this.set('sync', {
             enabled: true,
@@ -157,7 +152,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             default_backoff_seconds: 30,
             invoice_reference: 'quickbooks',
         });
-        this.set('companySettings', { client_id: 'company-id', client_secret_set: true });
+        this.set('companySettings', { production_client_id: 'company-id', production_client_secret_set: true });
         this.set('companySync', { interval_minutes: 2 });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
@@ -203,24 +198,26 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-create-app-step] a').hasClass('underline');
         assert
             .dom('[data-test-credentials-guidance] li:nth-child(2)')
-            .hasText('Choose the Environment, then copy its Client ID and Client secret from Keys & credentials into the fields below.');
+            .hasText(
+                'Copy the Production keys into Production keys below and the Development keys into Sandbox keys. Fill in one set or both; each organization chooses its environment when it connects.'
+            );
         assert.dom('[data-test-redirect-step]').hasText(`${REDIRECT_STEP} https://console.example/quickbooks`);
         assert.dom('[data-test-webhook-step]').hasText(`${WEBHOOK_STEP} http://internal.example/quickbooks/int/v1/webhooks ${VERIFIER_STEP}`);
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-500');
-        assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
+        assert.dom("[data-test-field-help='production_client_id']").hasClass('text-xs');
+        assert.dom("[data-test-field-help='production_client_id']").hasClass('text-gray-500');
+        assert.dom("[data-test-field-help='production_client_id']").hasClass('mt-1');
         assert.dom('[data-test-credential-save-step]').hasText('Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.');
         assert.dom("[data-test-field='redirect_uri']").doesNotExist();
-        assert.dom("[data-test-field='webhook_verifier']").isNotDisabled();
+        assert.dom("[data-test-field='production_webhook_verifier']").isNotDisabled();
         assert.dom('[data-test-verifier-set]').hasText('A verifier token is already saved. Leave this blank to keep it.');
         assert
-            .dom("[data-test-field-help='webhook_verifier']")
+            .dom("[data-test-field-help='production_webhook_verifier']")
             .hasText('Intuit signs webhooks with this token. Stored encrypted.', 'the saved-token line below already says to leave it blank');
-        assert.dom("[data-test-field='client_id']").hasAttribute('autocomplete', 'off');
-        assert.dom("[data-test-field='client_secret']").hasAttribute('autocomplete', 'new-password');
-        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('autocomplete', 'new-password');
+        assert.dom("[data-test-field='production_client_id']").hasAttribute('autocomplete', 'off');
+        assert.dom("[data-test-field='production_client_secret']").hasAttribute('autocomplete', 'new-password');
+        assert.dom("[data-test-field='production_webhook_verifier']").hasAttribute('autocomplete', 'new-password');
         assert.dom('[data-test-admin-verifier]').doesNotExist();
         assert.dom().doesNotIncludeText('QUICKBOOKS_WEBHOOK_VERIFIER');
         assert.dom().doesNotIncludeText('If this address is localhost');
@@ -256,16 +253,16 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-activity-block]').doesNotExist();
         assert.dom('[data-test-settings-scope]').hasClass('space-y-6');
         assert.strictEqual(this.element.querySelector('[data-test-settings-scope] .max-w-3xl'), null);
-        assert.strictEqual(this.element.querySelector("[data-test-field='client_id']").closest('.max-w-3xl'), null);
+        assert.strictEqual(this.element.querySelector("[data-test-field='production_client_id']").closest('.max-w-3xl'), null);
         assert.dom('#fleetbase-pagination').doesNotExist();
         assert.dom().doesNotIncludeText('The Primary choice for each category decides which system wins when the records differ and which system supplies identifiers.');
-        assert.dom("[data-test-field='environment']").hasValue('sandbox');
-        assert.dom("[data-test-field='environment'] option[value='sandbox']").hasText('Sandbox');
-        assert.dom("[data-test-field='environment'] option[value='production']").hasText('Production');
-        assert.dom("[data-test-field='client_id']").hasValue('org-id');
-        assert.dom("[data-test-field='client_id']").isNotDisabled();
-        assert.dom(this.element.querySelector("[data-test-field='client_id']").closest('.input-group').querySelector('label')).hasClass('required');
-        assert.dom(this.element.querySelector("[data-test-field='client_secret']").closest('.input-group').querySelector('label')).hasClass('required');
+        assert.dom("[data-test-field='environment']").doesNotExist();
+        assert.dom('[data-test-credential-set="production"] [data-test-credential-set-title]').hasText('Production keys');
+        assert.dom('[data-test-credential-set="sandbox"] [data-test-credential-set-title]').hasText('Sandbox keys');
+        assert.dom("[data-test-field='production_client_id']").hasValue('org-id');
+        assert.dom("[data-test-field='production_client_id']").isNotDisabled();
+        assert.dom(this.element.querySelector("[data-test-field='production_client_id']").closest('.input-group').querySelector('label')).hasClass('required');
+        assert.dom(this.element.querySelector("[data-test-field='production_client_secret']").closest('.input-group').querySelector('label')).hasClass('required');
         assert.dom("[data-test-sync-field='interval_minutes'] label").hasText('Sync frequency (minutes)');
         const syncFrequencyHelp = 'Minutes between scheduled syncs of waiting changes. 20 or more waiting changes start one sooner.';
         assert.dom("[data-test-sync-field='interval_minutes'] [data-test-field-help='interval_minutes']").hasText(syncFrequencyHelp);
@@ -281,11 +278,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-sync='periodic_interval_hours']").hasValue('24');
         assert.dom("[data-test-sync-field='retry_limit'] label").hasText('Retry attempts');
         assert.dom("[data-test-sync-field='default_backoff_seconds'] label").hasText('Retry delay (seconds)');
-        assert.dom("[data-test-sync-field='environment'] label").hasText('Environment');
-        assert
-            .dom("[data-test-field-help='environment']")
-            .hasText('Sandbox uses the Development keys and a QuickBooks sandbox company. Production uses the Production keys and your live QuickBooks Online company.');
-        assert.dom("[data-test-field-help='client_id']").hasText('On Keys & credentials. Use the Development Client ID with Sandbox, and the Production Client ID with your live company.');
+        assert.dom("[data-test-field-help='production_client_id']").hasText("On Keys & credentials, for this set's environment.");
         assert
             .dom("[data-test-policy='customer'] [data-test-field-help='sync_direction']")
             .hasText('Both keeps the two systems in step. To QuickBooks only sends Fleetbase changes. From QuickBooks only brings QuickBooks changes into Fleetbase.');
@@ -321,28 +314,28 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-policy='customer'] [data-test-sync='customer_direction'] option[value='inbound']").hasText('From QuickBooks');
         assert.dom("[data-test-policy='customer'] [data-test-sync='customer_direction'] option[value='off']").doesNotExist();
 
-        await fillIn("[data-test-field='client_id']", '');
-        const clientId = this.element.querySelector("[data-test-field='client_id']");
+        await fillIn("[data-test-field='production_client_id']", '');
+        const clientId = this.element.querySelector("[data-test-field='production_client_id']");
         const scrolled = [];
         clientId.scrollIntoView = (options) => scrolled.push(options);
         await click(saveButton());
-        assert.dom("[data-test-error='client_id']").exists();
-        assert.dom("[data-test-error='client_id']").hasClass('dark:text-red-400');
+        assert.dom("[data-test-error='production_client_id']").exists();
+        assert.dom("[data-test-error='production_client_id']").hasClass('dark:text-red-400');
         assert.dom("[data-test-error='redirect_uri']").doesNotExist();
-        assert.dom("[data-test-error='client_secret']").doesNotExist();
-        assertFieldError(assert, "[data-test-field='client_id']", 'client_id');
-        assert.dom("[data-test-field='environment']").doesNotHaveClass('border-red-500');
-        assert.dom("[data-test-field='environment']").doesNotHaveAttribute('aria-describedby');
+        assert.dom("[data-test-error='production_client_secret']").doesNotExist();
+        assertFieldError(assert, "[data-test-field='production_client_id']", 'production_client_id');
+        assert.dom("[data-test-field='sandbox_client_id']").doesNotHaveClass('border-red-500');
+        assert.dom("[data-test-field='sandbox_client_id']").doesNotHaveAttribute('aria-describedby');
         assert.strictEqual(document.activeElement, clientId);
         assert.deepEqual(scrolled, [{ block: 'center' }]);
         assert.dom('[data-test-save]', document).doesNotHaveClass('btn-is-loading');
         assert.strictEqual(this.saved, null);
 
-        await fillIn("[data-test-field='client_id']", 'org-id');
+        await fillIn("[data-test-field='production_client_id']", 'org-id');
         await fillIn("[data-test-sync='customer_conflict']", 'quickbooks');
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.client_id, 'org-id');
-        assert.strictEqual(this.saved.auth.environment, 'sandbox');
+        assert.strictEqual(this.saved.auth.production_client_id, 'org-id');
+        assert.false(Object.hasOwn(this.saved.auth, 'environment'));
         assert.strictEqual(this.saved.sync.enabled, undefined);
         assert.strictEqual(this.saved.sync.interval_minutes, 5);
         // Conflict is unset, so Primary is the default, QuickBooks, for both keys.
@@ -355,8 +348,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.strictEqual(this.saved.sync.payment_direction, 'both');
         assert.strictEqual(this.saved.sync.wallet_direction, 'both');
         assert.strictEqual(this.saved.sync.periodic_interval_hours, 24);
-        assert.strictEqual(this.saved.auth.webhook_verifier, undefined);
-        assert.strictEqual(this.saved.auth.client_secret, undefined);
+        assert.strictEqual(this.saved.auth.production_webhook_verifier, undefined);
+        assert.strictEqual(this.saved.auth.production_client_secret, undefined);
         assertUrlsStayOutOfPayload(assert, this.saved);
         assert.dom('[data-test-policy="wallet"]').includesText('Primary');
         assert.dom('[data-test-policy="wallet"]').includesText('Sync direction');
@@ -371,7 +364,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
     });
 
     test('organization settings require the Intuit app fields before saving', async function (assert) {
-        this.set('settings', { client_id: '', redirect_uri: '', environment: 'sandbox', client_secret_set: false });
+        this.set('settings', { production_client_id: '', redirect_uri: '', production_client_secret_set: false });
         this.set('sync', {
             enabled: true,
             interval_minutes: 5,
@@ -394,31 +387,31 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-credential-save-step]').hasText('Choose Save Changes. Each organization then connects from its own QuickBooks Setup page.');
         assert.dom('[data-test-redirect-step]').includesText(REDIRECT_STEP);
         assert.dom('[data-test-redirect-step]').doesNotIncludeText('{{fleetbase.url}}');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-500');
-        assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
+        assert.dom("[data-test-field-help='production_client_id']").hasClass('text-xs');
+        assert.dom("[data-test-field-help='production_client_id']").hasClass('text-gray-500');
+        assert.dom("[data-test-field-help='production_client_id']").hasClass('mt-1');
         assert.dom('[data-test-connection-state]').hasAttribute('data-test-connection-state', 'loading');
         assert.dom('[data-test-connect]').doesNotExist();
         assert.dom('[data-test-admin-disconnect]').doesNotExist();
-        assert.dom(this.element.querySelector("[data-test-field='client_secret']").closest('.input-group').querySelector('label')).hasClass('required');
-        assert.dom("[data-test-field-help='webhook_verifier']").includesText('Intuit signs webhooks with this token. Stored encrypted.');
-        assert.dom("[data-test-field-help='webhook_verifier']").doesNotIncludeText('Leave blank');
+        assert.dom(this.element.querySelector("[data-test-field='production_client_secret']").closest('.input-group').querySelector('label')).hasClass('required');
+        assert.dom("[data-test-field-help='production_webhook_verifier']").includesText('Intuit signs webhooks with this token. Stored encrypted.');
+        assert.dom("[data-test-field-help='production_webhook_verifier']").doesNotIncludeText('Leave blank');
         assert.dom('[data-test-webhook-step]').includesText(WEBHOOK_STEP);
 
         await click(saveButton());
-        assert.dom("[data-test-error='client_id']").exists();
+        assert.dom("[data-test-error='production_client_id']").exists();
         assert.dom("[data-test-error='redirect_uri']").doesNotExist();
-        assert.dom("[data-test-error='client_secret']").exists();
-        assertFieldError(assert, "[data-test-field='client_id']", 'client_id');
-        assertFieldError(assert, "[data-test-field='client_secret']", 'client_secret');
+        assert.dom("[data-test-error='production_client_secret']").exists();
+        assertFieldError(assert, "[data-test-field='production_client_id']", 'production_client_id');
+        assertFieldError(assert, "[data-test-field='production_client_secret']", 'production_client_secret');
         assert.strictEqual(this.saved, null);
 
-        await fillIn("[data-test-field='client_id']", 'admin-id');
-        await fillIn("[data-test-field='client_secret']", 'secret');
+        await fillIn("[data-test-field='production_client_id']", 'admin-id');
+        await fillIn("[data-test-field='production_client_secret']", 'secret');
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.client_id, 'admin-id');
-        assert.strictEqual(this.saved.auth.client_secret, 'secret');
-        assert.strictEqual(this.saved.auth.environment, 'sandbox');
+        assert.strictEqual(this.saved.auth.production_client_id, 'admin-id');
+        assert.strictEqual(this.saved.auth.production_client_secret, 'secret');
+        assert.false(Object.hasOwn(this.saved.auth, 'environment'));
         assert.strictEqual(this.saved.sync.interval_minutes, 5);
         assert.strictEqual(this.saved.sync.enabled, undefined);
         assert.strictEqual(this.saved.scope, 'company');
@@ -426,21 +419,20 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
     });
 
-    test('environment comes first, then Client ID and Client secret next to each other', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+    test('each set shows its Client ID and Client secret next to each other, Production first', async function (assert) {
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true });
         this.set('sync', { interval_minutes: 5, retry_limit: 5, default_backoff_seconds: 30 });
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
 
         const order = [...this.element.querySelectorAll('[data-test-field]')].map((element) => element.dataset.testField).filter((key) => !key.startsWith('public_'));
-        assert.deepEqual(order.slice(0, 4), ['environment', 'client_id', 'client_secret', 'webhook_verifier']);
+        assert.deepEqual(order.slice(0, 4), ['production_client_id', 'production_client_secret', 'production_webhook_verifier', 'sandbox_client_id']);
     });
 
     test('the Configuring QuickBooks steps are collapsed by default and open from their title', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
-            environment: 'sandbox',
-            client_secret_set: true,
+            production_client_id: 'id',
+            production_client_secret_set: true,
             public_oauth_redirect_url: 'https://fleet.example.com/quickbooks',
             public_oauth_redirect_ready: true,
             public_webhook_receiver_url: 'https://fleet.example.com/quickbooks/int/v1/webhooks',
@@ -463,8 +455,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         });
         assert.true(shown('[data-test-credentials-guidance-title]'), 'the title shows while collapsed');
         // The credential fields stay outside the section, so collapsing it never hides an input.
-        assert.dom('[data-test-credentials-guidance] [data-test-field="client_id"]').doesNotExist();
-        assert.true(shown('[data-test-field="client_id"]'), 'the fields show while collapsed');
+        assert.dom('[data-test-credentials-guidance] [data-test-field="production_client_id"]').doesNotExist();
+        assert.true(shown('[data-test-field="production_client_id"]'), 'the fields show while collapsed');
 
         await click('[data-test-credentials-guidance-title]');
         assert.dom('[data-test-credentials-guidance] details').hasAttribute('open');
@@ -472,7 +464,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.true(shown('[data-test-redirect-step] [data-test-field="public_oauth_redirect_url"]'), 'the URL shows once opened');
 
         // Typing in a field re-renders the form; the opened steps stay open.
-        await fillIn('[data-test-field="client_id"]', 'other-id');
+        await fillIn('[data-test-field="production_client_id"]', 'other-id');
         assert.true(this.element.querySelector('[data-test-credentials-guidance] details').open, 'still open after a re-render');
 
         await click('[data-test-credentials-guidance-title]');
@@ -481,9 +473,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
     test('URLs that are not public https addresses share one collapsed warning at the top that lists what breaks and the fix', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
-            environment: 'sandbox',
-            client_secret_set: true,
+            production_client_id: 'id',
+            production_client_secret_set: true,
             public_oauth_redirect_url: 'http://localhost:4200/quickbooks',
             public_oauth_redirect_ready: false,
             public_webhook_receiver_url: 'https://fleet.example.com/quickbooks/int/v1/webhooks',
@@ -566,7 +557,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
     });
 
     test('a changed Client ID needs its Client secret, and an unchanged one keeps the saved secret', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
@@ -574,30 +565,30 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
 
         assert.dom('[data-test-secret-set]').exists();
-        await fillIn("[data-test-field='client_id']", 'new-id');
+        await fillIn("[data-test-field='production_client_id']", 'new-id');
         assert.dom('[data-test-secret-set]').doesNotExist();
-        assert.dom("[data-test-field='client_secret']").hasAttribute('placeholder', '');
+        assert.dom("[data-test-field='production_client_secret']").hasAttribute('placeholder', '');
         await click(saveButton());
         assert.strictEqual(this.saved, null);
-        assert.dom("[data-test-error='client_secret']").hasText('Enter the Client secret shown next to the Client ID on Keys & credentials.');
-        assert.dom("[data-test-error='client_id']").doesNotExist();
+        assert.dom("[data-test-error='production_client_secret']").hasText('Enter the Client secret shown next to the Client ID on Keys & credentials.');
+        assert.dom("[data-test-error='production_client_id']").doesNotExist();
         assert.dom('[data-test-secret-set]').doesNotExist();
 
-        await fillIn("[data-test-field='client_id']", 'id');
+        await fillIn("[data-test-field='production_client_id']", 'id');
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.client_id, 'id');
-        assert.strictEqual(this.saved.auth.client_secret, undefined);
+        assert.strictEqual(this.saved.auth.production_client_id, 'id');
+        assert.strictEqual(this.saved.auth.production_client_secret, undefined);
 
         this.set('saved', null);
-        await fillIn("[data-test-field='client_id']", 'new-id');
-        await fillIn("[data-test-field='client_secret']", 'new-secret');
+        await fillIn("[data-test-field='production_client_id']", 'new-id');
+        await fillIn("[data-test-field='production_client_secret']", 'new-secret');
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.client_id, 'new-id');
-        assert.strictEqual(this.saved.auth.client_secret, 'new-secret');
+        assert.strictEqual(this.saved.auth.production_client_id, 'new-id');
+        assert.strictEqual(this.saved.auth.production_client_secret, 'new-secret');
     });
 
     test('a changed Client ID needs its webhook verifier when one is saved', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true, webhook_verifier_set: true, webhook_verifier_hint: 'v1v2' });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true, production_webhook_verifier_set: true, production_webhook_verifier_hint: 'v1v2' });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
@@ -605,124 +596,124 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
 
         assert.dom('[data-test-verifier-set]').exists();
-        await fillIn("[data-test-field='client_id']", 'new-id');
-        await fillIn("[data-test-field='client_secret']", 'new-secret');
+        await fillIn("[data-test-field='production_client_id']", 'new-id');
+        await fillIn("[data-test-field='production_client_secret']", 'new-secret');
         assert.dom('[data-test-verifier-set]').doesNotExist();
-        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', '');
+        assert.dom("[data-test-field='production_webhook_verifier']").hasAttribute('placeholder', '');
         await click(saveButton());
         assert.strictEqual(this.saved, null);
-        assert.dom("[data-test-error='webhook_verifier']").hasText('Enter the Verifier Token from developer.intuit.com → your app → Webhooks. A new Client ID needs its own token.');
+        assert
+            .dom("[data-test-error='production_webhook_verifier']")
+            .hasText('Enter the Verifier Token from developer.intuit.com → your app → Webhooks. A new Client ID needs its own token.');
 
-        await fillIn("[data-test-field='webhook_verifier']", 'new-verifier');
+        await fillIn("[data-test-field='production_webhook_verifier']", 'new-verifier');
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.client_id, 'new-id');
-        assert.strictEqual(this.saved.auth.webhook_verifier, 'new-verifier');
+        assert.strictEqual(this.saved.auth.production_client_id, 'new-id');
+        assert.strictEqual(this.saved.auth.production_webhook_verifier, 'new-verifier');
     });
 
     test('a changed Client ID needs no webhook verifier when none is saved', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true, webhook_verifier_set: false });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true, production_webhook_verifier_set: false });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
 
-        await fillIn("[data-test-field='client_id']", 'new-id');
-        await fillIn("[data-test-field='client_secret']", 'new-secret');
+        await fillIn("[data-test-field='production_client_id']", 'new-id');
+        await fillIn("[data-test-field='production_client_secret']", 'new-secret');
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.client_id, 'new-id');
-        assert.strictEqual(this.saved.auth.webhook_verifier, undefined);
+        assert.strictEqual(this.saved.auth.production_client_id, 'new-id');
+        assert.strictEqual(this.saved.auth.production_webhook_verifier, undefined);
     });
 
     test('a saved secret shows as dots and its last four characters, and a typed key stays visible until saved or hidden', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
-            environment: 'sandbox',
-            client_secret_set: true,
-            client_secret_hint: 'a1b2',
-            webhook_verifier_set: true,
-            webhook_verifier_hint: null,
+            production_client_id: 'id',
+            production_client_secret_set: true,
+            production_client_secret_hint: 'a1b2',
+            production_webhook_verifier_set: true,
+            production_webhook_verifier_hint: null,
         });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
         this.set('onSave', () => Promise.resolve());
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
 
-        assert.dom("[data-test-field='client_secret']").hasValue('');
-        assert.dom("[data-test-field='client_secret']").hasAttribute('placeholder', '••••••••a1b2');
-        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', '••••••••');
-        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-label', 'Show Client secret', 'an empty field offers Show');
+        assert.dom("[data-test-field='production_client_secret']").hasValue('');
+        assert.dom("[data-test-field='production_client_secret']").hasAttribute('placeholder', '••••••••a1b2');
+        assert.dom("[data-test-field='production_webhook_verifier']").hasAttribute('placeholder', '••••••••');
+        assert.dom("[data-test-toggle-visibility='production_client_secret']").hasAttribute('aria-label', 'Show Client secret', 'an empty field offers Show');
 
-        await fillIn("[data-test-field='client_secret']", 'new-secret');
-        assert.dom("[data-test-field='client_secret']").hasAttribute('type', 'text', 'a typed key stays visible until it is saved');
-        assert.dom("[data-test-field='client_secret']").hasAttribute('spellcheck', 'false');
-        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-label', 'Hide Client secret');
-        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-pressed', 'true');
+        await fillIn("[data-test-field='production_client_secret']", 'new-secret');
+        assert.dom("[data-test-field='production_client_secret']").hasAttribute('type', 'text', 'a typed key stays visible until it is saved');
+        assert.dom("[data-test-field='production_client_secret']").hasAttribute('spellcheck', 'false');
+        assert.dom("[data-test-toggle-visibility='production_client_secret']").hasAttribute('aria-label', 'Hide Client secret');
+        assert.dom("[data-test-toggle-visibility='production_client_secret']").hasAttribute('aria-pressed', 'true');
 
-        await click("[data-test-toggle-visibility='client_secret']");
-        assert.dom("[data-test-field='client_secret']").hasAttribute('type', 'password');
-        assert.dom("[data-test-field='client_secret']").hasValue('new-secret');
-        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-label', 'Show Client secret');
-        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-pressed', 'false');
-        await fillIn("[data-test-field='webhook_verifier']", 'new-verifier');
-        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('type', 'text', 'each field has its own toggle');
-        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-label', 'Hide Webhook verifier token');
-        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-pressed', 'true');
-        await click("[data-test-toggle-visibility='webhook_verifier']");
-        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('type', 'password');
-        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-label', 'Show Webhook verifier token');
-        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-pressed', 'false');
-        assert.dom("[data-test-field='client_secret']").hasAttribute('type', 'password', 'hiding the verifier leaves the secret as it was');
-        await click("[data-test-toggle-visibility='webhook_verifier']");
-        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('type', 'text');
-        assert.dom("[data-test-field='webhook_verifier']").hasValue('new-verifier');
+        await click("[data-test-toggle-visibility='production_client_secret']");
+        assert.dom("[data-test-field='production_client_secret']").hasAttribute('type', 'password');
+        assert.dom("[data-test-field='production_client_secret']").hasValue('new-secret');
+        assert.dom("[data-test-toggle-visibility='production_client_secret']").hasAttribute('aria-label', 'Show Client secret');
+        assert.dom("[data-test-toggle-visibility='production_client_secret']").hasAttribute('aria-pressed', 'false');
+        await fillIn("[data-test-field='production_webhook_verifier']", 'new-verifier');
+        assert.dom("[data-test-field='production_webhook_verifier']").hasAttribute('type', 'text', 'each field has its own toggle');
+        assert.dom("[data-test-toggle-visibility='production_webhook_verifier']").hasAttribute('aria-label', 'Hide Webhook verifier token');
+        assert.dom("[data-test-toggle-visibility='production_webhook_verifier']").hasAttribute('aria-pressed', 'true');
+        await click("[data-test-toggle-visibility='production_webhook_verifier']");
+        assert.dom("[data-test-field='production_webhook_verifier']").hasAttribute('type', 'password');
+        assert.dom("[data-test-toggle-visibility='production_webhook_verifier']").hasAttribute('aria-label', 'Show Webhook verifier token');
+        assert.dom("[data-test-toggle-visibility='production_webhook_verifier']").hasAttribute('aria-pressed', 'false');
+        assert.dom("[data-test-field='production_client_secret']").hasAttribute('type', 'password', 'hiding the verifier leaves the secret as it was');
+        await click("[data-test-toggle-visibility='production_webhook_verifier']");
+        assert.dom("[data-test-field='production_webhook_verifier']").hasAttribute('type', 'text');
+        assert.dom("[data-test-field='production_webhook_verifier']").hasValue('new-verifier');
 
         await click(saveButton());
-        assert.dom("[data-test-field='client_secret']").hasValue('');
-        assert.dom("[data-test-field='client_secret']").hasAttribute('placeholder', '••••••••a1b2');
-        await fillIn("[data-test-field='client_secret']", 'next-secret');
-        assert.dom("[data-test-field='client_secret']").hasAttribute('type', 'text', 'after a save the next typed key is visible again');
+        assert.dom("[data-test-field='production_client_secret']").hasValue('');
+        assert.dom("[data-test-field='production_client_secret']").hasAttribute('placeholder', '••••••••a1b2');
+        await fillIn("[data-test-field='production_client_secret']", 'next-secret');
+        assert.dom("[data-test-field='production_client_secret']").hasAttribute('type', 'text', 'after a save the next typed key is visible again');
 
-        await fillIn("[data-test-field='client_id']", 'other-id');
-        assert.dom("[data-test-field='client_secret']").hasAttribute('placeholder', '', 'no hint for a secret that belongs to another Client ID');
-        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', '', 'no mask for a verifier that belongs to another Client ID');
+        await fillIn("[data-test-field='production_client_id']", 'other-id');
+        assert.dom("[data-test-field='production_client_secret']").hasAttribute('placeholder', '', 'no hint for a secret that belongs to another Client ID');
+        assert.dom("[data-test-field='production_webhook_verifier']").hasAttribute('placeholder', '', 'no mask for a verifier that belongs to another Client ID');
     });
 
     test('the webhook verifier is hidden and shown independently of the Client secret', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true, webhook_verifier_set: true });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true, production_webhook_verifier_set: true });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} />`);
 
         const type = (key) => document.querySelector(`[data-test-field='${key}']`).getAttribute('type');
         const toggle = (key) => click(`[data-test-toggle-visibility='${key}']`);
-        await fillIn("[data-test-field='client_secret']", 'typed-secret');
-        await fillIn("[data-test-field='webhook_verifier']", 'typed-verifier');
-        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['text', 'text']);
+        await fillIn("[data-test-field='production_client_secret']", 'typed-secret');
+        await fillIn("[data-test-field='production_webhook_verifier']", 'typed-verifier');
+        assert.deepEqual([type('production_client_secret'), type('production_webhook_verifier')], ['text', 'text']);
 
-        await toggle('webhook_verifier');
-        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['text', 'password'], 'hiding the verifier leaves the secret shown');
+        await toggle('production_webhook_verifier');
+        assert.deepEqual([type('production_client_secret'), type('production_webhook_verifier')], ['text', 'password'], 'hiding the verifier leaves the secret shown');
 
-        await toggle('client_secret');
-        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['password', 'password']);
+        await toggle('production_client_secret');
+        assert.deepEqual([type('production_client_secret'), type('production_webhook_verifier')], ['password', 'password']);
 
-        await toggle('webhook_verifier');
-        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['password', 'text'], 'showing the verifier leaves the secret hidden');
+        await toggle('production_webhook_verifier');
+        assert.deepEqual([type('production_client_secret'), type('production_webhook_verifier')], ['password', 'text'], 'showing the verifier leaves the secret hidden');
 
-        await toggle('client_secret');
-        await toggle('client_secret');
-        assert.deepEqual([type('client_secret'), type('webhook_verifier')], ['password', 'text'], 'toggling the secret leaves the verifier shown');
-        assert.dom("[data-test-toggle-visibility='webhook_verifier']").hasAttribute('aria-pressed', 'true');
-        assert.dom("[data-test-toggle-visibility='client_secret']").hasAttribute('aria-pressed', 'false');
-        assert.dom("[data-test-field='webhook_verifier']").hasValue('typed-verifier');
+        await toggle('production_client_secret');
+        await toggle('production_client_secret');
+        assert.deepEqual([type('production_client_secret'), type('production_webhook_verifier')], ['password', 'text'], 'toggling the secret leaves the verifier shown');
+        assert.dom("[data-test-toggle-visibility='production_webhook_verifier']").hasAttribute('aria-pressed', 'true');
+        assert.dom("[data-test-toggle-visibility='production_client_secret']").hasAttribute('aria-pressed', 'false');
+        assert.dom("[data-test-field='production_webhook_verifier']").hasValue('typed-verifier');
     });
 
     test('save shows a success notification when settings are stored', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
+            production_client_id: 'id',
             redirect_uri: 'https://example.test/callback',
-            environment: 'sandbox',
-            client_secret_set: true,
+            production_client_secret_set: true,
         });
         this.set('sync', { enabled: true, interval_minutes: 5, batch_size: 100, retry_limit: 5, default_backoff_seconds: 30 });
         this.set('onSave', () => Promise.resolve());
@@ -731,8 +722,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
         `);
 
-        assert.dom(this.element.querySelector("[data-test-field='client_id']").closest('.input-group').querySelector('label')).hasClass('required');
-        assert.dom(this.element.querySelector("[data-test-field='client_secret']").closest('.input-group').querySelector('label')).hasClass('required');
+        assert.dom(this.element.querySelector("[data-test-field='production_client_id']").closest('.input-group').querySelector('label')).hasClass('required');
+        assert.dom(this.element.querySelector("[data-test-field='production_client_secret']").closest('.input-group').querySelector('label')).hasClass('required');
 
         await click(saveButton());
         assert.deepEqual(this.notifications.messages.at(-1), ['success', 'QuickBooks settings saved.']);
@@ -740,10 +731,9 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
     test('saving without changing Primary stores the choice shown on screen', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
+            production_client_id: 'id',
             redirect_uri: 'https://example.test/callback',
-            environment: 'sandbox',
-            client_secret_set: true,
+            production_client_secret_set: true,
         });
         this.set('sync', {
             enabled: true,
@@ -820,10 +810,9 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.deepEqual(this.notifications.messages, []);
 
         this.set('settings', {
-            client_id: 'id',
+            production_client_id: 'id',
             redirect_uri: 'https://example.test/callback',
-            environment: 'sandbox',
-            client_secret_set: true,
+            production_client_secret_set: true,
         });
         this.set('sync', {
             enabled: true,
@@ -838,8 +827,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom('[data-test-settings-unavailable]').doesNotExist();
         await click(saveButton());
         assert.strictEqual(this.saved.scope, 'company');
-        assert.strictEqual(this.saved.auth.client_id, 'id');
-        assert.strictEqual(this.saved.auth.environment, 'sandbox');
+        assert.strictEqual(this.saved.auth.production_client_id, 'id');
+        assert.false(Object.hasOwn(this.saved.auth, 'environment'));
         assert.strictEqual(this.saved.sync.enabled, undefined);
         assert.strictEqual(this.saved.sync.interval_minutes, 5);
         assert.strictEqual(this.saved.sync.customer_direction, 'both');
@@ -856,9 +845,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         this.owner.register('service:abilities', DeniedSettingsAbilitiesStubService);
         this.set('settings', {
-            client_id: 'id',
-            environment: 'sandbox',
-            client_secret_set: true,
+            production_client_id: 'id',
+            production_client_secret_set: true,
         });
         this.set('sync', { interval_minutes: 5 });
         this.set('canEdit', true);
@@ -885,9 +873,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
     test('save and every field are disabled with a note when the server says the caller cannot edit', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
-            environment: 'sandbox',
-            client_secret_set: true,
+            production_client_id: 'id',
+            production_client_secret_set: true,
         });
         this.set('sync', { interval_minutes: 5 });
         this.set('saved', null);
@@ -906,29 +893,28 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         assert.dom('[data-test-settings-read-only]').exists();
         assert.dom('[data-test-save]', document).isDisabled();
-        assert.dom('[data-test-field="client_id"]').isDisabled();
+        assert.dom('[data-test-field="production_client_id"]').isDisabled();
         assert.dom('[data-test-sync="retry_limit"]').isDisabled();
         assert.dom('[data-test-sync="wallet_conflict"]').isDisabled();
         assert.strictEqual(this.saved, null);
     });
 
     test('the form stays editable when the host does not pass can edit', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true });
         this.set('sync', { interval_minutes: 5 });
 
         await render(hbs`<QuickbooksSettings @scope="company" @settings={{this.settings}} @sync={{this.sync}} @settingsLoaded={{true}} />`);
 
         assert.dom('[data-test-settings-read-only]').doesNotExist();
-        assert.dom('[data-test-field="client_id"]').isNotDisabled();
+        assert.dom('[data-test-field="production_client_id"]').isNotDisabled();
     });
 
     test('a blank webhook verifier stays out of the save and direction is independent of Primary', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
+            production_client_id: 'id',
             redirect_uri: 'https://example.test/callback',
-            environment: 'sandbox',
-            client_secret_set: true,
-            webhook_verifier_set: true,
+            production_client_secret_set: true,
+            production_webhook_verifier_set: true,
             internal_webhook_receiver_url: 'http://internal.example/hooks',
             public_webhook_receiver_url: 'http://internal.example/hooks',
             public_oauth_redirect_url: 'http://console.example/quickbooks',
@@ -950,24 +936,24 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
         `);
 
-        assert.dom("[data-test-field='webhook_verifier']").hasValue('');
-        assert.dom("[data-test-field='webhook_verifier']").hasAttribute('placeholder', '••••••••');
+        assert.dom("[data-test-field='production_webhook_verifier']").hasValue('');
+        assert.dom("[data-test-field='production_webhook_verifier']").hasAttribute('placeholder', '••••••••');
         assert.dom('[data-test-verifier-set]').hasText('A verifier token is already saved. Leave this blank to keep it.');
-        this.set('verifierErrors', { webhook_verifier: 'The webhook verifier is not valid.' });
+        this.set('verifierErrors', { production_webhook_verifier: 'The webhook verifier is not valid.' });
         this.set('noop', () => {});
         await render(
             hbs`<QuickbooksSettingsFields @secret={{this.verifierSecret}} @errors={{this.verifierErrors}} @syncOnly={{false}} @onUpdate={{this.noop}} @onSetEntityEnabled={{this.noop}} @onToggleVisibility={{this.noop}} />`
         );
-        assert.dom('[data-test-error="webhook_verifier"]').hasText('The webhook verifier is not valid.');
+        assert.dom('[data-test-error="production_webhook_verifier"]').hasText('The webhook verifier is not valid.');
         assert.dom('[data-test-verifier-set]').hasText('A verifier token is already saved. Leave this blank to keep it.', 'an error does not hide how to keep the saved token');
         await render(hbs`
             <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
         `);
         assertSelectableUrl(assert, 'public_webhook_receiver_url', 'http://internal.example/hooks');
         assertSelectableUrl(assert, 'public_oauth_redirect_url', 'http://console.example/quickbooks');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-xs');
-        assert.dom("[data-test-field-help='environment']").hasClass('text-gray-500');
-        assert.dom("[data-test-field-help='environment']").hasClass('mt-1');
+        assert.dom("[data-test-field-help='production_client_id']").hasClass('text-xs');
+        assert.dom("[data-test-field-help='production_client_id']").hasClass('text-gray-500');
+        assert.dom("[data-test-field-help='production_client_id']").hasClass('mt-1');
         assert.dom('[data-test-localhost-warning]').doesNotExist();
         assert.dom().doesNotIncludeText('{{fleetbase.url}}');
         assert.dom('[data-test-admin-verifier]').doesNotExist();
@@ -975,18 +961,17 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-sync='customer_direction']").hasValue('both');
 
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.webhook_verifier, undefined);
+        assert.strictEqual(this.saved.auth.production_webhook_verifier, undefined);
         assert.strictEqual(this.saved.sync.customer_conflict, 'quickbooks');
         assert.strictEqual(this.saved.sync.customer_reference, 'quickbooks');
         assert.strictEqual(this.saved.sync.customer_direction, 'both');
         assertUrlsStayOutOfPayload(assert, this.saved);
 
         this.set('settings', {
-            client_id: 'id',
+            production_client_id: 'id',
             redirect_uri: 'https://example.test/callback',
-            environment: 'sandbox',
-            client_secret_set: true,
-            webhook_verifier_set: true,
+            production_client_secret_set: true,
+            production_webhook_verifier_set: true,
             internal_webhook_receiver_url: 'http://localhost/quickbooks/int/v1/webhooks',
             public_webhook_receiver_url: 'http://localhost/quickbooks/int/v1/webhooks',
             public_oauth_redirect_url: 'http://localhost:4200/quickbooks',
@@ -998,11 +983,10 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom().doesNotIncludeText('{{fleetbase.url}}');
 
         this.set('settings', {
-            client_id: 'id',
+            production_client_id: 'id',
             redirect_uri: 'https://example.test/callback',
-            environment: 'sandbox',
-            client_secret_set: true,
-            webhook_verifier_set: true,
+            production_client_secret_set: true,
+            production_webhook_verifier_set: true,
             internal_webhook_receiver_url: 'https://public.example/hooks',
             public_webhook_receiver_url: 'https://public.example/hooks',
             public_oauth_redirect_url: 'https://console.example/quickbooks',
@@ -1011,21 +995,21 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         assert.dom("[data-test-field='public_oauth_redirect_url']").hasText('https://console.example/quickbooks');
 
         await fillIn("[data-test-sync='customer_direction']", 'outbound');
-        await fillIn("[data-test-field='webhook_verifier']", 'verifier-token');
+        await fillIn("[data-test-field='production_webhook_verifier']", 'verifier-token');
         await click(saveButton());
         assert.strictEqual(this.saved.sync.customer_direction, 'outbound');
         assert.strictEqual(this.saved.sync.customer_conflict, 'quickbooks');
         assert.strictEqual(this.saved.sync.customer_reference, 'quickbooks');
-        assert.strictEqual(this.saved.auth.webhook_verifier, 'verifier-token');
-        assert.strictEqual(this.saved.auth.client_secret, undefined);
+        assert.strictEqual(this.saved.auth.production_webhook_verifier, 'verifier-token');
+        assert.strictEqual(this.saved.auth.production_client_secret, undefined);
         assertUrlsStayOutOfPayload(assert, this.saved);
     });
 
-    test('a missing environment defaults to production and a stored sandbox value stays sandbox', async function (assert) {
+    test('a set nobody filled in is saved empty and does not block the other set', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
+            production_client_id: 'id',
             redirect_uri: 'https://example.test/callback',
-            client_secret_set: true,
+            production_client_secret_set: true,
         });
         this.set('sync', { enabled: true, interval_minutes: 5, retry_limit: 5, default_backoff_seconds: 30 });
         this.set('saved', null);
@@ -1035,30 +1019,50 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
             <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
         `);
 
-        assert.dom("[data-test-field='environment']").hasValue('production');
+        assert.dom("[data-test-field='sandbox_client_id']").hasValue('');
+        assert.dom('[data-test-secret-set="sandbox"]').doesNotExist();
         assert.dom("[data-test-sync='batch_size']").doesNotExist();
         // No URL yet: the step does not end in an empty line.
         assert.dom('[data-test-field="public_webhook_receiver_url"]').doesNotExist();
         assert.dom('[data-test-field="public_oauth_redirect_url"]').doesNotExist();
         await click(saveButton());
-        assert.strictEqual(this.saved.auth.environment, 'production');
+        assert.strictEqual(this.saved.auth.production_client_id, 'id');
+        assert.strictEqual(this.saved.auth.sandbox_client_id, '');
+        assert.false(Object.hasOwn(this.saved.auth, 'sandbox_client_secret'));
         assertUrlsStayOutOfPayload(assert, this.saved);
+    });
 
+    test('a half-filled set needs its Client secret, and a saved sandbox set is shown as saved', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
-            redirect_uri: 'https://example.test/callback',
-            environment: 'sandbox',
-            client_secret_set: true,
+            production_client_id: 'id',
+            production_client_secret_set: true,
+            sandbox_client_id: 'dev-id',
         });
-        assert.dom("[data-test-field='environment']").hasValue('sandbox');
+        this.set('sync', { interval_minutes: 5, retry_limit: 5, default_backoff_seconds: 30 });
+        this.set('saved', null);
+        this.set('onSave', (payload) => this.set('saved', payload));
+
+        await render(hbs`
+            <QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />
+        `);
+
+        assert.dom("[data-test-field='sandbox_client_id']").hasValue('dev-id');
+        await click(saveButton());
+        assert.strictEqual(this.saved, null);
+        assert.dom("[data-test-error='sandbox_client_secret']").exists();
+        assert.dom("[data-test-error='production_client_secret']").doesNotExist();
+
+        await fillIn("[data-test-field='sandbox_client_secret']", 'dev-secret');
+        await click(saveButton());
+        assert.strictEqual(this.saved.auth.sandbox_client_id, 'dev-id');
+        assert.strictEqual(this.saved.auth.sandbox_client_secret, 'dev-secret');
     });
 
     test('a stored off direction saves as both and the selected direction is what is stored', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
+            production_client_id: 'id',
             redirect_uri: 'https://example.test/callback',
-            environment: 'production',
-            client_secret_set: true,
+            production_client_secret_set: true,
         });
         this.set('sync', {
             enabled: true,
@@ -1099,9 +1103,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
     test('an unchecked entity disables Primary and Sync direction and is saved off', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
-            environment: 'production',
-            client_secret_set: true,
+            production_client_id: 'id',
+            production_client_secret_set: true,
         });
         this.set('sync', {
             enabled: true,
@@ -1213,7 +1216,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
     test('admin save with wallets turned on does not ask', async function (assert) {
         const modals = this.owner.lookup('service:modals-manager');
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: false });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
@@ -1228,10 +1231,9 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
     test('field help text uses the readable gray', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
-            environment: 'sandbox',
-            client_secret_set: true,
-            webhook_verifier_set: true,
+            production_client_id: 'id',
+            production_client_secret_set: true,
+            production_webhook_verifier_set: true,
             public_webhook_receiver_url: 'http://internal.example/quickbooks/int/v1/webhooks',
             public_oauth_redirect_url: 'https://console.example/quickbooks',
         });
@@ -1250,7 +1252,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
     });
 
     test('a Data Resolution switch toggles with Space and Enter', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: false });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
@@ -1277,7 +1279,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
     });
 
     test('a read-only switch is announced as disabled and ignores keys', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30, wallet_enabled: false });
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @canEdit={{false}} @settingsLoaded={{true}} />`);
@@ -1294,9 +1296,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
     test('connect does not send an import flag and customers stay on the Customers switch', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
-            environment: 'sandbox',
-            client_secret_set: true,
+            production_client_id: 'id',
+            production_client_secret_set: true,
         });
         this.set('sync', {
             interval_minutes: 5,
@@ -1334,9 +1335,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
     test('save shows a loading state while the request is in flight', async function (assert) {
         this.set('settings', {
-            client_id: 'id',
-            environment: 'sandbox',
-            client_secret_set: true,
+            production_client_id: 'id',
+            production_client_secret_set: true,
         });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
         let release;
@@ -1361,7 +1361,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
     });
 
     test('the Tax panel shows who works out invoice tax and saves the choice', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true });
         this.set('sync', { interval_minutes: 5, periodic_interval_hours: 24, retry_limit: 5, default_backoff_seconds: 30 });
         this.set('saved', null);
         this.set('onSave', (payload) => this.set('saved', payload));
@@ -1385,7 +1385,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
     });
 
     test('a stored tax choice shows, and a server error for it sits under the control', async function (assert) {
-        this.set('settings', { client_id: 'id', environment: 'sandbox', client_secret_set: true });
+        this.set('settings', { production_client_id: 'id', production_client_secret_set: true });
         this.set('sync', {
             interval_minutes: 5,
             periodic_interval_hours: 24,
@@ -1415,9 +1415,8 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
     test('each validation error sits under its control, before the hint', async function (assert) {
         this.set('settings', {
-            client_id: '',
-            environment: 'nope',
-            client_secret_set: false,
+            production_client_id: '',
+            production_client_secret_set: false,
         });
         this.set('sync', {
             interval_minutes: 0,
@@ -1428,7 +1427,7 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
         this.set('onSave', () => {
             const error = new Error('save failed');
             error.errors = {
-                webhook_verifier: 'Enter the webhook verifier.',
+                production_webhook_verifier: 'Enter the webhook verifier.',
                 customer_conflict: 'quickbooks.validation.choice',
                 customer_reference: 'Choose the system that supplies identifiers.',
                 customer_direction: 'quickbooks.validation.direction-customer',
@@ -1438,33 +1437,31 @@ module('Integration | Component | quickbooks-settings', function (hooks) {
 
         await render(hbs`<QuickbooksSettings @settings={{this.settings}} @sync={{this.sync}} @onSave={{this.onSave}} />`);
 
-        const environment = this.element.querySelector("[data-test-field='environment']");
+        const clientId = this.element.querySelector("[data-test-field='production_client_id']");
         const scrolled = [];
-        environment.scrollIntoView = (options) => scrolled.push(options);
+        clientId.scrollIntoView = (options) => scrolled.push(options);
         await click(saveButton());
 
-        assertFieldError(assert, "[data-test-field='client_id']", 'client_id');
-        assertFieldError(assert, "[data-test-field='environment']", 'environment');
-        assertFieldError(assert, "[data-test-field='client_secret']", 'client_secret');
+        assertFieldError(assert, "[data-test-field='production_client_id']", 'production_client_id');
+        assertFieldError(assert, "[data-test-field='production_client_secret']", 'production_client_secret');
         assertFieldError(assert, "[data-test-sync='interval_minutes']", 'interval_minutes');
         assert.dom("[data-test-sync='retry_limit']").doesNotHaveClass('border-red-500');
         assert.dom("[data-test-sync='retry_limit']").doesNotHaveAttribute('aria-describedby');
-        assert.strictEqual(document.activeElement, environment);
+        assert.strictEqual(document.activeElement, clientId);
         assert.deepEqual(scrolled, [{ block: 'center' }]);
 
-        await fillIn("[data-test-field='client_id']", 'id');
-        assert.dom("[data-test-error='client_id']").doesNotExist();
-        assert.dom("[data-test-field='client_id']").doesNotHaveClass('border-red-500');
-        assert.dom("[data-test-field='client_id']").doesNotHaveAttribute('aria-describedby');
-        assert.dom("[data-test-field='client_id']").doesNotHaveAttribute('aria-invalid');
+        await fillIn("[data-test-field='production_client_id']", 'id');
+        assert.dom("[data-test-error='production_client_id']").doesNotExist();
+        assert.dom("[data-test-field='production_client_id']").doesNotHaveClass('border-red-500');
+        assert.dom("[data-test-field='production_client_id']").doesNotHaveAttribute('aria-describedby');
+        assert.dom("[data-test-field='production_client_id']").doesNotHaveAttribute('aria-invalid');
 
-        await fillIn("[data-test-field='environment']", 'sandbox');
-        await fillIn("[data-test-field='client_secret']", 'secret');
+        await fillIn("[data-test-field='production_client_secret']", 'secret');
         await fillIn("[data-test-sync='interval_minutes']", '5');
         await click(saveButton());
 
-        assertFieldError(assert, "[data-test-field='webhook_verifier']", 'webhook_verifier');
-        assert.strictEqual(document.activeElement, this.element.querySelector("[data-test-field='webhook_verifier']"));
+        assertFieldError(assert, "[data-test-field='production_webhook_verifier']", 'production_webhook_verifier');
+        assert.strictEqual(document.activeElement, this.element.querySelector("[data-test-field='production_webhook_verifier']"));
 
         const primary = this.element.querySelector("[data-test-sync='customer_conflict']");
         const direction = this.element.querySelector("[data-test-sync='customer_direction']");

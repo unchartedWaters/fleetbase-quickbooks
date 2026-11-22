@@ -81,6 +81,23 @@
                     {{else}}
                     {{! Only the actions that apply to this state are shown. }}
                     <div class="flex flex-wrap gap-2" data-test-connection-actions>
+                        {{#if this.showEnvironmentChoice}}
+                            <div class="basis-full" data-test-environment>
+                                <label class="text-sm font-semibold text-gray-900 dark:text-gray-100" for="quickbooks-connect-environment">{{t "quickbooks.connection.environment-label"}}</label>
+                                <select
+                                    id="quickbooks-connect-environment"
+                                    class="form-select form-input ml-2"
+                                    disabled={{this.busy}}
+                                    data-test-environment-select
+                                    {{on "change" this.chooseEnvironment}}
+                                >
+                                    {{#each this.environmentOptions key="value" as |option|}}
+                                        <option value={{option.value}} selected={{option.selected}}>{{option.label}}</option>
+                                    {{/each}}
+                                </select>
+                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400" data-test-environment-help>{{t "quickbooks.connection.environment-help"}}</p>
+                            </div>
+                        {{/if}}
                         {{#if this.showSyncNow}}
                             <Button
                                 @type="primary"

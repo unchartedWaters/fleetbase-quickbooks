@@ -52,10 +52,11 @@ accounts), and products with QuickBooks Online.
 - When Intuit returns `error` instead, the page posts the state with the error
   so the API drops it, and shows a fixed message: cancelled for
   `access_denied`, a generic failure otherwise.
-- Global settings (Client ID, Client secret, environment, webhook verifier) are
-  edited only by an installation administrator on Admin → QuickBooks →
-  Settings, with `scope=admin` on the system settings rows. The OAuth redirect
-  and webhook receiver URLs are computed, shown there as text, and not stored.
+- Global settings (a Client ID, Client secret and webhook verifier per
+  environment) are edited only by an installation administrator on Admin →
+  QuickBooks → Settings, with `scope=admin` on the system settings rows. The
+  OAuth redirect and webhook receiver URLs are computed, shown there as text,
+  and not stored.
   The sync options on that screen are only a template. Changing them does not
   change any organization's sync settings, and a global save queues nothing for
   organizations. A blank system field stays blank. QuickBooks Setup uses
@@ -65,8 +66,10 @@ accounts), and products with QuickBooks Online.
   once. An `auth` or unknown key at company scope returns HTTP 422. Older
   organization rows without the `scope: organization` marker are ignored.
   Existing installs re-seed permissions with
-  `php artisan fleetbase:create-permissions`. Environment may fall back to
-  `QUICKBOOKS_ENVIRONMENT`, which defaults to `production`.
+  `php artisan fleetbase:create-permissions`. The settings hold one set of keys
+  per Intuit environment (`production_*` and `sandbox_*` fields); there is no
+  environment setting, because each organization picks sandbox or production
+  when it connects.
 - Tokens are refreshed before each sync or import when they expire within 5
   minutes (the admin-only `POST connection/test` API endpoint does the same; the
   console has no Test connection button). Reconnection is requested only when

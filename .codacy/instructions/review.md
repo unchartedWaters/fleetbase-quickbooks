@@ -145,10 +145,12 @@
   treat any change there as security-sensitive. The OAuth redirect is the
   console's QuickBooks page, which posts the code to the protected
   `oauth/complete`; flag any new public OAuth route.
-- Settings scope: Client ID/secret, webhook verifier and environment are global
-  and admin-only. The OAuth redirect and webhook receiver URLs are computed
-  from server config (`CONSOLE_HOST`, `APP_URL`), shown read-only and never
-  stored; flag any input, payload key or stored field that sets them. Flag any
+- Settings scope: Client ID/secret and webhook verifier (one set per Intuit
+  environment) are global and admin-only. The environment itself is not a
+  setting: it belongs to the organization's connection, chosen by an
+  administrator when connecting. The OAuth redirect and webhook receiver URLs
+  are computed from server config (`CONSOLE_HOST`, `APP_URL`), shown read-only
+  and never stored; flag any input, payload key or stored field that sets them. Flag any
   org-level endpoint, payload or UI that reads, returns or writes these global
   settings. Organization rows may hold only
   `SettingsKeys::SYNC_FIELDS`.

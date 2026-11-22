@@ -188,12 +188,15 @@ Portal. One app serves the whole install. Intuit's own guides cover each step:
    `localhost` for sandbox apps, but this extension requires a public https URL
    (see [Developing locally](#developing-locally)).
 3. Copy the Client ID and Client secret from the app's Keys & credentials:
-   [Get the Client ID and Client Secret][intuit-keys]. Development keys work
-   only with sandbox companies; choose Sandbox for Environment. Production keys
-   need Intuit's production App Details and an approved App Assessment
-   Questionnaire: [Publish your app][intuit-publish]. Listing on the QuickBooks
-   App Store is not required. Environment defaults to Production; after
-   switching it, each organization connects again.
+   [Get the Client ID and Client Secret][intuit-keys]. Intuit issues separate
+   keys for Development and Production. Enter the Development keys under
+   **Sandbox keys** and the Production keys under **Production keys**; fill in
+   one set or both. Development keys work only with sandbox companies.
+   Production keys need Intuit's production App Details and an approved App
+   Assessment Questionnaire: [Publish your app][intuit-publish]. Listing on the
+   QuickBooks App Store is not required. There is no environment setting here:
+   an administrator picks Sandbox or Production when connecting an
+   organization (see [Connect and disconnect](#connect-and-disconnect)).
 4. Add the Public OAuth Redirect URL to the app's Redirect URIs, under
    Development or Production to match the keys: [Set app redirect
    URIs][intuit-redirect].
@@ -216,7 +219,8 @@ Portal. One app serves the whole install. Intuit's own guides cover each step:
 
 ## Settings
 
-Global settings are Client ID, Client secret, environment and webhook verifier.
+Global settings are one set of keys per Intuit environment (Client ID, Client
+secret and webhook verifier, for Production and for Sandbox).
 The OAuth redirect and webhook receiver URLs are computed and shown read-only;
 they are not stored. Only an installation administrator can
 view or save them, on Admin → QuickBooks → Settings, which uses `scope=admin`
@@ -225,18 +229,19 @@ and the system rows `system.quickbooks.auth` and `system.quickbooks.sync`
 
 The sync options on that screen are strictly a template. Changing them has no
 effect on any organization's sync settings, and a global save queues nothing for
-organizations. Credentials, the webhook verifier, environment, and URLs are
-global and admin-only.
+organizations. Credentials, the webhook verifiers, and URLs are global and
+admin-only. The environment is not a global setting: it belongs to each
+organization's connection.
 
 ![Admin, QuickBooks, Settings: the template note, then Authentication
 with the Configuring QuickBooks steps opened, showing the OAuth and webhook
-URLs to copy, then Environment, Client ID, masked secret and
-verifier][admin-settings]
+URLs to copy, then the Production and Sandbox key sets, each with its Client ID,
+masked secret and verifier][admin-settings]
 
 Organization settings → QuickBooks Setup uses `scope=company` (the default). It
 shows the connection controls and the organization's own sync options. An
 organization can change only sync options. It never sees or saves credentials,
-the webhook verifier, environment, or URLs. The organization's settings are
+the webhook verifiers, or URLs. The organization's settings are
 stored on `company.{uuid}.quickbooks.sync` with a `scope: organization` marker;
 organization rows written by older builds (no marker) are ignored.
 `GET settings` at company scope returns only `can_edit`, `sync`, `has_copy`, and
@@ -285,17 +290,18 @@ with Organization, Two Factor, and Notifications. QuickBooks Setup is route
 QuickBooks header item opens QuickBooks Setup. The Fleetbase Admin panel
 **QuickBooks** has one item, **Settings**. There is no Ledger settings entry.
 
-An installation administrator saves the install's Client ID, Client secret, and
-system webhook verifier on Admin → QuickBooks → Settings. Connect on QuickBooks
-Setup uses those saved keys. Client ID, Client secret, and the
-webhook verifier come only from that system row. A blank system field stays
-blank. Environment may fall back to `QUICKBOOKS_ENVIRONMENT`, which defaults to
-`production`.
+An installation administrator saves the install's keys on Admin → QuickBooks →
+Settings: for each Intuit environment, a Client ID, Client secret, and system
+webhook verifier (`production_client_id`, `sandbox_client_secret`, and so on).
+Connect on QuickBooks Setup uses the keys of the environment being connected.
+The keys come only from that system row. A blank system field stays blank.
 
-Client ID and Client secret are required together. A blank Client secret keeps
-the saved one only while the Client ID stays the same. A changed Client ID needs
-its own Client secret, or the save is refused. If a webhook verifier is saved,
-a changed Client ID also needs that app's Verifier Token from its Webhooks page.
+Within a set, Client ID and Client secret are required together, and a set
+nobody filled in is skipped. At least one set must be complete. A blank Client
+secret keeps the saved one only while that set's Client ID stays the same. A
+changed Client ID needs its own Client secret, or the save is refused. If that
+set has a saved webhook verifier, a changed Client ID also needs that app's
+Verifier Token from its Webhooks page.
 
 A saved Client secret or webhook verifier shows as dots and its last four
 characters, such as `••••••••a1b2`; the full value is never sent back. A value
@@ -467,9 +473,17 @@ changes. To upgrade, run `php artisan migrate`, which adds the
 
 ### Environments
 
-New setups use production. The settings default is `production`: `server/config/quickbooks.php` reads `QUICKBOOKS_ENVIRONMENT` with a default of `production`, and a blank environment on the form is saved as production. A stored `sandbox` value stays sandbox when settings are saved without changing it.
-
-The `quickbooks_connections.environment` column is a different thing. Its migration default is `sandbox`, but connect always writes the environment from settings onto the connection row, so that default is only a fallback for a row created some other way. API calls use the environment stored on the connection, not the current setting, and a connection with no environment is treated as sandbox. After you switch the environment in settings, connect again.
+Sandbox and production are different QuickBooks companies, and Intuit issues
+separate keys for each, so the environment belongs to the organization's
+connection, not to the global settings. `quickbooks_connections.environment`
+holds it. An administrator picks it with **Connect to** beside the Connect
+button when keys for both environments are saved. With keys for one
+environment, that one is used. An operator reconnecting an organization uses the
+environment the organization last connected in. Every later call, including
+token refresh and disconnect, uses the keys and API host of the environment
+stored on the connection row; a row with no environment is treated as sandbox.
+Connecting in the other environment is a change of company, so it asks what
+happens to the data already linked.
 
 - Sandbox uses the Development keys, a QuickBooks sandbox company, and
   `https://sandbox-quickbooks.api.intuit.com`.
@@ -498,7 +512,7 @@ shows why.
 
 ## Connect and disconnect
 
-Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved by an installation administrator in Admin → QuickBooks → Settings for the install and are required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
+Keys come from [developer.intuit.com](https://developer.intuit.com) → your app → Keys & credentials. Client ID and Client secret are saved by an installation administrator in Admin → QuickBooks → Settings, one set per environment, and the set for the environment being connected is required before connect. The secret is stored encrypted and is not shown again after save. Connect without those keys returns HTTP 422 and does not open Intuit.
 
 The OAuth redirect is the console's QuickBooks page: `CONSOLE_HOST` plus
 `/quickbooks`. The webhook path is `/quickbooks/int/v1/webhooks` on the API
@@ -763,9 +777,10 @@ and Sync now][dashboard-widget]
 
 There is one public receiver: `POST /quickbooks/int/v1/webhooks`. It is outside
 the session and does not use CSRF. Intuit signs the raw body. Intuit's
-`intuit-signature` is checked against the install-wide system webhook verifier.
-If that verifier is not saved, the webhook is rejected with HTTP 401. An
-organization verifier and `QUICKBOOKS_WEBHOOK_VERIFIER` are not accepted.
+`intuit-signature` is checked against the install-wide system webhook verifiers:
+the signature is accepted if it matches the Production or the Sandbox verifier.
+If neither is saved, the webhook is rejected with HTTP 401. An organization
+verifier and `QUICKBOOKS_WEBHOOK_VERIFIER` are not accepted.
 Unsigned posts are HTTP 401 and do not dispatch events. A valid signature
 returns HTTP 200 after events are dispatched. A valid signature for a realm with
 no connection (for example after a disconnect), or for a body that names no
@@ -887,7 +902,7 @@ the URL with Intuit.
 
 Intuit subscription is configured in the Intuit developer portal only. Open the app, choose Webhooks, then Production or Development, and paste this URL into Endpoint URL. Subscribe to Customer, Invoice, Payment, and Account when that type's direction is From QuickBooks or Both. Fleetbase does not call an Intuit API to register the URL, choose entities, or unsubscribe a realm. `WebhookSubscriptions::apply()` does not call Intuit.
 
-The system webhook verifier is stored encrypted on the install-wide settings row and is not shown again after save. Leave the field blank to keep the saved token.
+The system webhook verifiers are stored encrypted on the install-wide settings row and are not shown again after save. Leave a field blank to keep its saved token.
 
 Other packages can listen for `Fleetbase\Quickbooks\Events\QuickBooksEntityChanged`. Each event is one entity:
 

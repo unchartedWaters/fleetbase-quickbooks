@@ -34,9 +34,8 @@ class ChoiceController extends ConnectionController
     public static function make(SettingsStore $store, bool $mayChangeCompany = true): self
     {
         $store->rows[SettingsKeys::adminAuth()] = [
-            'client_id'     => 'client-id',
-            'client_secret' => (new SecretCipher())->encrypt('client-secret'),
-            'environment'   => 'sandbox',
+            'sandbox_client_id'     => 'client-id',
+            'sandbox_client_secret' => (new SecretCipher())->encrypt('client-secret'),
         ];
 
         $controller = new self(

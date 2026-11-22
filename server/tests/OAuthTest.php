@@ -36,54 +36,57 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
-test('global credentials are used and an organization row does not replace them', function () {
-    $resolved = (new CredentialResolver())->resolve(
-        ['client_id' => 'company-id', 'client_secret' => 'company-secret', 'redirect_uri' => 'https://company.example.test/callback', 'environment' => 'sandbox', 'webhook_verifier' => 'company-verifier'],
-        ['client_id' => '', 'client_secret' => '', 'redirect_uri' => '', 'environment' => '', 'webhook_verifier' => ''],
-        ['client_id' => 'env-id', 'client_secret' => 'env-secret', 'redirect_uri' => 'https://example.test/callback', 'environment' => 'sandbox', 'webhook_verifier' => 'env-verifier']
-    );
-
-    expect($resolved['client_id'])->toBe('')
-        ->and($resolved['sources']['client_id'])->toBe('none')
-        ->and($resolved['client_secret'])->toBe('')
-        ->and($resolved['sources']['client_secret'])->toBe('none')
-        ->and($resolved['redirect_uri'])->toBe('')
-        ->and($resolved['sources'])->not->toHaveKey('redirect_uri')
-        ->and($resolved['webhook_verifier'])->toBe('')
-        ->and($resolved['sources']['webhook_verifier'])->toBe('none')
-        ->and($resolved['environment'])->toBe('sandbox')
-        ->and($resolved['sources']['environment'])->toBe('env');
-});
-
-test('global credentials resolve from the system row when there is no session', function () {
+test('credentials come from the system row, one set per environment', function () {
     expect(SettingsKeys::companyAuth('company-uuid'))->toBe('company.company-uuid.quickbooks.auth')
         ->and(SettingsKeys::adminAuth())->toBe('system.quickbooks.auth');
 
-    $resolved = (new CredentialResolver())->resolve(
-        ['client_id' => 'from-company-row'],
-        ['client_id' => 'from-system-row'],
-        ['client_id' => 'from-env']
-    );
+    $admin = [
+        'sandbox_client_id'           => 'dev-id',
+        'sandbox_client_secret'       => 'dev-secret',
+        'sandbox_webhook_verifier'    => 'dev-verifier',
+        'production_client_id'        => 'live-id',
+        'production_client_secret'    => 'live-secret',
+        'production_webhook_verifier' => 'live-verifier',
+        // Nothing but the saved keys is read: an old unprefixed or organization value changes nothing.
+        'client_id' => 'unprefixed-id',
+    ];
+    $sandbox    = (new CredentialResolver())->resolve($admin, 'sandbox');
+    $production = (new CredentialResolver())->resolve($admin, 'production');
+    $missing    = (new CredentialResolver())->resolve(['production_client_id' => 'only-live'], 'sandbox');
 
-    expect($resolved['client_id'])->toBe('from-system-row')
-        ->and($resolved['sources']['client_id'])->toBe('admin');
+    expect($sandbox)->toBe([
+        'client_id'        => 'dev-id',
+        'client_secret'    => 'dev-secret',
+        'redirect_uri'     => '',
+        'environment'      => 'sandbox',
+        'webhook_verifier' => 'dev-verifier',
+    ])
+        ->and($production['client_id'])->toBe('live-id')
+        ->and($production['environment'])->toBe('production')
+        ->and($production['webhook_verifier'])->toBe('live-verifier')
+        ->and($missing['client_id'])->toBe('')
+        ->and($missing['client_secret'])->toBe('')
+        ->and(SettingsKeys::environment('production'))->toBe('production')
+        ->and(SettingsKeys::environment('anything else'))->toBe('sandbox')
+        ->and(SettingsKeys::environment(null))->toBe('sandbox');
 });
 
 test('the client secret is encrypted at rest and is not returned by the settings api', function () {
     $cipher   = new SecretCipher();
     $settings = new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), $cipher);
-    $stored   = $settings->storeAuth(['client_id' => 'id', 'client_secret' => 'plain-secret'], []);
+    $stored   = $settings->storeAuth(['production_client_id' => 'id', 'production_client_secret' => 'plain-secret'], []);
 
-    expect($stored['client_secret'])->not->toBe('plain-secret')
-        ->and($cipher->decrypt($stored['client_secret']))->toBe('plain-secret');
+    expect($stored['production_client_secret'])->not->toBe('plain-secret')
+        ->and($cipher->decrypt($stored['production_client_secret']))->toBe('plain-secret');
 
     $browser = $settings->forBrowser($stored);
-    expect($browser)->not->toHaveKey('client_secret')
-        ->and($browser['client_secret_set'])->toBeTrue();
+    expect($browser)->not->toHaveKey('production_client_secret')
+        ->and($browser['production_client_secret_set'])->toBeTrue()
+        ->and($browser['sandbox_client_secret_set'])->toBeFalse();
 
     $request = Request::create('/settings', 'POST', [
         'company_uuid' => 'company-uuid',
-        'auth'         => ['client_id' => 'id', 'client_secret' => 'plain-secret'],
+        'auth'         => ['production_client_id' => 'id', 'production_client_secret' => 'plain-secret'],
     ]);
     $controller = new SettingController(
         new Authorizer(static fn () => false),
@@ -99,11 +102,10 @@ test('an unrecognized token is not a live secret and a plaintext setting is encr
     $settings                               = new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), $cipher);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'        => 'id',
-        'client_secret'    => 'plain-secret',
-        'webhook_verifier' => 'plain-verifier',
-        'redirect_uri'     => 'https://example.com/callback',
-        'environment'      => 'sandbox',
+        'sandbox_client_id'        => 'id',
+        'sandbox_client_secret'    => 'plain-secret',
+        'sandbox_webhook_verifier' => 'plain-verifier',
+        'redirect_uri'             => 'https://example.com/callback',
     ];
     $controller = new SettingController(
         new Authorizer(static fn () => true),
@@ -116,11 +118,10 @@ test('an unrecognized token is not a live secret and a plaintext setting is encr
         $response = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
             'auth'  => [
-                'client_id'        => 'id',
-                'client_secret'    => '',
-                'webhook_verifier' => '',
-                'redirect_uri'     => 'https://example.com/callback',
-                'environment'      => 'sandbox',
+                'sandbox_client_id'        => 'id',
+                'sandbox_client_secret'    => '',
+                'sandbox_webhook_verifier' => '',
+                'redirect_uri'             => 'https://example.com/callback',
             ],
             'sync' => qbSettings(),
         ]));
@@ -132,11 +133,11 @@ test('an unrecognized token is not a live secret and a plaintext setting is encr
             ->and($body)->not->toContain('plain-verifier')
             ->and($body)->not->toContain('access_token')
             ->and($body)->not->toContain('refresh_token')
-            ->and($stored['client_secret'])->not->toBe('plain-secret')
-            ->and($cipher->decrypt($stored['client_secret']))->toBe('plain-secret')
-            ->and($stored['webhook_verifier'])->not->toBe('plain-verifier')
-            ->and($cipher->decrypt($stored['webhook_verifier']))->toBe('plain-verifier')
-            ->and($settings->credentialsFor($store, 'company-uuid')['client_secret'])->toBe('plain-secret');
+            ->and($stored['sandbox_client_secret'])->not->toBe('plain-secret')
+            ->and($cipher->decrypt($stored['sandbox_client_secret']))->toBe('plain-secret')
+            ->and($stored['sandbox_webhook_verifier'])->not->toBe('plain-verifier')
+            ->and($cipher->decrypt($stored['sandbox_webhook_verifier']))->toBe('plain-verifier')
+            ->and($settings->credentialsFor($store, 'sandbox')['client_secret'])->toBe('plain-secret');
     } finally {
         session(['company' => null]);
     }
@@ -163,26 +164,28 @@ test('a failed decrypt, an unrecognized secret or old AES ciphertext is missing'
     $iv          = random_bytes(16);
     $legacy      = base64_encode($iv . openssl_encrypt('old-secret', 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv));
 
-    $unrecognized = $settings->resolveAuth([], [
-        'client_secret'    => 'not-a-secret',
-        'webhook_verifier' => $tampered,
-    ], []);
-    $opened = $settings->resolveAuth([], [
-        'client_secret'    => $legacy,
-        'webhook_verifier' => $cipher->encrypt('verifier-token'),
-    ], []);
+    $unrecognized                                  = new MemorySettingsStore();
+    $unrecognized->rows[SettingsKeys::adminAuth()] = [
+        'sandbox_client_id'        => 'id',
+        'sandbox_client_secret'    => 'not-a-secret',
+        'sandbox_webhook_verifier' => $tampered,
+    ];
+    $opened                                  = new MemorySettingsStore();
+    $opened->rows[SettingsKeys::adminAuth()] = [
+        'sandbox_client_id'        => 'id',
+        'sandbox_client_secret'    => $legacy,
+        'sandbox_webhook_verifier' => $cipher->encrypt('verifier-token'),
+    ];
     $connection = new Fleetbase\Quickbooks\Models\Connection();
     $connection->setRawAttributes([
         'access_token'  => 'not-a-token',
         'refresh_token' => $legacy,
     ]);
 
-    expect($unrecognized['client_secret'])->toBe('')
-        ->and($unrecognized['client_secret'])->not->toBe('not-a-secret')
-        ->and($unrecognized['webhook_verifier'])->toBe('')
-        ->and($unrecognized['webhook_verifier'])->not->toBe($tampered)
-        ->and($opened['client_secret'])->toBe('')
-        ->and($opened['webhook_verifier'])->toBe('verifier-token')
+    expect($settings->credentialsFor($unrecognized, 'sandbox')['client_secret'])->toBe('')
+        ->and($settings->webhookVerifiersFor($unrecognized))->toBe([])
+        ->and($settings->credentialsFor($opened, 'sandbox')['client_secret'])->toBe('')
+        ->and($settings->webhookVerifiersFor($opened))->toBe(['verifier-token'])
         ->and($connection->access_token)->toBeNull()
         ->and($connection->refresh_token)->toBeNull();
 });
@@ -369,9 +372,8 @@ test('oauth start sends the console QuickBooks page and refuses one that is not 
     config()->set('quickbooks.console_host', 'http://10.30.0.34:4200');
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'     => 'client-id',
-        'client_secret' => (new SecretCipher())->encrypt('secret'),
-        'environment'   => 'sandbox',
+        'sandbox_client_id'     => 'client-id',
+        'sandbox_client_secret' => (new SecretCipher())->encrypt('secret'),
         // Stored redirect and public URLs from an older build are never used.
         'redirect_uri'              => 'https://example.com/quickbooks/int/v1/oauth/callback',
         'public_oauth_redirect_url' => 'https://example.com/quickbooks/int/v1/oauth/callback',
@@ -386,6 +388,7 @@ test('oauth start sends the console QuickBooks page and refuses one that is not 
 
     try {
         $start = static fn (): JsonResponse => $controller->start(Request::create('/oauth/start', 'POST', [
+            'environment'  => 'sandbox',
             'company_uuid' => 'company-uuid',
         ]));
 
@@ -433,9 +436,8 @@ test('oauth start refuses before Intuit when no console host is configured', fun
     $public                                 = 'https://console.example.com/quickbooks';
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'     => 'client-id',
-        'client_secret' => (new SecretCipher())->encrypt('secret'),
-        'environment'   => 'sandbox',
+        'sandbox_client_id'     => 'client-id',
+        'sandbox_client_secret' => (new SecretCipher())->encrypt('secret'),
     ];
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
@@ -448,7 +450,7 @@ test('oauth start refuses before Intuit when no console host is configured', fun
         $store,
         new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())
     );
-    $start = static fn (): JsonResponse => $controller->start(Request::create('/oauth/start', 'POST'));
+    $start = static fn (): JsonResponse => $controller->start(Request::create('/oauth/start', 'POST', ['environment' => 'sandbox']));
 
     try {
         $refused = $start();
@@ -498,9 +500,8 @@ test('oauth complete exchanges the code with the console QuickBooks page as the 
     ]);
     $store                                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()]                 = [
-        'client_id'     => 'client-id',
-        'client_secret' => (new SecretCipher())->encrypt('secret'),
-        'environment'   => 'sandbox',
+        'sandbox_client_id'     => 'client-id',
+        'sandbox_client_secret' => (new SecretCipher())->encrypt('secret'),
     ];
     $controller = new class(new Authorizer(static fn () => true), new OAuthFlow(new QuickBooksClient()), new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()), $store, new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {
         use NoLinkedData;
@@ -524,6 +525,7 @@ test('oauth complete exchanges the code with the console QuickBooks page as the 
 
     try {
         $started = $controller->start(Request::create('/oauth/start', 'POST', [
+            'environment'  => 'sandbox',
             'company_uuid' => 'company-uuid',
         ]));
         expect(qbOAuthRedirect($started))->toBe($computed);
@@ -581,9 +583,8 @@ test('oauth complete sends the redirect uri used at start even if the console ho
     ]);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'     => 'client-id',
-        'client_secret' => (new SecretCipher())->encrypt('secret'),
-        'environment'   => 'sandbox',
+        'sandbox_client_id'     => 'client-id',
+        'sandbox_client_secret' => (new SecretCipher())->encrypt('secret'),
     ];
     $authorizer = new Authorizer(static fn () => true);
     $flow       = new OAuthFlow(new QuickBooksClient());
@@ -610,7 +611,7 @@ test('oauth complete sends the redirect uri used at start even if the console ho
     };
 
     try {
-        $started = $controller->start(Request::create('/oauth/start', 'POST'));
+        $started = $controller->start(Request::create('/oauth/start', 'POST', ['environment' => 'sandbox']));
         expect(qbOAuthRedirect($started))->toBe($atStart);
         $state = (string) $started->getData(true)['state'];
 
@@ -657,14 +658,13 @@ test('an operator may only reconnect the QuickBooks company the organization alr
     ]);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'     => 'client-id',
-        'client_secret' => (new SecretCipher())->encrypt('secret'),
-        'environment'   => 'sandbox',
+        'sandbox_client_id'     => 'client-id',
+        'sandbox_client_secret' => (new SecretCipher())->encrypt('secret'),
     ];
     $controller = LastRealmController::make($administrator, $lastRealm, $store);
 
     try {
-        $started = $controller->start(Request::create('/oauth/start', 'POST'));
+        $started = $controller->start(Request::create('/oauth/start', 'POST', ['environment' => 'sandbox']));
         if ($startAllowed === false) {
             // A first connection the caller cannot make is refused before anyone signs in at Intuit.
             expect($started->getStatusCode())->toBe(403)
@@ -722,15 +722,14 @@ test('oauth start refuses an operator whose organization never connected', funct
     config()->set('quickbooks.console_host', 'https://console.example.com');
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'     => 'client-id',
-        'client_secret' => (new SecretCipher())->encrypt('secret'),
-        'environment'   => 'sandbox',
+        'sandbox_client_id'     => 'client-id',
+        'sandbox_client_secret' => (new SecretCipher())->encrypt('secret'),
     ];
 
     try {
-        $refused = LastRealmController::make(false, null, $store)->start(Request::create('/oauth/start', 'POST'));
+        $refused = LastRealmController::make(false, null, $store)->start(Request::create('/oauth/start', 'POST', ['environment' => 'sandbox']));
         $again   = LastRealmController::make(false, '9341453000000001', $store)->start(
-            Request::create('/oauth/start', 'POST')
+            Request::create('/oauth/start', 'POST', ['environment' => 'sandbox'])
         );
 
         expect($refused->getStatusCode())->toBe(403)
@@ -772,9 +771,8 @@ test('oauth complete skips customer import when customers are turned off', funct
     ]);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'     => 'client-id',
-        'client_secret' => (new SecretCipher())->encrypt('secret'),
-        'environment'   => 'sandbox',
+        'sandbox_client_id'     => 'client-id',
+        'sandbox_client_secret' => (new SecretCipher())->encrypt('secret'),
     ];
     $store->rows[SettingsKeys::adminSync()] = ['customer_enabled' => false];
     $controller                             = new class(new Authorizer(static fn () => true), new OAuthFlow(new QuickBooksClient()), new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()), $store, new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {
@@ -792,6 +790,7 @@ test('oauth complete skips customer import when customers are turned off', funct
 
     try {
         $started = $controller->start(Request::create('/oauth/start', 'POST', [
+            'environment'  => 'sandbox',
             'company_uuid' => 'company-uuid',
         ]));
         $state = (string) $started->getData(true)['state'];
@@ -842,9 +841,8 @@ test('oauth start twice in a row answers 429 the second time', function () {
     $public                                 = 'https://console.example.com/quickbooks';
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'     => 'client-id',
-        'client_secret' => (new SecretCipher())->encrypt('secret'),
-        'environment'   => 'sandbox',
+        'sandbox_client_id'     => 'client-id',
+        'sandbox_client_secret' => (new SecretCipher())->encrypt('secret'),
     ];
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
@@ -865,8 +863,8 @@ test('oauth start twice in a row answers 429 the second time', function () {
     config()->set('quickbooks.console_host', 'https://console.example.com');
 
     try {
-        $first  = $controller->start(Request::create('/oauth/start', 'POST'));
-        $second = $controller->start(Request::create('/oauth/start', 'POST'));
+        $first  = $controller->start(Request::create('/oauth/start', 'POST', ['environment' => 'sandbox']));
+        $second = $controller->start(Request::create('/oauth/start', 'POST', ['environment' => 'sandbox']));
     } finally {
         Cache::swap($previous[0]);
         config()->set('quickbooks.manual_cooldown_seconds', $previous[1]);
@@ -883,9 +881,8 @@ test('a cancelled or failed connection does not hold back the next Connect', fun
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'client_id'     => 'client-id',
-        'client_secret' => (new SecretCipher())->encrypt('secret'),
-        'environment'   => 'sandbox',
+        'sandbox_client_id'     => 'client-id',
+        'sandbox_client_secret' => (new SecretCipher())->encrypt('secret'),
     ];
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
@@ -906,15 +903,15 @@ test('a cancelled or failed connection does not hold back the next Connect', fun
     config()->set('quickbooks.console_host', 'https://console.example.com');
 
     try {
-        $started   = $controller->start(Request::create('/oauth/start', 'POST'));
+        $started   = $controller->start(Request::create('/oauth/start', 'POST', ['environment' => 'sandbox']));
         $cancelled = $controller->complete(Request::create('/oauth/complete', 'POST', [
             'state' => $started->getData(true)['state'],
             'error' => 'access_denied',
         ]));
-        $afterCancel = $controller->start(Request::create('/oauth/start', 'POST'));
+        $afterCancel = $controller->start(Request::create('/oauth/start', 'POST', ['environment' => 'sandbox']));
         $failed      = $controller->complete(Request::create('/oauth/complete', 'POST', ['state' => 'unknown']));
-        $afterFail   = $controller->start(Request::create('/oauth/start', 'POST'));
-        $third       = $controller->start(Request::create('/oauth/start', 'POST'));
+        $afterFail   = $controller->start(Request::create('/oauth/start', 'POST', ['environment' => 'sandbox']));
+        $third       = $controller->start(Request::create('/oauth/start', 'POST', ['environment' => 'sandbox']));
     } finally {
         Cache::swap($previous[0]);
         config()->set('quickbooks.manual_cooldown_seconds', $previous[1]);
@@ -941,6 +938,7 @@ test('oauth start rejects missing client id or redirect uri', function () {
     );
 
     $response = $controller->start(Request::create('/oauth/start', 'POST', [
+        'environment'  => 'sandbox',
         'company_uuid' => 'company-uuid',
         'user_uuid'    => 'user-uuid',
     ]));
@@ -1517,9 +1515,8 @@ test('summary last sync is the latest finished batch and stays empty when every 
         $previousUrl = config('app.url');
         config()->set('app.url', 'http://localhost:8000');
         $store->rows[SettingsKeys::adminAuth()] = [
-            'client_id'     => 'client-id',
-            'client_secret' => (new SecretCipher())->encrypt('secret'),
-            'environment'   => 'sandbox',
+            'sandbox_client_id'     => 'client-id',
+            'sandbox_client_secret' => (new SecretCipher())->encrypt('secret'),
         ];
         try {
             $local = $controller->summary($request)->getData(true);

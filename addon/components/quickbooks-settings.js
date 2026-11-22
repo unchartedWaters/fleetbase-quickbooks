@@ -3,7 +3,7 @@ import { action } from '@ember/object';
 import { tracked } from '@glimmer/tracking';
 import { inject as service } from '@ember/service';
 import { scheduleTask } from 'ember-lifeline';
-import { DEFAULT_ENVIRONMENT, fieldState, normalizeSyncDirection, secretPresentation, validateSettings, webhookVerifierPresentation } from '../utils/settings-form';
+import { credentialKeys, ENVIRONMENTS, fieldState, normalizeSyncDirection, secretPresentation, validateSettings, webhookVerifierPresentation } from '../utils/settings-form';
 
 const NUMBER_FIELDS = ['interval_minutes', 'periodic_interval_hours', 'retry_limit', 'default_backoff_seconds'];
 const MINIMUMS = {
@@ -12,7 +12,6 @@ const MINIMUMS = {
     retry_limit: 1,
     default_backoff_seconds: 5,
 };
-const AUTH_FIELDS = ['environment', 'client_id'];
 const SYNC_FIELDS = ['interval_minutes', 'periodic_interval_hours', 'retry_limit', 'default_backoff_seconds'];
 const POLICY_FIELDS = [
     'customer_conflict',
@@ -45,11 +44,10 @@ const CHOICE_DEFAULTS = {
     wallet_direction: 'both',
     tax_source: 'quickbooks',
 };
+// Each environment's keys, in the order they are shown: Client ID, Client secret, Webhook verifier token.
+const CREDENTIAL_FIELDS = ENVIRONMENTS.flatMap((environment) => Object.values(credentialKeys(environment)));
 const ERROR_FIELD_ORDER = [
-    'environment',
-    'client_id',
-    'client_secret',
-    'webhook_verifier',
+    ...CREDENTIAL_FIELDS,
     'interval_minutes',
     'periodic_interval_hours',
     'retry_limit',
@@ -68,8 +66,6 @@ const ERROR_FIELD_ORDER = [
     'wallet_direction',
     'tax_source',
 ];
-
-const CREDENTIAL_FIELDS = ['environment', 'client_id', 'client_secret', 'webhook_verifier'];
 
 function firstErrorKey(errors) {
     return ERROR_FIELD_ORDER.find((key) => errors?.[key]) || Object.keys(errors || {})[0] || null;
@@ -130,8 +126,6 @@ function primaryEntity(key) {
 }
 
 const LABEL_KEYS = {
-    client_id: 'quickbooks.settings.fields.client-id',
-    environment: 'quickbooks.settings.fields.environment',
     interval_minutes: 'quickbooks.settings.fields.interval-minutes',
     periodic_interval_hours: 'quickbooks.settings.fields.periodic-interval-hours',
     retry_limit: 'quickbooks.settings.fields.retry-limit',
@@ -139,8 +133,6 @@ const LABEL_KEYS = {
 };
 
 const HINT_KEYS = {
-    client_id: 'quickbooks.settings.hints.client-id',
-    environment: 'quickbooks.settings.hints.environment',
     interval_minutes: 'quickbooks.settings.hints.interval-minutes',
     periodic_interval_hours: 'quickbooks.settings.hints.periodic-interval-hours',
     retry_limit: 'quickbooks.settings.hints.retry-limit',
@@ -257,8 +249,21 @@ export default class QuickbooksSettingsComponent extends Component {
 
     primaryTouched = new Set();
 
-    get authFields() {
-        return AUTH_FIELDS.map((key) => this.present(key));
+    // One set of keys per Intuit environment. Each organization picks its environment when it connects.
+    get credentialSets() {
+        return ENVIRONMENTS.map((environment) => {
+            const keys = credentialKeys(environment);
+            const clientId = { ...this.present(keys.clientId), hint: this.intl.t('quickbooks.settings.hints.client-id') };
+
+            return {
+                environment,
+                keys,
+                clientId,
+                title: this.intl.t(`quickbooks.settings.sets.${environment}`),
+                help: this.intl.t(`quickbooks.settings.sets.${environment}-help`),
+                secret: this.secretFor(keys),
+            };
+        });
     }
 
     get syncFields() {
@@ -319,35 +324,35 @@ export default class QuickbooksSettingsComponent extends Component {
             .map((field) => ({ key: field.key, title: this.intl.t(field.notPublicTitleKey), text: this.intl.t(field.notPublicKey) }));
     }
 
-    get secret() {
-        const presentation = secretPresentation(this.args.settings);
+    secretFor(keys) {
+        const presentation = secretPresentation(this.args.settings, keys.secret);
         // A saved secret or verifier belongs to the saved Client ID, so neither is offered for a changed one.
-        const savedClientId = String(this.args.settings?.client_id || '').trim();
-        const clientId = String(this.present('client_id').value || '').trim();
+        const savedClientId = String(this.args.settings?.[keys.clientId] || '').trim();
+        const clientId = String(this.present(keys.clientId).value || '').trim();
         const clientChanged = Boolean(savedClientId && clientId && clientId !== savedClientId);
         if (clientChanged) {
             presentation.set = false;
         }
-        if (this.draft.client_secret !== null && this.draft.client_secret !== undefined) {
-            presentation.value = this.draft.client_secret;
+        if (this.draft[keys.secret] !== null && this.draft[keys.secret] !== undefined) {
+            presentation.value = this.draft[keys.secret];
         }
         // An empty field has nothing to show, so its button offers Show.
-        presentation.visible = Boolean(presentation.value) && this.secretVisible('client_secret');
+        presentation.visible = Boolean(presentation.value) && this.secretVisible(keys.secret);
         // The fields template already receives this object, so the verifier rides along with the same blank-keeps-saved shape.
-        presentation.verifier = webhookVerifierPresentation(this.args.settings);
+        presentation.verifier = webhookVerifierPresentation(this.args.settings, keys.verifier);
         if (clientChanged) {
             presentation.verifier.set = false;
         }
-        if (this.draft.webhook_verifier !== null && this.draft.webhook_verifier !== undefined) {
-            presentation.verifier.value = this.draft.webhook_verifier;
+        if (this.draft[keys.verifier] !== null && this.draft[keys.verifier] !== undefined) {
+            presentation.verifier.value = this.draft[keys.verifier];
         }
-        presentation.verifier.visible = Boolean(presentation.verifier.value) && this.secretVisible('webhook_verifier');
+        presentation.verifier.visible = Boolean(presentation.verifier.value) && this.secretVisible(keys.verifier);
 
         return presentation;
     }
 
     present(key) {
-        const source = AUTH_FIELDS.includes(key) ? this.args.settings : this.syncSource;
+        const source = CREDENTIAL_FIELDS.includes(key) ? this.args.settings : this.syncSource;
         const state = fieldState(source, key);
         this.applyPresentDefault(state, key);
         this.applyPresentDraft(state, key);
@@ -363,8 +368,6 @@ export default class QuickbooksSettingsComponent extends Component {
             state.value = 5;
         } else if (key === 'periodic_interval_hours') {
             state.value = 24;
-        } else if (key === 'environment') {
-            state.value = DEFAULT_ENVIRONMENT;
         } else if (CHOICE_DEFAULTS[key]) {
             state.value = CHOICE_DEFAULTS[key];
         }
@@ -483,14 +486,7 @@ export default class QuickbooksSettingsComponent extends Component {
 
         const auth = this.syncOnly ? null : this.buildAuth();
         const sync = this.buildSync();
-        const errors = validateSettings({
-            auth: auth && { ...auth, client_secret: this.draft.client_secret || '', webhook_verifier: this.draft.webhook_verifier || '' },
-            sync,
-            secretSet: Boolean(this.args.settings?.client_secret_set),
-            verifierSet: Boolean(this.args.settings?.webhook_verifier_set),
-            savedClientId: this.args.settings?.client_id ?? '',
-            syncOnly: this.syncOnly,
-        });
+        const errors = validateSettings({ auth, sync, saved: this.args.settings, syncOnly: this.syncOnly });
         this.errors = this.localizeErrors(errors);
         if (Object.keys(errors).length) {
             this.revealFirstError(errors);
@@ -574,17 +570,18 @@ export default class QuickbooksSettingsComponent extends Component {
         }
     }
 
+    // Every environment's Client ID is sent as it shows. A secret or verifier is sent only when one was typed, so a blank keeps the saved one.
     buildAuth() {
-        const auth = {
-            client_id: String(this.present('client_id').value || '').trim(),
-            environment: this.present('environment').value || DEFAULT_ENVIRONMENT,
-        };
-        if (this.draft.client_secret) {
-            auth.client_secret = this.draft.client_secret;
-        }
-        if (this.draft.webhook_verifier) {
-            auth.webhook_verifier = this.draft.webhook_verifier;
-        }
+        const auth = {};
+        ENVIRONMENTS.forEach((environment) => {
+            const keys = credentialKeys(environment);
+            auth[keys.clientId] = String(this.present(keys.clientId).value || '').trim();
+            [keys.secret, keys.verifier].forEach((key) => {
+                if (this.draft[key]) {
+                    auth[key] = this.draft[key];
+                }
+            });
+        });
 
         return auth;
     }

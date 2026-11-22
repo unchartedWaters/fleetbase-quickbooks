@@ -16,10 +16,9 @@ use Illuminate\Support\Facades\Http;
 function validAuth(array $overrides = []): array
 {
     return array_merge([
-        'client_id'     => 'client-id',
-        'client_secret' => 'secret',
-        'redirect_uri'  => 'https://example.com/callback',
-        'environment'   => 'sandbox',
+        'production_client_id'     => 'client-id',
+        'production_client_secret' => 'secret',
+        'redirect_uri'             => 'https://example.com/callback',
     ], $overrides);
 }
 
@@ -195,29 +194,37 @@ test('direction and the customer catalog interval are validated', function () {
 test('settings are rejected when required values are missing or out of range', function () {
     $validator = new SettingsValidator();
 
-    expect($validator->errors([], []))->toHaveKey('client_id')
-        ->and(qbText($validator->errors([], [])['client_id']))->toBe('Enter the Client ID from developer.intuit.com → '
-            . 'your app '
-            . '→ Keys & credentials.')
-        ->and(qbText($validator->errors(['environment' => 'staging'], [])['environment']))->toBe('Choose Sandbox for '
-            . 'Development keys, or Production for your live company.')
+    // With nothing saved, at least one environment needs its keys.
+    expect(array_keys($validator->credentialErrors([])))->toBe(['production_client_id', 'production_client_secret'])
+        ->and($validator->errors([], []))->toHaveKey('production_client_id')
+        ->and(qbText($validator->errors([], [])['production_client_id']))->toBe('Enter the Client ID from '
+            . 'developer.intuit.com → your app → Keys & credentials.')
         // The OAuth redirect is computed, so it is never a setting to validate.
         ->and($validator->errors([], []))->not->toHaveKey('redirect_uri');
 
+    // A set with any key in it needs its Client ID and Client secret; a set nobody filled in is skipped.
+    $half = $validator->credentialErrors(['sandbox_webhook_verifier' => 'token']);
+    expect(array_keys($half))->toBe(['sandbox_client_id', 'sandbox_client_secret']);
+    expect($validator->credentialErrors(['sandbox_client_id' => 'dev-id', 'sandbox_client_secret' => 'dev']))->toBe([])
+        ->and($validator->credentialErrors(['sandbox_client_id' => 'dev-id']))->toHaveKey('sandbox_client_secret')
+        ->and($validator->credentialErrors(['production_client_id' => 'id', 'production_client_secret' => 's', 'sandbox_client_id' => 'x']))
+        ->toHaveKey('sandbox_client_secret')
+        ->and($validator->credentialErrors(['production_client_id' => 'id', 'production_client_secret' => 's']))->toBe([]);
+
     $errors = $validator->errors(validAuth([
-        'redirect_uri'  => 'not-a-url',
-        'client_secret' => '',
+        'redirect_uri'             => 'not-a-url',
+        'production_client_secret' => '',
     ]), qbSettings([
         'interval_minutes'        => 0,
         'default_backoff_seconds' => 4,
     ]));
 
     expect($errors)->not->toHaveKey('redirect_uri')
-        ->and($errors)->toHaveKey('client_secret')
+        ->and($errors)->toHaveKey('production_client_secret')
         ->and($errors)->toHaveKey('interval_minutes')
         ->and(qbText($errors['default_backoff_seconds']))->toBe('Enter a whole number of seconds for Retry delay, at '
             . 'least 5.')
-        ->and($errors)->not->toHaveKey('client_id');
+        ->and($errors)->not->toHaveKey('production_client_id');
 
     expect(qbText($validator->errors(validAuth(), qbSettings(['retry_limit' => 0]))['retry_limit']))
         ->toBe('Enter a whole number of retry attempts, at least 1.');
@@ -232,27 +239,25 @@ test('settings are rejected when required values are missing or out of range', f
 });
 
 test('a blank client secret is not configured and interval minutes stay out of auth', function () {
-    $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::adminAuth()]                 = [
-        'client_secret'    => '',
-        'interval_minutes' => '5',
+    $store                                  = new MemorySettingsStore();
+    $store->rows[SettingsKeys::adminAuth()] = [
+        'production_client_secret' => '',
+        'interval_minutes'         => '5',
     ];
 
     expect($store->adminAuth())->toBe([])
         ->and($store->normalizeAuth([
-            'client_id'        => 'id',
-            'client_secret'    => '   ',
-            'interval_minutes' => '5',
-            'redirect_uri'     => 'https://example.test/callback',
-            'environment'      => 'sandbox',
+            'production_client_id'     => 'id',
+            'production_client_secret' => '   ',
+            'interval_minutes'         => '5',
+            'redirect_uri'             => 'https://example.test/callback',
         ]))->toBe([
-            'client_id'   => 'id',
-            'environment' => 'sandbox',
+            'production_client_id' => 'id',
         ])
         ->and($store->normalizeAuth([
-            'client_secret'    => 'kept-secret',
-            'interval_minutes' => '5',
-        ]))->toBe(['client_secret' => 'kept-secret']);
+            'production_client_secret' => 'kept-secret',
+            'interval_minutes'         => '5',
+        ]))->toBe(['production_client_secret' => 'kept-secret']);
 
     session(['company' => 'company-uuid']);
     $controller = new SettingController(
@@ -268,23 +273,22 @@ test('a blank client secret is not configured and interval minutes stay out of a
         ]))->getData(true);
 
         expect($leftover['company_auth'])->not->toHaveKey('interval_minutes')
-            ->and($leftover['company_auth'])->not->toHaveKey('client_secret')
-            ->and($leftover['company_auth']['client_secret_set'])->toBeFalse()
-            ->and($leftover['auth']['client_secret_set'])->toBeFalse();
+            ->and($leftover['company_auth'])->not->toHaveKey('production_client_secret')
+            ->and($leftover['company_auth']['production_client_secret_set'])->toBeFalse()
+            ->and($leftover['auth']['production_client_secret_set'])->toBeFalse();
 
         $store->rows[SettingsKeys::adminAuth()] = [
-            'client_secret'    => 'kept-secret',
-            'interval_minutes' => '5',
+            'production_client_secret' => 'kept-secret',
+            'interval_minutes'         => '5',
         ];
         $response = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
             'auth'         => [
-                'client_id'        => 'client-id',
-                'client_secret'    => '',
-                'redirect_uri'     => 'https://example.com/callback',
-                'environment'      => 'sandbox',
-                'interval_minutes' => '5',
+                'production_client_id'     => 'client-id',
+                'production_client_secret' => '',
+                'redirect_uri'             => 'https://example.com/callback',
+                'interval_minutes'         => '5',
             ],
             'sync' => qbSettings(['override' => true, 'customer_enabled' => false, 'customer_direction' => 'off']),
         ]));
@@ -298,14 +302,14 @@ test('a blank client secret is not configured and interval minutes stay out of a
         expect($response->getStatusCode())->toBe(200)
             ->and($response->getContent())->not->toContain('kept-secret')
             ->and($stored)->not->toHaveKey('interval_minutes')
-            ->and($stored['client_secret'])->not->toBe('kept-secret')
-            ->and((new SecretCipher())->decrypt($stored['client_secret']))->toBe('kept-secret')
+            ->and($stored['production_client_secret'])->not->toBe('kept-secret')
+            ->and((new SecretCipher())->decrypt($stored['production_client_secret']))->toBe('kept-secret')
             ->and($storedSync)->not->toHaveKey('override')
             ->and($storedSync['customer_enabled'])->toBeFalse()
             ->and($storedSync['customer_direction'])->toBe('both')
             ->and($shown['company_auth'])->not->toHaveKey('interval_minutes')
-            ->and($shown['company_auth']['client_secret_set'])->toBeTrue()
-            ->and($shown['company_auth'])->not->toHaveKey('client_secret')
+            ->and($shown['company_auth']['production_client_secret_set'])->toBeTrue()
+            ->and($shown['company_auth'])->not->toHaveKey('production_client_secret')
             ->and($shown['sync'])->not->toHaveKey('override')
             ->and($shown['sync']['customer_direction'])->toBe('both')
             ->and($shown['sync']['customer_enabled'])->toBeFalse()
@@ -320,8 +324,8 @@ test('admin connection uses the global secret and ignores an organization row', 
     $cipher                                                   = new SecretCipher();
     $companySecret                                            = $cipher->encrypt('company-secret');
     $adminSecret                                              = $cipher->encrypt('admin-secret');
-    $store->rows[SettingsKeys::companyAuth('company-uuid')]   = validAuth(['client_secret' => $companySecret, 'client_id' => 'company-id']);
-    $store->rows[SettingsKeys::adminAuth()]                   = validAuth(['client_secret' => $adminSecret, 'client_id' => 'admin-id']);
+    $store->rows[SettingsKeys::companyAuth('company-uuid')]   = validAuth(['production_client_secret' => $companySecret, 'production_client_id' => 'company-id']);
+    $store->rows[SettingsKeys::adminAuth()]                   = validAuth(['production_client_secret' => $adminSecret, 'production_client_id' => 'admin-id']);
 
     session(['company' => 'company-uuid']);
     $settings   = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
@@ -336,28 +340,27 @@ test('admin connection uses the global secret and ignores an organization row', 
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
         ]))->getData(true);
-        $credentials = $settings->credentialsFor($store, 'company-uuid');
+        $credentials = $settings->credentialsFor($store, 'production');
 
-        expect($shown['auth']['client_secret_set'])->toBeTrue()
-            ->and($shown['auth']['client_id'])->toBe('admin-id')
-            ->and($shown['auth']['sources']['client_id'])->toBe('admin')
+        expect($shown['auth']['production_client_secret_set'])->toBeTrue()
+            ->and($shown['auth']['production_client_id'])->toBe('admin-id')
             ->and($credentials['client_id'])->toBe('admin-id')
             ->and($credentials['client_secret'])->toBe('admin-secret')
-            ->and($store->companyAuth('company-uuid')['client_secret'])->toBe($companySecret);
+            ->and($store->companyAuth('company-uuid')['production_client_secret'])->toBe($companySecret);
 
         $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope'        => 'admin',
             'company_uuid' => 'company-uuid',
-            'auth'         => validAuth(['client_id' => 'saved-id', 'client_secret' => 'saved-secret']),
+            'auth'         => validAuth(['production_client_id' => 'saved-id', 'production_client_secret' => 'saved-secret']),
             'sync'         => qbSettings(),
         ]));
-        $connected = $settings->credentialsFor($store, 'other-company');
+        $connected = $settings->credentialsFor($store, 'production');
 
         expect($saved->getStatusCode())->toBe(200)
             ->and($store->adminSync())->not->toHaveKey('override')
             ->and($connected['client_id'])->toBe('saved-id')
             ->and($connected['client_secret'])->toBe('saved-secret')
-            ->and($store->companyAuth('company-uuid')['client_id'])->toBe('company-id');
+            ->and($store->companyAuth('company-uuid')['production_client_id'])->toBe('company-id');
     } finally {
         session(['company' => null]);
     }
@@ -387,11 +390,11 @@ test('a company scope request is not the global settings screen and shows no cre
         expect($company->getStatusCode())->toBe(200)
             ->and($company->getData(true))->not->toHaveKey('auth')
             ->and($store->adminAuth())->toBe([])
-            ->and($shown['auth']['client_id'])->toBe('')
-            ->and($shown['auth']['client_secret_set'])->toBeFalse()
-            ->and($shown['auth'])->not->toHaveKey('client_secret')
-            ->and($shown['auth']['sources']['client_id'])->toBe('none')
-            ->and($shown['auth']['sources']['client_secret'])->toBe('none');
+            ->and($shown['auth']['production_client_id'])->toBe('')
+            ->and($shown['auth']['production_client_secret_set'])->toBeFalse()
+            ->and($shown['auth']['sandbox_client_secret_set'])->toBeFalse()
+            ->and($shown['auth'])->not->toHaveKey('production_client_secret')
+            ->and($shown['auth'])->not->toHaveKey('sources');
     } finally {
         session(['company' => null]);
     }
@@ -728,57 +731,64 @@ test('a loopback https app url keeps that scheme on the console host', function 
     }
 });
 
-test('a new install defaults to production and a stored sandbox stays stored', function () {
+test('the admin settings hold one set of keys per environment and no environment setting', function () {
     $store = new MemorySettingsStore();
     session(['company' => 'company-uuid']);
-    config()->set('quickbooks.environment', null);
     $controller = new SettingController(
         new Authorizer(static fn () => true),
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
         $store
     );
+    $show = static fn (): array => $controller->show(InstallAdminRequest::create('/settings', 'GET', [
+        'scope'        => 'admin',
+        'company_uuid' => 'company-uuid',
+    ]))->getData(true);
+    $save = static fn (array $auth): Illuminate\Http\JsonResponse => $controller->save(InstallAdminRequest::create('/settings', 'POST', [
+        'scope'        => 'admin',
+        'company_uuid' => 'company-uuid',
+        'auth'         => $auth,
+        'sync'         => qbSettings(),
+    ]));
 
     try {
-        $shown = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
-            'scope'        => 'admin',
-            'company_uuid' => 'company-uuid',
-        ]))->getData(true);
+        $empty = $show()['auth'];
 
-        expect($shown['auth']['environment'])->toBe('production')
-            ->and($shown['auth']['sources']['environment'])->toBe('env')
+        expect($empty)->not->toHaveKey('environment')
+            ->and($empty['production_client_id'])->toBe('')
+            ->and($empty['sandbox_client_id'])->toBe('')
             ->and($store->adminAuth())->toBe([]);
 
-        $store->rows[SettingsKeys::adminAuth()] = validAuth(['environment' => 'sandbox']);
-        $unusedSystem                           = $controller->show(InstallAdminRequest::create('/settings', 'GET', [
-            'scope'        => 'admin',
-            'company_uuid' => 'company-uuid',
-        ]))->getData(true);
+        // Only sandbox keys: the empty production set the form sends is not stored, and no environment is stored or sent back.
+        $sandboxOnly = $save([
+            'sandbox_client_id'     => 'dev-id',
+            'sandbox_client_secret' => 'dev-secret',
+            'production_client_id'  => '',
+            'environment'           => 'production',
+        ]);
+        $auth        = $sandboxOnly->getData(true)['auth'];
 
-        expect($unusedSystem['auth']['environment'])->toBe('sandbox')
-            ->and($unusedSystem['auth']['sources']['environment'])->toBe('admin');
+        expect($sandboxOnly->getStatusCode())->toBe(200)
+            ->and(array_keys($store->rows[SettingsKeys::adminAuth()]))->toBe(['sandbox_client_id', 'sandbox_client_secret'])
+            ->and($auth)->not->toHaveKey('environment')
+            ->and($auth['sandbox_client_secret_set'])->toBeTrue()
+            ->and($auth['production_client_secret_set'])->toBeFalse();
 
-        $store->rows[SettingsKeys::adminAuth()]                 = validAuth(['environment' => 'sandbox']);
-        $saved                                                  = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
-            'scope'        => 'admin',
-            'company_uuid' => 'company-uuid',
-            'auth'         => [
-                'client_id'     => 'client-id',
-                'redirect_uri'  => 'https://example.com/callback',
-                'client_secret' => 'secret',
-            ],
-            'sync' => qbSettings(),
-        ]));
+        // Production keys are added without touching the sandbox set.
+        $both = $save(['production_client_id' => 'live-id', 'production_client_secret' => 'live-secret']);
 
-        expect($saved->getStatusCode())->toBe(200)
-            ->and($store->rows[SettingsKeys::adminAuth()]['environment'])->toBe('sandbox')
-            ->and($store->rows[SettingsKeys::adminAuth()]['environment'])->toBe('sandbox')
-            ->and($store->rows[SettingsKeys::adminSync()])->not->toHaveKey('override');
+        expect($both->getStatusCode())->toBe(200)
+            ->and($show()['auth']['sandbox_client_id'])->toBe('dev-id')
+            ->and($show()['auth']['production_client_id'])->toBe('live-id');
 
-        $configSource = file_get_contents(dirname(__DIR__) . '/config/quickbooks.php');
-        expect($configSource)->toContain("env('QUICKBOOKS_ENVIRONMENT', 'production')");
+        // A set cannot be emptied of its Client ID while its secret is saved.
+        $blank = $save(['production_client_id' => '']);
+
+        expect($blank->getStatusCode())->toBe(422)
+            ->and(array_keys($blank->getData(true)['errors']))->toBe(['production_client_id']);
+
+        expect(file_get_contents(dirname(__DIR__) . '/config/quickbooks.php'))->not->toContain('QUICKBOOKS_ENVIRONMENT');
     } finally {
         session(['company' => null]);
-        config()->set('quickbooks.environment', null);
     }
 });
 

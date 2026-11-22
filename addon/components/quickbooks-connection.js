@@ -82,6 +82,24 @@ export default class QuickbooksConnectionComponent extends Component {
         return this.isConnected && canChangeCompany(this.abilities) && canConnect(this.abilities);
     }
 
+    // An administrator chooses between sandbox and production, but only when keys for both are saved.
+    get showEnvironmentChoice() {
+        return (this.showConnect || this.showChangeCompany) && canChangeCompany(this.abilities) && (this.args.environments?.length ?? 0) > 1;
+    }
+
+    get environmentOptions() {
+        return (this.args.environments ?? []).map((environment) => ({
+            value: environment,
+            label: this.intl.t(`quickbooks.settings.options.${environment}`),
+            selected: environment === this.args.environment,
+        }));
+    }
+
+    @action
+    chooseEnvironment(event) {
+        this.args.onEnvironment?.(event.target.value);
+    }
+
     get changeCompanyDisabled() {
         return this.busy || !this.isConfigured;
     }
