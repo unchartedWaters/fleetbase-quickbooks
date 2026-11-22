@@ -67,12 +67,6 @@ parameters:
 			path: server/src/Services/BatchRunner.php
 
 		-
-			message: '#^Binary operation "\+" between mixed and 1 results in an error\.$#'
-			identifier: binaryOp.invalid
-			count: 3
-			path: server/src/Services/CustomerImporter.php
-
-		-
 			message: '#^Parameter \#1 \$bill of method Fleetbase\\Quickbooks\\Support\\CustomerMapper\:\:addressFromBillAddr\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
 			identifier: argument.type
 			count: 1
@@ -433,18 +427,6 @@ parameters:
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: '#^Binary operation "\+" between mixed and 1 results in an error\.$#'
-			identifier: binaryOp.invalid
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: '#^Binary operation "\+\=" between mixed and int results in an error\.$#'
-			identifier: assignOp.invalid
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
 			message: '#^Binary operation "\." between mixed and ''\:'' results in an error\.$#'
 			identifier: binaryOp.invalid
 			count: 1
@@ -466,12 +448,6 @@ parameters:
 			message: '#^Call to function is_array\(\) with array\<string, mixed\> will always evaluate to true\.$#'
 			identifier: function.alreadyNarrowedType
 			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: '#^Cannot use \+\+ on mixed\.$#'
-			identifier: postInc.type
-			count: 11
 			path: server/src/Services/SyncEngine.php
 
 		-

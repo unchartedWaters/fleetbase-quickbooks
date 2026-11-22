@@ -20,6 +20,7 @@ use Fleetbase\Quickbooks\Services\Concerns\SyncsWallets;
 use Fleetbase\Quickbooks\Services\Concerns\UpdatesInvoices;
 use Fleetbase\Quickbooks\Support\Amounts;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\FleetbaseTax;
@@ -691,8 +692,6 @@ class SyncEngine
 
     /**
      * @param array<string, mixed> $settings
-     *
-     * @return array<string, mixed>
      */
     public function runScheduled(
         SyncLedger $ledger,
@@ -701,27 +700,27 @@ class SyncEngine
         int $now,
         bool $force = false,
         bool $ignoreInterval = false,
-    ): array {
+    ): Batch {
         // A note left by a run that stopped before recording its row is not shown on this run.
         $this->rowNotes = [];
         $trigger        = $force === true ? 'now' : 'scheduled';
         $connection     = $ledger->connection($companyUuid);
         if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false) {
-            return $this->emptyBatch($trigger, 'skipped');
+            return new Batch($trigger, 'skipped');
         }
         if (empty($connection['needs_reauth']) === false) {
             if ($force === true) {
                 return $this->recordSkipped($ledger, $companyUuid, $trigger, ConnectionTokens::REAUTH_MESSAGE);
             }
 
-            return $this->emptyBatch($trigger, 'skipped');
+            return new Batch($trigger, 'skipped');
         }
         if ($this->isRateLimited($connection, $now) === true) {
             if ($force === true) {
                 return $this->recordSkipped($ledger, $companyUuid, $trigger, self::RATE_LIMITED_MESSAGE);
             }
 
-            return $this->emptyBatch($trigger, 'skipped');
+            return new Batch($trigger, 'skipped');
         }
         $last = $connection['last_batch_at'] ?? null;
         if (
@@ -730,7 +729,7 @@ class SyncEngine
             && $last !== null
             && ($now - (int) $last) < ($settings['interval_minutes'] * 60)
         ) {
-            return $this->emptyBatch($trigger, 'skipped');
+            return new Batch($trigger, 'skipped');
         }
 
         $pending = $ledger->duePending($companyUuid, (int) $settings['batch_size'], $now);
@@ -743,16 +742,14 @@ class SyncEngine
 
     /**
      * @param array<string, mixed> $settings
-     *
-     * @return array<string, mixed>
      */
-    public function reconcile(SyncLedger $ledger, string $companyUuid, array $settings, int $now): array
+    public function reconcile(SyncLedger $ledger, string $companyUuid, array $settings, int $now): Batch
     {
         // A note left by a run that stopped before recording its row is not shown on this run.
         $this->rowNotes = [];
         $connection     = $ledger->connection($companyUuid);
         if (is_array($connection) === false || ConnectionGate::hasRealm($connection) === false) {
-            return $this->emptyBatch('manual', 'skipped');
+            return new Batch('manual', 'skipped');
         }
         if (empty($connection['needs_reauth']) === false) {
             return $this->recordSkipped($ledger, $companyUuid, 'manual', ConnectionTokens::REAUTH_MESSAGE);
@@ -832,14 +829,10 @@ class SyncEngine
             return;
         }
         $skipped           = count(array_keys(array_column($attempts, 'outcome'), 'skipped', true));
-        $ledger->batches[] = array_merge($this->emptyBatch('webhook', 'finished'), [
-            'company_uuid' => $companyUuid,
-            'direction'    => 'inbound',
-            'updated'      => count($attempts) - $skipped,
-            'skipped'      => $skipped,
-            'started_at'   => $now,
-            'finished_at'  => $now,
-        ]);
+        $batch             = Batch::forCompany($companyUuid, 'webhook', 'finished', 'inbound', $now, $now);
+        $batch->updated    = count($attempts) - $skipped;
+        $batch->skipped    = $skipped;
+        $ledger->batches[] = $batch;
         array_push($ledger->attempts, ...$attempts);
     }
 
@@ -1171,10 +1164,8 @@ class SyncEngine
      *
      * @param array<int, array<string, mixed>> $rows
      * @param array<string, mixed>             $settings
-     *
-     * @return array<string, mixed>
      */
-    public function syncEntities(SyncLedger $ledger, string $companyUuid, array $rows, array $settings, int $now): array
+    public function syncEntities(SyncLedger $ledger, string $companyUuid, array $rows, array $settings, int $now): Batch
     {
         // A note left by a run that stopped before recording its row is not shown on this run.
         $this->rowNotes = [];
@@ -1184,7 +1175,7 @@ class SyncEngine
             || ConnectionGate::hasRealm($connection) === false
             || empty($connection['needs_reauth']) === false
         ) {
-            return $this->emptyBatch('catalog', 'skipped');
+            return new Batch('catalog', 'skipped');
         }
 
         return $this->process($ledger, $connection, $rows, $settings, $now, 'catalog', false);
@@ -1217,8 +1208,6 @@ class SyncEngine
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
      * @param array<string, mixed>             $settings
-     *
-     * @return array<string, mixed>
      */
     private function process(
         SyncLedger $ledger,
@@ -1228,7 +1217,7 @@ class SyncEngine
         int $now,
         string $trigger,
         bool $reportUnmatched,
-    ): array {
+    ): Batch {
         $this->customTxnNumbers  = [];
         $this->runSettings       = $settings;
         $this->productResults    = [];
@@ -1253,11 +1242,11 @@ class SyncEngine
         }
 
         if ($reportUnmatched === true) {
-            $batch['unmatched'] += $this->countUnmatched($ledger, $connection);
+            $batch->unmatched += $this->countUnmatched($ledger, $connection);
         }
 
-        $batch['status']      = 'finished';
-        $batch['finished_at'] = $now;
+        $batch->status        = 'finished';
+        $batch->finishedAt    = $now;
         $ledger->batches[]    = $batch;
 
         return $batch;
@@ -1270,7 +1259,6 @@ class SyncEngine
      *
      * @param array<string, mixed> $connection
      * @param array<string, mixed> $settings
-     * @param array<string, mixed> $batch
      *
      * @return array<string, mixed>
      */
@@ -1278,7 +1266,7 @@ class SyncEngine
         SyncLedger $ledger,
         array $connection,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
     ): array {
@@ -1301,33 +1289,16 @@ class SyncEngine
 
     /**
      * @param array<string, mixed> $connection
-     *
-     * @return array<string, mixed>
      */
-    private function newOutboundBatch(array $connection, string $trigger, int $now): array
+    private function newOutboundBatch(array $connection, string $trigger, int $now): Batch
     {
-        return [
-            'company_uuid' => $connection['company_uuid'],
-            'trigger'      => $trigger,
-            'direction'    => 'outbound',
-            'status'       => 'running',
-            'created'      => 0,
-            'updated'      => 0,
-            'aligned'      => 0,
-            'voided'       => 0,
-            'unmatched'    => 0,
-            'failed'       => 0,
-            'skipped'      => 0,
-            'started_at'   => $now,
-            'finished_at'  => null,
-        ];
+        return Batch::forCompany((string) $connection['company_uuid'], $trigger, 'running', 'outbound', $now, null);
     }
 
     /**
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
      * @param array<string, mixed>             $settings
-     * @param array<string, mixed>             $batch
      *
      * @return array<string, mixed>
      */
@@ -1336,7 +1307,7 @@ class SyncEngine
         array $connection,
         array $rows,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
     ): array {
@@ -1451,7 +1422,6 @@ class SyncEngine
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $block
      * @param array<string, mixed>             $settings
-     * @param array<string, mixed>             $batch
      */
     private function runBlock(
         SyncLedger $ledger,
@@ -1459,7 +1429,7 @@ class SyncEngine
         array $block,
         string $type,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
     ): bool {
@@ -1849,9 +1819,8 @@ class SyncEngine
      * moves onto it; otherwise, or when the follow-up has no Activity row, the first pass stays.
      *
      * @param array<int, array{row: array<string, mixed>, outcome: string, attempt: int|null}> $followUps
-     * @param array<string, mixed>                                                             $batch
      */
-    private function withoutFirstPass(SyncLedger $ledger, array $followUps, array &$batch): void
+    private function withoutFirstPass(SyncLedger $ledger, array $followUps, Batch $batch): void
     {
         foreach ($followUps as $followUp) {
             $second = $this->recordedRows[$this->rowKey($followUp['row'])] ?? null;
@@ -1862,7 +1831,7 @@ class SyncEngine
             if ($first !== null && $this->movesFirstNote($ledger, $first, $second['attempt']) === false) {
                 continue;
             }
-            $batch[$followUp['outcome']] = max(0, (int) ($batch[$followUp['outcome']] ?? 0) - 1);
+            $batch->add($followUp['outcome'], -1);
             if ($first !== null) {
                 unset($ledger->attempts[$first]);
             }
@@ -2034,34 +2003,10 @@ class SyncEngine
         }
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    private function emptyBatch(string $trigger, string $status): array
-    {
-        return [
-            'trigger'     => $trigger,
-            'direction'   => 'outbound',
-            'status'      => $status,
-            'created'     => 0,
-            'updated'     => 0,
-            'aligned'     => 0,
-            'voided'      => 0,
-            'unmatched'   => 0,
-            'failed'      => 0,
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function recordSkipped(SyncLedger $ledger, string $companyUuid, string $trigger, string $message): array
+    private function recordSkipped(SyncLedger $ledger, string $companyUuid, string $trigger, string $message): Batch
     {
         $now                     = time();
-        $batch                   = $this->emptyBatch($trigger, 'skipped');
-        $batch['company_uuid']   = $companyUuid;
-        $batch['started_at']     = $now;
-        $batch['finished_at']    = $now;
+        $batch                   = Batch::forCompany($companyUuid, $trigger, 'skipped', 'outbound', $now, $now);
         $ledger->batches[]       = $batch;
         $ledger->attempts[]      = [
             'company_uuid' => $companyUuid,
@@ -2078,14 +2023,13 @@ class SyncEngine
      * @param array<string, mixed> $connection
      * @param array<string, mixed> $row
      * @param array<string, mixed> $settings
-     * @param array<string, mixed> $batch
      */
     private function runOne(
         SyncLedger $ledger,
         array &$connection,
         array $row,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
     ): void {
@@ -2106,7 +2050,7 @@ class SyncEngine
             $this->lastError = null;
             if ($exception instanceof QuickBooksException && $exception->isUnauthorized() === true) {
                 $this->tokenRejected($ledger, $companyUuid);
-                $batch['failed']++;
+                $batch->failed++;
 
                 return;
             }
@@ -2131,7 +2075,6 @@ class SyncEngine
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
      * @param array<string, mixed>             $settings
-     * @param array<string, mixed>             $batch
      *
      * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Batches* traits.
      */
@@ -2140,7 +2083,7 @@ class SyncEngine
         array &$connection,
         array $rows,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
         bool $record,
@@ -2185,7 +2128,6 @@ class SyncEngine
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
      * @param array<string, mixed>             $settings
-     * @param array<string, mixed>             $batch
      *
      * @return array<string, PlannedWrite>|null
      */
@@ -2194,7 +2136,7 @@ class SyncEngine
         array $connection,
         array $rows,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
         bool $record,
@@ -2241,7 +2183,6 @@ class SyncEngine
      * @param array<string, mixed> $connection
      * @param array<string, mixed> $row
      * @param array<string, mixed> $settings
-     * @param array<string, mixed> $batch
      */
     private function haltPlan(
         SyncLedger $ledger,
@@ -2249,7 +2190,7 @@ class SyncEngine
         array $row,
         QuickBooksException $exception,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
         bool $record,
@@ -2257,7 +2198,7 @@ class SyncEngine
         $this->writeBuffer = null;
         if ($exception->isUnauthorized() === true) {
             $this->tokenRejected($ledger, (string) $connection['company_uuid']);
-            $batch['failed']++;
+            $batch->failed++;
 
             return;
         }
@@ -2275,7 +2216,6 @@ class SyncEngine
      * @param PlannedWrite         $plan
      * @param BatchResult          $result
      * @param array<string, mixed> $settings
-     * @param array<string, mixed> $batch
      */
     private function haltBlockRow(
         SyncLedger $ledger,
@@ -2283,7 +2223,7 @@ class SyncEngine
         array $plan,
         array $result,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
         bool $record,
@@ -2291,7 +2231,7 @@ class SyncEngine
         $failed = $this->haltedItem($ledger, $connection, $plan, $result, $settings, $now);
         if ($failed === null) {
             $this->tokenRejected($ledger, (string) $connection['company_uuid']);
-            $batch['failed']++;
+            $batch->failed++;
         } elseif ($record === true) {
             $this->recordRow($ledger, $connection, $failed['row'], 'failed', $batch, $trigger, $failed['error']);
         }
@@ -2447,13 +2387,12 @@ class SyncEngine
      *
      * @param array<string, mixed> $connection
      * @param PaymentItem          $item
-     * @param array<string, mixed> $batch
      */
     private function recordBufferedItem(
         SyncLedger $ledger,
         array $connection,
         array $item,
-        array &$batch,
+        Batch $batch,
         string $trigger,
     ): void {
         $this->lastError = ($item['permanent'] === true && $item['outcome'] === 'failed') ? $item['planError'] : null;
@@ -2467,7 +2406,6 @@ class SyncEngine
      * @param array<string, PlannedWrite> $planned
      * @param array<string, BatchResult>  $results
      * @param array<string, mixed>        $settings
-     * @param array<string, mixed>        $batch
      */
     private function finishInvoices(
         SyncLedger $ledger,
@@ -2475,7 +2413,7 @@ class SyncEngine
         array $planned,
         array $results,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
     ): bool {
@@ -2501,7 +2439,7 @@ class SyncEngine
                 $this->commitFinished($ledger, $connection, $finished, $batch, $trigger, true);
                 $this->writeBuffer = null;
                 $this->tokenRejected($ledger, (string) $connection['company_uuid']);
-                $batch['failed']++;
+                $batch->failed++;
 
                 return true;
             }
@@ -2577,7 +2515,6 @@ class SyncEngine
      *
      * @param array<string, mixed>       $connection
      * @param array<string, PaymentItem> $finished
-     * @param array<string, mixed>       $batch
      * @param array<string, mixed>       $settings
      */
     private function settleInvoices(
@@ -2585,7 +2522,7 @@ class SyncEngine
         array $connection,
         array $finished,
         bool $unauthorized,
-        array &$batch,
+        Batch $batch,
         array $settings,
         int $now,
         string $trigger,
@@ -2605,7 +2542,7 @@ class SyncEngine
         $this->commitFinished($ledger, $connection, $keep, $batch, $trigger, true);
         if ($unauthorized === true) {
             $this->tokenRejected($ledger, $companyUuid);
-            $batch['failed']++;
+            $batch->failed++;
         }
 
         return true;
@@ -2614,13 +2551,12 @@ class SyncEngine
     /**
      * @param array<string, mixed>       $connection
      * @param array<string, PaymentItem> $finished
-     * @param array<string, mixed>       $batch
      */
     private function commitFinished(
         SyncLedger $ledger,
         array $connection,
         array $finished,
-        array &$batch,
+        Batch $batch,
         string $trigger,
         bool $record,
     ): void {
@@ -3205,18 +3141,17 @@ class SyncEngine
     /**
      * @param array<string, mixed> $connection
      * @param array<string, mixed> $row
-     * @param array<string, mixed> $batch
      */
     private function recordRow(
         SyncLedger $ledger,
         array $connection,
         array $row,
         string $outcome,
-        array &$batch,
+        Batch $batch,
         string $trigger,
         ?string $retryError,
     ): void {
-        $batch[$outcome] = ($batch[$outcome] ?? 0) + 1;
+        $batch->add($outcome);
         // rowNote() is read once, so the error is worked out once.
         $copied = $this->takePrimaryCopy($row);
         $error  = $this->lastError
@@ -3318,7 +3253,6 @@ class SyncEngine
      *
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
-     * @param array<string, mixed>             $batch
      *
      * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Concerns traits.
      */
@@ -3326,7 +3260,7 @@ class SyncEngine
         SyncLedger $ledger,
         array $connection,
         array $rows,
-        array &$batch,
+        Batch $batch,
         string $trigger,
         bool $record,
     ): bool {

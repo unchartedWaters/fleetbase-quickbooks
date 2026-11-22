@@ -19,6 +19,7 @@ use Fleetbase\Quickbooks\Services\Concerns\RetiresDeleteBatches;
 use Fleetbase\Quickbooks\Services\Concerns\StoresConnections;
 use Fleetbase\Quickbooks\Services\Concerns\StoresLinks;
 use Fleetbase\Quickbooks\Services\Concerns\StoresPaymentInvoiceRows;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Database\Eloquent\Builder;
@@ -538,10 +539,6 @@ class FleetbaseDirectory
     {
         $batchUuid = null;
         foreach ($ledger->batches as $batch) {
-            if (empty($batch['uuid']) === false) {
-                $batchUuid = (string) $batch['uuid'];
-                continue;
-            }
             $record = new SyncBatch();
             $record->fill($this->batchAttributes($batch));
             $record->save();
@@ -1020,33 +1017,31 @@ class FleetbaseDirectory
     /**
      * A batch time in unix seconds as the batch table stores it, or null when unset.
      */
-    private static function batchTime(mixed $time): ?string
+    private static function batchTime(?int $time): ?string
     {
-        return $time === null ? null : date('Y-m-d H:i:s', (int) $time);
+        return $time === null ? null : date('Y-m-d H:i:s', $time);
     }
 
     /**
-     * @param array<string, mixed> $batch
-     *
      * @return array<string, mixed>
      */
-    private function batchAttributes(array $batch): array
+    private function batchAttributes(Batch $batch): array
     {
         return [
-            'company_uuid'   => $batch['company_uuid'] ?? null,
-            'trigger'        => $batch['trigger'] ?? 'scheduled',
-            'direction'      => $batch['direction'] ?? 'outbound',
-            'status'         => $batch['status'] ?? 'finished',
-            'created_count'  => $batch['created'] ?? 0,
-            'updated_count'  => $batch['updated'] ?? 0,
-            'aligned_count'  => $batch['aligned'] ?? 0,
-            'voided_count'   => $batch['voided'] ?? 0,
-            'unmatched_count'=> $batch['unmatched'] ?? 0,
-            'failed_count'   => $batch['failed'] ?? 0,
-            'linked_count'   => $batch['linked'] ?? 0,
-            'skipped_count'  => $batch['skipped'] ?? 0,
-            'started_at'     => self::batchTime($batch['started_at'] ?? null),
-            'finished_at'    => self::batchTime($batch['finished_at'] ?? null),
+            'company_uuid'    => $batch->companyUuid,
+            'trigger'         => $batch->trigger,
+            'direction'       => $batch->direction,
+            'status'          => $batch->status,
+            'created_count'   => $batch->created,
+            'updated_count'   => $batch->updated,
+            'aligned_count'   => $batch->aligned,
+            'voided_count'    => $batch->voided,
+            'unmatched_count' => $batch->unmatched,
+            'failed_count'    => $batch->failed,
+            'linked_count'    => $batch->linked,
+            'skipped_count'   => $batch->skipped,
+            'started_at'      => self::batchTime($batch->startedAt),
+            'finished_at'     => self::batchTime($batch->finishedAt),
         ];
     }
 

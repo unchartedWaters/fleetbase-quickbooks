@@ -115,6 +115,8 @@
   entries; its entries are bare `array` where `array<string, mixed>` is
   declared. `is_array()`-style guards on decoded or queued data are kept on
   purpose (`treatPhpDocTypesAsCertain: false`).
+- A sync run's batch is a `Support\Batch` object with typed counters, not an
+  array. Count a row with `$batch->add($outcome)`; do not add array keys.
 - Codacy runs Lizard's 50-line function limit on `server/src`; split long
   methods rather than suppressing.
 - JS: Prettier from the `prettier` key in `package.json` (4 spaces, width 190,

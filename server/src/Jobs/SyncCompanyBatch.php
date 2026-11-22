@@ -84,7 +84,7 @@ class SyncCompanyBatch implements ShouldQueue
     public function handle(BatchRunner $runner): void
     {
         $result = $runner->run($this->companyUuid, $this->trigger);
-        if (($result['reason'] ?? null) !== 'busy' || in_array($this->trigger, ['drain', 'catalog'], true) === false) {
+        if ($result->status !== 'busy' || in_array($this->trigger, ['drain', 'catalog'], true) === false) {
             return;
         }
         if ($this->continuationRetry >= self::CONTINUATION_RETRY_LIMIT) {

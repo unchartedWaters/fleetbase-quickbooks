@@ -9,6 +9,7 @@
 
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
@@ -699,9 +700,9 @@ test('sec reconcile works only due pending invoices when any exist and does not 
 
     $batch = $engine->reconcile($ledger, 'company-uuid', qbSettings(), 1_000);
 
-    expect($batch['created'])->toBe(1)
-        ->and($batch['trigger'])->toBe('manual')
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->created)->toBe(1)
+        ->and($batch->trigger)->toBe('manual')
+        ->and($batch->failed)->toBe(0)
         ->and(array_count_values($client->calls)['createInvoice'] ?? 0)->toBe(1)
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-2'))->not->toBeNull()
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-1'))->toBeNull()
@@ -719,7 +720,7 @@ test('sec reconcile pending rows honor batch size before the catalog', function 
 
     $batch = $engine->reconcile($ledger, 'company-uuid', qbSettings(['batch_size' => 2]), 1_000);
 
-    expect($batch['created'])->toBe(2)
+    expect($batch->created)->toBe(2)
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-1'))->not->toBeNull()
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-2'))->not->toBeNull()
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-3'))->toBeNull()
@@ -744,7 +745,7 @@ test('sec reconcile without pending scans non-draft invoices then linked drafts 
         static fn (array $row): array => [$row['local_type'], $row['local_uuid'], $row['reason'] ?? null, $row['status']],
         $ledger->pending
     );
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-a'))->not->toBeNull()
         ->and($queued)->toBe([
             ['invoice', 'inv-b', 'reconcile', 'pending'],
@@ -761,7 +762,7 @@ test('sec reconcile within batch size queues nothing and never sends unlinked dr
 
     $batch = $engine->reconcile($ledger, 'company-uuid', qbSettings(), 1_000);
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and(array_count_values($client->calls)['createInvoice'] ?? 0)->toBe(1)
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-a'))->not->toBeNull()
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-draft'))->toBeNull()
@@ -793,21 +794,9 @@ test('sec every outbound entry point records one finished batch with the same sh
 
     foreach (['scheduled', 'now', 'catalog'] as $mode) {
         [$batch, $ledger, $client] = $run($mode);
-        expect($batch)->toBe([
-            'company_uuid' => 'company-uuid',
-            'trigger'      => $mode,
-            'direction'    => 'outbound',
-            'status'       => 'finished',
-            'created'      => 1,
-            'updated'      => 0,
-            'aligned'      => 0,
-            'voided'       => 0,
-            'unmatched'    => 0,
-            'failed'       => 0,
-            'skipped'      => 0,
-            'started_at'   => 1_000,
-            'finished_at'  => 1_000,
-        ], $mode)
+        $expected                  = Batch::forCompany('company-uuid', $mode, 'finished', 'outbound', 1_000, 1_000);
+        $expected->created         = 1;
+        expect($batch)->toEqual($expected)
             ->and($ledger->batches)->toBe([$batch], $mode)
             ->and($ledger->connections['company-uuid']['last_rate_limit_wait'])->toBeNull()
             ->and($ledger->connections['company-uuid']['last_batch_at'] ?? null)->toBe($mode === 'catalog' ? null : 1_000, $mode)
@@ -829,8 +818,8 @@ test('sec a block of one type is buffered and a lone row of another type is sent
     ], qbSettings(), 1_000);
 
     $counts = array_count_values($client->calls);
-    expect($batch['created'])->toBe(3)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->created)->toBe(3)
+        ->and($batch->failed)->toBe(0)
         ->and($counts['createCustomer'] ?? 0)->toBe(2)
         ->and($counts['createAccount'] ?? 0)->toBe(1)
         ->and(array_search('createAccount', $client->calls, true))->toBeGreaterThan(array_search('createCustomer', $client->calls, true))
@@ -849,8 +838,8 @@ test('sec a row is not sent once the connection is rate limited', function () {
     $batch = $engine->syncEntities($ledger, 'company-uuid', [secPending('customer', 'cust-1')], qbSettings(), 1_000);
 
     expect($client->calls)->toBe([])
-        ->and($batch['status'])->toBe('finished')
-        ->and($batch['created'])->toBe(0)
+        ->and($batch->status)->toBe('finished')
+        ->and($batch->created)->toBe(0)
         ->and($ledger->batches)->toHaveCount(1)
         ->and($ledger->connections['company-uuid']['last_rate_limit_wait'])->toBe(60);
 });
@@ -985,7 +974,7 @@ test('sec payments created in a block are stored under their payment ids', funct
         $links[$link['local_uuid']] = [$link['qbo_id'], $link['invoice_uuid'] ?? null];
     }
     ksort($links);
-    expect($batch['failed'])->toBe(0)
+    expect($batch->failed)->toBe(0)
         ->and(array_count_values($client->calls)['createPayment'] ?? 0)->toBe(2)
         ->and($client->calls)->toContain('batch')
         ->and($links)->toBe([
@@ -1061,8 +1050,8 @@ test('sec a block create with only one confirmed number creates one invoice and 
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['invoice_reference' => 'quickbooks']), 1_000);
 
-    expect($batch['created'])->toBe(1)
-        ->and($batch['failed'])->toBe(1)
+    expect($batch->created)->toBe(1)
+        ->and($batch->failed)->toBe(1)
         ->and(array_count_values($client->calls)['latestInvoiceDocNumber'] ?? 0)->toBe(1)
         ->and($ledger->invoices['inv-1']['number'])->toBe('INV-016')
         ->and($ledger->invoices['inv-2']['number'])->toBe('LOCAL-2')

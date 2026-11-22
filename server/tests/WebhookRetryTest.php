@@ -85,10 +85,10 @@ test('a remote change that still fails after the last retry is recorded as a fai
 
     expect($jobs)->toBe([])
         ->and($batches)->toHaveCount(1)
-        ->and($batches[0]['trigger'])->toBe('webhook')
-        ->and($batches[0]['direction'])->toBe('inbound')
-        ->and($batches[0]['status'])->toBe('failed')
-        ->and($batches[0]['failed'])->toBe(1)
+        ->and($batches[0]->trigger)->toBe('webhook')
+        ->and($batches[0]->direction)->toBe('inbound')
+        ->and($batches[0]->status)->toBe('failed')
+        ->and($batches[0]->failed)->toBe(1)
         ->and($attempts)->toHaveCount(1)
         ->and($attempts[0]['outcome'])->toBe('failed')
         ->and(qbText($attempts[0]['error']))->toBe(

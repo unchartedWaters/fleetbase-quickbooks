@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Tests\Support;
 
 use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\PaymentTokens;
 
 /**
@@ -416,10 +417,8 @@ class PrimaryFixtures
      * Run the queue again, as a later sync does.
      *
      * @param array<string, mixed> $settings
-     *
-     * @return array<string, mixed>
      */
-    public static function runAgain(SyncEngine $engine, SyncLedger $ledger, array $settings, int $when): array
+    public static function runAgain(SyncEngine $engine, SyncLedger $ledger, array $settings, int $when): Batch
     {
         $ledger->connections['company-uuid']['last_batch_at'] = null;
         foreach (array_keys($ledger->pending) as $index) {

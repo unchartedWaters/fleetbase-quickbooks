@@ -207,8 +207,8 @@ test('a 401 refreshes the access token once and repeats the call without asking 
 
     $batch = $engine->syncEntities($ledger, 'company-uuid', trcRows(), trcSync(), time());
 
-    expect($batch['created'])->toBe(2)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->created)->toBe(2)
+        ->and($batch->failed)->toBe(0)
         ->and($client->refreshes)->toBe(1)
         ->and($client->tokensSeen[0])->toBe('old-access')
         ->and(array_count_values($client->tokensSeen)['old-access'])->toBe(1)
@@ -232,7 +232,7 @@ test('a later call that still holds the replaced token uses the new one without 
 
     expect($refreshesAfterFirst)->toBe(1)
         ->and($client->refreshes)->toBe(1)
-        ->and($second['created'])->toBe(1)
+        ->and($second->created)->toBe(1)
         ->and(array_unique(array_slice($client->tokensSeen, $before)))->toBe(['new-access']);
 });
 
@@ -807,7 +807,7 @@ test('a refresh that fails for a temporary reason is tried once per run, not onc
     $batch = $engine->syncEntities($ledger, 'company-uuid', $rows, trcSync(), time());
 
     expect($client->refreshes)->toBe(1)
-        ->and($batch['created'])->toBe(0)
+        ->and($batch->created)->toBe(0)
         ->and(empty($ledger->connections['company-uuid']['needs_reauth']))->toBeTrue()
         ->and(array_unique(array_column($ledger->pending, 'status')))->toBe(['pending'])
         // The wallet row was never sent, so it keeps its attempts.
@@ -825,7 +825,7 @@ test('a single row whose refresh failed for a temporary reason stops the run wit
     $batch = $engine->syncEntities($ledger, 'company-uuid', $rows, trcSync(), time());
 
     expect($client->refreshes)->toBe(1)
-        ->and($batch['status'])->toBe('finished')
+        ->and($batch->status)->toBe('finished')
         ->and(empty($ledger->connections['company-uuid']['needs_reauth']))->toBeTrue();
 });
 
@@ -840,5 +840,5 @@ test('the next run tries the refresh again after a temporary failure', function 
     $second               = $engine->syncEntities(trcLedger(), 'company-uuid', trcRows(), trcSync(), time());
 
     expect($client->refreshes)->toBe(2)
-        ->and($second['created'])->toBe(2);
+        ->and($second->created)->toBe(2);
 });

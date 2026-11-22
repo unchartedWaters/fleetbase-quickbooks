@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Services\Concerns;
 
 use Fleetbase\Quickbooks\Services\QuickBooksClient;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 
 /**
@@ -16,14 +17,13 @@ trait BatchesCustomers
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
      * @param array<string, mixed>             $settings
-     * @param array<string, mixed>             $batch
      */
     private function syncCustomerBlock(
         SyncLedger $ledger,
         array &$connection,
         array $rows,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
         bool $record,
@@ -48,7 +48,7 @@ trait BatchesCustomers
         } catch (QuickBooksException $exception) {
             if ($exception->isUnauthorized() === true) {
                 $this->tokenRejected($ledger, (string) $connection['company_uuid']);
-                $batch['failed']++;
+                $batch->failed++;
 
                 return true;
             }

@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Services\Concerns;
 
 use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 
 /**
@@ -37,14 +38,13 @@ trait BatchesPayments
      *
      * @param array<string, mixed>       $connection
      * @param array<string, PaymentItem> $finished
-     * @param array<string, mixed>       $batch
      * @param array<string, mixed>       $settings
      */
     private function settlePaymentBuffer(
         SyncLedger $ledger,
         array $connection,
         array $finished,
-        array &$batch,
+        Batch $batch,
         array $settings,
         int $now,
         string $trigger,
@@ -71,7 +71,7 @@ trait BatchesPayments
         $this->commitFinished($ledger, $connection, $settled['commit'], $batch, $trigger, $record);
         if ($settled['rejected'] === true) {
             $this->tokenRejected($ledger, (string) $connection['company_uuid']);
-            $batch['failed']++;
+            $batch->failed++;
         }
 
         return $settled['stop'];

@@ -8,6 +8,7 @@ use Fleetbase\Quickbooks\Services\CustomerImporter;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SyncFlagger;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\WebhookRetry;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
@@ -43,8 +44,8 @@ test('an imported customer keeps notes and the billing address', function () {
             'PostalCode'             => 'SW1',
             'Country'                => 'UK',
         ],
-    ])], []);
-    $created = array_values($batch['ledger']->customers)[0];
+    ])], [], $ledger);
+    $created = array_values($ledger->customers)[0];
 
     expect($created['notes'])->toBe('Dock 4')
         ->and($created['address'])->toBe([
@@ -59,13 +60,13 @@ test('an imported customer keeps notes and the billing address', function () {
 });
 
 test('a quickbooks customer with no fleetbase match creates a contact', function () {
-    $batch = importWith([remoteCustomer('1', 'Ada Lovelace', 'ada@example.test', '5550100')], []);
+    $batch = importWith([remoteCustomer('1', 'Ada Lovelace', 'ada@example.test', '5550100')], [], $ledger);
 
-    expect($batch['created'])->toBe(1)
-        ->and($batch['finished_at'])->toBeInt()
-        ->and($batch['ledger']->batches[0]['finished_at'])->toBe($batch['finished_at'])
-        ->and(array_values($batch['ledger']->customers)[0]['type'])->toBe('customer')
-        ->and(array_values($batch['ledger']->customers)[0]['company_uuid'])->toBe('company-uuid');
+    expect($batch->created)->toBe(1)
+        ->and($batch->finishedAt)->toBeInt()
+        ->and($ledger->batches[0]->finishedAt)->toBe($batch->finishedAt)
+        ->and(array_values($ledger->customers)[0]['type'])->toBe('customer')
+        ->and(array_values($ledger->customers)[0]['company_uuid'])->toBe('company-uuid');
 });
 
 test('email and name matches link instead of creating', function () {
@@ -78,19 +79,18 @@ test('email and name matches link instead of creating', function () {
         [['uuid' => 'local-3', 'company_uuid' => 'company-uuid', 'name' => 'Exact Name', 'email' => null, 'phone' => null]]
     );
 
-    expect($email['created'])->toBe(0)->and($email['linked'])->toBe(1)
-        ->and($name['linked'])->toBe(1);
+    expect($email->created)->toBe(0)->and($email->linked)->toBe(1)
+        ->and($name->linked)->toBe(1);
 });
 
 test('a phone-only match creates a new customer', function () {
     $phone = importWith(
         [remoteCustomer('2', 'Other', 'nope@example.test', '(555) 010-0')],
-        [['uuid' => 'local-2', 'company_uuid' => 'company-uuid', 'name' => 'Kept', 'phone' => '5550100']]
-    );
+        [['uuid' => 'local-2', 'company_uuid' => 'company-uuid', 'name' => 'Kept', 'phone' => '5550100']], $ledger);
 
-    expect($phone['created'])->toBe(1)
-        ->and($phone['linked'])->toBe(0)
-        ->and($phone['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-2'))->toBeNull();
+    expect($phone->created)->toBe(1)
+        ->and($phone->linked)->toBe(0)
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-2'))->toBeNull();
 });
 
 test('a name match links even when the emails differ', function () {
@@ -100,11 +100,11 @@ test('a name match links even when the emails differ', function () {
         'name'         => 'John Smith',
         'email'        => 'jsmith@other.test',
         'phone'        => null,
-    ]]);
+    ]], $ledger);
 
-    expect($batch['linked'])->toBe(1)
-        ->and($batch['created'])->toBe(0)
-        ->and($batch['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-7')['qbo_id'])->toBe('41');
+    expect($batch->linked)->toBe(1)
+        ->and($batch->created)->toBe(0)
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-7')['qbo_id'])->toBe('41');
 });
 
 test('a phone and name match links by name', function () {
@@ -114,11 +114,11 @@ test('a phone and name match links by name', function () {
         'name'         => 'Jane Doe',
         'email'        => 'jdoe@other.test',
         'phone'        => '5550100',
-    ]]);
+    ]], $ledger);
 
-    expect($batch['linked'])->toBe(1)
-        ->and($batch['created'])->toBe(0)
-        ->and($batch['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-8')['qbo_id'])->toBe('42');
+    expect($batch->linked)->toBe(1)
+        ->and($batch->created)->toBe(0)
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-8')['qbo_id'])->toBe('42');
 });
 
 test('a fleetbase name with a colon matches the name quickbooks stores with a dash', function () {
@@ -128,19 +128,19 @@ test('a fleetbase name with a colon matches the name quickbooks stores with a da
         'name'         => 'Harbor: West',
         'email'        => null,
         'phone'        => null,
-    ]]);
+    ]], $ledger);
 
-    expect($batch['linked'])->toBe(1)
-        ->and($batch['created'])->toBe(0)
-        ->and($batch['ledger']->link('company-uuid', 'realm-1', 'customer', 'local-9')['qbo_id'])->toBe('58');
+    expect($batch->linked)->toBe(1)
+        ->and($batch->created)->toBe(0)
+        ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-9')['qbo_id'])->toBe('58');
 });
 
 test('existing fleetbase field values are not overwritten', function () {
     $existing = [['uuid' => 'local-1', 'company_uuid' => 'company-uuid', 'name' => 'Fleetbase Name', 'email' => 'ada@example.test', 'phone' => '111']];
     $result   = importWith([remoteCustomer('1', 'QuickBooks Name', 'ada@example.test', '999')], $existing);
 
-    expect($result['customers'][0]['name'])->toBe('Fleetbase Name')
-        ->and($result['customers'][0]['phone'])->toBe('111');
+    expect($existing[0]['name'])->toBe('Fleetbase Name')
+        ->and($existing[0]['phone'])->toBe('111');
 });
 
 test('inactive customers and sub customers are skipped', function () {
@@ -150,7 +150,7 @@ test('inactive customers and sub customers are skipped', function () {
         remoteCustomer('3', 'Active', 'on@example.test', null),
     ], []);
 
-    expect($result['skipped'])->toBe(2)->and($result['created'])->toBe(1);
+    expect($result->skipped)->toBe(2)->and($result->created)->toBe(1);
 });
 
 test('a second import creates nothing and adds no duplicate links', function () {
@@ -161,9 +161,9 @@ test('a second import creates nothing and adds no duplicate links', function () 
     $first                 = $importer->import($ledger, $ledger->connections['company-uuid'], [], true);
     $second                = $importer->import($ledger, $ledger->connections['company-uuid'], array_values($ledger->customers), true);
 
-    expect($first['created'])->toBe(1)
-        ->and($second['created'])->toBe(0)
-        ->and($second['linked'])->toBe(1)
+    expect($first->created)->toBe(1)
+        ->and($second->created)->toBe(0)
+        ->and($second->linked)->toBe(1)
         ->and(count($ledger->links))->toBe(1);
 });
 
@@ -194,7 +194,7 @@ test('imported customers produce no outbound write on the next batch', function 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
     expect($ledger->pending)->toBe([])
-        ->and($batch['created'])->toBe(0)
+        ->and($batch->created)->toBe(0)
         ->and($syncClient->calls)->not->toContain('createCustomer');
 });
 
@@ -211,7 +211,7 @@ test('pagination walks one block at a time', function () {
     $ledger = importLedger();
     $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true, 100);
 
-    expect($batch['created'])->toBe(101)
+    expect($batch->created)->toBe(101)
         ->and($client->calls)->toContain('queryCustomers:1')
         ->and($client->calls)->toContain('queryCustomers:101')
         ->and($ledger->connections['company-uuid'])->not->toHaveKey('customer_import_start');
@@ -229,7 +229,7 @@ test('a smaller batch size is the page size', function () {
     $ledger = importLedger();
     $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true, 2);
 
-    expect($batch['created'])->toBe(3)
+    expect($batch->created)->toBe(3)
         ->and($client->calls)->toBe(['queryCustomers:1', 'queryCustomers:3']);
 });
 
@@ -247,14 +247,14 @@ test('an import that stops keeps the cursor and the next run continues', functio
     $importer  = new CustomerImporter($client);
     $stopped   = $importer->import($ledger, $ledger->connections['company-uuid'], [], true, 2, 1);
 
-    expect($stopped['created'])->toBe(2)
+    expect($stopped->created)->toBe(2)
         ->and($client->calls)->toBe(['queryCustomers:1'])
         ->and($ledger->connections['company-uuid']['customer_import_start'])->toBe(3);
 
     $client->calls = [];
     $resumed       = $importer->import($ledger, $ledger->connections['company-uuid'], [], true, 2);
 
-    expect($resumed['created'])->toBe(1)
+    expect($resumed->created)->toBe(1)
         ->and($client->calls)->toBe(['queryCustomers:3'])
         ->and($ledger->connections['company-uuid'])->not->toHaveKey('customer_import_start');
 });
@@ -317,7 +317,7 @@ test('a deadline continuation dispatches after lock release and resumes the stor
         }
     };
     $deadlineImporter = new class($client) extends CustomerImporter {
-        public function import(SyncLedger $ledger, array $connection, array $fleetbaseCustomers, bool $enabled, int $pageSize = self::MAX_PAGE_SIZE, ?int $deadline = null): array
+        public function import(SyncLedger $ledger, array $connection, array $fleetbaseCustomers, bool $enabled, int $pageSize = self::MAX_PAGE_SIZE, ?int $deadline = null): Batch
         {
             return parent::import($ledger, $connection, $fleetbaseCustomers, $enabled, 2, 1);
         }
@@ -333,7 +333,7 @@ test('a deadline continuation dispatches after lock release and resumes the stor
 
         expect($client->calls)->toBe(['queryCustomers:1'])
             ->and($ledger->connections['company-uuid']['customer_import_start'])->toBe(3)
-            ->and($ledger->batches[0]['continue'])->toBeTrue()
+            ->and($ledger->batches[0]->continue)->toBeTrue()
             ->and($dispatcher->jobs)->toHaveCount(1)
             ->and($dispatcher->lockHeld)->toBe([false])
             ->and($dispatcher->jobs[0]->continuationAttempt)->toBe(0);
@@ -343,7 +343,7 @@ test('a deadline continuation dispatches after lock release and resumes the stor
 
         expect($client->calls)->toBe(['queryCustomers:3'])
             ->and($ledger->connections['company-uuid'])->not->toHaveKey('customer_import_start')
-            ->and($ledger->batches[1]['continue'])->toBeFalse()
+            ->and($ledger->batches[1]->continue)->toBeFalse()
             ->and($dispatcher->jobs)->toHaveCount(1);
     } finally {
         Cache::swap($previousCache);
@@ -502,8 +502,8 @@ test('a single failing record is recorded and the rest of the import continues',
     });
     $batch = $importer->import($ledger, $ledger->connections['company-uuid'], [], true);
 
-    expect($batch['created'])->toBe(2)
-        ->and($batch['failed'])->toBe(1)
+    expect($batch->created)->toBe(2)
+        ->and($batch->failed)->toBe(1)
         ->and($ledger->attempts)->toHaveCount(1)
         ->and($ledger->attempts[0]['outcome'])->toBe('failed')
         ->and($ledger->attempts[0]['local_uuid'])->toBe('2')
@@ -522,8 +522,8 @@ test('a short page with a failure does not reset the cursor to the start', funct
 
     $batch = $importer->import($ledger, $ledger->connections['company-uuid'], [], true, 2);
 
-    expect($batch['failed'])->toBe(1)
-        ->and($batch['created'])->toBe(0)
+    expect($batch->failed)->toBe(1)
+        ->and($batch->created)->toBe(0)
         ->and($ledger->connections['company-uuid']['customer_import_start'])->toBe(5);
 });
 
@@ -541,8 +541,8 @@ test('a failed candidate lookup does not create the page', function () {
         $ledger = importLedger();
         $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true);
 
-        expect($batch['created'])->toBe(0)
-            ->and($batch['failed'])->toBe(2)
+        expect($batch->created)->toBe(0)
+            ->and($batch->failed)->toBe(2)
             ->and($ledger->customers)->toBe([])
             ->and($ledger->links)->toBe([])
             ->and($ledger->connections['company-uuid'])->not->toHaveKey('customer_import_start');
@@ -584,8 +584,8 @@ test('imported customers match stored email case, and a stored phone alone does 
     $ledger = importLedger();
     $batch  = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], true);
 
-    expect($batch['created'])->toBe(1)
-        ->and($batch['linked'])->toBe(1)
+    expect($batch->created)->toBe(1)
+        ->and($batch->linked)->toBe(1)
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-email')['qbo_id'])->toBe('1')
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-phone'))->toBeNull();
 });
@@ -660,8 +660,8 @@ test('customer matching compares normalized email and phone in php', function ()
         $connection->flushQueryLog();
     }
 
-    expect($batch['linked'])->toBe(1)
-        ->and($batch['created'])->toBe(1)
+    expect($batch->linked)->toBe(1)
+        ->and($batch->created)->toBe(1)
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-trim')['qbo_id'])->toBe('1')
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'other-company'))->toBeNull()
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'vendor-row'))->toBeNull()
@@ -730,8 +730,8 @@ test('a second remote customer is not linked unless its quickbooks id is stored'
 
     $ids = array_map(static fn (array $link): string => (string) $link['qbo_id'], $ledger->links);
 
-    expect($batch['created'])->toBe(2)
-        ->and($batch['linked'])->toBe(0)
+    expect($batch->created)->toBe(2)
+        ->and($batch->linked)->toBe(0)
         ->and($ids)->toEqualCanonicalizing(['1', '2']);
 });
 
@@ -789,9 +789,9 @@ test('nothing is imported when the option is off', function () {
     $ledger                = importLedger();
     $batch                 = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], [], false);
 
-    expect($batch['created'])->toBe(0)
-        ->and($batch['finished_at'])->toBeInt()
-        ->and($batch['direction'])->toBe('inbound')
+    expect($batch->created)->toBe(0)
+        ->and($batch->finishedAt)->toBeInt()
+        ->and($batch->direction)->toBe('inbound')
         ->and($client->calls)->toBe([]);
 });
 
@@ -813,9 +813,9 @@ test('importing named quickbooks customers reads only those, creates the new one
     $connection = $ledger->connections['company-uuid'];
     $batch      = (new CustomerImporter($client))->importIds($ledger, $connection, ['95', '94', '96']);
 
-    expect($batch['created'])->toBe(1)
-        ->and($batch['trigger'])->toBe('import')
-        ->and($batch['direction'])->toBe('inbound')
+    expect($batch->created)->toBe(1)
+        ->and($batch->trigger)->toBe('import')
+        ->and($batch->direction)->toBe('inbound')
         ->and($client->calls)->toBe(['getCustomer:95', 'getCustomer:96'])
         ->and($ledger->linkForRemote('realm-1', 'Customer', '95'))->not->toBeNull()
         ->and($ledger->batches)->toHaveCount(1);
@@ -852,8 +852,8 @@ test('a named customer import that cannot reach quickbooks is queued again, then
             ->and($dispatcher->jobs[0]->quickbooksAttempt)->toBe(1)
             ->and($dispatcher->jobs[0]->delay)->toBeGreaterThanOrEqual(WebhookRetry::BASE_DELAY_SECONDS)
             ->and($directory->memory->batches)->toHaveCount(1)
-            ->and($directory->memory->batches[0]['status'])->toBe('failed')
-            ->and($directory->memory->batches[0]['trigger'])->toBe('import');
+            ->and($directory->memory->batches[0]->status)->toBe('failed')
+            ->and($directory->memory->batches[0]->trigger)->toBe('import');
     });
 });
 
@@ -1031,16 +1031,13 @@ test('a named import does not save a customer another import linked before it sa
     }
 });
 
-function importWith(array $remote, array $local): array
+function importWith(array $remote, array $local, ?SyncLedger &$ledger = null): Batch
 {
     $client                = new FakeQuickBooks();
     $client->customerPages = [1 => $remote];
     $ledger                = importLedger();
-    $batch                 = (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], $local, true);
-    $batch['ledger']       = $ledger;
-    $batch['customers']    = $local;
 
-    return $batch;
+    return (new CustomerImporter($client))->import($ledger, $ledger->connections['company-uuid'], $local, true);
 }
 
 function importLedger(): SyncLedger

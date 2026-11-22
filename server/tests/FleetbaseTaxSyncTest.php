@@ -22,7 +22,7 @@ test('a new invoice sends its Fleetbase tax to QuickBooks and keeps it', functio
     $sent   = $client->sentInvoices[0];
     $second = Company::again($engine, $ledger, $settings, time() + 10);
 
-    expect($first['created'])->toBe(1)
+    expect($first->created)->toBe(1)
         ->and($sent['Line'][0]['SalesItemLineDetail']['TaxCodeRef'])->toBe(['value' => 'TAX'])
         ->and($sent['TxnTaxDetail'])->toBe(['TxnTaxCodeRef' => ['value' => '2'], 'TotalTax' => '1.50'])
         ->and($client->invoices['inv-1']['TotalAmt'])->toBe('11.50')
@@ -30,7 +30,7 @@ test('a new invoice sends its Fleetbase tax to QuickBooks and keeps it', functio
         ->and($ledger->invoices['inv-1']['items'][0]['tax_rate'])->toBe('15.00')
         ->and($ledger->invoices['inv-1']['total'])->toBe(1150)
         ->and(Company::invoiceLink($ledger)['tax_source'] ?? null)->toBe('fleetbase')
-        ->and($second['aligned'])->toBe(1)
+        ->and($second->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
@@ -63,7 +63,7 @@ test('with Fleetbase as Primary a Fleetbase tax change is sent', function () {
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', Company::settings(), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($client->invoices['qb-1']['TxnTaxDetail']['TotalTax'])->toBe('1.00')
         ->and($client->invoices['qb-1']['TotalAmt'])->toBe('11.00')
         ->and($ledger->invoices['inv-1']['tax'])->toBe(100);
@@ -90,7 +90,7 @@ test('with QuickBooks as Primary a QuickBooks tax edit is put back and Activity 
             'QuickBooks had a different tax for this invoice. Fleetbase works out tax for this organization, so its'
                 . ' tax was sent back to QuickBooks.'
         )
-        ->and($again['aligned'])->toBe(1)
+        ->and($again->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
@@ -120,12 +120,12 @@ test('QuickBooks not keeping the Fleetbase tax fails the invoice and it is not s
     $client->calls = [];
     $second        = Company::again($engine, $ledger, $settings, time() + 10);
 
-    expect($first['failed'])->toBe(1)
+    expect($first->failed)->toBe(1)
         ->and(Primary::notes($ledger)[0] ?? '')->toContain('QuickBooks did not keep the tax Fleetbase sent')
         ->and(Primary::notes($ledger)[0] ?? '')->toContain('1.50')
         ->and($ledger->invoices['inv-1']['tax'])->toBe(150)
         ->and(Company::invoiceLink($ledger)['tax_source'] ?? null)->toBe('fleetbase')
-        ->and($second['failed'])->toBe(1)
+        ->and($second->failed)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
@@ -137,7 +137,7 @@ test('outside the US the Fleetbase tax is sent per QuickBooks rate of the line c
     $sent   = $client->sentInvoices[0];
     $second = Company::again($engine, $ledger, $settings, time() + 10);
 
-    expect($first['created'])->toBe(1)
+    expect($first->created)->toBe(1)
         ->and($sent['Line'][0]['SalesItemLineDetail']['TaxCodeRef'])->toBe(['value' => '4'])
         ->and($sent['TxnTaxDetail'])->toBe(['TotalTax' => '12.00', 'TaxLine' => [
             InvoiceLines::rateTax('5.00', '5', 'gst', '100.00'),
@@ -146,7 +146,7 @@ test('outside the US the Fleetbase tax is sent per QuickBooks rate of the line c
         ->and($ledger->invoices['inv-1']['tax'])->toBe(1200)
         ->and($ledger->invoices['inv-1']['items'][0]['tax_amount'])->toBe(1200)
         ->and($client->taxRateReads)->toBe(1)
-        ->and($second['aligned'])->toBe(1);
+        ->and($second->aligned)->toBe(1);
 });
 
 test('a line whose QuickBooks tax code has another rate fails before anything is sent', function () {
@@ -158,7 +158,7 @@ test('a line whose QuickBooks tax code has another rate fails before anything is
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', Company::settings(), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($client->invoiceCreates)->toBe(0)
         ->and(Primary::notes($ledger)[0] ?? '')->toContain('adds up to 12%');
 });
@@ -171,11 +171,11 @@ test('with sales tax off in QuickBooks the invoice is sent without tax and Fleet
     $first  = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
     $second = Company::again($engine, $ledger, $settings, time() + 10);
 
-    expect($first['created'])->toBe(1)
+    expect($first->created)->toBe(1)
         ->and($client->sentInvoices[0])->not->toHaveKey('TxnTaxDetail')
         ->and($ledger->invoices['inv-1']['tax'])->toBe(150)
         ->and(Primary::notes($ledger)[0] ?? '')->toContain('Sales tax is off in QuickBooks')
-        ->and($second['aligned'])->toBe(1);
+        ->and($second->aligned)->toBe(1);
 });
 
 test('invoices only from QuickBooks keep the Fleetbase rate of each line', function () {
@@ -216,13 +216,13 @@ test('invoices sent together keep their Fleetbase tax', function () {
         'tax_source'
     );
 
-    expect($first['created'])->toBe(2)
+    expect($first->created)->toBe(2)
         ->and(array_column($client->sentInvoices, 'TxnTaxDetail'))->each->toBe([
             'TxnTaxCodeRef' => ['value' => '2'], 'TotalTax' => '1.50',
         ])
         ->and($marks)->toBe(['fleetbase', 'fleetbase'])
         ->and($ledger->invoices['inv-2']['tax'])->toBe(150)
-        ->and($second['aligned'])->toBe(2)
+        ->and($second->aligned)->toBe(2)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
@@ -236,10 +236,10 @@ test('invoices sent together whose tax QuickBooks did not keep fail and are not 
     $client->calls = [];
     $second        = Company::again($engine, $ledger, $settings, time() + 10, ['inv-1', 'inv-2']);
 
-    expect($first['failed'])->toBe(2)
+    expect($first->failed)->toBe(2)
         ->and(Primary::notes($ledger)[1] ?? '')->toContain('QuickBooks did not keep the tax Fleetbase sent')
         ->and($ledger->invoices['inv-2']['tax'])->toBe(150)
-        ->and($second['failed'])->toBe(2)
+        ->and($second->failed)->toBe(2)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
@@ -255,7 +255,7 @@ test('a QuickBooks invoice changed to amounts that include tax fails and Fleetba
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and(Primary::notes($ledger)[0] ?? '')->toContain('include tax')
         ->and($ledger->invoices['inv-1']['items'][0]['amount'])->toBe(1000)
         ->and($ledger->invoices['inv-1']['items'][0]['tax_rate'])->toBe('15.00')
@@ -295,7 +295,7 @@ test('an invoice whose lost create is found under its reserved number keeps its 
         $first = $engine->runScheduled($ledger, 'company-uuid', $settings, 1_000);
         Company::again($engine, $ledger, $settings, 1_000_000);
 
-        expect($first['failed'])->toBe(1)
+        expect($first->failed)->toBe(1)
             ->and($client->invoiceCreates)->toBe(1)
             ->and(Company::invoiceLink($ledger)['tax_source'] ?? null)->toBe('fleetbase');
     } finally {

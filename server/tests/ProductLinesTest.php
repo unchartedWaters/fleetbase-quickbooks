@@ -18,7 +18,7 @@ test('a new invoice puts each line on its product, fee or the service item', fun
     $mug   = Products::linkOf($ledger, 'Mug')['qbo_id'];
     $fee   = Products::linkOf($ledger, 'Base Fee')['qbo_id'];
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and($client->itemCreates)->toBe(2)
         ->and($client->items[$fee]['Type'])->toBe('Service')
         ->and($client->items[$fee])->not->toHaveKey('UnitPrice')
@@ -68,7 +68,7 @@ test('invoices of one block share the product of a name', function () {
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(2)
+    expect($batch->created)->toBe(2)
         ->and($client->itemCreates)->toBe(1)
         ->and(Products::lineItems($client->invoices['inv-1']))->toBe(['qb-item-1'])
         ->and(Products::lineItems($client->invoices['inv-2']))->toBe(['qb-item-1']);
@@ -94,7 +94,7 @@ test('a matched line on the service item moves to its product, though nothing el
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and(Products::lineItems($client->invoices['qb-1']))->toBe(['qb-9'])
         ->and($client->invoices['qb-1']['Line'][0]['Id'])->toBe('1');
 });
@@ -121,7 +121,7 @@ test('a matched line keeps a product chosen in QuickBooks', function () {
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
@@ -146,7 +146,7 @@ test('a matched line keeps its inactive product once its Fleetbase product is go
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and(Products::lineItems($client->invoices['qb-1']))->toBe(['qb-9', 'item-1'])
         ->and($client->itemWrites)->toBe([]);
 });
@@ -159,7 +159,7 @@ test('a line whose product QuickBooks refuses uses the service item and says so'
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and(Products::lineItems($client->invoices['inv-1']))->toBe(['item-1'])
         ->and(qbText($ledger->attempts[0]['error']))->toContain('Mug');
 });
@@ -172,7 +172,7 @@ test('a temporary failure making a line product fails the invoice to try again',
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($ledger->pending[0]['status'])->toBe('pending');
 });
@@ -260,7 +260,7 @@ test('a matched line keeps its product once its Fleetbase product is gone, while
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and(Products::lineItems($client->invoices['qb-1']))->toBe(['qb-9']);
 });
@@ -274,7 +274,7 @@ test('a matched line whose text no longer names its product moves to the service
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and(Products::lineItems($client->invoices['qb-1']))->toBe(['item-1']);
 });
 
@@ -299,6 +299,6 @@ test('a matched fee line keeps its inactive fee product, whatever the fee label'
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and(Products::lineItems($client->invoices['qb-1']))->toBe(['qb-7']);
 });

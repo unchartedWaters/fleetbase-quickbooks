@@ -50,8 +50,8 @@ test('an invoice in the home currency is created with its currency and needs no 
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(1)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->created)->toBe(1)
+        ->and($batch->failed)->toBe(0)
         ->and($client->invoices['inv-1']['CurrencyRef']['value'])->toBe('USD')
         ->and($client->calls)->not->toContain('multiCurrencyEnabled');
 });
@@ -61,8 +61,8 @@ test('a foreign currency invoice fails with the currency message when multi-curr
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(0)
-        ->and($batch['failed'])->toBe(1)
+    expect($batch->created)->toBe(0)
+        ->and($batch->failed)->toBe(1)
         ->and($ledger->attempts[0]['outcome'])->toBe('failed')
         ->and(qbText($ledger->attempts[0]['error']))->toBe('Invoice currency EUR does not match the QuickBooks home '
             . 'currency '
@@ -77,8 +77,8 @@ test('a foreign currency invoice keeps its currency reference when multi-currenc
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(1)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->created)->toBe(1)
+        ->and($batch->failed)->toBe(0)
         ->and($ledger->attempts[0]['error'])->toBeNull()
         ->and($client->invoices['inv-1']['CurrencyRef']['value'])->toBe('EUR');
 });
@@ -96,8 +96,8 @@ test('a linked foreign currency invoice is not updated when multi-currency is of
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
-        ->and($batch['updated'])->toBe(0)
+    expect($batch->failed)->toBe(1)
+        ->and($batch->updated)->toBe(0)
         ->and(qbText($ledger->attempts[0]['error']))->toBe('Invoice currency EUR does not match the QuickBooks home '
             . 'currency '
             . 'USD.')
@@ -114,8 +114,8 @@ test('voiding a foreign currency invoice does not hit the currency check', funct
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['voided'])->toBe(1)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->voided)->toBe(1)
+        ->and($batch->failed)->toBe(0)
         ->and($client->calls)->toContain('voidInvoice');
 });
 
@@ -124,7 +124,7 @@ test('an inbound only invoice sync does not fail a foreign currency invoice', fu
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_direction' => 'inbound']), time());
 
-    expect($batch['failed'])->toBe(0)
+    expect($batch->failed)->toBe(0)
         ->and($client->calls)->not->toContain('createInvoice');
 });
 
@@ -166,7 +166,7 @@ test('a yen invoice is sent in whole yen', function () {
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $lines = $client->invoices['inv-1']['Line'];
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and($lines[0]['Amount'])->toBe('5000.00')
         ->and($lines[0]['SalesItemLineDetail']['UnitPrice'])->toBe('5000.00')
         ->and($lines[1]['Amount'])->toBe('5000.00')
@@ -232,8 +232,8 @@ test('a yen invoice that matches quickbooks is aligned and not sent again', func
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
-        ->and($batch['updated'])->toBe(0)
+    expect($batch->aligned)->toBe(1)
+        ->and($batch->updated)->toBe(0)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
@@ -272,7 +272,7 @@ test('a yen payment is sent in whole yen and matches on the next sync', function
 
     $second = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
+    expect($second->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updatePayment')
         ->and($client->calls)->not->toContain('updateInvoice');
 });
@@ -335,7 +335,7 @@ test('a customer created for a foreign currency invoice is created in that curre
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $made  = array_values($client->customers);
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and($made)->toHaveCount(1)
         ->and($made[0]['CurrencyRef']['value'] ?? null)->toBe('EUR')
         ->and($client->invoices['inv-1']['CurrencyRef']['value'])->toBe('EUR');
@@ -363,7 +363,7 @@ test('an invoice whose currency differs from its linked quickbooks customer fail
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($client->calls)->not->toContain('createInvoice')
         ->and(qbText($ledger->attempts[0]['error']))->toBe(
             'Invoice currency EUR does not match the currency of QuickBooks customer "Ada" (USD).'

@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Services\Concerns;
 
 use Fleetbase\Quickbooks\Services\ProductItems;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
@@ -25,14 +26,13 @@ trait SyncsProducts
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
      * @param array<string, mixed>             $settings
-     * @param array<string, mixed>             $batch
      */
     private function syncProductRows(
         SyncLedger $ledger,
         array &$connection,
         array $rows,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
     ): bool {
@@ -68,7 +68,6 @@ trait SyncsProducts
      * @param array<string, mixed> $connection
      * @param array<string, mixed> $row
      * @param array<string, mixed> $settings
-     * @param array<string, mixed> $batch
      */
     private function productReadFailed(
         SyncLedger $ledger,
@@ -76,13 +75,13 @@ trait SyncsProducts
         array $row,
         QuickBooksException $exception,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
     ): bool {
         if ($exception->isUnauthorized() === true) {
             $this->tokenRejected($ledger, (string) $connection['company_uuid']);
-            $batch['failed']++;
+            $batch->failed++;
 
             return true;
         }
@@ -107,7 +106,6 @@ trait SyncsProducts
      *     transient: bool, note: string|null
      * }> $results
      * @param array<string, mixed> $settings
-     * @param array<string, mixed> $batch
      */
     private function recordProductRows(
         SyncLedger $ledger,
@@ -116,7 +114,7 @@ trait SyncsProducts
         array $keys,
         array $results,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
     ): void {

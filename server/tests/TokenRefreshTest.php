@@ -83,7 +83,7 @@ test('a batch is skipped with a reconnect message when the refresh token is refu
 
     $batch = batchRunner($directory, $tokens, $client)->run('company-uuid', 'now');
 
-    expect($batch['status'])->toBe('skipped')
+    expect($batch->status)->toBe('skipped')
         ->and($directory->memory->connections['company-uuid']['needs_reauth'])->toBeTrue()
         ->and($directory->memory->batches)->toHaveCount(1)
         ->and($directory->memory->attempts[0]['error'])->toBe(ConnectionTokens::REAUTH_MESSAGE)
@@ -162,7 +162,7 @@ test('a stored sync enabled flag does not skip a due scheduled sync', function (
 
     $scheduled = withBatchDispatcher(fn () => batchRunner($directory, $tokens, $client, $store)->run('company-uuid'));
 
-    expect($scheduled['status'])->toBe('finished')
+    expect($scheduled->status)->toBe('finished')
         ->and($client->calls)->toContain('createCustomer');
 });
 
@@ -519,7 +519,7 @@ test('an idle connection refreshed a day ago is not due for a token refresh', fu
     $result = withBatchDispatcher(fn () => $runner->run('company-uuid'));
 
     expect($runner->isScheduledDue('company-uuid', time()))->toBeFalse()
-        ->and($result['status'])->toBe('skipped')
+        ->and($result->status)->toBe('skipped')
         ->and($client->refreshes)->toBe(0);
 });
 

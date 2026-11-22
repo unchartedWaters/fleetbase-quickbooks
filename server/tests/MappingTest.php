@@ -90,7 +90,7 @@ test('a scheduled batch creates a linked quickbooks account for a wallet', funct
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $link  = $ledger->link('company-uuid', 'realm-1', 'wallet', 'wal-1');
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and($client->calls)->toContain('createAccount')
         ->and($client->calls)->not->toContain('findAccountByAcctNum')
         ->and($link['qbo_entity'])->toBe('Account')
@@ -295,7 +295,7 @@ test('an invoice whose customer has no link syncs the customer first', function 
 
     expect($client->calls)->toContain('createInvoice')
         ->and(array_search('createCustomer', $client->calls, true))->toBeLessThan(array_search('createInvoice', $client->calls, true))
-        ->and($batch['created'])->toBe(1);
+        ->and($batch->created)->toBe(1);
 });
 
 test('an invoice reports an error when its customer cannot be synced', function () {
@@ -309,7 +309,7 @@ test('an invoice reports an error when its customer cannot be synced', function 
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($client->calls)->not->toContain('createInvoice');
 });
 
@@ -323,8 +323,8 @@ test('a foreign currency fails the invoice instead of posting it in the home cur
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(0)
-        ->and($batch['failed'])->toBe(1)
+    expect($batch->created)->toBe(0)
+        ->and($batch->failed)->toBe(1)
         ->and(qbText($ledger->attempts[0]['error']))->toBe('Invoice currency EUR does not match the QuickBooks home '
             . 'currency '
             . 'USD.')
@@ -366,7 +366,7 @@ test('use the quickbooks invoice copies the total and understood line items', fu
         'invoice_reference' => 'fleetbase',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($ledger->invoices['inv-1']['total'])->toBe(2500)
         ->and($ledger->invoices['inv-1']['items'][0]['description'])->toBe('Evening delivery')
         ->and($ledger->invoices['inv-1']['items'][0]['quantity'])->toBe(2)
@@ -445,7 +445,7 @@ test('use the quickbooks account copies wallet details and leaves the fleetbase 
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($ledger->wallets['wal-1']['name'])->toBe('QB Operating')
         ->and($ledger->wallets['wal-1']['description'])->toBe('QB float')
         ->and($ledger->wallets['wal-1']['currency'])->toBe('EUR')
@@ -459,8 +459,8 @@ test('use the quickbooks account copies wallet details and leaves the fleetbase 
     $ledger->pending[0]['status']                         = 'pending';
     $second                                               = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
-        ->and($second['updated'])->toBe(0)
+    expect($second->aligned)->toBe(1)
+        ->and($second->updated)->toBe(0)
         ->and($ledger->wallets['wal-1']['acct_num'] ?? null)->toBeNull()
         ->and($client->calls)->not->toContain('updateAccount');
 });
@@ -498,7 +498,7 @@ test('quickbooks primary copies the linked account currency onto the wallet', fu
         'wallet_reference' => 'quickbooks',
     ]), time());
 
-    expect($batch['failed'])->toBe(0)
+    expect($batch->failed)->toBe(0)
         ->and($ledger->wallets['wal-1']['currency'])->toBe('EUR')
         ->and($client->calls)->not->toContain('createAccount')
         ->and($ledger->attempts[0]['error'])->toBeNull();
@@ -536,7 +536,7 @@ test('quickbooks primary uses the home currency when the account has no currency
         'wallet_reference' => 'quickbooks',
     ]), time());
 
-    expect($batch['failed'])->toBe(0)
+    expect($batch->failed)->toBe(0)
         ->and($ledger->connections['company-uuid']['home_currency'])->toBe('USD')
         ->and($ledger->wallets['wal-1']['currency'])->toBe('USD')
         ->and($client->calls)->not->toContain('createAccount')
@@ -596,7 +596,7 @@ test('a retry after a lost link adopts the existing record by doc number', funct
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $link  = $ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-1');
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($link['qbo_id'])->toBe('existing-9');
 });

@@ -1363,7 +1363,7 @@ test('a failed refresh sets needs reauth and stops that company from syncing', f
     [$engine] = qbEngine();
     $batch    = $engine->runScheduled($ledger, 'company-uuid', qbSettings(), time());
 
-    expect($batch['status'])->toBe('skipped');
+    expect($batch->status)->toBe('skipped');
 });
 
 test('a link whose realm does not match the active connection is not used for an update', function () {

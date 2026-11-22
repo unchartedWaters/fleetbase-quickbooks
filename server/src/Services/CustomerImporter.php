@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Models\Connection;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
@@ -74,23 +75,10 @@ class CustomerImporter
     /**
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $fleetbaseCustomers
-     *
-     * @return array<string, mixed>
      */
-    public function import(SyncLedger $ledger, array $connection, array $fleetbaseCustomers, bool $enabled, int $pageSize = self::MAX_PAGE_SIZE, ?int $deadline = null): array
+    public function import(SyncLedger $ledger, array $connection, array $fleetbaseCustomers, bool $enabled, int $pageSize = self::MAX_PAGE_SIZE, ?int $deadline = null): Batch
     {
-        $batch = [
-            'company_uuid' => $connection['company_uuid'],
-            'trigger'      => 'import',
-            'direction'    => 'inbound',
-            'status'       => 'finished',
-            'created'      => 0,
-            'linked'       => 0,
-            'skipped'      => 0,
-            'failed'       => 0,
-            'continue'     => false,
-            'finished_at'  => time(),
-        ];
+        $batch = Batch::forCompany((string) $connection['company_uuid'], 'import', 'finished', 'inbound', null, time());
 
         if ($enabled === false) {
             $ledger->batches[] = $batch;
@@ -117,7 +105,7 @@ class CustomerImporter
             $start = $next;
         }
 
-        $batch['finished_at'] = time();
+        $batch->finishedAt    = time();
         $ledger->batches[]    = $batch;
 
         return $batch;
@@ -130,10 +118,8 @@ class CustomerImporter
      *
      * @param array<string, mixed> $connection
      * @param array<int, string>   $ids
-     *
-     * @return array<string, mixed>
      */
-    public function importIds(SyncLedger $ledger, array $connection, array $ids): array
+    public function importIds(SyncLedger $ledger, array $connection, array $ids): Batch
     {
         $realm = (string) ($connection['realm_id'] ?? '');
         $ledger->ensureIndex();
@@ -143,18 +129,7 @@ class CustomerImporter
                 $wanted[] = $id;
             }
         }
-        $batch = [
-            'company_uuid' => $connection['company_uuid'],
-            'trigger'      => 'import',
-            'direction'    => 'inbound',
-            'status'       => 'finished',
-            'created'      => 0,
-            'linked'       => 0,
-            'skipped'      => 0,
-            'failed'       => 0,
-            'continue'     => false,
-            'finished_at'  => time(),
-        ];
+        $batch = Batch::forCompany((string) $connection['company_uuid'], 'import', 'finished', 'inbound', null, time());
         if ($wanted === []) {
             return $batch;
         }
@@ -176,7 +151,7 @@ class CustomerImporter
         } else {
             $this->tallyImportedPage($ledger, $connection, $page, $batch, $fleetbaseCustomers);
         }
-        $batch['finished_at'] = time();
+        $batch->finishedAt    = time();
         $ledger->batches[]    = $batch;
 
         return $batch;
@@ -218,10 +193,9 @@ class CustomerImporter
      *
      * @param array<string, mixed>             $connection
      * @param array<int, mixed>                $page
-     * @param array<string, mixed>             $batch
      * @param array<int, array<string, mixed>> $fleetbaseCustomers
      */
-    private function importFetchedPage(SyncLedger $ledger, array &$connection, array $page, array &$batch, array &$fleetbaseCustomers, int $start, int $pageSize, ?int $deadline): ?int
+    private function importFetchedPage(SyncLedger $ledger, array &$connection, array $page, Batch $batch, array &$fleetbaseCustomers, int $start, int $pageSize, ?int $deadline): ?int
     {
         $failedAt = $this->tallyImportedPage($ledger, $connection, $page, $batch, $fleetbaseCustomers);
         if ($failedAt !== null) {
@@ -241,7 +215,7 @@ class CustomerImporter
         $start += $pageSize;
         $this->writeCursor($ledger, $connection, $start);
         if ($deadline !== null && time() >= $deadline) {
-            $batch['continue'] = true;
+            $batch->continue = true;
 
             return null;
         }
@@ -252,10 +226,9 @@ class CustomerImporter
     /**
      * @param array<string, mixed>             $connection
      * @param array<int, mixed>                $page
-     * @param array<string, mixed>             $batch
      * @param array<int, array<string, mixed>> $fleetbaseCustomers
      */
-    private function tallyImportedPage(SyncLedger $ledger, array $connection, array $page, array &$batch, array &$fleetbaseCustomers): ?int
+    private function tallyImportedPage(SyncLedger $ledger, array $connection, array $page, Batch $batch, array &$fleetbaseCustomers): ?int
     {
         $failedAt = null;
         $position = 0;
@@ -265,7 +238,7 @@ class CustomerImporter
                 continue;
             }
             $outcome         = $this->importOne($ledger, $connection, $fleetbaseCustomers, $remote);
-            $batch[$outcome] = ($batch[$outcome] ?? 0) + 1;
+            $batch->add($outcome);
             if ($outcome === 'failed' && $failedAt === null) {
                 $failedAt = $position;
             }
@@ -348,19 +321,18 @@ class CustomerImporter
     /**
      * @param array<string, mixed> $connection
      * @param array<int, mixed>    $page
-     * @param array<string, mixed> $batch
      */
-    private function failPage(SyncLedger $ledger, array $connection, array $page, array &$batch): void
+    private function failPage(SyncLedger $ledger, array $connection, array $page, Batch $batch): void
     {
         foreach ($page as $remote) {
             if (is_array($remote) === false) {
                 continue;
             }
             if ($this->skippedRemote($remote) === true) {
-                $batch['skipped'] = ($batch['skipped'] ?? 0) + 1;
+                $batch->skipped++;
                 continue;
             }
-            $batch['failed']    = ($batch['failed'] ?? 0) + 1;
+            $batch->failed++;
             $ledger->attempts[] = [
                 'company_uuid' => $connection['company_uuid'],
                 'local_type'   => 'customer',

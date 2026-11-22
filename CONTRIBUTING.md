@@ -132,7 +132,7 @@ partial `composer update` of only the packages that image does not lock. A
 plain `composer update` drifts from Fleetbase.
 
 PHPStan 2 no longer accepts a bare `array` (for example a decoded JSON body)
-where `array<string, mixed>` is declared. About 180 of those sites are in
+where `array<string, mixed>` is declared. About 160 of those sites are in
 `phpstan-baseline.neon`; the rest of its first run on this code was fixed or
 is covered by `treatPhpDocTypesAsCertain: false`, because records from
 QuickBooks and the queue are checked at run time on purpose.

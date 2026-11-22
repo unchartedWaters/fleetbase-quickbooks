@@ -8,6 +8,7 @@ use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Services\TokenRefresher;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
@@ -368,8 +369,8 @@ foreach (['createCustomer' => 'customers', 'createInvoice' => 'the invoice'] as 
 
             $batch = $first->run('company-1', 'now');
 
-            expect($batch['status'])->toBe('finished')
-                ->and($secondResult)->toBeArray()
+            expect($batch->status)->toBe('finished')
+                ->and($secondResult)->toBeInstanceOf(Batch::class)
                 ->and($client->creates)->toBe(2)
                 ->and($client->invoiceCreates)->toBe(1)
                 ->and(DB::table('quickbooks_links')->where('local_type', 'customer')->count())->toBe(2)
@@ -464,7 +465,7 @@ test('the customer catalog leaves a customer to the run that holds its pending r
         $batch = $runner->run('company-1', 'catalog');
 
         $linked = DB::table('quickbooks_links')->where('local_type', 'customer')->pluck('local_uuid')->all();
-        expect($batch['status'])->toBe('finished')
+        expect($batch->status)->toBe('finished')
             ->and($client->creates)->toBe(1)
             ->and($linked)->toBe(['cust-2'])
             ->and(DB::table('quickbooks_pending_syncs')->where('uuid', 'pend-cust-1')->value('claimed_by'))->toBe('other-run');
@@ -488,9 +489,8 @@ test('a second customer catalog run for the same company waits while the first p
 
         $batch = $first->run('company-1', 'catalog');
 
-        expect($batch['status'])->toBe('finished')
-            ->and($secondResult['status'])->toBe('skipped')
-            ->and($secondResult['reason'])->toBe('busy')
+        expect($batch->status)->toBe('finished')
+            ->and($secondResult->status)->toBe('busy')
             ->and($client->creates)->toBe(2)
             ->and(Cache::get('quickbooks.customer-catalog-lease.company-1'))->toBeNull();
     } finally {
@@ -672,8 +672,8 @@ test('a customer catalog page whose only failure quickbooks will refuse again st
         $batch = $runner->run('company-1', 'catalog');
 
         $failed = DB::table('quickbooks_sync_attempts')->where('outcome', 'failed')->get();
-        expect($batch['failed'])->toBe(1)
-            ->and($batch['created'])->toBe(1)
+        expect($batch->failed)->toBe(1)
+            ->and($batch->created)->toBe(1)
             ->and($failed)->toHaveCount(1)
             ->and($failed[0]->local_uuid)->toBe('cust-1')
             ->and(qbText($failed[0]->error))->toContain('already uses that name')
@@ -696,7 +696,7 @@ test('a customer catalog page with a failure that may pass on retry is kept for 
 
         $batch = $runner->run('company-1', 'catalog');
 
-        expect($batch['failed'])->toBe(1)
+        expect($batch->failed)->toBe(1)
             ->and($directory->customerCatalogStamp('company-1'))->toBeNull();
     } finally {
         $restore();

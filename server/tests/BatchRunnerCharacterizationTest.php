@@ -16,6 +16,7 @@ use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Services\TokenRefresher;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
@@ -144,21 +145,21 @@ class BrcEngine extends SyncEngine
     /** @var array<int, string> */
     public array $httpLock = [];
 
-    public function runScheduled(SyncLedger $ledger, string $companyUuid, array $settings, int $now, bool $force = false, bool $ignoreInterval = false): array
+    public function runScheduled(SyncLedger $ledger, string $companyUuid, array $settings, int $now, bool $force = false, bool $ignoreInterval = false): Batch
     {
         $this->calls[] = 'runScheduled:' . ($force === true ? 'force' : 'normal') . ':' . ($ignoreInterval === true ? 'ignore' : 'interval');
 
         return $this->brcWork($ledger, $force === true ? 'now' : 'scheduled');
     }
 
-    public function reconcile(SyncLedger $ledger, string $companyUuid, array $settings, int $now): array
+    public function reconcile(SyncLedger $ledger, string $companyUuid, array $settings, int $now): Batch
     {
         $this->calls[] = 'reconcile';
 
         return $this->brcWork($ledger, 'manual');
     }
 
-    public function syncEntities(SyncLedger $ledger, string $companyUuid, array $rows, array $settings, int $now): array
+    public function syncEntities(SyncLedger $ledger, string $companyUuid, array $rows, array $settings, int $now): Batch
     {
         $ids                 = array_map(static fn (array $row): string => (string) $row['local_uuid'], $rows);
         $this->calls[]       = 'syncEntities';
@@ -175,7 +176,7 @@ class BrcEngine extends SyncEngine
     /**
      * @return array<string, mixed>
      */
-    private function brcWork(SyncLedger $ledger, string $trigger, int $count = 1): array
+    private function brcWork(SyncLedger $ledger, string $trigger, int $count = 1): Batch
     {
         $this->httpLock[] = 'before:' . (BatchRunner::holds(BRC_COMPANY) === true ? 'held' : 'free');
         $this->runHttp(function (): void {
@@ -185,7 +186,8 @@ class BrcEngine extends SyncEngine
         if ($this->work !== null) {
             return ($this->work)($ledger, $trigger, $count);
         }
-        $batch             = ['trigger' => $trigger, 'status' => 'finished', 'created' => $count, 'updated' => 0, 'aligned' => 0, 'failed' => 0, 'skipped' => 0];
+        $batch             = new Batch($trigger);
+        $batch->created    = $count;
         $ledger->batches[] = $batch;
 
         return $batch;
@@ -365,7 +367,7 @@ test('a sync now run holds the lock to load, drops it for token refresh and quic
     $run   = brcRun($built['runner'], 'now');
 
     expect($run['error'])->toBeNull()
-        ->and($run['result']['status'])->toBe('finished')
+        ->and($run['result']->status)->toBe('finished')
         ->and($built['engine']->calls)->toBe(['runScheduled:force:interval'])
         ->and($built['engine']->httpLock)->toBe(['before:free', 'during:free', 'after:free'])
         ->and($built['directory']->events)->toBe(['loadPending:held', 'save:held', 'releaseClaims:held'])
@@ -376,7 +378,7 @@ test('a sync now run holds the lock to load, drops it for token refresh and quic
 
 test('when the engine throws the ledger is still saved under the lock, claims are released and nothing is dispatched', function () {
     $built                  = brcRunner([], ['cust-1', 'cust-2']);
-    $built['engine']->work  = function (SyncLedger $ledger): array {
+    $built['engine']->work  = function (SyncLedger $ledger): Batch {
         $ledger->links[] = ['company_uuid' => BRC_COMPANY, 'local_type' => 'customer', 'local_uuid' => 'cust-1', 'qbo_entity' => 'Customer', 'qbo_id' => '77'];
 
         throw new RuntimeException('quickbooks exploded');
@@ -413,7 +415,7 @@ test('a finished drain with rows still due queues one drain after the lock is re
 
     $run = brcRun($built['runner'], 'drain');
 
-    expect($run['result']['status'])->toBe('finished')
+    expect($run['result']->status)->toBe('finished')
         ->and($built['engine']->calls)->toBe(['runScheduled:force:interval'])
         ->and($built['directory']->events)->toBe(['loadPending:held', 'save:held', 'releaseClaims:held', 'hasDuePending:held'])
         ->and(brcDispatched($run['dispatcher']))->toBe(['batch:drain'])
@@ -423,16 +425,16 @@ test('a finished drain with rows still due queues one drain after the lock is re
 
 test('a drain follow-up needs a finished batch, rows still due, and no failed token refresh', function () {
     $nothingDue                  = brcRunner();
-    $nothingDue['engine']->work  = function (SyncLedger $ledger): array {
+    $nothingDue['engine']->work  = function (SyncLedger $ledger): Batch {
         $ledger->pending[0]['status'] = 'done';
-        $batch                        = ['trigger' => 'now', 'status' => 'finished'];
+        $batch                        = new Batch('now', 'finished');
         $ledger->batches[]            = $batch;
 
         return $batch;
     };
     $notFinished                 = brcRunner([], ['cust-1', 'cust-2']);
-    $notFinished['engine']->work = function (SyncLedger $ledger): array {
-        $batch             = ['trigger' => 'now', 'status' => 'halted'];
+    $notFinished['engine']->work = function (SyncLedger $ledger): Batch {
+        $batch             = new Batch('now', 'halted');
         $ledger->batches[] = $batch;
 
         return $batch;
@@ -458,10 +460,10 @@ test('a drain follow-up needs a finished batch, rows still due, and no failed to
 
 test('a skipped batch that recorded nothing is not saved, one that recorded a batch is', function () {
     $quiet                   = brcRunner([], ['cust-1', 'cust-2']);
-    $quiet['engine']->work   = static fn (): array => ['trigger' => 'now', 'status' => 'skipped'];
+    $quiet['engine']->work   = static fn (): Batch => new Batch('now', 'skipped');
     $logged                  = brcRunner([], ['cust-1', 'cust-2']);
-    $logged['engine']->work  = function (SyncLedger $ledger): array {
-        $batch             = ['trigger' => 'now', 'status' => 'skipped', 'message' => 'rate limited'];
+    $logged['engine']->work  = function (SyncLedger $ledger): Batch {
+        $batch             = new Batch('now', 'skipped');
         $ledger->batches[] = $batch;
 
         return $batch;
@@ -470,10 +472,10 @@ test('a skipped batch that recorded nothing is not saved, one that recorded a ba
     $quietRun  = brcRun($quiet['runner'], 'drain');
     $loggedRun = brcRun($logged['runner'], 'drain');
 
-    expect($quietRun['result']['status'])->toBe('skipped')
+    expect($quietRun['result']->status)->toBe('skipped')
         ->and($quiet['directory']->events)->toBe(['loadPending:held', 'releaseClaims:free'])
         ->and(brcDispatched($quietRun['dispatcher']))->toBe([])
-        ->and($loggedRun['result']['status'])->toBe('skipped')
+        ->and($loggedRun['result']->status)->toBe('skipped')
         ->and($logged['directory']->events)->toBe(['loadPending:held', 'save:held', 'releaseClaims:held'])
         ->and(brcDispatched($loggedRun['dispatcher']))->toBe([])
         ->and(brcLockFree())->toBeTrue();
@@ -485,7 +487,7 @@ test('a manual reconcile claims a page first and claims the next page under the 
 
     $run = brcRun($built['runner'], 'manual');
 
-    expect($run['result']['status'])->toBe('finished')
+    expect($run['result']->status)->toBe('finished')
         ->and($built['engine']->calls)->toBe(['reconcile'])
         ->and($built['directory']->claimAfter)->toBe(['', 'inv-5'])
         ->and($built['directory']->events)->toBe([
@@ -505,9 +507,9 @@ test('a manual reconcile claims a page first and claims the next page under the 
 test('a manual reconcile whose next claim is empty clears the reconcile cursor', function () {
     $built                              = brcRunner([], ['cust-1']);
     $built['directory']->claimReturns   = ['inv-5', ''];
-    $built['engine']->work              = function (SyncLedger $ledger): array {
+    $built['engine']->work              = function (SyncLedger $ledger): Batch {
         $ledger->pending[0]['status'] = 'done';
-        $batch                        = ['trigger' => 'manual', 'status' => 'finished'];
+        $batch                        = new Batch('manual', 'finished');
         $ledger->batches[]            = $batch;
 
         return $batch;
@@ -545,13 +547,13 @@ test('a token refresh that is blocked records the skip under the lock and runs n
 
     $run = brcRun($built['runner'], 'drain');
 
-    expect($run['result'])->toBe(['trigger' => 'drain', 'status' => 'skipped'])
+    expect($run['result'])->toEqual(new Batch('drain', 'skipped'))
         ->and($tokens->refreshes)->toBe(1)
         ->and($built['engine']->calls)->toBe([])
         ->and($built['directory']->events)->toBe(['loadPending:held', 'saveSkipped:held', 'save:held', 'releaseClaims:held'])
         ->and($built['directory']->memory->attempts[0]['error'])->toBe('QuickBooks token refresh failed.')
-        ->and($built['directory']->memory->batches[0]['trigger'])->toBe('drain')
-        ->and($built['directory']->memory->batches[0]['direction'])->toBe('outbound')
+        ->and($built['directory']->memory->batches[0]->trigger)->toBe('drain')
+        ->and($built['directory']->memory->batches[0]->direction)->toBe('outbound')
         ->and(brcDispatched($run['dispatcher']))->toBe([])
         ->and(brcLockFree())->toBeTrue();
 });
@@ -569,12 +571,12 @@ test('a busy company lock skips the run and records it only for a non scheduled 
         $held->release();
     }
 
-    expect($nowRun['result'])->toBe(['trigger' => 'now', 'status' => 'skipped', 'reason' => 'busy'])
+    expect($nowRun['result'])->toEqual(new Batch('now', 'busy'))
         ->and(qbText($now['directory']->memory->attempts[0]['error']))->toBe('Another QuickBooks sync is already '
             . 'running.')
         ->and($now['directory']->events)->toBe(['saveSkipped:free', 'save:free'])
         ->and($now['engine']->calls)->toBe([])
-        ->and($scheduledRun['result'])->toBe(['trigger' => 'scheduled', 'status' => 'skipped', 'reason' => 'busy'])
+        ->and($scheduledRun['result'])->toEqual(new Batch('scheduled', 'busy'))
         ->and($scheduled['directory']->events)->toBe([])
         ->and(brcDispatched($nowRun['dispatcher']))->toBe([])
         ->and(brcDispatched($scheduledRun['dispatcher']))->toBe([]);
@@ -585,7 +587,7 @@ test('a scheduled run with nothing due and no catalog due does not take the lock
 
     $run = brcRun($built['runner'], 'scheduled');
 
-    expect($run['result'])->toBe(['trigger' => 'scheduled', 'status' => 'skipped'])
+    expect($run['result'])->toEqual(new Batch('scheduled', 'skipped'))
         ->and($built['directory']->events)->toBe([])
         ->and($built['engine']->calls)->toBe([]);
 });
@@ -595,7 +597,7 @@ test('a due scheduled run keeps the interval check and queues the catalog when t
 
     $run = brcRun($built['runner'], 'scheduled');
 
-    expect($run['result']['status'])->toBe('finished')
+    expect($run['result']->status)->toBe('finished')
         ->and($built['engine']->calls)->toBe(['runScheduled:normal:interval'])
         ->and($built['directory']->events)->toBe(['loadPending:held', 'save:held', 'releaseClaims:held'])
         ->and(brcDispatched($run['dispatcher']))->toBe(['batch:catalog'])
@@ -611,7 +613,7 @@ test('a scheduled run started early by a full update batch skips the interval wa
 
     $run = brcRun($built['runner'], 'scheduled');
 
-    expect($run['result']['status'])->toBe('finished')
+    expect($run['result']->status)->toBe('finished')
         ->and($built['engine']->calls)->toBe(['runScheduled:normal:ignore'])
         ->and(brcDispatched($run['dispatcher']))->toBe([]);
 });
@@ -625,7 +627,7 @@ test('a now run that fills its batch dispatches a drain', function () {
 
     $run = brcRun($built['runner'], 'now');
 
-    expect($run['result']['status'])->toBe('finished')
+    expect($run['result']->status)->toBe('finished')
         ->and($built['engine']->calls)->toBe(['runScheduled:force:interval'])
         ->and(brcDispatched($run['dispatcher']))->toBe(['batch:drain'])
         ->and($run['dispatcher']->heldAtDispatch)->toBe([false]);
@@ -650,9 +652,9 @@ test('the drain chain marker ends with the chain, and expires when no drain runs
     $uuids                 = array_map(static fn (int $index): string => sprintf('cust-%03d', $index), range(1, 150));
     $built                 = brcRunner([], $uuids, ['batch_size' => 100]);
     $ended                 = brcRunner();
-    $ended['engine']->work = function (SyncLedger $ledger): array {
+    $ended['engine']->work = function (SyncLedger $ledger): Batch {
         $ledger->pending[0]['status'] = 'done';
-        $batch                        = ['trigger' => 'now', 'status' => 'finished'];
+        $batch                        = new Batch('now', 'finished');
         $ledger->batches[]            = $batch;
 
         return $batch;
@@ -683,7 +685,7 @@ test('a scheduled run with only the catalog due runs one catalog page and does n
 
     $run = brcRun($built['runner'], 'scheduled');
 
-    expect($run['result']['status'])->toBe('finished')
+    expect($run['result']->status)->toBe('finished')
         ->and($built['engine']->calls)->toBe(['syncEntities'])
         ->and($built['engine']->entityPages)->toBe([['c-1', 'c-2']])
         ->and($built['directory']->memory->connections[BRC_COMPANY]['last_customer_catalog_at'])->toBeInt()
@@ -701,7 +703,7 @@ test('a catalog page of unchanged customers records no attempts', function () {
         ];
     }
     $first = $engine->syncEntities($memory, BRC_COMPANY, $rows, qbSettings(), time());
-    expect($first['created'])->toBe(3);
+    expect($first->created)->toBe(3);
     $memory->attempts = [];
     $memory->batches  = [];
 
@@ -717,7 +719,7 @@ test('a catalog page of unchanged customers records no attempts', function () {
     expect($run['error'])->toBeNull()
         ->and($memory->attempts)->toBe([])
         ->and($memory->batches)->toHaveCount(1)
-        ->and($memory->batches[0]['aligned'])->toBe(3);
+        ->and($memory->batches[0]->aligned)->toBe(3);
 });
 
 test('the catalog walks pages with a cursor and queues the next page after release', function () {
@@ -725,7 +727,7 @@ test('the catalog walks pages with a cursor and queues the next page after relea
 
     $first = brcRun($built['runner'], 'catalog');
 
-    expect($first['result']['status'])->toBe('finished')
+    expect($first['result']->status)->toBe('finished')
         ->and($built['engine']->entityPages)->toBe([['c-1', 'c-2']])
         ->and($built['engine']->httpLock)->toBe(['before:free', 'during:free', 'after:free'])
         ->and($built['directory']->events)->toBe(['loadCustomerBlock:held', 'save:held', 'releaseClaims:held'])
@@ -745,21 +747,25 @@ test('the catalog walks pages with a cursor and queues the next page after relea
     $third = brcRun($built['runner'], 'catalog');
 
     // The cursor was cleared, so the next catalog run starts again from the first page.
-    expect($third['result']['created'])->toBe(2)
+    expect($third['result']->created)->toBe(2)
         ->and($built['engine']->entityPages)->toBe([['c-1', 'c-2'], ['c-3'], ['c-1', 'c-2']])
         ->and(brcDispatched($third['dispatcher']))->toBe(['batch:catalog']);
 });
 
 test('a catalog page with a failure keeps the cursor, is still saved, and queues nothing', function () {
     $built                 = brcRunner([], [], ['batch_size' => 2], null, ['c-1', 'c-2', 'c-3']);
-    $built['engine']->work = function (SyncLedger $ledger, string $trigger, int $count): array {
-        return ['trigger' => 'catalog', 'status' => 'finished', 'created' => $count - 1, 'updated' => 0, 'aligned' => 0, 'failed' => 1, 'skipped' => 0];
+    $built['engine']->work = function (SyncLedger $ledger, string $trigger, int $count): Batch {
+        $batch          = new Batch('catalog');
+        $batch->created = $count - 1;
+        $batch->failed  = 1;
+
+        return $batch;
     };
     Cache::put('quickbooks.customer-catalog-after.' . BRC_COMPANY, 'c-0', 3600);
 
     $run = brcRun($built['runner'], 'catalog');
 
-    expect($run['result']['failed'])->toBe(1)
+    expect($run['result']->failed)->toBe(1)
         ->and($built['directory']->events)->toBe(['loadCustomerBlock:held', 'save:held', 'releaseClaims:held'])
         ->and(Cache::get('quickbooks.customer-catalog-after.' . BRC_COMPANY))->toBe('c-0')
         ->and(brcDispatched($run['dispatcher']))->toBe([]);
@@ -767,8 +773,12 @@ test('a catalog page with a failure keeps the cursor, is still saved, and queues
 
 test('a catalog page with a skipped row still commits the cursor and queues the next page', function () {
     $built                 = brcRunner([], [], ['batch_size' => 2], null, ['c-1', 'c-2', 'c-3']);
-    $built['engine']->work = function (SyncLedger $ledger, string $trigger, int $count): array {
-        return ['trigger' => 'catalog', 'status' => 'finished', 'created' => $count - 1, 'updated' => 0, 'aligned' => 0, 'failed' => 0, 'skipped' => 1];
+    $built['engine']->work = function (SyncLedger $ledger, string $trigger, int $count): Batch {
+        $batch          = new Batch('catalog');
+        $batch->created = $count - 1;
+        $batch->skipped = 1;
+
+        return $batch;
     };
 
     $run = brcRun($built['runner'], 'catalog');
@@ -779,7 +789,7 @@ test('a catalog page with a skipped row still commits the cursor and queues the 
 
 test('a catalog page whose engine throws is still saved under the lock and drops the lease', function () {
     $built                 = brcRunner([], [], ['batch_size' => 2], null, ['c-1', 'c-2', 'c-3']);
-    $built['engine']->work = function (): array {
+    $built['engine']->work = function (): Batch {
         throw new RuntimeException('catalog exploded');
     };
 
@@ -799,7 +809,7 @@ test('a catalog run while another holds the catalog lease is skipped as busy', f
 
     $run = brcRun($built['runner'], 'catalog');
 
-    expect($run['result'])->toBe(['trigger' => 'catalog', 'status' => 'skipped', 'reason' => 'busy'])
+    expect($run['result'])->toEqual(new Batch('catalog', 'busy'))
         ->and($built['engine']->calls)->toBe([])
         ->and($built['directory']->events)->toBe(['releaseClaims:held'])
         ->and(Cache::get('quickbooks.customer-catalog-lease.' . BRC_COMPANY))->toBeTrue()
@@ -812,7 +822,7 @@ test('a catalog run with customers turned off returns at once and forgets the ca
 
     $run = brcRun($built['runner'], 'catalog');
 
-    expect($run['result'])->toBe(['trigger' => 'catalog', 'status' => 'skipped'])
+    expect($run['result'])->toEqual(new Batch('catalog', 'skipped'))
         ->and($built['engine']->calls)->toBe([])
         ->and($built['directory']->events)->toBe(['releaseClaims:held'])
         ->and(Cache::get('quickbooks.customer-catalog-after.' . BRC_COMPANY))->toBeNull()
@@ -826,7 +836,7 @@ test('a blocked token on a catalog page records the skip and keeps the cursor', 
 
     $run = brcRun($built['runner'], 'catalog');
 
-    expect($run['result'])->toBe(['trigger' => 'catalog', 'status' => 'skipped'])
+    expect($run['result'])->toEqual(new Batch('catalog', 'skipped'))
         ->and($built['engine']->calls)->toBe([])
         ->and($built['directory']->events)->toBe(['loadCustomerBlock:held', 'saveSkipped:held', 'save:held', 'releaseClaims:held'])
         ->and(Cache::get('quickbooks.customer-catalog-after.' . BRC_COMPANY))->toBeNull()
