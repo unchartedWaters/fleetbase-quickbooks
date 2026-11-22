@@ -248,7 +248,7 @@ test('quickbooks http stays outside the company lock and follow-up dispatch happ
         }
     }
 
-    expect($batch['status'])->toBe('finished')
+    expect($batch->status)->toBe('finished')
         ->and($directory->heldDuringLoad)->toBeTrue()
         ->and($client->heldDuringHttp)->toBeFalse()
         ->and($directory->heldDuringSave)->toBeTrue()
@@ -323,7 +323,7 @@ test('a due token refresh keeps the company lock and the new token is saved unde
 
     $batch = $runner->run('company-uuid', 'drain');
 
-    expect($batch['status'])->toBe('finished')
+    expect($batch->status)->toBe('finished')
         ->and($client->heldDuringRefresh)->toBeTrue()
         ->and($client->secondCouldStart)->toBeFalse()
         ->and($directory->heldDuringTokenSave)->toBeTrue()

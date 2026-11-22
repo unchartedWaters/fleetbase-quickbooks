@@ -5,6 +5,7 @@ namespace Fleetbase\Quickbooks\Services\Concerns;
 use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Illuminate\Database\Eloquent\Builder;
@@ -509,16 +510,10 @@ trait QueuesPending
 
     private function recordFailedSave(string $companyUuid, string $trigger, int $deferred, int $now): void
     {
-        $ledger            = new SyncLedger();
-        $ledger->batches[] = [
-            'company_uuid' => $companyUuid,
-            'trigger'      => $trigger,
-            'direction'    => 'outbound',
-            'status'       => 'failed',
-            'failed'       => $deferred,
-            'started_at'   => $now,
-            'finished_at'  => $now,
-        ];
+        $ledger             = new SyncLedger();
+        $batch              = Batch::forCompany($companyUuid, $trigger, 'failed', 'outbound', $now, $now);
+        $batch->failed      = $deferred;
+        $ledger->batches[]  = $batch;
         $ledger->attempts[] = [
             'company_uuid' => $companyUuid,
             'local_type'   => 'connection',

@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Tests\Support;
 
 use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\InvoiceTax;
 
@@ -169,8 +170,6 @@ class FleetbaseTaxCompany
      *
      * @param array<string, mixed> $settings
      * @param array<int, string>   $uuids
-     *
-     * @return array<string, mixed>
      */
     public static function again(
         SyncEngine $engine,
@@ -178,7 +177,7 @@ class FleetbaseTaxCompany
         array $settings,
         int $when,
         array $uuids = ['inv-1'],
-    ): array {
+    ): Batch {
         $ledger->connections['company-uuid']['last_batch_at'] = null;
         $ledger->pending                                      = array_map(
             static fn (string $uuid): array => PrimaryFixtures::pending('invoice', $uuid),

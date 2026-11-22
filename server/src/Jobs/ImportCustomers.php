@@ -324,7 +324,7 @@ class ImportCustomers implements ShouldQueue
                 $started + BatchRunner::LOCK_SECONDS - self::DEADLINE_MARGIN_SECONDS
             );
 
-            return empty($batch['continue']) === false;
+            return $batch->continue;
         } finally {
             // Saved even when a page query throws, so customers already created keep their links.
             // The resume position is stored only once those customers are saved: a worker that
@@ -425,10 +425,10 @@ class ImportCustomers implements ShouldQueue
         $ledger->links = array_values($ledger->links);
         $ledger->rebuildIndex();
         $last = array_key_last($ledger->batches);
-        if ($dropped > 0 && $last !== null && ($ledger->batches[$last]['trigger'] ?? '') === 'import') {
+        if ($dropped > 0 && $last !== null && $ledger->batches[$last]->trigger === 'import') {
             // Those QuickBooks customers are linked now, by the other job.
-            $ledger->batches[$last]['created'] = max(0, (int) ($ledger->batches[$last]['created'] ?? 0) - $dropped);
-            $ledger->batches[$last]['linked']  = (int) ($ledger->batches[$last]['linked'] ?? 0) + $dropped;
+            $ledger->batches[$last]->add('created', -$dropped);
+            $ledger->batches[$last]->add('linked', $dropped);
         }
     }
 

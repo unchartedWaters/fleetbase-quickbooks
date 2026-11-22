@@ -47,7 +47,7 @@ test('disconnected sync reconcile drain catalog and import do not record activit
     $runner = gateRunner($ledger);
     foreach (['scheduled', 'now', 'manual', 'drain', 'catalog'] as $trigger) {
         $batch = $runner->run('company-uuid', $trigger);
-        expect($batch['status'])->toBe('skipped')
+        expect($batch->status)->toBe('skipped')
             ->and($runner->isScheduledDue('company-uuid', time()))->toBeFalse();
     }
 
@@ -65,7 +65,7 @@ test('another organization connection does not sync this organization and a miss
     $idle  = gateRunner($empty);
 
     expect($idle->hasConnection('company-uuid'))->toBeFalse()
-        ->and($idle->run('company-uuid', 'now')['status'])->toBe('skipped')
+        ->and($idle->run('company-uuid', 'now')->status)->toBe('skipped')
         ->and($empty->batches)->toBe([])
         ->and($empty->attempts)->toBe([]);
 
@@ -106,7 +106,7 @@ test('another organization connection does not sync this organization and a miss
         $batch = $runner->run('company-uuid', 'now');
     });
 
-    expect($batch['status'])->toBe('skipped')
+    expect($batch->status)->toBe('skipped')
         ->and($client->calls)->toBe([])
         ->and($ledger->batches)->toBe([])
         ->and($ledger->attempts)->toBe([])
@@ -143,7 +143,7 @@ test('a connected organization still syncs when due even if sync enabled is stor
         $batch = $runner->run('company-uuid', 'scheduled');
     });
 
-    expect($batch['status'])->toBe('finished')
+    expect($batch->status)->toBe('finished')
         ->and($client->calls)->toContain('createCustomer')
         ->and($ledger->batches)->not->toBe([]);
 });

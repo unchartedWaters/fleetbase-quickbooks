@@ -35,30 +35,30 @@ test('a company is skipped when the interval has not elapsed the rate limit is a
 
     $waiting                                               = batchLedger();
     $waiting->connections['company-uuid']['last_batch_at'] = $now;
-    expect($engine->runScheduled($waiting, 'company-uuid', $settings, $now)['status'])->toBe('skipped');
+    expect($engine->runScheduled($waiting, 'company-uuid', $settings, $now)->status)->toBe('skipped');
 
     $disabled                      = batchLedger();
     $disabled->customers['cust-1'] = customerRow('cust-1');
     $disabled->pending[]           = pendingRow('customer', 'cust-1');
     $ran                           = $engine->runScheduled($disabled, 'company-uuid', qbSettings(['enabled' => false]), $now);
-    expect($ran['status'])->toBe('finished')
+    expect($ran->status)->toBe('finished')
         ->and($client->calls)->toContain('createCustomer');
 
     $limited                                                    = batchLedger();
     $limited->connections['company-uuid']['rate_limited_until'] = $now + 30;
-    expect($engine->runScheduled($limited, 'company-uuid', $settings, $now)['status'])->toBe('skipped');
+    expect($engine->runScheduled($limited, 'company-uuid', $settings, $now)->status)->toBe('skipped');
 
     $reauth                                              = batchLedger();
     $reauth->connections['company-uuid']['needs_reauth'] = true;
-    expect($engine->runScheduled($reauth, 'company-uuid', $settings, $now)['status'])->toBe('skipped');
+    expect($engine->runScheduled($reauth, 'company-uuid', $settings, $now)->status)->toBe('skipped');
 
     $forced = $engine->runScheduled($reauth, 'company-uuid', $settings, $now, true);
-    expect($forced['status'])->toBe('skipped')
+    expect($forced->status)->toBe('skipped')
         ->and(qbText(end($reauth->attempts)['error']))->toBe('QuickBooks needs to be connected again. '
             . 'Choose Connect to QuickBooks on QuickBooks Setup.');
 
     $reconcile = $engine->reconcile($reauth, 'company-uuid', $settings, $now);
-    expect($reconcile['status'])->toBe('skipped')
+    expect($reconcile->status)->toBe('skipped')
         ->and(qbText(end($reauth->attempts)['error']))->toBe('QuickBooks needs to be connected again. '
             . 'Choose Connect to QuickBooks on QuickBooks Setup.');
 });
@@ -131,8 +131,8 @@ test('a 401 mid batch stops the batch keeps the rows pending without using attem
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $rows  = array_column($ledger->pending, null, 'local_uuid');
 
-    expect($batch['created'])->toBe(1)
-        ->and($batch['failed'])->toBe(1)
+    expect($batch->created)->toBe(1)
+        ->and($batch->failed)->toBe(1)
         ->and(array_count_values($client->calls)['createCustomer'])->toBe(2)
         ->and($rows['cust-1']['status'])->toBe('done')
         ->and($rows['cust-2']['status'])->toBe('pending')
@@ -433,10 +433,10 @@ test('a batch creates updates voids and skips a matching invoice', function () {
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(1)
-        ->and($batch['updated'])->toBe(1)
-        ->and($batch['voided'])->toBe(1)
-        ->and($batch['aligned'])->toBe(1)
+    expect($batch->created)->toBe(1)
+        ->and($batch->updated)->toBe(1)
+        ->and($batch->voided)->toBe(1)
+        ->and($batch->aligned)->toBe(1)
         ->and($client->calls)->toContain('voidInvoice');
 });
 
@@ -450,7 +450,7 @@ test('an unchanged second pass counts records as aligned and sends no writes', f
     $ledger->pending[0]['status']                         = 'pending';
     $batch                                                = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time() + 10);
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and(array_count_values($client->calls)['createCustomer'] ?? 0)->toBe(1)
         ->and($client->calls)->not->toContain('updateCustomer');
 });
@@ -479,7 +479,7 @@ test('manual reconcile includes entities that were never flagged', function () {
 
     $first = $engine->reconcile($ledger, 'company-uuid', qbSettings(), time());
 
-    expect($first['created'])->toBeGreaterThan(0)
+    expect($first->created)->toBeGreaterThan(0)
         ->and($client->calls)->toContain('createCustomer')
         ->and($client->invoices)->toHaveCount(1);
 });
@@ -492,7 +492,7 @@ test('a quickbooks invoice with no local invoice and no link is out of scope', f
     $batch                     = $engine->reconcile($ledger, 'company-uuid', qbSettings(), time());
 
     expect($client->calls)->not->toContain('listInvoices')
-        ->and($batch['unmatched'])->toBe(0)
+        ->and($batch->unmatched)->toBe(0)
         ->and($ledger->invoices)->not->toHaveKey('orphan')
         ->and($client->calls)->not->toContain('voidInvoice');
 });
@@ -500,14 +500,14 @@ test('a quickbooks invoice with no local invoice and no link is out of scope', f
 test('no connection skips and a stored enabled flag does not stop a due sync', function () {
     [$engine, $client] = qbEngine();
     $empty             = new SyncLedger();
-    expect($engine->runScheduled($empty, 'company-uuid', qbSettings(), time())['status'])->toBe('skipped');
+    expect($engine->runScheduled($empty, 'company-uuid', qbSettings(), time())->status)->toBe('skipped');
 
     $ledger                      = batchLedger();
     $ledger->customers['cust-1'] = customerRow('cust-1');
     $ledger->pending[]           = pendingRow('customer', 'cust-1');
     $ran                         = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['enabled' => false]), time());
 
-    expect($ran['status'])->toBe('finished')
+    expect($ran->status)->toBe('finished')
         ->and($client->calls)->toContain('createCustomer');
 });
 
@@ -560,8 +560,8 @@ test('a missing linked invoice with a quickbooks primary is not created again', 
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_reference' => 'quickbooks']), time());
 
-    expect($batch['created'])->toBe(0)
-        ->and($batch['aligned'])->toBe(1)
+    expect($batch->created)->toBe(0)
+        ->and($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('nextInvoiceDocNumber')
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($ledger->invoices['inv-1']['number'])->toBe('LOCAL-9')
@@ -646,8 +646,8 @@ test('a block create fails when quickbooks does not confirm a free invoice numbe
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_reference' => 'quickbooks']), time());
     $rows  = array_column($ledger->pending, null, 'local_uuid');
 
-    expect($batch['created'])->toBe(0)
-        ->and($batch['failed'])->toBe(2)
+    expect($batch->created)->toBe(0)
+        ->and($batch->failed)->toBe(2)
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($rows['inv-1']['status'])->not->toBe('done')
         ->and($rows['inv-2']['status'])->not->toBe('done')
@@ -688,7 +688,7 @@ test('an invoice number another organization takes first fails once and the next
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['failed'])->toBe(1)
+    expect($first->failed)->toBe(1)
         ->and($ledger->pending[0]['status'])->toBe('pending')
         ->and($ledger->invoices['inv-1']['number'])->toBe('LOCAL-1');
 
@@ -697,7 +697,7 @@ test('an invoice number another organization takes first fails once and the next
     $second = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 3600);
     $docs   = array_column($client->invoices, 'DocNumber');
 
-    expect($second['created'])->toBe(1)
+    expect($second->created)->toBe(1)
         ->and($ledger->invoices['inv-1']['number'])->toBe('INV-011')
         ->and($client->invoices['other-org']['DocNumber'])->toBe('INV-010')
         ->and(count($docs))->toBe(count(array_unique($docs)));
@@ -723,7 +723,7 @@ test('quickbooks invoice numbers replace the fleetbase number', function () {
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'invoice_reference' => 'quickbooks']), time());
 
     expect($ledger->invoices['inv-1']['number'])->toBe('QB-100')
-        ->and($batch['updated'])->toBe(1)
+        ->and($batch->updated)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
@@ -737,7 +737,7 @@ test('a manual sync runs even when the interval has not elapsed', function () {
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(), $now, true);
 
-    expect($batch['status'])->toBe('finished')
+    expect($batch->status)->toBe('finished')
         ->and($client->calls)->toContain('createCustomer');
 });
 
@@ -750,13 +750,13 @@ test('sync now and reconcile still run when automatic sync is off', function () 
 
     $now = $engine->runScheduled($ledger, 'company-uuid', $settings, time(), true);
 
-    expect($now['status'])->toBe('finished')
+    expect($now->status)->toBe('finished')
         ->and($client->calls)->toContain('createCustomer');
 
     $ledger->connections['company-uuid']['last_batch_at']  = null;
     $second                                                = $engine->reconcile($ledger, 'company-uuid', $settings, time());
 
-    expect($second['status'])->toBe('finished');
+    expect($second->status)->toBe('finished');
 });
 
 test('a forced sync with no connection does not record a skipped batch', function () {
@@ -765,7 +765,7 @@ test('a forced sync with no connection does not record a skipped batch', functio
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['enabled' => false]), time(), true);
 
-    expect($batch['status'])->toBe('skipped')
+    expect($batch->status)->toBe('skipped')
         ->and($ledger->batches)->toBe([])
         ->and($ledger->attempts)->toBe([])
         ->and($client->calls)->toBe([]);
@@ -811,7 +811,7 @@ test('a 401 on a payment update sent with an invoice block keeps that invoice pe
         ->and($rows['inv-1']['attempts'])->toBe(0)
         ->and($rows['inv-2']['status'])->toBe('pending')
         ->and($rows['inv-2']['attempts'])->toBe(0)
-        ->and($batch['failed'])->toBe(1)
+        ->and($batch->failed)->toBe(1)
         ->and($ledger->connections['company-uuid']['needs_reauth'])->toBeTrue();
 });
 
@@ -851,9 +851,9 @@ test('a differing payment is compared and a quickbooks reference still creates a
 
     $reported = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($reported['updated'])->toBe(0)
-        ->and($reported['aligned'])->toBe(1)
-        ->and($reported['skipped'])->toBe(0)
+    expect($reported->updated)->toBe(0)
+        ->and($reported->aligned)->toBe(1)
+        ->and($reported->skipped)->toBe(0)
         ->and($ledger->attempts[0]['error'])->toBeNull()
         ->and($client->calls)->not->toContain('updatePayment')
         ->and($client->payments['pay-9']['TxnDate'])->toBe('2026-09-01')
@@ -917,8 +917,8 @@ test('the first fleetbase payment is created when quickbooks has no payment yet'
         'payment_reference' => 'fleetbase',
     ]), time());
 
-    expect($reported['skipped'])->toBe(0)
-        ->and($reported['aligned'])->toBe(1)
+    expect($reported->skipped)->toBe(0)
+        ->and($reported->aligned)->toBe(1)
         ->and($ledger->attempts[0]['error'])->toBeNull()
         ->and($client->calls)->toContain('createPayment')
         ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'pay-1')['qbo_id'])->toBe('pay-1');
@@ -938,7 +938,7 @@ test('the first fleetbase payment is created when quickbooks has no payment yet'
         'payment_reference' => 'fleetbase',
     ]), time());
 
-    expect($adopted['skipped'])->toBe(0)
+    expect($adopted->skipped)->toBe(0)
         ->and($fresh->attempts[0]['error'])->toBeNull()
         ->and(count(array_filter($client->calls, fn ($call) => $call === 'createPayment')))->toBe($before + 1);
     $stored = array_values(array_filter(
@@ -971,7 +971,7 @@ test('a quickbooks payment copied onto the invoice matches on the next sync', fu
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(500)
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
         ->and($ledger->invoices['inv-1']['paid_at'])->toBe('')
@@ -983,8 +983,8 @@ test('a quickbooks payment copied onto the invoice matches on the next sync', fu
     $ledger->pending[0]['status']                         = 'pending';
     $second                                               = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
-        ->and($second['updated'])->toBe(0)
+    expect($second->aligned)->toBe(1)
+        ->and($second->updated)->toBe(0)
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(500)
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
         ->and($ledger->invoices['inv-1']['paid_at'])->toBe('')

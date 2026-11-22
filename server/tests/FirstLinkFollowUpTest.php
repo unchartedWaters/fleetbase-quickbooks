@@ -61,8 +61,8 @@ test('a follow-up halted by a rate limit keeps the first pass of the records it 
 
     expect(Primary::count($client, 'updateCustomer'))->toBe(1)
         ->and(array_column($ledger->attempts, 'local_uuid'))->toContain('cust-2')
-        ->and($batch['aligned'])->toBe(2)
-        ->and($batch['failed'])->toBe(1)
+        ->and($batch->aligned)->toBe(2)
+        ->and($batch->failed)->toBe(1)
         ->and(Primary::token($ledger, 'customer', 'cust-1'))->toBe('~3')
         ->and(Primary::token($ledger, 'customer', 'cust-2'))->toBe('~5');
 });

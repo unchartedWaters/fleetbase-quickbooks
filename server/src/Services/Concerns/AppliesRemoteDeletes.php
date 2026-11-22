@@ -6,6 +6,7 @@ use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder as QueryBuilder;
@@ -194,21 +195,12 @@ trait AppliesRemoteDeletes
         if ($companyUuid === '' || $notes === []) {
             return;
         }
-        $now   = time();
-        $batch = [
-            'company_uuid' => $companyUuid,
-            'trigger'      => 'webhook',
-            'direction'    => 'inbound',
-            'status'       => 'finished',
-            'skipped'      => 0,
-            'linked'       => 0,
-            'started_at'   => $now,
-            'finished_at'  => $now,
-        ];
+        $now      = time();
+        $batch    = Batch::forCompany($companyUuid, 'webhook', 'finished', 'inbound', $now, $now);
         $attempts = [];
         foreach ($notes as $note) {
             $outcome = ($note['outcome'] ?? 'skipped') === 'linked' ? 'linked' : 'skipped';
-            $batch[$outcome]++;
+            $batch->add($outcome);
             $attempts[] = [
                 'company_uuid' => $companyUuid,
                 'local_type'   => $note['local_type'],
@@ -221,10 +213,9 @@ trait AppliesRemoteDeletes
     }
 
     /**
-     * @param array<string, mixed>             $batch
      * @param array<int, array<string, mixed>> $attempts
      */
-    private function saveNoteBatch(array $batch, array $attempts): void
+    private function saveNoteBatch(Batch $batch, array $attempts): void
     {
         if ($this->memory !== null) {
             $this->memory->batches[] = $batch;

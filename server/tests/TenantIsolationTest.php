@@ -217,7 +217,7 @@ test('a customer import that stops before its save does not move the stored curs
         $batch = $importer->import($ledger, $connection, [], true, 1, time() - 1);
 
         // The worker dies here: the customers of page one were never saved.
-        expect($batch['continue'])->toBeTrue()
+        expect($batch->continue)->toBeTrue()
             ->and($ledger->connections['company-a'][CustomerImporter::CURSOR_COLUMN])->toBe(2)
             ->and(tenantRow('company-a')->customer_import_start)->toBeNull();
     } finally {

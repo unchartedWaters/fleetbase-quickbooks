@@ -14,6 +14,7 @@ use Fleetbase\Quickbooks\Services\CustomerImporter;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SettingsService;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
@@ -268,8 +269,8 @@ test('each page is requested at the stored cursor, and the cursor advances by th
         ['start' => 3, 'max' => 2, 'cursor' => 3],
         ['start' => 5, 'max' => 2, 'cursor' => 5],
     ])
-        ->and($batch['created'])->toBe(5)
-        ->and($batch['continue'])->toBeFalse()
+        ->and($batch->created)->toBe(5)
+        ->and($batch->continue)->toBeFalse()
         ->and($ledger->connections['company-uuid'])->not->toHaveKey(CustomerImporter::CURSOR_COLUMN)
         ->and($ledger->batches)->toHaveCount(1)
         ->and($ledger->batches[0])->toBe($batch);
@@ -283,7 +284,7 @@ test('a full last page is followed by one empty page request that resets the cur
     $batch = (new CustomerImporter($client, cicCreator()))->import($ledger, $ledger->connections['company-uuid'], [], true, 2);
 
     expect(array_column($client->queries, 'start'))->toBe([1, 3])
-        ->and($batch['created'])->toBe(2)
+        ->and($batch->created)->toBe(2)
         ->and($ledger->connections['company-uuid'])->not->toHaveKey(CustomerImporter::CURSOR_COLUMN);
 });
 
@@ -326,10 +327,10 @@ test('a passed deadline stops after the first full page with the next cursor sto
     $batch = (new CustomerImporter($client, cicCreator()))->import($ledger, $ledger->connections['company-uuid'], [], true, 2, time() - 5);
 
     expect(array_column($client->queries, 'start'))->toBe([1])
-        ->and($batch['continue'])->toBeTrue()
-        ->and($batch['created'])->toBe(2)
+        ->and($batch->continue)->toBeTrue()
+        ->and($batch->created)->toBe(2)
         ->and($ledger->connections['company-uuid'][CustomerImporter::CURSOR_COLUMN])->toBe(3)
-        ->and($ledger->batches[0]['continue'])->toBeTrue();
+        ->and($ledger->batches[0]->continue)->toBeTrue();
 });
 
 test('a short page finishes the import even when the deadline has passed', function () {
@@ -339,7 +340,7 @@ test('a short page finishes the import even when the deadline has passed', funct
 
     $batch = (new CustomerImporter($client, cicCreator()))->import($ledger, $ledger->connections['company-uuid'], [], true, 2, time() - 5);
 
-    expect($batch['continue'])->toBeFalse()
+    expect($batch->continue)->toBeFalse()
         ->and($ledger->connections['company-uuid'])->not->toHaveKey(CustomerImporter::CURSOR_COLUMN);
 });
 
@@ -351,8 +352,8 @@ test('a future deadline does not stop the walk', function () {
     $batch = (new CustomerImporter($client, cicCreator()))->import($ledger, $ledger->connections['company-uuid'], [], true, 2, time() + 3600);
 
     expect(array_column($client->queries, 'start'))->toBe([1, 3, 5, 7])
-        ->and($batch['continue'])->toBeFalse()
-        ->and($batch['created'])->toBe(6);
+        ->and($batch->continue)->toBeFalse()
+        ->and($batch->created)->toBe(6);
 });
 
 test('a failed row on a later page keeps the cursor at that row and stops even though the page was full', function () {
@@ -363,9 +364,9 @@ test('a failed row on a later page keeps the cursor at that row and stops even t
     $batch = (new CustomerImporter($client, cicCreator(['5'])))->import($ledger, $ledger->connections['company-uuid'], [], true, 3);
 
     expect(array_column($client->queries, 'start'))->toBe([1, 4])
-        ->and($batch['created'])->toBe(5)
-        ->and($batch['failed'])->toBe(1)
-        ->and($batch['continue'])->toBeFalse()
+        ->and($batch->created)->toBe(5)
+        ->and($batch->failed)->toBe(1)
+        ->and($batch->continue)->toBeFalse()
         ->and($ledger->connections['company-uuid'][CustomerImporter::CURSOR_COLUMN])->toBe(5)
         ->and($ledger->attempts)->toBe([[
             'company_uuid' => 'company-uuid',
@@ -383,8 +384,8 @@ test('only the first failed row of a page decides the cursor', function () {
 
     $batch = (new CustomerImporter($client, cicCreator(['5', '6'])))->import($ledger, $ledger->connections['company-uuid'], [], true, 3);
 
-    expect($batch['failed'])->toBe(2)
-        ->and($batch['created'])->toBe(4)
+    expect($batch->failed)->toBe(2)
+        ->and($batch->created)->toBe(4)
         ->and($ledger->connections['company-uuid'][CustomerImporter::CURSOR_COLUMN])->toBe(5);
 });
 
@@ -394,8 +395,8 @@ test('a failure on the very first row stops the walk and leaves an absent cursor
     $fresh                      = cicLedger();
     $freshBatch                 = (new CustomerImporter($freshClient, cicCreator(['1'])))->import($fresh, $fresh->connections['company-uuid'], [], true, 2);
 
-    expect($freshBatch['failed'])->toBe(1)
-        ->and($freshBatch['created'])->toBe(1)
+    expect($freshBatch->failed)->toBe(1)
+        ->and($freshBatch->created)->toBe(1)
         ->and(array_column($freshClient->queries, 'start'))->toBe([1])
         ->and($fresh->connections['company-uuid'])->not->toHaveKey(CustomerImporter::CURSOR_COLUMN);
 });
@@ -411,8 +412,8 @@ test('entries that are not arrays still count toward the page position and the p
     $batch = (new CustomerImporter($client, cicCreator(['4'])))->import($ledger, $ledger->connections['company-uuid'], [], true, 2);
 
     expect(array_column($client->queries, 'start'))->toBe([1, 3])
-        ->and($batch['created'])->toBe(1)
-        ->and($batch['failed'])->toBe(1)
+        ->and($batch->created)->toBe(1)
+        ->and($batch->failed)->toBe(1)
         ->and($ledger->connections['company-uuid'][CustomerImporter::CURSOR_COLUMN])->toBe(4);
 });
 
@@ -430,8 +431,8 @@ test('inactive, parent-referenced and job customers are skipped without an attem
 
     $batch = (new CustomerImporter($client, cicCreator()))->import($ledger, $ledger->connections['company-uuid'], [], true);
 
-    expect($batch['skipped'])->toBe(3)
-        ->and($batch['created'])->toBe(3)
+    expect($batch->skipped)->toBe(3)
+        ->and($batch->created)->toBe(3)
         ->and(array_keys($ledger->customers))->toBe(['contact-4', 'contact-5', 'contact-6'])
         ->and($ledger->attempts)->toBe([]);
 });
@@ -460,7 +461,7 @@ test('a created customer gets a link with the realm, quickbooks id, sync token a
         $links[] = [$link['company_uuid'], $link['realm_id'], $link['local_type'], $link['local_uuid'], $link['qbo_entity'], $link['qbo_id'], $link['sync_token']];
     }
 
-    expect($batch['created'])->toBe(2)
+    expect($batch->created)->toBe(2)
         ->and($seen)->toBe([['company-uuid', 'realm-1', '11'], ['company-uuid', 'realm-1', '12']])
         ->and($links)->toEqualCanonicalizing([
             ['owner-company', 'realm-1', 'customer', 'made-11', 'Customer', '11', '3'],
@@ -490,7 +491,7 @@ test('a remote id already linked is counted as linked without calling the creato
         return ['uuid' => 'never', 'company_uuid' => 'company-uuid'];
     }))->import($ledger, $ledger->connections['company-uuid'], [], true);
 
-    expect($batch['linked'])->toBe(1)
+    expect($batch->linked)->toBe(1)
         ->and($created)->toBe(0)
         ->and($ledger->links)->toHaveCount(1);
 });
@@ -520,8 +521,8 @@ test('a fleetbase match links without a sync token unless it is already linked t
 
     $batch = (new CustomerImporter($client, cicCreator()))->import($ledger, $ledger->connections['company-uuid'], $local, true);
 
-    expect($batch['linked'])->toBe(2)
-        ->and($batch['created'])->toBe(1)
+    expect($batch->linked)->toBe(2)
+        ->and($batch->created)->toBe(1)
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-same')['qbo_id'])->toBe('31')
         // No baseline: the first sync lets QuickBooks, as Primary, win the differences.
         ->and($ledger->link('company-uuid', 'realm-1', 'customer', 'local-same')['sync_token'])->toBe('')
@@ -549,8 +550,8 @@ test('local contacts matching a page email or name are remembered and linked, ot
 
     $batch = (new CustomerImporter($client, cicCreator()))->import($ledger, $ledger->connections['company-uuid'], [], true);
 
-    expect($batch['linked'])->toBe(2)
-        ->and($batch['created'])->toBe(1)
+    expect($batch->linked)->toBe(2)
+        ->and($batch->created)->toBe(1)
         ->and(array_keys($ledger->customers))->toEqualCanonicalizing(['db-email', 'db-name', 'contact-42'])
         ->and($ledger->customers['db-email'])->toBe([
             'uuid'         => 'db-email',
@@ -615,8 +616,8 @@ test('a page with no email, phone or name does not look up local contacts at all
 
         $batch = (new CustomerImporter($client, cicCreator()))->import($ledger, $ledger->connections['company-uuid'], [], true);
 
-        expect($batch['created'])->toBe(2)
-            ->and($batch['failed'])->toBe(0);
+        expect($batch->created)->toBe(2)
+            ->and($batch->failed)->toBe(0);
     } finally {
         cicEnsureContacts();
     }
@@ -641,10 +642,10 @@ test('a failed contact lookup fails the page rows, still counts skipped rows, an
         $batch = (new CustomerImporter($client, cicCreator()))->import($ledger, $ledger->connections['company-uuid'], [], true, 3);
 
         expect(array_column($client->queries, 'start'))->toBe([3])
-            ->and($batch['failed'])->toBe(1)
-            ->and($batch['skipped'])->toBe(1)
-            ->and($batch['created'])->toBe(0)
-            ->and($batch['status'])->toBe('finished')
+            ->and($batch->failed)->toBe(1)
+            ->and($batch->skipped)->toBe(1)
+            ->and($batch->created)->toBe(0)
+            ->and($batch->status)->toBe('finished')
             ->and($ledger->attempts)->toBe([[
                 'company_uuid' => 'company-uuid',
                 'local_type'   => 'customer',
@@ -666,10 +667,11 @@ test('a disabled import records one empty batch and does not touch the cursor', 
 
     expect($client->queries)->toBe([])
         ->and($ledger->batches)->toBe([$batch])
-        ->and($batch['company_uuid'])->toBe('company-uuid')
-        ->and($batch['trigger'])->toBe('import')
-        ->and($batch['status'])->toBe('finished')
-        ->and([$batch['created'], $batch['linked'], $batch['skipped'], $batch['failed'], $batch['continue']])->toBe([0, 0, 0, 0, false])
+        ->and($batch->companyUuid)->toBe('company-uuid')
+        ->and($batch->trigger)->toBe('import')
+        ->and($batch->status)->toBe('finished')
+        ->and([$batch->created, $batch->linked, $batch->skipped, $batch->failed])->toBe([0, 0, 0, 0])
+        ->and($batch->continue)->toBeFalse()
         ->and($ledger->connections['company-uuid'][CustomerImporter::CURSOR_COLUMN])->toBe(9);
 });
 
@@ -679,11 +681,17 @@ test('the import job passes the settings page size, a lock based deadline and an
         /** @var array<int, mixed> */
         public array $captured = [];
 
-        public function import(SyncLedger $ledger, array $connection, array $fleetbaseCustomers, bool $enabled, int $pageSize = self::MAX_PAGE_SIZE, ?int $deadline = null): array
-        {
+        public function import(
+            SyncLedger $ledger,
+            array $connection,
+            array $fleetbaseCustomers,
+            bool $enabled,
+            int $pageSize = self::MAX_PAGE_SIZE,
+            ?int $deadline = null,
+        ): Batch {
             $this->captured[] = [$fleetbaseCustomers, $enabled, $pageSize, $deadline - time()];
 
-            return ['continue' => false];
+            return new Batch('import');
         }
     };
     $env = cicWithJobEnvironment(function () use ($importer): void {
@@ -725,7 +733,7 @@ test('the import job drops the lock for page queries and saves under it', functi
     expect($env['error'])->toBeNull()
         ->and($client->heldDuringQuery)->toBe([false, false])
         ->and($directory->events)->toBe(['save:held'])
-        ->and($directory->memory->batches[0]['created'])->toBe(3)
+        ->and($directory->memory->batches[0]->created)->toBe(3)
         ->and($env['dispatcher']->jobs)->toBe([]);
 });
 
@@ -799,8 +807,8 @@ test('the import job records why it skipped: reconnect needed, customers off, or
         ->and(qbText($reauth->memory->attempts[0]['error']))->toBe('QuickBooks needs to be connected again before '
             . 'import can '
             . 'continue. Choose Connect to QuickBooks on QuickBooks Setup.')
-        ->and($reauth->memory->batches[0]['trigger'])->toBe('import')
-        ->and($reauth->memory->batches[0]['direction'])->toBe('inbound')
+        ->and($reauth->memory->batches[0]->trigger)->toBe('import')
+        ->and($reauth->memory->batches[0]->direction)->toBe('inbound')
         ->and($off->events)->toBe(['saveSkipped:held', 'save:held'])
         ->and(qbText($off->memory->attempts[0]['error']))->toBe('Customers are turned off in Data Resolution, so they '
             . 'are not imported.')
@@ -814,8 +822,14 @@ test('a deadline stop in the job queues one continuation after the lock is relea
     $client                = new CicQuickBooks();
     $client->customerPages = [1 => cicPage(1, 2)];
     $importer              = new class($client, cicCreator()) extends CustomerImporter {
-        public function import(SyncLedger $ledger, array $connection, array $fleetbaseCustomers, bool $enabled, int $pageSize = self::MAX_PAGE_SIZE, ?int $deadline = null): array
-        {
+        public function import(
+            SyncLedger $ledger,
+            array $connection,
+            array $fleetbaseCustomers,
+            bool $enabled,
+            int $pageSize = self::MAX_PAGE_SIZE,
+            ?int $deadline = null,
+        ): Batch {
             return parent::import($ledger, $connection, $fleetbaseCustomers, $enabled, 2, time() - 1);
         }
     };

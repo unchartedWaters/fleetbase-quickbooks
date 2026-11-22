@@ -39,7 +39,7 @@ test('a 401 on the payment batch records the invoices before it and asks to reco
         ->and($rows['inv-2']['attempts'])->toBe(0)
         ->and($rows['inv-3']['status'])->toBe('pending')
         ->and($rows['inv-3']['attempts'])->toBe(0)
-        ->and($batch['failed'])->toBe(1)
+        ->and($batch->failed)->toBe(1)
         ->and($ledger->connections['company-uuid']['needs_reauth'])->toBeTrue()
         ->and(end($ledger->attempts)['error'])->toBe(SyncEngine::TOKEN_REJECTED_MESSAGE);
 });

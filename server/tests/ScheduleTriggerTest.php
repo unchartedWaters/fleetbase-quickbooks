@@ -37,25 +37,25 @@ test('the sync interval sends any due rows and 20 due rows may start early', fun
 
     $one = scheduleTriggerRun($now - 400, 1);
     expect($one['due'])->toBeTrue()
-        ->and($one['batch']['status'])->toBe('finished')
-        ->and($one['batch']['trigger'])->toBe('scheduled')
+        ->and($one['batch']->status)->toBe('finished')
+        ->and($one['batch']->trigger)->toBe('scheduled')
         ->and($one['client']->calls)->toContain('createCustomer');
 
     $few = scheduleTriggerRun($now, 19);
     expect($few['due'])->toBeFalse()
-        ->and($few['batch']['status'])->toBe('skipped')
+        ->and($few['batch']->status)->toBe('skipped')
         ->and($few['client']->calls)->toBe([]);
 
     $full = scheduleTriggerRun($now, 20);
     expect($full['due'])->toBeTrue()
-        ->and($full['batch']['status'])->toBe('finished')
-        ->and($full['batch']['trigger'])->toBe('scheduled')
+        ->and($full['batch']->status)->toBe('finished')
+        ->and($full['batch']->trigger)->toBe('scheduled')
         ->and($full['client']->heldLock)->toBeFalse()
         ->and($full['client']->calls)->not->toBe([]);
 
     $empty = scheduleTriggerRun($now - 400, 0);
     expect($empty['due'])->toBeFalse()
-        ->and($empty['batch']['status'])->toBe('skipped')
+        ->and($empty['batch']->status)->toBe('skipped')
         ->and($empty['client']->calls)->toBe([]);
 });
 
@@ -63,13 +63,13 @@ test('sync now and reconcile still run before the interval elapses', function ()
     $now  = time();
     $sync = scheduleTriggerRun($now, 1, 'now');
     expect($sync['due'])->toBeFalse()
-        ->and($sync['batch']['status'])->toBe('finished')
+        ->and($sync['batch']->status)->toBe('finished')
         ->and($sync['client']->calls)->toContain('createCustomer')
         ->and($sync['client']->heldLock)->toBeFalse();
 
     $reconcile = scheduleTriggerRun($now, 0, 'manual');
-    expect($reconcile['batch']['status'])->toBe('finished')
-        ->and($reconcile['batch']['trigger'])->toBe('manual');
+    expect($reconcile['batch']->status)->toBe('finished')
+        ->and($reconcile['batch']->trigger)->toBe('manual');
 });
 
 /**

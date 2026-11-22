@@ -24,7 +24,7 @@ test('a line naming its product goes on the QuickBooks product of that name', fu
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and($client->itemCreates)->toBe(0)
         ->and($client->itemWrites)->toBe([])
         ->and(Products::linkOf($ledger, 'Distance')['state'])->toBe(ProductItems::ADOPTED)
@@ -87,7 +87,7 @@ test('a named line is sent while Storefront products cannot be read', function (
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and(Products::lineItems($client->invoices['inv-1']))->toBe(['qb-7']);
 });
 
@@ -140,7 +140,7 @@ test('a matched line moves to the product its line now names, though nothing els
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and(Products::lineItems($client->invoices['qb-1']))->toBe(['qb-8'])
         ->and($client->invoices['qb-1']['Line'][0]['Id'])->toBe('1');
 });
@@ -155,7 +155,7 @@ test('a matched line stays on its named product', function () {
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 

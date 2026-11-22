@@ -30,6 +30,7 @@ use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Services\TokenRefresher;
 use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
@@ -496,7 +497,7 @@ test('the sync engine pushes a customer, invoice, payment and wallet end to end'
     $errors = array_values(array_filter(array_column($ledger->attempts, 'error')));
 
     expect($errors)->toBe([])
-        ->and($batch['failed'] ?? 0)->toBe(0);
+        ->and($batch->failed)->toBe(0);
 
     $links = [];
     foreach ($ledger->links as $link) {
@@ -613,7 +614,7 @@ test('QuickBooks works out the tax of the lines Fleetbase sends and Fleetbase co
     $items  = $ledger->invoices['inv-tax']['items'];
 
     expect($errors)->toBe([])
-        ->and($first['failed'] ?? 0)->toBe(0)
+        ->and($first->failed)->toBe(0)
         ->and($remote['Line'][0]['SalesItemLineDetail']['TaxCodeRef']['value'] ?? null)->toBe('TAX')
         ->and($remote['TxnTaxDetail']['TxnTaxCodeRef']['value'] ?? null)->not->toBeNull()
         ->and($tax)->toBeGreaterThan(0)
@@ -633,7 +634,7 @@ test('QuickBooks works out the tax of the lines Fleetbase sends and Fleetbase co
     $remote = $client->getInvoice($connection, (string) $link['qbo_id']);
     $tax    = sandboxCents($remote['TxnTaxDetail']['TotalTax'] ?? 0);
 
-    expect($second['updated'] ?? 0)->toBe(1)
+    expect($second->updated)->toBe(1)
         ->and(sandboxCents($remote['TotalAmt'] ?? null))->toBe(3500 + $tax)
         ->and($ledger->invoices['inv-tax']['tax'])->toBe($tax)
         ->and($ledger->invoices['inv-tax']['total'])->toBe(3500 + $tax);
@@ -643,8 +644,8 @@ test('QuickBooks works out the tax of the lines Fleetbase sends and Fleetbase co
 
     $third = $engine->runScheduled($ledger, $company, $settings, time() + 10, true);
 
-    expect($third['aligned'] ?? 0)->toBe(1)
-        ->and($third['updated'] ?? 0)->toBe(0);
+    expect($third->aligned)->toBe(1)
+        ->and($third->updated)->toBe(0);
 })->group('sandbox');
 
 test('products are created, adopted, updated, made inactive and brought back, and invoice lines use them', function () {
@@ -822,7 +823,7 @@ test('with Fleetbase working out tax QuickBooks keeps the Fleetbase tax and an e
     ];
     $ledger->pending = [$pending('customer', 'cust-own'), $pending('invoice', 'inv-own')];
     $settings        = qbSettings(['interval_minutes' => 1, 'tax_source' => 'fleetbase']);
-    $again           = function (int $when) use ($engine, $ledger, $company, $settings, $pending): array {
+    $again           = function (int $when) use ($engine, $ledger, $company, $settings, $pending): Batch {
         $ledger->connections[$company]['last_batch_at'] = null;
         $ledger->pending                                = [$pending('invoice', 'inv-own')];
 
@@ -835,7 +836,7 @@ test('with Fleetbase working out tax QuickBooks keeps the Fleetbase tax and an e
     $remote = $client->getInvoice($connection, (string) ($link['qbo_id'] ?? ''));
 
     expect($errors)->toBe([])
-        ->and($first['failed'] ?? 0)->toBe(0)
+        ->and($first->failed)->toBe(0)
         ->and($link['tax_source'] ?? null)->toBe('fleetbase')
         ->and($remote['Line'][0]['SalesItemLineDetail']['TaxCodeRef']['value'] ?? null)->toBe('TAX')
         ->and(sandboxCents($remote['TxnTaxDetail']['TotalTax'] ?? null))->toBe(450)
@@ -845,7 +846,7 @@ test('with Fleetbase working out tax QuickBooks keeps the Fleetbase tax and an e
 
     $second = $again(time() + 5);
 
-    expect($second['aligned'] ?? 0)->toBe(1);
+    expect($second->aligned)->toBe(1);
 
     // The wait time stops being taxed in Fleetbase: QuickBooks gets that line untaxed and the new tax.
     $ledger->invoices['inv-own']['items'][1]['tax_rate']   = '0.00';
@@ -857,11 +858,11 @@ test('with Fleetbase working out tax QuickBooks keeps the Fleetbase tax and an e
     $remote = $client->getInvoice($connection, (string) $link['qbo_id']);
     $fourth = $again(time() + 15);
 
-    expect($third['updated'] ?? 0)->toBe(1)
+    expect($third->updated)->toBe(1)
         ->and($remote['Line'][1]['SalesItemLineDetail']['TaxCodeRef']['value'] ?? null)->toBe('NON')
         ->and(sandboxCents($remote['TxnTaxDetail']['TotalTax'] ?? null))->toBe(300)
         ->and(sandboxCents($remote['TotalAmt'] ?? null))->toBe(3300)
-        ->and($fourth['aligned'] ?? 0)->toBe(1);
+        ->and($fourth->aligned)->toBe(1);
 })->group('sandbox');
 
 test('outside the US the tax of each rate is shared over the lines, and kept when Fleetbase works it out', function () {
@@ -951,7 +952,7 @@ test('outside the US the tax of each rate is shared over the lines, and kept whe
         'company_uuid' => $company, 'local_type' => $type, 'local_uuid' => $uuid,
         'status'       => 'pending', 'attempts' => 0,
     ];
-    $run = function (array $settings, array $uuids, int $when) use ($engine, $ledger, $company, $pending): array {
+    $run = function (array $settings, array $uuids, int $when) use ($engine, $ledger, $company, $pending): Batch {
         $ledger->connections[$company]['last_batch_at'] = null;
         $ledger->pending                                = array_map(
             static fn (string $uuid): array => $pending('invoice', $uuid),
@@ -978,14 +979,14 @@ test('outside the US the tax of each rate is shared over the lines, and kept whe
     $aligned = $run($quickbooks, ['inv-qb'], time() + 10);
 
     expect(array_values(array_filter(array_column($ledger->attempts, 'error'))))->toBe([])
-        ->and($first['failed'] ?? 0)->toBe(0)
+        ->and($first->failed)->toBe(0)
         ->and($copied['Line'][0]['SalesItemLineDetail']['TaxCodeRef']['value'] ?? null)->toBe($chosen['code'])
         ->and(count($copied['TxnTaxDetail']['TaxLine'] ?? []))->toBe($chosen['rates'])
         ->and($tax)->toBeGreaterThan(0)
         ->and($ledger->invoices['inv-qb']['tax'])->toBe($tax)
         ->and(array_sum(array_column($items, 'tax_amount')))->toBe($tax)
         ->and($items[0]['tax_rate'])->toBe($chosen['rate'])
-        ->and($aligned['aligned'] ?? 0)->toBe(1);
+        ->and($aligned->aligned)->toBe(1);
 
     // Fleetbase works out the tax: QuickBooks keeps the amount Fleetbase sends for each rate.
     $fleetbase                   = qbSettings(['interval_minutes' => 1, 'tax_source' => 'fleetbase']);
@@ -996,11 +997,11 @@ test('outside the US the tax of each rate is shared over the lines, and kept whe
     $ledger->invoices['inv-bad'] = $invoice('inv-bad', number_format((float) $chosen['rate'] + 1, 2, '.', ''));
     $mismatch                    = $run($fleetbase, ['inv-bad'], time() + 25);
 
-    expect($sent['created'] ?? 0)->toBe(1)
+    expect($sent->created)->toBe(1)
         ->and(sandboxCents($kept['TxnTaxDetail']['TotalTax'] ?? null))->toBe($ledger->invoices['inv-fb']['tax'])
         ->and(sandboxCents($kept['TotalAmt'] ?? null))->toBe($ledger->invoices['inv-fb']['total'])
         ->and(count($kept['TxnTaxDetail']['TaxLine'] ?? []))->toBe($chosen['rates'])
-        ->and($again['aligned'] ?? 0)->toBe(1)
-        ->and($mismatch['failed'] ?? 0)->toBe(1)
+        ->and($again->aligned)->toBe(1)
+        ->and($mismatch->failed)->toBe(1)
         ->and($ledger->link($company, (string) $connection['realm_id'], 'invoice', 'inv-bad'))->toBeNull();
 })->group('sandbox');

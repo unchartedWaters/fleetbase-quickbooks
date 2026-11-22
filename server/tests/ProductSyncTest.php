@@ -22,7 +22,7 @@ test('a new product becomes a QuickBooks product posting and taxed like the serv
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
     $link  = Products::linkOf($ledger, 'Iced coffee');
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and($client->itemWrites)->toBe([['create' => [
             'Name'             => 'Iced coffee',
             'Type'             => 'NonInventory',
@@ -58,8 +58,8 @@ test('an unchanged product is not written again, and a new price is sent alone',
         time() + 120
     );
 
-    expect($first['aligned'])->toBe(1)
-        ->and($second['updated'])->toBe(1)
+    expect($first->aligned)->toBe(1)
+        ->and($second->updated)->toBe(1)
         ->and($client->itemWrites)->toBe([['update' => [
             'UnitPrice' => '15.00',
             'Id'        => 'qb-9',
@@ -80,8 +80,8 @@ test('products with one name share one QuickBooks product, written once', functi
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
     expect($client->itemCreates)->toBe(1)
-        ->and($batch['created'])->toBe(1)
-        ->and($batch['aligned'])->toBe(1)
+        ->and($batch->created)->toBe(1)
+        ->and($batch->aligned)->toBe(1)
         ->and($client->itemWrites[0]['create'])->not->toHaveKey('Sku')
         ->and($client->itemWrites[0]['create']['Name'])->toBe('Mug');
 });
@@ -104,7 +104,7 @@ test('a QuickBooks product that already has the name is used as it is and never 
     $ledger->connections[Products::COMPANY]['last_batch_at'] = null;
     $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time() + 120);
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and(qbText($ledger->attempts[0]['error']))->toContain('MUG')
         ->and(Products::linkOf($ledger, 'Mug')['qbo_id'])->toBe('qb-5')
         ->and(Products::linkOf($ledger, 'Mug')['state'])->toBe(ProductItems::ADOPTED)
@@ -195,10 +195,10 @@ test('the last product of a name gone makes its product inactive, and it comes b
         time() + 120
     );
 
-    expect($deleted['updated'])->toBe(1)
+    expect($deleted->updated)->toBe(1)
         ->and($off['Active'])->toBeFalse()
         ->and($off['Name'])->toBe('Mug (deleted)')
-        ->and($restored['updated'])->toBe(1)
+        ->and($restored->updated)->toBe(1)
         ->and($client->items['qb-9']['Active'])->toBeTrue()
         ->and($client->items['qb-9']['Name'])->toBe('Mug')
         ->and(Products::linkOf($ledger, 'Mug')['state'])->toBeNull();
@@ -224,8 +224,8 @@ test('a renamed product leaves its old QuickBooks product in use while another p
         time() + 120
     );
 
-    expect($kept['aligned'])->toBe(1)
-        ->and($gone['updated'])->toBe(1)
+    expect($kept->aligned)->toBe(1)
+        ->and($gone->updated)->toBe(1)
         ->and($client->items['qb-9']['Active'])->toBeFalse()
         ->and(Products::linkOf($ledger, 'Mug')['state'])->toBe(ProductItems::DEACTIVATED);
 });
@@ -240,7 +240,7 @@ test('a product made inactive in QuickBooks stays inactive', function () {
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->itemWrites)->toBe([])
         ->and(qbText($ledger->attempts[0]['error']))->toContain('Mug');
 });
@@ -274,7 +274,7 @@ test('product rows close with no Activity while invoices are not sent to QuickBo
     expect($client->itemWrites)->toBe([])
         ->and($client->calls)->toBe([])
         ->and($ledger->attempts)->toBe([])
-        ->and($batch['skipped'] + $batch['aligned'] + $batch['created'])->toBe(0)
+        ->and($batch->skipped + $batch->aligned + $batch->created)->toBe(0)
         ->and($ledger->pending[0]['status'])->toBe('done');
 })->with([
     'invoices off'             => [['invoice_enabled' => false]],
@@ -292,7 +292,7 @@ test('when Storefront cannot be read no QuickBooks product is made inactive', fu
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($client->itemWrites)->toBe([])
         ->and($ledger->pending[0]['status'])->toBe('pending')
         ->and($ledger->pending[0]['next_attempt_at'])->toBeGreaterThan(time());
@@ -307,7 +307,7 @@ test('a name QuickBooks refuses as taken says which product', function () {
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and(qbText($ledger->attempts[0]['error']))->toContain('Mug')
         ->and(qbText($ledger->attempts[0]['error']))->toContain('QuickBooks');
 });
@@ -320,7 +320,7 @@ test('a product named like the service item uses it', function () {
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->itemWrites)->toBe([]);
 });
 
@@ -358,7 +358,7 @@ test('products read only in part are not sent', function () {
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($client->itemWrites)->toBe([])
         ->and($ledger->pending[0]['status'])->toBe('pending');
 });
@@ -389,7 +389,7 @@ test('a product changed in QuickBooks since it was read is tried again', functio
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($engine->permanentFailures(Products::COMPANY))->toBe(0)
         ->and($client->itemWrites)->toHaveCount(1);
 });
@@ -416,7 +416,7 @@ test('a 401 while writing products stops the run and asks to reconnect', functio
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($ledger->connections[Products::COMPANY]['needs_reauth'])->toBeTrue()
         ->and($ledger->pending[0]['status'])->toBe('pending')
         ->and($ledger->pending[0]['attempts'])->toBe(0);
@@ -433,7 +433,7 @@ test('a rate limit while writing products fails the first row and stops the run'
 
     $batch = $engine->runScheduled($ledger, Products::COMPANY, qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($ledger->connections[Products::COMPANY]['needs_reauth'] ?? false)->toBeFalse()
         ->and(array_column($ledger->attempts, 'local_uuid'))->toBe(['p-1'])
         ->and($ledger->pending[1]['status'])->toBe('pending');

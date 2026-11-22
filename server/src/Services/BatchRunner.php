@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Jobs\SyncCompanyBatch;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Support\Facades\Cache;
@@ -74,12 +75,9 @@ class BatchRunner
     ) {
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    public function run(string $companyUuid, string $trigger = 'scheduled'): array
+    public function run(string $companyUuid, string $trigger = 'scheduled'): Batch
     {
-        $skipped = ['trigger' => $trigger, 'status' => 'skipped'];
+        $skipped = new Batch($trigger, 'skipped');
         if (ConnectionGate::hasRealm($this->directory->connection($companyUuid)) === false) {
             return $skipped;
         }
@@ -105,7 +103,7 @@ class BatchRunner
                 $this->directory->saveSkipped($companyUuid, $trigger, 'outbound', 'quickbooks.messages.sync-running');
             }
 
-            return $skipped + ['reason' => 'busy'];
+            return new Batch($trigger, 'busy');
         }
         if ($keepalive === true) {
             Cache::put($this->keepaliveKey($companyUuid), true, self::TOKEN_KEEPALIVE_RETRY_SECONDS);
@@ -116,12 +114,15 @@ class BatchRunner
 
     /**
      * @param array<string, mixed> $resolved
-     * @param array<string, mixed> $skipped
-     *
-     * @return array<string, mixed>
      */
-    private function performLockedRun(string $companyUuid, string $trigger, array $resolved, bool $catalogDue, array $skipped, Lock $lock): array
-    {
+    private function performLockedRun(
+        string $companyUuid,
+        string $trigger,
+        array $resolved,
+        bool $catalogDue,
+        Batch $skipped,
+        Lock $lock,
+    ): Batch {
         $state = [
             'ledger'           => null,
             'save'             => false,
@@ -145,13 +146,17 @@ class BatchRunner
 
     /**
      * @param array<string, mixed>                                                                               $resolved
-     * @param array<string, mixed>                                                                               $skipped
      * @param array{ledger: ?SyncLedger, save: bool, follow_up: bool, ran_catalog: bool, continue_catalog: bool} $state
-     *
-     * @return array<string, mixed>
      */
-    private function runLockedBody(string $companyUuid, string $trigger, array $resolved, bool $catalogDue, array $skipped, Lock $lock, array &$state): array
-    {
+    private function runLockedBody(
+        string $companyUuid,
+        string $trigger,
+        array $resolved,
+        bool $catalogDue,
+        Batch $skipped,
+        Lock $lock,
+        array &$state,
+    ): Batch {
         if ($trigger === 'manual') {
             $this->claimReconcilePage($companyUuid, (int) $resolved['batch_size']);
         }
@@ -166,22 +171,24 @@ class BatchRunner
             return $this->runCustomerCatalog($companyUuid, $resolved, $trigger, $state['continue_catalog'], $state['ledger'], $state['save'], $lock);
         }
 
-        return $this->runPendingBody($companyUuid, $trigger, $resolved, $skipped, $lock, $state);
+        return $this->runPendingBody($companyUuid, $trigger, $resolved, $lock, $state);
     }
 
     /**
      * @param array<string, mixed>                                                                               $resolved
-     * @param array<string, mixed>                                                                               $skipped
      * @param array{ledger: ?SyncLedger, save: bool, follow_up: bool, ran_catalog: bool, continue_catalog: bool} $state
-     *
-     * @return array<string, mixed>
      */
-    private function runPendingBody(string $companyUuid, string $trigger, array $resolved, array $skipped, Lock $lock, array &$state): array
-    {
+    private function runPendingBody(
+        string $companyUuid,
+        string $trigger,
+        array $resolved,
+        Lock $lock,
+        array &$state,
+    ): Batch {
         $now    = time();
         $loaded = $this->directory->loadPending($companyUuid, (int) $resolved['batch_size'], $now);
         if ($loaded === null) {
-            return $skipped;
+            return new Batch($trigger, 'skipped');
         }
 
         $now        = time();
@@ -191,7 +198,7 @@ class BatchRunner
             $this->ensureLock($lock, $companyUuid);
             $this->directory->saveSkipped($companyUuid, $trigger, 'outbound', $blocked);
 
-            return $skipped;
+            return new Batch($trigger, 'skipped');
         }
         $ledger                            = $loaded['ledger'];
         $ledger->connections[$companyUuid] = $connection;
@@ -208,7 +215,7 @@ class BatchRunner
             default        => $this->engine->runScheduled($ledger, $companyUuid, $resolved, $now, false, $ignoreInterval),
         };
         $nothingRecorded   = count($ledger->batches) === $batchesBefore;
-        $state['save']     = (($batch['status'] ?? null) === 'skipped' && $nothingRecorded === true) === false;
+        $state['save']     = ($batch->status === 'skipped' && $nothingRecorded === true) === false;
         // A run stopped by a token refresh that failed for now is not followed up at once:
         // each follow-up would try the refresh again for one row. The schedule retries it.
         // Sync now that filled its batch chains drains too, so a backlog does not wait for the schedule.
@@ -216,7 +223,7 @@ class BatchRunner
         $chains             = in_array($trigger, ['manual', 'drain'], true) === true
             || ($trigger === 'now' && $fullBatch === true);
         $state['follow_up'] = $chains === true
-            && ($batch['status'] ?? '') === 'finished'
+            && $batch->status === 'finished'
             && $this->engine->refreshFailed($companyUuid) === false;
 
         return $batch;
@@ -459,14 +466,19 @@ class BatchRunner
      * on its own if the worker dies.
      *
      * @param array<string, mixed> $settings
-     *
-     * @return array<string, mixed>
      */
-    private function runCustomerCatalog(string $companyUuid, array $settings, string $trigger, bool &$continueCatalog, ?SyncLedger &$ledger, bool &$save, Lock $lock): array
-    {
+    private function runCustomerCatalog(
+        string $companyUuid,
+        array $settings,
+        string $trigger,
+        bool &$continueCatalog,
+        ?SyncLedger &$ledger,
+        bool &$save,
+        Lock $lock,
+    ): Batch {
         $leaseKey = $this->catalogLeaseKey($companyUuid);
         if (Cache::add($leaseKey, true, max(60, (int) config('quickbooks.sync.claim_seconds', 900))) === false) {
-            return ['trigger' => 'catalog', 'status' => 'skipped', 'reason' => 'busy'];
+            return new Batch('catalog', 'busy');
         }
 
         try {
@@ -478,11 +490,16 @@ class BatchRunner
 
     /**
      * @param array<string, mixed> $settings
-     *
-     * @return array<string, mixed>
      */
-    private function runCustomerCatalogPage(string $companyUuid, array $settings, string $trigger, bool &$continueCatalog, ?SyncLedger &$ledger, bool &$save, Lock $lock): array
-    {
+    private function runCustomerCatalogPage(
+        string $companyUuid,
+        array $settings,
+        string $trigger,
+        bool &$continueCatalog,
+        ?SyncLedger &$ledger,
+        bool &$save,
+        Lock $lock,
+    ): Batch {
         $now   = time();
         $after = (string) Cache::get($this->catalogCursorKey($companyUuid), '');
         $limit = max(1, (int) ($settings['batch_size'] ?? 100));
@@ -493,20 +510,17 @@ class BatchRunner
             Cache::forget($this->catalogCursorKey($companyUuid));
             $this->directory->rememberCustomerCatalogStamp($companyUuid, $now);
 
-            return ['trigger' => 'catalog', 'status' => 'finished', 'created' => 0, 'updated' => 0, 'aligned' => 0, 'failed' => 0, 'skipped' => 0];
+            return new Batch('catalog');
         }
 
         // A customer whose pending row another run holds is that run's work. The cursor
         // still moves past it, since that run is sending it now.
-        $page = $ids;
-        $ids  = array_values(array_diff($ids, $this->directory->claimedLocalUuids($companyUuid, 'customer', $ids, $now)));
-        if ($ids === []) {
-            return ['trigger' => 'catalog', 'status' => 'skipped'];
-        }
-
-        $loaded = $this->directory->loadCustomerBlock($companyUuid, $ids);
+        $page    = $ids;
+        $claimed = $this->directory->claimedLocalUuids($companyUuid, 'customer', $ids, $now);
+        $ids     = array_values(array_diff($ids, $claimed));
+        $loaded  = $ids === [] ? null : $this->directory->loadCustomerBlock($companyUuid, $ids);
         if ($loaded === null) {
-            return ['trigger' => 'catalog', 'status' => 'skipped'];
+            return new Batch('catalog', 'skipped');
         }
 
         $connection = $this->engine->runHttp(fn () => $this->tokens->refreshIfDue($loaded['connection'], $now));
@@ -515,7 +529,7 @@ class BatchRunner
             $this->ensureLock($lock, $companyUuid);
             $this->directory->saveSkipped($companyUuid, 'catalog', 'outbound', $blocked);
 
-            return ['trigger' => 'catalog', 'status' => 'skipped'];
+            return new Batch('catalog', 'skipped');
         }
 
         $ledger                            = $loaded['ledger'];
@@ -582,24 +596,24 @@ class BatchRunner
      * data (for example a duplicate name) is recorded as a failed attempt and does not block
      * the commit: it would fail the same way on every retry and stall the rest of the catalog.
      * A skipped row is an intended no-op and does not block the commit either.
-     *
-     * @param array<string, mixed> $batch
      */
-    private function catalogPageSucceeded(array $batch, SyncLedger $ledger, string $companyUuid, int $expected, int $now): bool
-    {
+    private function catalogPageSucceeded(
+        Batch $batch,
+        SyncLedger $ledger,
+        string $companyUuid,
+        int $expected,
+        int $now,
+    ): bool {
         $connection = $ledger->connection($companyUuid);
         if ($connection === null || ConnectionTokens::blockedMessage($connection, $now) !== null) {
             return false;
         }
 
-        $completed = (int) ($batch['created'] ?? 0)
-            + (int) ($batch['updated'] ?? 0)
-            + (int) ($batch['aligned'] ?? 0);
-        $failed = (int) ($batch['failed'] ?? 0);
+        $completed = $batch->created + $batch->updated + $batch->aligned;
 
-        return ($batch['status'] ?? null) === 'finished'
-            && $failed === $this->engine->permanentFailures($companyUuid)
-            && $completed + $failed + (int) ($batch['skipped'] ?? 0) === $expected;
+        return $batch->status === 'finished'
+            && $batch->failed === $this->engine->permanentFailures($companyUuid)
+            && $completed + $batch->failed + $batch->skipped === $expected;
     }
 
     private function reconcileCursorKey(string $companyUuid): string

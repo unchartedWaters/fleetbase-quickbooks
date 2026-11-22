@@ -2,6 +2,7 @@
 
 use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\InvoiceMapper;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
@@ -32,8 +33,8 @@ test('a stored report customer conflict does not write the fleetbase customer', 
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($batch['updated'])->toBe(0)
-        ->and($batch['skipped'])->toBe(1)
+    expect($batch->updated)->toBe(0)
+        ->and($batch->skipped)->toBe(1)
         ->and($ledger->attempts[0]['error'])->toBeNull()
         ->and($ledger->customers['cust-1']['name'])->toBe('Ada')
         ->and($client->customers['qbo-customer']['DisplayName'])->toBe('Other Ada')
@@ -61,8 +62,8 @@ test('a stored report invoice conflict does not write the fleetbase invoice', fu
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($batch['updated'])->toBe(0)
-        ->and($batch['skipped'])->toBe(1)
+    expect($batch->updated)->toBe(0)
+        ->and($batch->skipped)->toBe(1)
         ->and($ledger->attempts[0]['error'])->toBeNull()
         ->and($ledger->invoices['inv-1']['total'])->toBe(1000)
         ->and($client->invoices['qb-1']['TotalAmt'])->toBe(25)
@@ -88,8 +89,8 @@ test('a stored report wallet conflict does not write the fleetbase wallet', func
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($batch['updated'])->toBe(0)
-        ->and($batch['skipped'])->toBe(1)
+    expect($batch->updated)->toBe(0)
+        ->and($batch->skipped)->toBe(1)
         ->and($ledger->attempts[0]['error'])->toBeNull()
         ->and($ledger->wallets['wal-1']['name'])->toBe('Operating')
         ->and($client->accounts['acct-1']['Name'])->toBe('QB Operating')
@@ -110,8 +111,8 @@ test('an unchanged invoice with the quickbooks primary ends aligned and is not r
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($batch['aligned'])->toBe(1)
-        ->and($batch['skipped'])->toBe(0)
+    expect($batch->aligned)->toBe(1)
+        ->and($batch->skipped)->toBe(0)
         ->and($ledger->attempts[0]['error'])->toBeNull()
         ->and($ledger->pending[0]['status'])->toBe('done')
         ->and($ledger->invoices['inv-1'])->toBe($before)
@@ -136,8 +137,8 @@ test('a fleetbase invoice number change is sent when the other invoice fields ma
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['updated'])->toBe(1)
-        ->and($batch['aligned'])->toBe(0)
+    expect($batch->updated)->toBe(1)
+        ->and($batch->aligned)->toBe(0)
         ->and($client->calls)->toContain('updateInvoice')
         ->and($client->invoices['qb-1']['DocNumber'])->toBe('INV-2')
         ->and($ledger->invoices['inv-1']['number'])->toBe('INV-2');
@@ -165,7 +166,7 @@ test('a fleetbase invoice number is sent when quickbooks wins other invoice conf
         'invoice_conflict' => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($client->calls)->toContain('updateInvoice')
         ->and($client->invoices['qb-1']['DocNumber'])->toBe('INV-2')
         ->and($ledger->invoices['inv-1']['number'])->toBe('INV-2');
@@ -186,15 +187,15 @@ test('a line edit that keeps the invoice total is sent once', function () {
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
-        ->and($first['aligned'])->toBe(0)
+    expect($first->updated)->toBe(1)
+        ->and($first->aligned)->toBe(0)
         ->and($client->invoices['qb-1']['Line'][0]['Description'])->toBe('Evening delivery')
         ->and($client->invoices['qb-1']['TotalAmt'])->toBe('10.00');
 
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
-        ->and($second['updated'])->toBe(0)
+    expect($second->aligned)->toBe(1)
+        ->and($second->updated)->toBe(0)
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
 });
 
@@ -204,13 +205,13 @@ test('a new invoice note is sent once', function () {
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($client->invoices['qb-1']['PrivateNote'])->toBe('Leave at dock')
         ->and($ledger->invoices['inv-1']['notes'])->toBe('Leave at dock');
 
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
+    expect($second->aligned)->toBe(1)
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
 });
 
@@ -220,14 +221,14 @@ test('a cleared invoice note is pushed once and is not restored', function () {
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($ledger->invoices['inv-1']['notes'])->toBe('')
         ->and($client->invoices['qb-1']['PrivateNote'])->toBe('');
 
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
-        ->and($second['updated'])->toBe(0)
+    expect($second->aligned)->toBe(1)
+        ->and($second->updated)->toBe(0)
         ->and($ledger->invoices['inv-1']['notes'])->toBe('')
         ->and($client->invoices['qb-1']['PrivateNote'])->toBe('')
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
@@ -239,14 +240,14 @@ test('a cleared invoice due date is pushed once and then stays aligned', functio
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($ledger->invoices['inv-1']['due_date'])->toBe('')
         ->and($client->invoices['qb-1']['DueDate'])->toBe('');
 
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
-        ->and($second['updated'])->toBe(0)
+    expect($second->aligned)->toBe(1)
+        ->and($second->updated)->toBe(0)
         ->and($ledger->invoices['inv-1']['due_date'])->toBe('')
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
 });
@@ -263,8 +264,8 @@ test('an empty quickbooks note or due date does not wipe the fleetbase invoice',
         'invoice_conflict'   => 'quickbooks',
     ]), time());
 
-    expect($batch['aligned'])->toBe(1)
-        ->and($batch['updated'])->toBe(0)
+    expect($batch->aligned)->toBe(1)
+        ->and($batch->updated)->toBe(0)
         ->and($ledger->invoices['inv-1']['notes'])->toBe('Keep')
         ->and($ledger->invoices['inv-1']['due_date'])->toBe('2026-10-01')
         ->and($client->calls)->not->toContain('updateInvoice');
@@ -278,7 +279,7 @@ test('quickbooks primary copies a note the fleetbase invoice does not have', fun
         'invoice_conflict' => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($ledger->invoices['inv-1']['notes'])->toBe('Dock 4')
         ->and($client->calls)->not->toContain('updateInvoice');
 });
@@ -349,13 +350,13 @@ test('changing the invoice customer updates the quickbooks customer once', funct
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($client->invoices['qb-1']['CustomerRef']['value'])->toBe('qbo-bea')
         ->and($ledger->invoices['inv-1']['customer_uuid'])->toBe('cust-2');
 
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
+    expect($second->aligned)->toBe(1)
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
 });
 
@@ -368,13 +369,13 @@ test('a different quickbooks currency is replaced with the fleetbase currency on
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
-        ->and($first['failed'])->toBe(0)
+    expect($first->updated)->toBe(1)
+        ->and($first->failed)->toBe(0)
         ->and($client->invoices['qb-1']['CurrencyRef']['value'])->toBe('USD');
 
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
+    expect($second->aligned)->toBe(1)
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
 });
 
@@ -400,7 +401,7 @@ test('a quickbooks balance of zero with no payment does not set amount paid', fu
         'payment_reference' => 'quickbooks',
     ]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and(array_key_exists('amount_paid', $ledger->invoices['inv-1']))->toBeFalse()
         ->and($ledger->invoices['inv-1']['status'])->toBe('sent')
         ->and($client->calls)->not->toContain('createPayment');
@@ -428,7 +429,7 @@ test('a partial fleetbase invoice stays partial when quickbooks balance is zero 
         'payment_reference' => 'quickbooks',
     ]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(400)
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
         ->and($client->calls)->not->toContain('createPayment');
@@ -468,7 +469,7 @@ test('a larger quickbooks total changes a paid invoice that no longer covers it'
         'invoice_conflict' => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($ledger->invoices['inv-1']['total'])->toBe(1500)
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(1000);
@@ -535,7 +536,7 @@ test('a partial payment sends the amount paid and matches on the next sync', fun
     $ledger->pending[0]['status']                         = 'pending';
     $second                                               = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
+    expect($second->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updatePayment');
 });
 
@@ -551,8 +552,8 @@ test('a paid invoice deleted in quickbooks is not recreated and its payment is n
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(0)
-        ->and($batch['aligned'])->toBe(1)
+    expect($batch->created)->toBe(0)
+        ->and($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($client->calls)->not->toContain('createPayment')
         ->and($ledger->invoices['inv-1']['status'])->toBe('paid')
@@ -619,8 +620,8 @@ test('inbound sync copies notes and billing address when the name is unchanged',
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($batch['updated'])->toBe(1)
-        ->and($batch['aligned'])->toBe(0)
+    expect($batch->updated)->toBe(1)
+        ->and($batch->aligned)->toBe(0)
         ->and($ledger->customers['cust-1']['name'])->toBe('Ada')
         ->and($ledger->customers['cust-1']['notes'])->toBe('Dock 4')
         ->and($ledger->customers['cust-1']['address'])->toBe([
@@ -637,8 +638,8 @@ test('inbound sync copies notes and billing address when the name is unchanged',
     $ledger->pending[0]['status']                         = 'pending';
     $again                                                = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
 
-    expect($again['aligned'])->toBe(1)
-        ->and($again['updated'])->toBe(0)
+    expect($again->aligned)->toBe(1)
+        ->and($again->updated)->toBe(0)
         ->and($ledger->customers['cust-1']['notes'])->toBe('Dock 4');
 });
 
@@ -666,7 +667,7 @@ test('a fleetbase primary clear is pushed and not restored from quickbooks', fun
 
     $both = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($both['updated'])->toBe(1)
+    expect($both->updated)->toBe(1)
         ->and($ledger->customers['cust-1']['notes'])->toBe('')
         ->and($ledger->customers['cust-1'])->not->toHaveKey('address')
         ->and($client->calls)->toContain('updateCustomer')
@@ -697,8 +698,8 @@ test('a fleetbase primary clear is pushed and not restored from quickbooks', fun
         'customer_direction' => 'outbound',
     ]), time());
 
-    expect($outbound['updated'])->toBe(1)
-        ->and($outbound['aligned'])->toBe(0)
+    expect($outbound->updated)->toBe(1)
+        ->and($outbound->aligned)->toBe(0)
         ->and($outboundLedger->customers['cust-1']['notes'])->toBe('')
         ->and($outboundLedger->customers['cust-1'])->not->toHaveKey('address')
         ->and($client->calls)->toContain('updateCustomer')
@@ -732,7 +733,7 @@ test('quickbooks primary still copies a note and address the fleetbase customer 
         'customer_conflict' => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($ledger->customers['cust-1']['notes'])->toBe('Dock 4')
         ->and($ledger->customers['cust-1']['address']['line1'])->toBe('1 Analytical Engine')
         ->and($ledger->customers['cust-1']['address']['line2'])->toBe('Suite 2')
@@ -769,8 +770,8 @@ test('an empty quickbooks note or address leaves the fleetbase value in place', 
         'customer_reference' => 'quickbooks',
     ]), time());
 
-    expect($batch['aligned'])->toBe(1)
-        ->and($batch['updated'])->toBe(0)
+    expect($batch->aligned)->toBe(1)
+        ->and($batch->updated)->toBe(0)
         ->and($ledger->customers['cust-1']['notes'])->toBe('Keep')
         ->and($ledger->customers['cust-1']['address']['line1'])->toBe('1 Analytical Engine')
         ->and($ledger->customers['cust-1']['address']['line2'])->toBe('Suite 2')
@@ -795,8 +796,8 @@ test('quickbooks primary counts an email change as updated when the name stays t
         'customer_reference' => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
-        ->and($batch['aligned'])->toBe(0)
+    expect($batch->updated)->toBe(1)
+        ->and($batch->aligned)->toBe(0)
         ->and($ledger->customers['cust-1']['name'])->toBe('Ada')
         ->and($ledger->customers['cust-1']['email'])->toBe('new@example.test')
         ->and($client->calls)->not->toContain('updateCustomer');
@@ -1052,7 +1053,7 @@ test('rows that fail without a quickbooks error record why and stop retrying', f
     $batch  = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $errors = array_column($ledger->attempts, 'error', 'local_uuid');
 
-    expect($batch['failed'])->toBe(4)
+    expect($batch->failed)->toBe(4)
         ->and(qbText($errors['ghost-c']))->toBe('Customer no longer exists in Fleetbase.')
         ->and(qbText($errors['ghost-w']))->toBe('Wallet no longer exists in Fleetbase.')
         ->and(qbText($errors['ghost-i']))->toBe('Invoice no longer exists in Fleetbase.')
@@ -1072,7 +1073,7 @@ test('an invoice without a service item creates one and fails clearly when quick
 
     $failed = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($failed['failed'])->toBe(1)
+    expect($failed->failed)->toBe(1)
         ->and(qbText($ledger->attempts[0]['error']))->toContain('Income account')
         ->and($client->calls)->toContain('ensureServiceItem')
         ->and($client->calls)->not->toContain('createInvoice');
@@ -1117,7 +1118,7 @@ test('the currency check is skipped when quickbooks does not report a home curre
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and($client->calls)->toContain('homeCurrency')
         ->and($client->calls)->toContain('createInvoice');
 });
@@ -1156,7 +1157,7 @@ test('a second sync does not create a second payment when the remote invoice bal
     $second                                               = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
 
     expect(count(array_filter($client->calls, fn ($call) => $call === 'createPayment')))->toBe(1)
-        ->and($second['failed'])->toBe(0)
+        ->and($second->failed)->toBe(0)
         ->and($ledger->link('company-uuid', 'realm-1', 'payment', 'pay-1')['qbo_id'])->toBe('pay-1');
 });
 
@@ -1184,8 +1185,8 @@ test('a differing quickbooks invoice still copies its payment before the row is 
         'payment_reference' => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->updated)->toBe(1)
+        ->and($batch->failed)->toBe(0)
         ->and($ledger->pending[0]['status'])->toBe('done')
         ->and($ledger->invoices['inv-1']['total'])->toBe(1500)
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(500)
@@ -1220,7 +1221,7 @@ test('a shared quickbooks payment copies only the amount applied to this invoice
         'payment_reference' => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(500)
         ->and($ledger->invoices['inv-1']['status'])->toBe('partial')
         ->and($client->payments['pay-shared']['Line'])->toHaveCount(2)
@@ -1254,7 +1255,7 @@ test('a shared quickbooks payment is not rewritten from fleetbase', function () 
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['skipped'])->toBe(1)
+    expect($batch->skipped)->toBe(1)
         ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies credits or other '
             . 'invoices, so Fleetbase left it unchanged. Change it in QuickBooks.')
         ->and($client->calls)->not->toContain('updatePayment')
@@ -1291,7 +1292,7 @@ test('a quickbooks payment that also applies a credit memo is not rewritten from
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['skipped'])->toBe(1)
+    expect($batch->skipped)->toBe(1)
         ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies credits or other '
             . 'invoices, so Fleetbase left it unchanged. Change it in QuickBooks.')
         ->and($client->calls)->not->toContain('updatePayment')
@@ -1328,7 +1329,7 @@ test('a quickbooks payment with an unapplied amount is not rewritten from fleetb
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['skipped'])->toBe(1)
+    expect($batch->skipped)->toBe(1)
         ->and(qbText($ledger->attempts[0]['error']))->toBe('This QuickBooks payment also applies credits or other '
             . 'invoices, so Fleetbase left it unchanged. Change it in QuickBooks.')
         ->and($client->calls)->not->toContain('updatePayment')
@@ -1345,7 +1346,7 @@ test('an invoice number longer than quickbooks allows fails the row before anyth
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($client->calls)->not->toContain('createInvoice')
         ->and(qbText($ledger->attempts[0]['error']))->toBe('Invoice number ACME-LOGISTICS-2026-00042 has more than '
             . 'the 21 characters QuickBooks accepts, so it was not sent. Use a shorter invoice number or prefix.');
@@ -1356,7 +1357,7 @@ test('a fleetbase invoice number longer than quickbooks allows is not sent on an
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and($client->invoices['qb-1']['DocNumber'])->toBe('INV-1')
         ->and(qbText($ledger->attempts[0]['error']))->toContain('ACME-LOGISTICS-2026-00042');
@@ -1389,8 +1390,8 @@ test('a part-paid invoice with no recorded payment date leaves the quickbooks pa
     $first  = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($first['aligned'])->toBe(1)
-        ->and($second['aligned'])->toBe(1)
+    expect($first->aligned)->toBe(1)
+        ->and($second->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updatePayment')
         ->and($client->payments['pay-1']['TxnDate'])->toBe('2026-09-12');
 });
@@ -1430,8 +1431,8 @@ test('a quickbooks payment is copied onto an invoice that is not paid yet', func
         'payment_reference' => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(2)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->updated)->toBe(2)
+        ->and($batch->failed)->toBe(0)
         ->and($ledger->invoices['inv-partial']['amount_paid'])->toBe(400)
         ->and($ledger->invoices['inv-partial']['status'])->toBe('partial')
         ->and($ledger->invoices['inv-partial']['payment_from_quickbooks'])->toBeTrue()
@@ -1453,7 +1454,7 @@ test('a customer lookup failure does not create a customer', function () {
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($client->calls)->toContain('findCustomerByEmail')
         ->and($client->calls)->not->toContain('createCustomer')
         ->and(qbText($ledger->attempts[0]['error']))->toBe('QuickBooks request failed with status 500')
@@ -1469,7 +1470,7 @@ test('a new wallet in a foreign currency is not created', function () {
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and(qbText($ledger->attempts[0]['error']))->toBe('Wallet currency EUR does not match the QuickBooks home '
             . 'currency '
             . 'USD.')
@@ -1488,8 +1489,8 @@ test('an unexpected error on one row is recorded and the rest of the batch still
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
-        ->and($batch['created'])->toBe(1)
+    expect($batch->failed)->toBe(1)
+        ->and($batch->created)->toBe(1)
         ->and(qbText($ledger->attempts[0]['error']))->toBe('Sync failed.')
         ->and($ledger->pending[0]['status'])->toBe('pending')
         ->and($ledger->pending[0]['attempts'])->toBe(1);
@@ -1533,8 +1534,8 @@ test('sync now and reconcile during a rate limit record why they were skipped', 
     $forced     = $engine->runScheduled($ledger, 'company-uuid', qbSettings(), $now, true);
     $reconciled = $engine->reconcile($ledger, 'company-uuid', qbSettings(), $now);
 
-    expect($forced['status'])->toBe('skipped')
-        ->and($reconciled['status'])->toBe('skipped')
+    expect($forced->status)->toBe('skipped')
+        ->and($reconciled->status)->toBe('skipped')
         ->and($ledger->batches)->toHaveCount(2)
         ->and(array_map('qbText', array_column($ledger->attempts, 'error')))->toBe([
             'QuickBooks asked Fleetbase to wait (rate limit). Try again in a few minutes.',
@@ -1551,8 +1552,8 @@ test('sync now without a connection points to the connection page', function () 
     $forced     = $engine->runScheduled($ledger, 'company-uuid', qbSettings(), time(), true);
     $reconciled = $engine->reconcile($ledger, 'company-uuid', qbSettings(), time());
 
-    expect($forced['status'])->toBe('skipped')
-        ->and($reconciled['status'])->toBe('skipped')
+    expect($forced->status)->toBe('skipped')
+        ->and($reconciled->status)->toBe('skipped')
         ->and($ledger->batches)->toBe([])
         ->and($ledger->attempts)->toBe([]);
 });
@@ -1567,7 +1568,7 @@ test('reconcile processes at most batch_size and leaves the rest pending', funct
     $batch   = $engine->reconcile($ledger, 'company-uuid', qbSettings(['batch_size' => 1]), time());
     $pending = array_values(array_filter($ledger->pending, fn (array $row): bool => ($row['status'] ?? '') === 'pending' && ($row['local_type'] ?? '') === 'invoice'));
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and($pending)->toHaveCount(1)
         ->and($pending[0]['local_uuid'])->toBe('inv-2')
         ->and($client->calls)->not->toContain('listInvoices')
@@ -1585,7 +1586,7 @@ test('a disabled customer is not synced', function () {
         'customer_enabled' => false,
     ]), time());
 
-    expect($batch['skipped'])->toBe(1)
+    expect($batch->skipped)->toBe(1)
         ->and($client->calls)->not->toContain('createCustomer');
 });
 
@@ -1601,7 +1602,7 @@ test('customer sync off fails an invoice that still needs that customer', functi
         'customer_direction' => 'off',
     ]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and(qbText($ledger->attempts[0]['error']))->toBe('Customer sync is off, so this invoice cannot be synced.')
         ->and($client->calls)->not->toContain('createCustomer')
         ->and($client->calls)->not->toContain('createInvoice');
@@ -1639,7 +1640,7 @@ test('inbound does not create a quickbooks customer', function () {
         'customer_direction' => 'inbound',
     ]), time());
 
-    expect($batch['skipped'])->toBe(1)
+    expect($batch->skipped)->toBe(1)
         ->and($client->calls)->not->toContain('createCustomer');
 });
 
@@ -1689,7 +1690,7 @@ test('a lost wallet link reattaches the one account with the same name and curre
 
     expect($ledger->link('company-uuid', 'realm-1', 'wallet', 'wal-1')['qbo_id'])->toBe('acct-9')
         ->and($client->calls)->not->toContain('createAccount')
-        ->and($batch['aligned'])->toBe(1);
+        ->and($batch->aligned)->toBe(1);
 });
 
 test('a cleared wallet description is pushed once and an empty quickbooks description is left in place', function () {
@@ -1717,8 +1718,8 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
-        ->and($first['aligned'])->toBe(0)
+    expect($first->updated)->toBe(1)
+        ->and($first->aligned)->toBe(0)
         ->and($ledger->wallets['wal-1']['description'])->toBe('')
         ->and($client->accounts['acct-9']['Description'])->toBe('')
         ->and(array_count_values($client->calls)['updateAccount'] ?? 0)->toBe(1);
@@ -1727,8 +1728,8 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
     $ledger->pending[0]['status']                         = 'pending';
     $second                                               = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
-        ->and($second['updated'])->toBe(0)
+    expect($second->aligned)->toBe(1)
+        ->and($second->updated)->toBe(0)
         ->and($ledger->wallets['wal-1']['description'])->toBe('')
         ->and($client->accounts['acct-9']['Description'])->toBe('')
         ->and(array_count_values($client->calls)['updateAccount'] ?? 0)->toBe(1);
@@ -1753,7 +1754,7 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
 
     $referenceFirst = $referenceEngine->runScheduled($referenceLedger, 'company-uuid', $referenceSettings, time());
 
-    expect($referenceFirst['updated'])->toBe(1)
+    expect($referenceFirst->updated)->toBe(1)
         ->and($referenceLedger->wallets['wal-1']['description'])->toBe('')
         ->and($referenceClient->accounts['acct-9']['Description'])->toBe('')
         ->and(array_count_values($referenceClient->calls)['updateAccount'] ?? 0)->toBe(1);
@@ -1762,8 +1763,8 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
     $referenceLedger->pending[0]['status']                         = 'pending';
     $referenceSecond                                               = $referenceEngine->runScheduled($referenceLedger, 'company-uuid', $referenceSettings, time() + 10);
 
-    expect($referenceSecond['aligned'])->toBe(1)
-        ->and($referenceSecond['updated'])->toBe(0)
+    expect($referenceSecond->aligned)->toBe(1)
+        ->and($referenceSecond->updated)->toBe(0)
         ->and(array_count_values($referenceClient->calls)['updateAccount'] ?? 0)->toBe(1);
 
     [$sourceEngine, $sourceClient]    = qbEngine();
@@ -1786,8 +1787,8 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
         'wallet_conflict'  => 'quickbooks',
     ]), time());
 
-    expect($fromQuickBooks['aligned'])->toBe(0)
-        ->and($fromQuickBooks['updated'])->toBe(1)
+    expect($fromQuickBooks->aligned)->toBe(0)
+        ->and($fromQuickBooks->updated)->toBe(1)
         ->and($sourceLedger->wallets['wal-1']['description'])->toBe('Keep')
         ->and($sourceClient->accounts['acct-9']['Description'])->toBe('Keep')
         ->and(array_count_values($sourceClient->calls)['updateAccount'] ?? 0)->toBe(1);
@@ -1812,8 +1813,8 @@ test('a cleared wallet description is pushed once and an empty quickbooks descri
         'wallet_reference' => 'quickbooks',
     ]), time());
 
-    expect($inbound['aligned'])->toBe(1)
-        ->and($inbound['updated'])->toBe(0)
+    expect($inbound->aligned)->toBe(1)
+        ->and($inbound->updated)->toBe(0)
         ->and($inboundLedger->wallets['wal-1']['description'])->toBe('Keep')
         ->and($inboundClient->calls)->not->toContain('updateAccount');
 });
@@ -1940,7 +1941,7 @@ test('a failed payment flush is recorded on the invoice and a 401 leaves the res
     $rows  = array_column($ledger->pending, null, 'local_uuid');
 
     expect($client->paymentAttempts)->toBe(1)
-        ->and($batch['aligned'])->toBe(1)
+        ->and($batch->aligned)->toBe(1)
         ->and($rows['inv-before']['status'])->toBe('done')
         ->and($rows['inv-paid']['status'])->toBe('pending')
         ->and($rows['inv-paid']['attempts'])->toBe(0)
@@ -2052,9 +2053,9 @@ test('a failed or short invoice or wallet read is not treated as missing', funct
     $failed = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $rows   = array_column($ledger->pending, null, 'local_uuid');
 
-    expect($failed['voided'])->toBe(0)
-        ->and($failed['aligned'])->toBe(0)
-        ->and($failed['failed'])->toBe(2)
+    expect($failed->voided)->toBe(0)
+        ->and($failed->aligned)->toBe(0)
+        ->and($failed->failed)->toBe(2)
         ->and($client->calls)->not->toContain('voidInvoice')
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($client->calls)->not->toContain('getInvoice:qb-1')
@@ -2081,9 +2082,9 @@ test('a failed or short invoice or wallet read is not treated as missing', funct
     $miss     = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $missRows = array_column($ledger->pending, null, 'local_uuid');
 
-    expect($miss['voided'])->toBe(1)
-        ->and($miss['aligned'])->toBe(2)
-        ->and($miss['created'])->toBe(0)
+    expect($miss->voided)->toBe(1)
+        ->and($miss->aligned)->toBe(2)
+        ->and($miss->created)->toBe(0)
         ->and($client->calls)->toContain('voidInvoice')
         ->and($missRows['inv-gone']['status'])->toBe('done')
         ->and($missRows['inv-live']['status'])->toBe('done')
@@ -2209,7 +2210,7 @@ test('an invoice id query keeps paging until a short page', function () {
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1, 'batch_size' => 120]), time());
 
-    expect($batch['voided'])->toBe(101)
+    expect($batch->voided)->toBe(101)
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($client->calls)->not->toContain('getInvoice:qb-101')
         ->and($client->invoices['qb-101']['voided'] ?? false)->toBeTrue()
@@ -2337,7 +2338,7 @@ test('failed linked payment reads fail their invoices without creating replaceme
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $rows  = array_column($ledger->pending, null, 'local_uuid');
 
-    expect($batch['failed'])->toBe(2)
+    expect($batch->failed)->toBe(2)
         ->and($rows['inv-one']['status'])->toBe('pending')
         ->and($rows['inv-two']['status'])->toBe('pending')
         ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-one')['qbo_id'])->toBe('inv-1')
@@ -2654,7 +2655,7 @@ test('a zero quickbooks payment marks a paid invoice unpaid', function () {
         'payment_conflict' => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(0)
         ->and($ledger->invoices['inv-1']['status'])->toBe('sent')
         ->and($client->calls)->not->toContain('updatePayment')
@@ -2855,8 +2856,8 @@ test('every payment on one invoice is summed and stored under its quickbooks id'
         'payment_reference' => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->updated)->toBe(1)
+        ->and($batch->failed)->toBe(0)
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(1000)
         ->and($ledger->invoices['inv-1']['status'])->toBe('paid')
         ->and($ledger->invoices['inv-1']['paid_at'])->toBe('2026-09-12')
@@ -3012,7 +3013,7 @@ test('outbound customer compare ignores email case and phone punctuation', funct
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateCustomer');
 
     $ledger->customers['cust-1']['phone']                 = '5550109999';
@@ -3020,7 +3021,7 @@ test('outbound customer compare ignores email case and phone punctuation', funct
     $ledger->pending[0]['status']                         = 'pending';
     $second                                               = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time() + 10);
 
-    expect($second['updated'])->toBe(1)
+    expect($second->updated)->toBe(1)
         ->and($client->calls)->toContain('updateCustomer');
 });
 
@@ -3073,8 +3074,8 @@ test('a linked customer or wallet deleted in quickbooks is left unchanged', func
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
-        ->and($batch['created'])->toBe(0)
+    expect($batch->aligned)->toBe(1)
+        ->and($batch->created)->toBe(0)
         ->and($client->calls)->not->toContain('createCustomer')
         ->and($client->calls)->not->toContain('findCustomerByEmail')
         ->and($ledger->customers['cust-1']['name'])->toBe('Local Ada')
@@ -3088,7 +3089,7 @@ test('a linked customer or wallet deleted in quickbooks is left unchanged', func
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('createAccount')
         ->and($ledger->wallets['wal-1']['name'])->toBe('Operating')
         ->and($ledger->link('company-uuid', 'realm-1', 'wallet', 'wal-1')['qbo_id'])->toBe('acct-gone');
@@ -3109,8 +3110,8 @@ test('a linked customer deleted in fleetbase is made inactive in quickbooks', fu
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['updated'])->toBe(1)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->updated)->toBe(1)
+        ->and($batch->failed)->toBe(0)
         ->and($client->calls)->toContain('updateCustomer')
         ->and($client->calls)->not->toContain('createCustomer')
         ->and($client->customers['qbo-customer']['Active'])->toBeFalse()
@@ -3138,8 +3139,8 @@ test('a deleted fleetbase customer or wallet is never created and an inactive on
     $settings = qbSettings(['interval_minutes' => 1, 'wallet_enabled' => true]);
     $batch    = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($batch['aligned'])->toBe(3)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->aligned)->toBe(3)
+        ->and($batch->failed)->toBe(0)
         ->and($client->calls)->not->toContain('createCustomer')
         ->and($client->calls)->not->toContain('updateCustomer')
         ->and($client->calls)->not->toContain('findCustomerByEmail')
@@ -3186,7 +3187,7 @@ test('a linked wallet deleted in fleetbase makes its quickbooks account inactive
     $settings = qbSettings(['interval_minutes' => 1, 'wallet_enabled' => true]);
     $batch    = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($client->calls)->toContain('updateAccount')
         ->and($client->accounts['acct-1']['Active'])->toBeFalse()
         ->and($client->accounts['acct-1']['Name'])->toBe('Operating');
@@ -3215,9 +3216,9 @@ test('a voided cancelled deleted or removed invoice is not pushed', function () 
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(0)
-        ->and($batch['updated'])->toBe(0)
-        ->and($batch['voided'])->toBe(1)
+    expect($batch->created)->toBe(0)
+        ->and($batch->updated)->toBe(0)
+        ->and($batch->voided)->toBe(1)
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and($client->calls)->toContain('voidInvoice')
@@ -3477,14 +3478,14 @@ test('an invoice line update sends the existing sales line id', function () {
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($client->invoices['qb-1']['Line'])->toHaveCount(1)
         ->and($client->invoices['qb-1']['Line'][0]['Id'])->toBe('9')
         ->and($client->invoices['qb-1']['Line'][0]['Description'])->toBe('Evening delivery');
 
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
+    expect($second->aligned)->toBe(1)
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
 });
 
@@ -3526,8 +3527,8 @@ test('extra quickbooks sales lines stay and one update aligns the invoice', func
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
-        ->and($first['aligned'])->toBe(0)
+    expect($first->updated)->toBe(1)
+        ->and($first->aligned)->toBe(0)
         ->and($client->invoices['qb-1']['Line'])->toHaveCount(4)
         ->and($client->invoices['qb-1']['Line'][0]['Id'])->toBe('9')
         ->and($client->invoices['qb-1']['Line'][0]['Description'])->toBe('Evening delivery')
@@ -3539,8 +3540,8 @@ test('extra quickbooks sales lines stay and one update aligns the invoice', func
     unset($ledger->invoices['inv-1']['items'][0]['qbo_line_id']);
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
-        ->and($second['updated'])->toBe(0)
+    expect($second->aligned)->toBe(1)
+        ->and($second->updated)->toBe(0)
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1)
         ->and($client->invoices['qb-1']['Line'][1])->toBe($warehouse)
         ->and($client->invoices['qb-1']['Line'][2])->toEqual($subtotalSent)
@@ -3565,14 +3566,14 @@ test('a quickbooks discount kept on the invoice converges in one sync', function
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($client->invoices['qb-1']['TotalAmt'])->toBe('8.50')
         ->and($client->invoices['qb-1']['Line'][1])->toBe($discount);
 
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
-        ->and($second['updated'])->toBe(0)
+    expect($second->aligned)->toBe(1)
+        ->and($second->updated)->toBe(0)
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
 });
 
@@ -3589,7 +3590,7 @@ test('an invoice that differs from quickbooks only by a discount is aligned', fu
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
@@ -3605,12 +3606,12 @@ test('sales tax quickbooks adds on top of the fleetbase lines does not update th
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($client->invoices['qb-1']['TotalAmt'])->toBe('10.80');
 
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
+    expect($second->aligned)->toBe(1)
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
 });
 
@@ -3634,7 +3635,7 @@ test('a discounted invoice paid in full in quickbooks becomes paid', function ()
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(900)
         ->and($ledger->invoices['inv-1']['status'])->toBe('paid')
         ->and($client->calls)->not->toContain('updateInvoice')
@@ -3664,7 +3665,7 @@ test('a discounted invoice left part-paid becomes paid once quickbooks shows it 
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($ledger->invoices['inv-1']['status'])->toBe('paid')
         ->and($client->calls)->not->toContain('updatePayment');
 });
@@ -3686,7 +3687,7 @@ test('a line deleted in fleetbase is removed from the quickbooks invoice and a q
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1', '3'])
         ->and($client->invoices['qb-1']['Line'][1])->toBe($warehouse)
         ->and($ledger->invoices['inv-1']['line_map'])->toBe(['realm' => 'realm-1', 'invoice' => 'qb-1'])
@@ -3700,7 +3701,7 @@ test('a line deleted in fleetbase is removed from the quickbooks invoice and a q
     );
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
+    expect($second->aligned)->toBe(1)
         ->and(array_count_values($client->calls)['updateInvoice'] ?? 0)->toBe(1);
 });
 
@@ -3718,7 +3719,7 @@ test('a removed line stored for another quickbooks company or invoice stays', fu
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1', '2'])
         ->and($ledger->invoices['inv-1']['cleared_lines'] ?? [])->toBe([]);
@@ -3735,7 +3736,7 @@ test('a removed line id that a fleetbase line still holds is not removed', funct
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1']);
 });
@@ -3758,7 +3759,7 @@ test('an aligned invoice without stored line ids records which quickbooks line e
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and($ledger->invoices['inv-1']['line_map'])->toBe(['realm' => 'realm-1', 'invoice' => 'qb-1'])
         ->and(array_column($ledger->invoices['inv-1']['items'], 'qbo_line_id'))->toBe(['1', '2']);
@@ -3778,7 +3779,7 @@ test('a removed line that was edited in quickbooks stays', function () {
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1', '2']);
 });
@@ -3799,7 +3800,7 @@ test('a new fleetbase line on an invoice with stored ids does not replace a line
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1', '4', '3'])
         ->and($client->invoices['qb-1']['Line'][2])->toBe($warehouse)
         ->and(array_column($ledger->invoices['inv-1']['items'], 'qbo_line_id'))->toBe(['1', '4']);
@@ -3823,7 +3824,7 @@ test('an invoice without stored ids pairs lines by content, so a line deleted ea
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and(array_column($ledger->invoices['inv-1']['items'], 'qbo_line_id'))->toBe(['1', '3']);
 });
@@ -3843,7 +3844,7 @@ test('a new fleetbase line takes the quickbooks id, and nothing is recorded when
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and(array_column($client->invoices['qb-1']['Line'], 'Description'))->toBe(['Delivery', 'Tolls'])
         ->and(array_column($client->invoices['qb-1']['Line'], 'Id'))->toBe(['1', '2'])
         ->and(array_column($ledger->invoices['inv-1']['items'], 'qbo_line_id'))->toBe(['1', '2']);
@@ -3965,8 +3966,8 @@ test('quickbooks primary saves the invoice customer and home currency', function
         'invoice_reference'  => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->updated)->toBe(1)
+        ->and($batch->failed)->toBe(0)
         ->and($ledger->invoices['inv-1']['customer_uuid'])->toBe('cust-2')
         ->and($ledger->invoices['inv-1']['currency'])->toBe('USD')
         ->and($client->calls)->not->toContain('updateInvoice');
@@ -3980,8 +3981,8 @@ test('a non-home currency fails the push instead of updating the invoice in the 
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(0)
-        ->and($first['failed'])->toBe(1)
+    expect($first->updated)->toBe(0)
+        ->and($first->failed)->toBe(1)
         ->and(qbText($ledger->attempts[0]['error']))->toBe('Invoice currency EUR does not match the QuickBooks home '
             . 'currency '
             . 'USD.')
@@ -4001,8 +4002,8 @@ test('quickbooks primary does not copy a non-home invoice currency', function ()
         'invoice_conflict' => 'quickbooks',
     ]), time());
 
-    expect($batch['updated'])->toBe(1)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->updated)->toBe(1)
+        ->and($batch->failed)->toBe(0)
         ->and($ledger->invoices['inv-1']['notes'])->toBe('Dock')
         ->and($ledger->invoices['inv-1']['currency'])->toBe('USD');
 });
@@ -4033,7 +4034,7 @@ test('clearing street2 email or phone is pushed once and then stays aligned', fu
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($client->customers['qbo-1']['PrimaryEmailAddr']['Address'])->toBe('')
         ->and($client->customers['qbo-1']['PrimaryPhone']['FreeFormNumber'])->toBe('')
         ->and($client->customers['qbo-1']['BillAddr']['Line2'])->toBe('')
@@ -4044,7 +4045,7 @@ test('clearing street2 email or phone is pushed once and then stays aligned', fu
     $ledger->pending[0]['status']                         = 'pending';
     $second                                               = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
+    expect($second->aligned)->toBe(1)
         ->and(array_count_values($client->calls)['updateCustomer'] ?? 0)->toBe(1);
 });
 
@@ -4067,7 +4068,7 @@ test('outbound quickbooks primary sends a cleared wallet description once', func
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($ledger->wallets['wal-1']['description'])->toBe('')
         ->and($client->accounts['acct-9']['Description'])->toBe('');
 
@@ -4075,8 +4076,8 @@ test('outbound quickbooks primary sends a cleared wallet description once', func
     $ledger->pending[0]['status']                         = 'pending';
     $second                                               = $engine->runScheduled($ledger, 'company-uuid', $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
-        ->and($second['updated'])->toBe(0)
+    expect($second->aligned)->toBe(1)
+        ->and($second->updated)->toBe(0)
         ->and(array_count_values($client->calls)['updateAccount'] ?? 0)->toBe(1);
 });
 
@@ -4099,10 +4100,10 @@ test('a customer name with a colon or a line break is sent in a form quickbooks 
         time() + 10
     );
 
-    expect($first['created'])->toBe(1)
+    expect($first->created)->toBe(1)
         ->and($client->customers['1']['DisplayName'])->toBe('Acme- North Depot East')
-        ->and($second['aligned'])->toBe(1)
-        ->and($second['updated'])->toBe(0)
+        ->and($second->aligned)->toBe(1)
+        ->and($second->updated)->toBe(0)
         ->and($client->calls)->not->toContain('updateCustomer')
         ->and($ledger->customers['cust-1']['name'])->toBe("Acme: North\tDepot\nEast");
 
@@ -4137,7 +4138,7 @@ foreach ([1 => 'on its own', 2 => 'in a batch'] as $nameTakenCount => $nameTaken
         $batch  = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
         $errors = array_column($ledger->attempts, 'error', 'local_uuid');
 
-        expect($batch['failed'])->toBe(1)
+        expect($batch->failed)->toBe(1)
             ->and(qbText($errors['cust-1']))->toBe(
                 'QuickBooks did not accept customer "Acme- North": a QuickBooks customer, vendor or employee'
                 . ' already uses that name. Rename one of them, then sync again.'
@@ -4171,8 +4172,8 @@ test('changes copied in from a quickbooks webhook show in activity as one inboun
     ], $settings, 1_000);
 
     expect($ledger->batches)->toHaveCount(1)
-        ->and($ledger->batches[0])->toMatchArray([
-            'company_uuid' => 'company-uuid',
+        ->and($ledger->batches[0])->toMatchObject([
+            'companyUuid'  => 'company-uuid',
             'trigger'      => 'webhook',
             'direction'    => 'inbound',
             'status'       => 'finished',
@@ -4244,8 +4245,8 @@ test('a quickbooks change that fleetbase primary replaces says so in activity', 
         ]), time());
         $error = $ledger->attempts[0]['error'] ?? null;
 
-        expect($batch['updated'])->toBe(1, $primary)
-            ->and($batch['failed'])->toBe(0, $primary);
+        expect($batch->updated)->toBe(1, $primary)
+            ->and($batch->failed)->toBe(0, $primary);
         if ($noted === true) {
             expect(qbText((string) $error))->toBe('Fleetbase is Primary here, so the change made in QuickBooks'
                 . ' was replaced with the Fleetbase values. Choose QuickBooks as Primary to keep changes made'
@@ -4271,7 +4272,7 @@ test('a new wallet named like an account another wallet uses gets its own accoun
     $first = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $link  = $ledger->link('company-uuid', 'realm-1', 'wallet', 'wal-2');
 
-    expect($first['created'])->toBe(1)
+    expect($first->created)->toBe(1)
         ->and($link['qbo_id'])->not->toBe('acct-9')
         ->and($client->accounts[$link['qbo_id']]['Name'])->toBe('Personal Wallet (wallet_wal-2)')
         ->and($ledger->wallets['wal-2']['name'])->toBe('Personal Wallet');
@@ -4284,7 +4285,7 @@ test('a new wallet named like an account another wallet uses gets its own accoun
             'wallet_reference' => $primary,
         ]), time() + 10);
 
-        expect($again['aligned'])->toBe(1)
+        expect($again->aligned)->toBe(1)
             ->and($client->calls)->not->toContain('updateAccount')
             ->and($ledger->wallets['wal-2']['name'])->toBe('Personal Wallet');
     }
@@ -4293,7 +4294,7 @@ test('a new wallet named like an account another wallet uses gets its own accoun
     $ledger->wallets['wal-2']['name'] = 'Business Wallet';
     $renamed                          = engineRunAgain($engine, $ledger, qbSettings(), time() + 20);
 
-    expect($renamed['updated'])->toBe(1)
+    expect($renamed->updated)->toBe(1)
         ->and($client->accounts[$link['qbo_id']]['Name'])->toBe('Business Wallet (wallet_wal-2)')
         ->and($ledger->wallets['wal-2']['name'])->toBe('Business Wallet');
 });
@@ -4310,8 +4311,8 @@ test('two new wallets with the same name in one run get two accounts', function 
     $names = array_column($client->accounts, 'Name');
     sort($names);
 
-    expect($batch['created'])->toBe(2)
-        ->and($batch['failed'])->toBe(0)
+    expect($batch->created)->toBe(2)
+        ->and($batch->failed)->toBe(0)
         ->and($names)->toBe(['Personal Wallet', 'Personal Wallet (wallet_wal-2)']);
 });
 
@@ -4386,7 +4387,7 @@ function engineLinkedInvoice(array $invoiceOverrides = [], array $remoteOverride
     return [$engine, $client, $ledger];
 }
 
-function engineRunAgain(SyncEngine $engine, SyncLedger $ledger, array $settings, int $when): array
+function engineRunAgain(SyncEngine $engine, SyncLedger $ledger, array $settings, int $when): Batch
 {
     $ledger->connections['company-uuid']['last_batch_at'] = null;
     $ledger->pending[0]['status']                         = 'pending';
@@ -4486,7 +4487,7 @@ test('a fleetbase edit keeps the product, tax code and note line QuickBooks has 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $lines = $client->invoices['qb-1']['Line'];
 
-    expect($batch['updated'])->toBe(1)
+    expect($batch->updated)->toBe(1)
         ->and($lines[0]['Amount'])->toBe('12.00')
         ->and($lines[0]['SalesItemLineDetail']['ItemRef']['value'])->toBe('55')
         ->and($lines[0]['SalesItemLineDetail']['TaxCodeRef'])->toBe(['value' => 'TAX'])
@@ -4523,7 +4524,7 @@ test('a QuickBooks bundle line alone does not make a fleetbase primary invoice l
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['aligned'])->toBe(1)
+    expect($batch->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and($client->invoices['qb-1']['SyncToken'])->toBe('0');
 });
@@ -4543,7 +4544,7 @@ test('an inactive service item is forgotten so the next sync finds or creates an
     $failed = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
     $errors = array_column($ledger->attempts, 'error', 'local_uuid');
 
-    expect($failed['failed'])->toBe(2)
+    expect($failed->failed)->toBe(2)
         ->and(qbText($errors['inv-1'] ?? null))->toContain('Fleetbase service (deleted)')
         ->and(array_count_values($client->calls)['itemActive'] ?? 0)->toBe(1)
         ->and($ledger->connections['company-uuid']['default_item_id'])->toBeNull();
@@ -4555,7 +4556,7 @@ test('an inactive service item is forgotten so the next sync finds or creates an
     }
     $created = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time() + 600);
 
-    expect($created['created'])->toBe(2)
+    expect($created->created)->toBe(2)
         ->and($ledger->connections['company-uuid']['default_item_id'])->toBe('item-2')
         ->and($client->invoices['inv-1']['Line'][0]['SalesItemLineDetail']['ItemRef'])->toBe(['value' => 'item-2']);
 });
@@ -4593,7 +4594,7 @@ test('a service item QuickBooks refuses to create is asked for once per block', 
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(3)
+    expect($batch->failed)->toBe(3)
         ->and(array_count_values($client->calls)['ensureServiceItem'])->toBe(1)
         ->and($client->calls)->not->toContain('createInvoice');
 });
@@ -4618,7 +4619,7 @@ test('a refused service item does not end the run when QuickBooks numbers new in
     $batch    = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
     $errors   = array_column($ledger->attempts, 'error', 'local_uuid');
 
-    expect($batch['failed'])->toBe(2)
+    expect($batch->failed)->toBe(2)
         ->and(qbText($errors['inv-1'] ?? null))->toContain('already exists')
         ->and($client->calls)->not->toContain('createInvoice');
 });
@@ -4654,7 +4655,7 @@ test('a blank fleetbase line and its blank QuickBooks line stay aligned', functi
 
         $batch = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-        expect($batch['aligned'])->toBe(1)
+        expect($batch->aligned)->toBe(1)
             ->and($ledger->invoices['inv-1']['items'][0]['description'])->toBe('');
     }
     expect($client->calls)->not->toContain('updateInvoice');
@@ -4687,8 +4688,8 @@ test('a fleetbase edit of an invoice with a QuickBooks sales tax rate is accepte
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(0)
-        ->and($batch['updated'])->toBe(1)
+    expect($batch->failed)->toBe(0)
+        ->and($batch->updated)->toBe(1)
         ->and($client->invoices['qb-1']['Line'][0]['Amount'])->toBe('12.00')
         ->and($client->invoices['qb-1']['TxnTaxDetail']['TxnTaxCodeRef'])->toBe(['value' => '2']);
 });
@@ -4733,7 +4734,7 @@ test('QuickBooks works out the tax of a new invoice and Fleetbase takes it', fun
     $first   = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
     $created = $client->invoices['inv-1'];
 
-    expect($first['created'])->toBe(1)
+    expect($first->created)->toBe(1)
         ->and($created['Line'])->toHaveCount(1)
         ->and($created['Line'][0]['SalesItemLineDetail']['TaxCodeRef'])->toBe(['value' => 'TAX'])
         ->and($created['TxnTaxDetail']['TxnTaxCodeRef'])->toBe(['value' => '2'])
@@ -4748,7 +4749,7 @@ test('QuickBooks works out the tax of a new invoice and Fleetbase takes it', fun
 
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
+    expect($second->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
@@ -4761,7 +4762,7 @@ test('a Fleetbase edit is sent without its tax and QuickBooks works the tax out 
     $ledger->invoices['inv-1']['items'][0]['unit_price'] = 2000;
     $second                                              = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['updated'])->toBe(1)
+    expect($second->updated)->toBe(1)
         ->and($client->invoices['inv-1']['TxnTaxDetail']['TotalTax'])->toBe('1.60')
         ->and($ledger->invoices['inv-1']['tax'])->toBe(160)
         ->and($ledger->invoices['inv-1']['total'])->toBe(2160)
@@ -4769,7 +4770,7 @@ test('a Fleetbase edit is sent without its tax and QuickBooks works the tax out 
 
     $third = engineRunAgain($engine, $ledger, $settings, time() + 20);
 
-    expect($third['aligned'])->toBe(1)
+    expect($third->aligned)->toBe(1)
         ->and(array_count_values($client->calls)['updateInvoice'])->toBe(1);
 });
 
@@ -4792,7 +4793,7 @@ test('a QuickBooks discount stays while the tax is copied back, and the next syn
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
     $lines  = array_column($client->invoices['inv-1']['Line'], 'DetailType');
 
-    expect($second['updated'])->toBe(1)
+    expect($second->updated)->toBe(1)
         ->and($lines)->toContain('DiscountLineDetail')
         ->and($client->invoices['inv-1']['TxnTaxDetail']['TotalTax'])->toBe('1.60')
         ->and($ledger->invoices['inv-1']['tax'])->toBe(160)
@@ -4801,8 +4802,8 @@ test('a QuickBooks discount stays while the tax is copied back, and the next syn
     $third  = engineRunAgain($engine, $ledger, $settings, time() + 20);
     $fourth = engineRunAgain($engine, $ledger, $settings, time() + 30);
 
-    expect($third['aligned'])->toBe(1)
-        ->and($fourth['aligned'])->toBe(1)
+    expect($third->aligned)->toBe(1)
+        ->and($fourth->aligned)->toBe(1)
         ->and(array_count_values($client->calls)['updateInvoice'])->toBe(1)
         ->and($ledger->invoices['inv-1']['total'])->toBe(2160);
 });
@@ -4858,7 +4859,7 @@ test('a taxable invoice with no sales tax rate is sent and Activity says why it 
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and($client->invoices['inv-1'])->not->toHaveKey('TxnTaxDetail')
         ->and($ledger->attempts[0]['outcome'])->toBe('created')
         ->and($ledger->attempts[0]['error'])->toBe('quickbooks.messages.invoice-no-tax-rate');
@@ -4874,14 +4875,14 @@ test('with automated sales tax QuickBooks chooses the rate and Activity gives no
     $batch   = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
     $created = $client->sentInvoices[0] ?? [];
 
-    expect($batch['created'])->toBe(1)
+    expect($batch->created)->toBe(1)
         ->and($created['Line'][0]['SalesItemLineDetail']['TaxCodeRef'])->toBe(['value' => 'TAX'])
         ->and($created)->not->toHaveKey('TxnTaxDetail')
         ->and($client->invoices['inv-1']['TxnTaxDetail']['TotalTax'])->toBe('0.80')
         ->and($ledger->invoices['inv-1']['tax'])->toBe(80)
         ->and($ledger->attempts[0]['error'])->toBeNull();
 
-    expect(engineRunAgain($engine, $ledger, $settings, time() + 10)['aligned'])->toBe(1);
+    expect(engineRunAgain($engine, $ledger, $settings, time() + 10)->aligned)->toBe(1);
 });
 
 test('with no sales tax rate the missing rate stays the Activity note when the Fleetbase tax goes', function () {
@@ -4902,7 +4903,7 @@ test('a failed read of the QuickBooks tax settings fails the invoice instead of 
 
     $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['interval_minutes' => 1]), time());
 
-    expect($batch['failed'])->toBe(1)
+    expect($batch->failed)->toBe(1)
         ->and($client->calls)->not->toContain('createInvoice')
         ->and($client->calls)->not->toContain('batch');
 });
@@ -4924,7 +4925,7 @@ test('an invoice block reads the tax settings, customers and service item once',
         $codes[(string) $invoice['DocNumber']] = $invoice['Line'][0]['SalesItemLineDetail']['TaxCodeRef']['value'];
     }
 
-    expect($batch['created'])->toBe(2)
+    expect($batch->created)->toBe(2)
         ->and($codes)->toBe(['INV-1' => 'TAX', 'INV-2' => 'NON'])
         ->and($client->salesTaxReads)->toBe(1)
         ->and($client->itemReads)->toBe(1)
@@ -4976,7 +4977,7 @@ test('QuickBooks Primary copies the line taxes and the next sync is aligned', fu
 
     $first = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($first['updated'])->toBe(1)
+    expect($first->updated)->toBe(1)
         ->and($ledger->invoices['inv-1']['tax'])->toBe(80)
         ->and($ledger->invoices['inv-1']['total'])->toBe(1080)
         ->and($ledger->invoices['inv-1']['items'][0]['tax_rate'])->toBe('8.00')
@@ -4984,7 +4985,7 @@ test('QuickBooks Primary copies the line taxes and the next sync is aligned', fu
 
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
-    expect($second['aligned'])->toBe(1)
+    expect($second->aligned)->toBe(1)
         ->and($client->calls)->not->toContain('updateInvoice');
 });
 
@@ -5016,7 +5017,7 @@ test('a payment above the QuickBooks invoice total is sent at that total with a 
     expect($payment['TotalAmt'] ?? null)->toBe('10.80')
         ->and($payment)->not->toHaveKey('UnappliedAmt')
         ->and($note)->toContain('more than the QuickBooks invoice total')
-        ->and($second['failed'])->toBe(0)
+        ->and($second->failed)->toBe(0)
         ->and($client->calls)->not->toContain('updatePayment');
 });
 
@@ -5090,7 +5091,7 @@ test('less tax from QuickBooks lowers the Fleetbase total with a note, and the p
         ->and($ledger->invoices['inv-1']['amount_paid'])->toBe(1150)
         ->and($payment['TotalAmt'] ?? null)->toBe('10.80')
         ->and($note)->toContain('less tax')
-        ->and($second['failed'])->toBe(0)
+        ->and($second->failed)->toBe(0)
         ->and($client->calls)->not->toContain('updatePayment');
 });
 
@@ -5112,8 +5113,8 @@ test('an invoice QuickBooks holds with tax included is aligned and its total sta
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
 
     expect($client->calls)->not->toContain('updateInvoice')
-        ->and($first['failed'])->toBe(0)
-        ->and($second['aligned'])->toBe(1)
+        ->and($first->failed)->toBe(0)
+        ->and($second->aligned)->toBe(1)
         ->and($ledger->invoices['inv-1']['tax'])->toBe(83)
         ->and($ledger->invoices['inv-1']['total'])->toBe(1000);
 });
@@ -5149,13 +5150,13 @@ test('outside the US the GST and PST QuickBooks worked out are shared over the F
     $second = engineRunAgain($engine, $ledger, $settings, time() + 10);
     $items  = $ledger->invoices['inv-1']['items'];
 
-    expect($first['failed'])->toBe(0)
+    expect($first->failed)->toBe(0)
         ->and($client->calls)->not->toContain('updateInvoice')
         ->and(array_column($items, 'tax_rate'))->toBe(['12.00', '5.00'])
         ->and(array_column($items, 'tax_amount'))->toBe([1200, 250])
         ->and($ledger->invoices['inv-1']['tax'])->toBe(1450)
         ->and($ledger->invoices['inv-1']['total'])->toBe(16450)
-        ->and($second['aligned'])->toBe(1);
+        ->and($second->aligned)->toBe(1);
 });
 
 test('an invoice that is not sent to QuickBooks does not read the QuickBooks tax settings', function () {
@@ -5166,7 +5167,7 @@ test('an invoice that is not sent to QuickBooks does not read the QuickBooks tax
     $settings = qbSettings(['interval_minutes' => 1, 'invoice_direction' => 'inbound']);
     $batch    = $engine->runScheduled($ledger, 'company-uuid', $settings, time());
 
-    expect($batch['failed'])->toBe(0)
+    expect($batch->failed)->toBe(0)
         ->and($ledger->invoices['inv-1']['notes'])->toBe('From QuickBooks')
         ->and($client->salesTaxReads)->toBe(0);
 });
@@ -5219,7 +5220,7 @@ test('a retried create whose first answer was lost links the invoice QuickBooks 
         $first = $engine->runScheduled($ledger, 'company-uuid', $settings, 1_000);
         engineRunAgain($engine, $ledger, $settings, 1_000_000);
 
-        expect($first['failed'])->toBe(1)
+        expect($first->failed)->toBe(1)
             ->and($client->invoiceCreates)->toBe(1)
             ->and($ledger->link('company-uuid', 'realm-1', 'invoice', 'inv-1')['qbo_id'] ?? null)->toBe('inv-1')
             ->and($ledger->invoices['inv-1']['number'])->toBe('1');

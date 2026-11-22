@@ -41,7 +41,7 @@ test('a refused payment item fails its invoice and the next payment is still sen
         ->and($rows['inv-2']['status'])->toBe('done')
         ->and(array_column($ledger->attempts, 'outcome', 'local_uuid'))
         ->toBe(['inv-1' => 'failed', 'inv-2' => 'created'])
-        ->and($batch['failed'])->toBe(1)
+        ->and($batch->failed)->toBe(1)
         ->and($ledger->connections['company-uuid']['rate_limited_until'] ?? null)->toBeNull();
 });
 
@@ -56,7 +56,7 @@ test('a rate-limited payment item stops the batch and leaves the next invoice pe
         ->and($rows['inv-2']['status'])->toBe('pending')
         ->and($rows['inv-2']['attempts'])->toBe(0)
         ->and(array_column($ledger->attempts, 'local_uuid'))->toBe(['inv-1'])
-        ->and($batch['failed'])->toBe(1)
+        ->and($batch->failed)->toBe(1)
         ->and($ledger->connections['company-uuid']['rate_limited_until'])->toBeGreaterThan(time())
         ->and($ledger->connections['company-uuid']['needs_reauth'])->toBeFalse();
 });

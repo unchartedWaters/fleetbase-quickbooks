@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Services\Concerns;
 
 use Fleetbase\Quickbooks\Services\SyncEngine;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\ReservedDocNumbers;
 
@@ -64,14 +65,13 @@ trait BatchesInvoices
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
      * @param array<string, mixed>             $settings
-     * @param array<string, mixed>             $batch
      */
     private function syncInvoiceBlock(
         SyncLedger $ledger,
         array &$connection,
         array $rows,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
     ): bool {
@@ -100,7 +100,7 @@ trait BatchesInvoices
         } catch (QuickBooksException $exception) {
             if ($exception->isUnauthorized() === true) {
                 $this->tokenRejected($ledger, (string) $connection['company_uuid']);
-                $batch['failed']++;
+                $batch->failed++;
 
                 return true;
             }
@@ -211,14 +211,13 @@ trait BatchesInvoices
      * @param array<string, mixed>                $connection
      * @param array<string, array<string, mixed>> $needed
      * @param array<string, mixed>                $settings
-     * @param array<string, mixed>                $batch
      */
     private function prepareInvoiceCustomers(
         SyncLedger $ledger,
         array &$connection,
         array $needed,
         array $settings,
-        array &$batch,
+        Batch $batch,
         int $now,
         string $trigger,
     ): bool {
@@ -242,7 +241,7 @@ trait BatchesInvoices
         } catch (QuickBooksException $exception) {
             if ($exception->isUnauthorized() === true) {
                 $this->tokenRejected($ledger, (string) $connection['company_uuid']);
-                $batch['failed']++;
+                $batch->failed++;
 
                 return true;
             }

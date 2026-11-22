@@ -2,6 +2,7 @@
 
 namespace Fleetbase\Quickbooks\Services;
 
+use Fleetbase\Quickbooks\Support\Batch;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 
 /**
@@ -53,7 +54,7 @@ class SyncLedger
      */
     public bool $productsMissing = false;
 
-    /** @var array<int, array<string, mixed>> */
+    /** @var array<int, Batch> */
     public array $batches = [];
 
     /** @var array<int, array<string, mixed>> */
@@ -466,52 +467,43 @@ class SyncLedger
 
     /**
      * Record a batch that did not run, with the reason Activity shows.
-     *
-     * @return array<string, mixed>
      */
-    public function skip(string $companyUuid, string $trigger, string $direction, string $message, int $now): array
+    public function skip(string $companyUuid, string $trigger, string $direction, string $message, int $now): Batch
     {
-        $batch = [
-            'company_uuid' => $companyUuid,
-            'trigger'      => $trigger,
-            'direction'    => $direction,
-            'status'       => 'skipped',
-            'created'      => 0,
-            'updated'      => 0,
-            'aligned'      => 0,
-            'voided'       => 0,
-            'unmatched'    => 0,
-            'failed'       => 0,
-            'started_at'   => $now,
-            'finished_at'  => $now,
-        ];
-        $this->batches[]  = $batch;
-        $this->attempts[] = [
-            'company_uuid' => $companyUuid,
-            'local_type'   => 'connection',
-            'local_uuid'   => $companyUuid,
-            'outcome'      => 'skipped',
-            'error'        => $message,
-        ];
+        return $this->recordStopped('skipped', $companyUuid, $trigger, $direction, $message, $now);
+    }
+
+    /**
+     * A run that stopped before it synced anything, recorded as failed with its reason.
+     */
+    public function fail(string $companyUuid, string $trigger, string $direction, string $message, int $now): Batch
+    {
+        $batch         = $this->recordStopped('failed', $companyUuid, $trigger, $direction, $message, $now);
+        $batch->failed = 1;
 
         return $batch;
     }
 
     /**
-     * A run that stopped before it synced anything, recorded as failed with its reason.
-     *
-     * @return array<string, mixed>
+     * A batch that ended as $status ('skipped' or 'failed') with one connection attempt carrying the reason.
      */
-    public function fail(string $companyUuid, string $trigger, string $direction, string $message, int $now): array
-    {
-        $batch            = array_merge($this->skip($companyUuid, $trigger, $direction, $message, $now), [
-            'status' => 'failed',
-            'failed' => 1,
-        ]);
-        $attempt          = array_merge((array) array_pop($this->attempts), ['outcome' => 'failed']);
-        $this->attempts[] = $attempt;
-        array_pop($this->batches);
-        $this->batches[] = $batch;
+    private function recordStopped(
+        string $status,
+        string $companyUuid,
+        string $trigger,
+        string $direction,
+        string $message,
+        int $now,
+    ): Batch {
+        $batch            = Batch::forCompany($companyUuid, $trigger, $status, $direction, $now, $now);
+        $this->batches[]  = $batch;
+        $this->attempts[] = [
+            'company_uuid' => $companyUuid,
+            'local_type'   => 'connection',
+            'local_uuid'   => $companyUuid,
+            'outcome'      => $status,
+            'error'        => $message,
+        ];
 
         return $batch;
     }
