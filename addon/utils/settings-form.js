@@ -10,25 +10,15 @@ function savedSecretPresentation(set, hint) {
     };
 }
 
-export function secretPresentation(settings, key = 'client_secret') {
-    return savedSecretPresentation(settings?.[`${key}_set`], settings?.[`${key}_hint`]);
+export function secretPresentation(settings) {
+    return savedSecretPresentation(settings?.client_secret_set, settings?.client_secret_hint);
 }
 
-export function webhookVerifierPresentation(settings, key = 'webhook_verifier') {
-    return savedSecretPresentation(settings?.[`${key}_set`], settings?.[`${key}_hint`]);
+export function webhookVerifierPresentation(settings) {
+    return savedSecretPresentation(settings?.webhook_verifier_set, settings?.webhook_verifier_hint);
 }
 
-// Intuit issues separate keys for its Production and Development (sandbox) apps, so the settings hold one set of
-// each. Every field is named after its environment: production_client_id, sandbox_webhook_verifier, and so on.
-export const ENVIRONMENTS = ['production', 'sandbox'];
-
-export function credentialKeys(environment) {
-    return {
-        clientId: `${environment}_client_id`,
-        secret: `${environment}_client_secret`,
-        verifier: `${environment}_webhook_verifier`,
-    };
-}
+export const DEFAULT_ENVIRONMENT = 'production';
 
 const SYNC_DIRECTIONS = ['both', 'outbound', 'inbound'];
 
@@ -74,49 +64,32 @@ function wholeNumber(value, minimum) {
     return false;
 }
 
-const text = (value) => String(value || '').trim();
-
-// A set nobody filled in is skipped. A set with any key in it needs its Client ID and Client secret, and at least one
-// set must be complete. A saved secret or verifier belongs to the saved Client ID, so a changed Client ID needs its own.
-function credentialErrors(auth, saved) {
+// syncOnly is the organization screen: credentials are global and are not checked there.
+// A saved secret or verifier belongs to savedClientId, so a changed Client ID needs its own.
+export function validateSettings({ auth, sync, secretSet, verifierSet = false, savedClientId, syncOnly = false }) {
     const errors = {};
-    let complete = 0;
-    ENVIRONMENTS.forEach((environment) => {
-        const keys = credentialKeys(environment);
-        const clientId = text(auth?.[keys.clientId]);
-        const savedClient = text(saved?.[keys.clientId]);
+    if (!syncOnly) {
+        const environment = auth?.environment || DEFAULT_ENVIRONMENT;
+        if (!['sandbox', 'production'].includes(environment)) {
+            errors.environment = 'quickbooks.validation.environment';
+        }
+
+        const clientId = String(auth?.client_id || '').trim();
+        if (!clientId) {
+            errors.client_id = 'quickbooks.validation.client-id';
+        }
+
+        const savedClient = String(savedClientId || '').trim();
         // A blank Client ID has its own error, so the saved secret is not flagged as well.
         const sameClient = !savedClient || !clientId || clientId === savedClient;
-        const secret = text(auth?.[keys.secret]) || (saved?.[`${keys.secret}_set`] && sameClient ? 'saved' : '');
-        const verifier = text(auth?.[keys.verifier]);
-        const verifierSaved = Boolean(saved?.[`${keys.verifier}_set`]);
-        if (!clientId && !secret && !verifier && !verifierSaved) {
-            return;
-        }
-        if (!clientId) {
-            errors[keys.clientId] = 'quickbooks.validation.client-id';
-        }
-        if (!secret) {
-            errors[keys.secret] = 'quickbooks.validation.client-secret';
+        if (!String(auth?.client_secret || '').trim() && !(secretSet && sameClient)) {
+            errors.client_secret = 'quickbooks.validation.client-secret';
         }
         // With no saved verifier, webhooks stay optional.
-        if (verifierSaved && !sameClient && !verifier) {
-            errors[keys.verifier] = 'quickbooks.validation.webhook-verifier';
+        if (verifierSet && !sameClient && !String(auth?.webhook_verifier || '').trim()) {
+            errors.webhook_verifier = 'quickbooks.validation.webhook-verifier';
         }
-        complete += clientId && secret ? 1 : 0;
-    });
-    if (!complete && !Object.keys(errors).length) {
-        errors[credentialKeys(ENVIRONMENTS[0]).clientId] = 'quickbooks.validation.client-id';
-        errors[credentialKeys(ENVIRONMENTS[0]).secret] = 'quickbooks.validation.client-secret';
     }
-
-    return errors;
-}
-
-// syncOnly is the organization screen: credentials are global and are not checked there.
-// saved is the settings the server last sent: each environment's Client ID, and whether its secret and verifier are saved.
-export function validateSettings({ auth, sync, saved, syncOnly = false }) {
-    const errors = syncOnly ? {} : credentialErrors(auth, saved);
 
     if (!wholeNumber(sync?.interval_minutes, 1)) {
         errors.interval_minutes = 'quickbooks.validation.interval-minutes';

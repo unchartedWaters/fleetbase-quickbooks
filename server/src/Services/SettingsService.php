@@ -4,7 +4,6 @@ namespace Fleetbase\Quickbooks\Services;
 
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\SecretCipher;
-use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 
 class SettingsService
@@ -17,50 +16,37 @@ class SettingsService
     }
 
     /**
-     * The app credentials the install connects and refreshes tokens with, for one Intuit environment.
-     *
-     * @return array{client_id: string, client_secret: string, redirect_uri: string, environment: string}
-     */
-    public function credentialsFor(SettingsStore $store, string $environment): array
-    {
-        $environment = SettingsKeys::environment($environment);
-        $resolved    = $this->credentials->resolve($this->decryptAuth($store->adminAuth()), $environment);
-
-        return [
-            'client_id'     => $resolved['client_id'],
-            'client_secret' => $resolved['client_secret'],
-            'redirect_uri'  => $resolved['redirect_uri'],
-            'environment'   => $resolved['environment'],
-        ];
-    }
-
-    /**
-     * The saved keys of every environment with their secrets opened, for the settings page to show what is set.
-     * A secret that does not open is missing.
+     * @param array<string, mixed> $company
+     * @param array<string, mixed> $admin
+     * @param array<string, mixed> $env
      *
      * @return array<string, mixed>
      */
-    public function plainAuth(SettingsStore $store): array
+    public function resolveAuth(array $company, array $admin, array $env): array
     {
-        return $this->decryptAuth($store->adminAuth());
+        return $this->credentials->resolve(
+            $this->decryptAuth($company),
+            $this->decryptAuth($admin),
+            $env
+        );
     }
 
     /**
-     * The environments whose Client ID and Client secret are both saved, in the order they are offered.
+     * The app credentials the install connects and refreshes tokens with.
      *
-     * @return array<int, string>
+     * @return array{client_id: string, client_secret: string, redirect_uri: string, environment: string}
      */
-    public function configuredEnvironments(SettingsStore $store): array
+    public function credentialsFor(SettingsStore $store, string $companyUuid): array
     {
-        $configured = [];
-        foreach (SettingsKeys::ENVIRONMENTS as $environment) {
-            $credentials = $this->credentialsFor($store, $environment);
-            if (trim($credentials['client_id']) !== '' && trim($credentials['client_secret']) !== '') {
-                $configured[] = $environment;
-            }
-        }
+        unset($companyUuid);
+        $resolved = $this->resolveAuth([], $store->adminAuth(), $store->envAuth());
 
-        return $configured;
+        return [
+            'client_id'     => (string) $resolved['client_id'],
+            'client_secret' => (string) $resolved['client_secret'],
+            'redirect_uri'  => (string) $resolved['redirect_uri'],
+            'environment'   => (string) $resolved['environment'],
+        ];
     }
 
     /**
@@ -74,7 +60,7 @@ class SettingsService
     }
 
     /**
-     * Seals what the form sent. A blank secret or verifier keeps the stored one, re-sealed.
+     * Keeps the stored secret when the form submits a blank secret.
      *
      * @param array<string, mixed> $incoming
      * @param array<string, mixed> $existing
@@ -83,49 +69,38 @@ class SettingsService
      */
     public function storeAuth(array $incoming, array $existing): array
     {
-        foreach (SettingsKeys::ENVIRONMENTS as $environment) {
-            $secret = SettingsKeys::credentialField($environment, 'client_secret');
-            $typed  = $incoming[$secret] ?? '';
-            if (is_string($typed) === false || $typed === '') {
-                $kept = $existing[$secret] ?? '';
-                // A blank form field keeps the stored secret. Plaintext and legacy AES are re-encrypted.
-                if (is_string($kept) === true && $kept !== '') {
-                    $incoming[$secret] = $this->cipher->seal($kept);
-                } else {
-                    unset($incoming[$secret]);
-                }
-            } else {
-                $incoming[$secret] = $this->cipher->encrypt($typed);
-            }
-            $incoming = $this->storeWebhookVerifier($incoming, $existing, $environment);
+        $secret = $incoming['client_secret'] ?? '';
+        if (is_string($secret) === false || $secret === '') {
+            $kept = $existing['client_secret'] ?? '';
+            // A blank form field keeps the stored secret. Plaintext and legacy AES are re-encrypted.
+            $incoming['client_secret'] = is_string($kept) === true ? $this->cipher->seal($kept) : $kept;
+        } else {
+            $incoming['client_secret'] = $this->cipher->encrypt($secret);
         }
 
-        return $incoming;
+        return $this->storeWebhookVerifier($incoming, $existing);
     }
 
     /**
-     * Every webhook verifier saved for the install, one per environment that has one.
+     * The install-wide webhook verifier.
      *
-     * Intuit signs a notification with the verifier of the app that sent it (Development or Production), and the
-     * notification does not say which, so a signature is good when any saved verifier matches. When none is
-     * saved, the list is empty and the signature check fails. An organization verifier and the
-     * QUICKBOOKS_WEBHOOK_VERIFIER environment variable are not substitutes. Only verifiers are decrypted, never
-     * client secrets.
+     * The only accepted verifier is the system webhook_verifier. When that
+     * row has none, the list is empty and the signature check fails. An
+     * organization verifier, another organization's secret, and the
+     * QUICKBOOKS_WEBHOOK_VERIFIER environment variable are not substitutes. Only webhook_verifier is decrypted, never
+     * client_secret, and no organization auth row is read.
      *
      * @return array<int, string>
      */
-    public function webhookVerifiersFor(SettingsStore $store): array
+    public function webhookVerifiersFor(SettingsStore $store, string $companyUuid): array
     {
-        $admin     = $store->adminAuth();
-        $verifiers = [];
-        foreach (SettingsKeys::ENVIRONMENTS as $environment) {
-            $own = $this->plainWebhookVerifier($admin, $environment);
-            if ($own !== null) {
-                $verifiers[] = $own;
-            }
+        unset($companyUuid);
+        $own = $this->plainWebhookVerifier($store->adminAuth());
+        if ($own === null) {
+            return [];
         }
 
-        return $verifiers;
+        return [$own];
     }
 
     /**
@@ -134,25 +109,24 @@ class SettingsService
      *
      * @return array<string, mixed>
      */
-    private function storeWebhookVerifier(array $incoming, array $existing, string $environment): array
+    private function storeWebhookVerifier(array $incoming, array $existing): array
     {
-        $field  = SettingsKeys::credentialField($environment, 'webhook_verifier');
-        $secret = $incoming[$field] ?? null;
+        $secret = $incoming['webhook_verifier'] ?? null;
         if (is_string($secret) === true && $secret !== '') {
-            $incoming[$field] = $this->cipher->encrypt($secret);
+            $incoming['webhook_verifier'] = $this->cipher->encrypt($secret);
 
             return $incoming;
         }
 
-        $kept = $existing[$field] ?? null;
+        $kept = $existing['webhook_verifier'] ?? null;
         if (is_string($kept) === false || $kept === '') {
-            unset($incoming[$field]);
+            unset($incoming['webhook_verifier']);
 
             return $incoming;
         }
 
         // A blank form field keeps the stored verifier. Plaintext and legacy AES are re-encrypted.
-        $incoming[$field] = $this->cipher->seal($kept);
+        $incoming['webhook_verifier'] = $this->cipher->seal($kept);
 
         return $incoming;
     }
@@ -172,13 +146,14 @@ class SettingsService
     }
 
     /**
-     * Decrypts one environment's webhook_verifier only. A value that does not open is missing, not the stored string.
+     * Decrypts webhook_verifier only. client_secret is left untouched.
+     * A value that does not open is missing, not the stored string.
      *
      * @param array<string, mixed> $stored
      */
-    private function plainWebhookVerifier(array $stored, string $environment): ?string
+    private function plainWebhookVerifier(array $stored): ?string
     {
-        $secret = $stored[SettingsKeys::credentialField($environment, 'webhook_verifier')] ?? null;
+        $secret = $stored['webhook_verifier'] ?? null;
         if (is_string($secret) === false || $secret === '') {
             return null;
         }
@@ -193,20 +168,17 @@ class SettingsService
      */
     private function decryptAuth(array $stored): array
     {
-        foreach (SettingsKeys::ENVIRONMENTS as $environment) {
-            foreach (['client_secret', 'webhook_verifier'] as $name) {
-                $field  = SettingsKeys::credentialField($environment, $name);
-                $secret = $stored[$field] ?? null;
-                if (is_string($secret) === false || $secret === '') {
-                    continue;
-                }
-                $opened = $this->openSecret($secret);
-                if ($opened === null) {
-                    unset($stored[$field]);
-                    continue;
-                }
-                $stored[$field] = $opened;
+        foreach (['client_secret', 'webhook_verifier'] as $field) {
+            $secret = $stored[$field] ?? null;
+            if (is_string($secret) === false || $secret === '') {
+                continue;
             }
+            $opened = $this->openSecret($secret);
+            if ($opened === null) {
+                unset($stored[$field]);
+                continue;
+            }
+            $stored[$field] = $opened;
         }
 
         return $stored;

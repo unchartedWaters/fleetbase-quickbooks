@@ -61,10 +61,4 @@ class LastRealmController extends ConnectionController
     {
         return $this->last;
     }
-
-    /** The environment the organization connected before: sandbox once it has connected at all. */
-    protected function lastEnvironment(string $companyUuid): ?string
-    {
-        return $this->last === null ? null : 'sandbox';
-    }
 }

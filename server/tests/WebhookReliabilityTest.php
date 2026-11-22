@@ -86,7 +86,7 @@ function whrStore(): MemorySettingsStore
 {
     $settings                               = whrSettings();
     $store                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
+    $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
 
     return $store;
 }

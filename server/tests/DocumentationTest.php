@@ -11,8 +11,8 @@ use Fleetbase\Quickbooks\Tests\Support\MarkdownLinks;
 test('the setup guide names every environment variable the server reads', function () {
     $names = DocsSource::environmentVariables();
 
-    expect($names)->toContain('QUICKBOOKS_SKIP_MIGRATE')
-        ->and($names)->not->toContain('QUICKBOOKS_ENVIRONMENT')
+    expect($names)->toContain('QUICKBOOKS_ENVIRONMENT')
+        ->and($names)->toContain('QUICKBOOKS_SKIP_MIGRATE')
         ->and($names)->not->toContain('PACKAGE')
         ->and(DocsSource::missing('docs/SETUP.md', $names))->toBe([]);
 });

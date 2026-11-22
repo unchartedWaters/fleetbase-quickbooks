@@ -60,9 +60,6 @@ class ConnectionController extends QuickbooksController
             'connection'      => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
             'can_connect_new' => $this->mayConnectFirst($request, $companyUuid),
             'linked'          => $this->reset()->linkCounts($companyUuid),
-            // The Intuit environments an administrator can connect to, and the one offered first.
-            'environments'    => $this->settings->configuredEnvironments($this->store),
-            'environment'     => $this->defaultEnvironment($companyUuid),
         ]);
     }
 
@@ -222,11 +219,7 @@ class ConnectionController extends QuickbooksController
         if ($this->mayConnectFirst($request, $companyUuid) === false) {
             return response()->json(['message' => Translation::get(OAuthFlow::CHANGE_COMPANY_MESSAGE)], 403);
         }
-        $environment = $this->chosenEnvironment($request, $companyUuid);
-        if ($environment === null) {
-            return response()->json(['message' => Translation::get(OAuthFlow::CHANGE_COMPANY_MESSAGE)], 403);
-        }
-        $credentials = $this->credentials($environment);
+        $credentials = $this->credentials($companyUuid);
         if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '') {
             return response()->json([
                 'message' => Translation::get('quickbooks.messages.not-set-up'),
@@ -485,7 +478,7 @@ class ConnectionController extends QuickbooksController
             ->where('status', 'finished')
             ->orderByDesc('finished_at')
             ->first();
-        $savedKeys   = $this->syncCredentialStatus($connection instanceof Connection === true ? $connection : null);
+        $savedKeys   = $this->syncCredentialStatus($companyUuid);
 
         return response()->json([
             'connection'             => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
@@ -510,18 +503,17 @@ class ConnectionController extends QuickbooksController
     private function revokeAtIntuit(string $companyUuid): void
     {
         try {
+            $credentials = $this->settings->credentialsFor($this->store, $companyUuid);
+            if (trim($credentials['client_id']) === '' || trim($credentials['client_secret']) === '') {
+                return;
+            }
+
             foreach (Connection::query()->where('company_uuid', $companyUuid)->get() as $row) {
                 if ($row instanceof Connection === false) {
                     continue;
                 }
-                // The token belongs to the Intuit app of its own environment.
-                $credentials = $this->settings->credentialsFor($this->store, (string) $row->environment);
-                $token       = trim((string) $row->refresh_token);
-                $hasKeys     = trim($credentials['client_id']) !== '' && trim($credentials['client_secret']) !== '';
-                if ($token === '' || $hasKeys === false) {
-                    continue;
-                }
-                if ($this->realmSharedWithOthers($row, $companyUuid) === true) {
+                $token = trim((string) $row->refresh_token);
+                if ($token === '' || $this->realmSharedWithOthers($row, $companyUuid) === true) {
                     continue;
                 }
 
@@ -646,11 +638,9 @@ class ConnectionController extends QuickbooksController
      */
     private function finishOAuth(Request $request, string $companyUuid, string $userUuid, ?string $level): ?array
     {
-        $allowed = fn (string $realmId): bool => $this->mayConnectRealm($request, $companyUuid, $realmId, $level);
-        $handle  = (string) $request->input('handle');
-        // The keys are those of the environment this flow was started for, whatever the settings say now.
-        $flow        = $handle !== '' ? $handle : (string) $request->input('state');
-        $credentials = $this->credentials($this->oauth->environmentOf($flow));
+        $allowed     = fn (string $realmId): bool => $this->mayConnectRealm($request, $companyUuid, $realmId, $level);
+        $credentials = $this->credentials($companyUuid);
+        $handle      = (string) $request->input('handle');
         if ($handle !== '') {
             return $this->oauth->complete($handle, $companyUuid, $userUuid, $credentials, $allowed);
         }
@@ -703,53 +693,6 @@ class ConnectionController extends QuickbooksController
         return $realm !== '' ? $realm : null;
     }
 
-    /**
-     * The Intuit environment a new authorization is for. An administrator picks one (the request's environment, else
-     * the one offered first); anyone else reconnects the environment the organization already uses. Null when there
-     * is none to reconnect.
-     */
-    private function chosenEnvironment(Request $request, string $companyUuid): ?string
-    {
-        if ($this->authorizer->can('quickbooks change-company connection', $request) === false) {
-            return $this->lastEnvironment($companyUuid);
-        }
-        $asked = $request->input('environment');
-
-        return is_string($asked) === true && in_array($asked, SettingsKeys::ENVIRONMENTS, true) === true
-            ? $asked
-            : $this->defaultEnvironment($companyUuid);
-    }
-
-    /**
-     * The environment offered first: the organization's own while its keys are saved, else the first with saved keys.
-     */
-    private function defaultEnvironment(string $companyUuid): string
-    {
-        $configured = $this->settings->configuredEnvironments($this->store);
-        $own        = $this->lastEnvironment($companyUuid);
-
-        if ($own !== null && in_array($own, $configured, true) === true) {
-            return $own;
-        }
-
-        return $configured[0] ?? SettingsKeys::ENVIRONMENTS[0];
-    }
-
-    /**
-     * The environment of the current connection, or of the last one after a disconnect.
-     */
-    protected function lastEnvironment(string $companyUuid): ?string
-    {
-        $connection = $this->latestConnection($companyUuid);
-        if ($connection instanceof Connection === true && (string) $connection->environment !== '') {
-            return SettingsKeys::environment((string) $connection->environment);
-        }
-        $remembered  = $this->store->get(SettingsKeys::companyLastRealm($companyUuid));
-        $environment = $remembered['environment'] ?? null;
-
-        return is_string($environment) === true && $environment !== '' ? SettingsKeys::environment($environment) : null;
-    }
-
     protected function connectionIsStored(string $companyUuid): bool
     {
         return Connection::query()->where('company_uuid', $companyUuid)->exists();
@@ -776,10 +719,7 @@ class ConnectionController extends QuickbooksController
         }
         $model->fill($connection);
         $model->save();
-        $this->store->put(SettingsKeys::companyLastRealm($companyUuid), [
-            'realm_id'    => (string) $model->realm_id,
-            'environment' => SettingsKeys::environment((string) $model->environment),
-        ]);
+        $this->store->put(SettingsKeys::companyLastRealm($companyUuid), ['realm_id' => (string) $model->realm_id]);
         FleetbaseDirectory::forgetReauthNotice($companyUuid);
     }
 
@@ -991,18 +931,16 @@ class ConnectionController extends QuickbooksController
     }
 
     /**
-     * Sync now uses the saved Client ID and Client secret of the connection's environment. Without a connection,
-     * whether any environment has them. A public https redirect is required to start OAuth, not to sync.
+     * Sync now uses the saved Client ID and Client secret.
+     * A public https redirect is required to start OAuth, not to sync.
      */
-    private function syncCredentialStatus(?Connection $connection): bool
+    private function syncCredentialStatus(string $companyUuid): bool
     {
-        if ($connection === null) {
-            return $this->settings->configuredEnvironments($this->store) !== [];
-        }
+        $credentials = $this->settings->credentialsFor($this->store, $companyUuid);
+        $clientId    = trim($credentials['client_id']);
+        $secretSet   = trim($credentials['client_secret']) !== '';
 
-        $configured = $this->settings->configuredEnvironments($this->store);
-
-        return in_array(SettingsKeys::environment((string) $connection->environment), $configured, true);
+        return $clientId !== '' && $secretSet;
     }
 
     /**
@@ -1012,9 +950,9 @@ class ConnectionController extends QuickbooksController
      *
      * @return array{client_id: string, client_secret: string, redirect_uri: string, environment: string}
      */
-    private function credentials(string $environment): array
+    private function credentials(string $companyUuid): array
     {
-        $credentials                 = $this->settings->credentialsFor($this->store, $environment);
+        $credentials                 = $this->settings->credentialsFor($this->store, $companyUuid);
         $redirect                    = ConsoleHost::oauthRedirectUrl();
         $credentials['redirect_uri'] = PublicHttps::isPublicHttpsUrl($redirect, false) === true ? $redirect : '';
 

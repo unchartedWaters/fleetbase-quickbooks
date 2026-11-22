@@ -201,8 +201,9 @@ test('starting a connection sends the browser to Intuit sign-in with the request
     session(['company' => 'sandbox-company', 'user' => 'sandbox-user']);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'sandbox_client_id'     => sandboxCredentials()['client_id'],
-        'sandbox_client_secret' => (new SecretCipher())->encrypt(sandboxCredentials()['client_secret']),
+        'client_id'     => sandboxCredentials()['client_id'],
+        'client_secret' => (new SecretCipher())->encrypt(sandboxCredentials()['client_secret']),
+        'environment'   => 'sandbox',
     ];
     $controller = new ConnectionController(
         new Authorizer(static fn () => true),
@@ -217,7 +218,7 @@ test('starting a connection sends the browser to Intuit sign-in with the request
     config()->set('quickbooks.console_host', 'https://console.example.com');
 
     try {
-        $started = $controller->start(Request::create('/oauth/start', 'POST', ['company_uuid' => 'sandbox-company', 'environment' => 'sandbox']));
+        $started = $controller->start(Request::create('/oauth/start', 'POST', ['company_uuid' => 'sandbox-company']));
     } finally {
         config()->set('quickbooks.console_host', $consoleHost);
         session(['company' => null, 'user' => null]);

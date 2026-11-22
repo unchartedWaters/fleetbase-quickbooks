@@ -131,26 +131,27 @@ test('saving settings keeps stored auth fields that were not sent', function () 
     session(['company' => 'company-uuid']);
     $store                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::adminAuth()] = [
-        'sandbox_client_id'     => 'kept-id',
-        'sandbox_client_secret' => 'kept-secret',
-        'redirect_uri'          => 'https://example.com/callback',
+        'client_id'     => 'kept-id',
+        'client_secret' => 'kept-secret',
+        'redirect_uri'  => 'https://example.com/callback',
+        'environment'   => 'sandbox',
     ];
 
     try {
         $response = securitySettingController($store)->save(InstallAdminRequest::create('/settings', 'POST', [
             'scope' => 'admin',
-            'auth'  => ['sandbox_client_id' => 'kept-id', 'sandbox_client_secret' => ''],
+            'auth'  => ['client_id' => 'kept-id', 'client_secret' => ''],
             'sync'  => qbSettings(['override' => true]),
         ]));
         $stored = $store->rows[SettingsKeys::adminAuth()];
 
         expect($response->getStatusCode())->toBe(200)
             ->and($response->getContent())->not->toContain('kept-secret')
-            ->and($stored['sandbox_client_id'])->toBe('kept-id')
-            ->and($stored['sandbox_client_secret'])->not->toBe('kept-secret')
-            ->and((new SecretCipher())->decrypt($stored['sandbox_client_secret']))->toBe('kept-secret')
+            ->and($stored['client_id'])->toBe('kept-id')
+            ->and($stored['client_secret'])->not->toBe('kept-secret')
+            ->and((new SecretCipher())->decrypt($stored['client_secret']))->toBe('kept-secret')
             ->and($stored)->not->toHaveKey('redirect_uri')
-            ->and($stored)->not->toHaveKey('environment');
+            ->and($stored['environment'])->toBe('sandbox');
     } finally {
         session(['company' => null]);
     }
@@ -358,8 +359,8 @@ test('a failed webhook check does not decrypt every company client secret', func
             'webhook_verifier' => 'verifier-b',
         ], []);
         $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth([
-            'production_client_secret'    => 'admin-secret',
-            'production_webhook_verifier' => 'admin-verifier',
+            'client_secret'    => 'admin-secret',
+            'webhook_verifier' => 'admin-verifier',
         ], []);
         $store->asked = [];
         $controller   = webhookController($settings, $store, ['realm-1' => 'company-a']);
@@ -376,12 +377,12 @@ test('a failed webhook check does not decrypt every company client secret', func
             expect($response->getStatusCode())->toBe(401)
                 ->and($events)->toBe([])
                 ->and($dispatcher->jobs)->toBe([])
-                ->and($cipher->decrypted)->toContain($admin['production_webhook_verifier'])
+                ->and($cipher->decrypted)->toContain($admin['webhook_verifier'])
                 ->and($cipher->decrypted)->not->toContain($company['webhook_verifier'])
                 ->and($cipher->decrypted)->not->toContain($company['client_secret'])
                 ->and($cipher->decrypted)->not->toContain($other['client_secret'])
                 ->and($cipher->decrypted)->not->toContain($other['webhook_verifier'])
-                ->and($cipher->decrypted)->not->toContain($admin['production_client_secret'])
+                ->and($cipher->decrypted)->not->toContain($admin['client_secret'])
                 ->and($store->asked)->toBe([SettingsKeys::adminAuth()]);
         });
     });

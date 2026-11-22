@@ -16,9 +16,6 @@
             @canConnectNew={{@canConnectNew}}
             @loadFailed={{@loadFailed}}
             @busy={{@busy}}
-            @environments={{@environments}}
-            @environment={{@environment}}
-            @onEnvironment={{@onEnvironment}}
             @onConnect={{@onConnect}}
             @onDisconnect={{@onDisconnect}}
             @onSync={{@onSync}}
@@ -49,10 +46,11 @@
         @syncOnly={{this.syncOnly}}
         @readOnly={{this.readOnly}}
         @errors={{this.errors}}
-        @credentialSets={{this.credentialSets}}
+        @authFields={{this.authFields}}
         @syncFields={{this.syncFields}}
         @policies={{this.policies}}
         @taxSource={{this.taxSource}}
+        @secret={{this.secret}}
         @displayedUrls={{this.displayedUrls}}
         @urlWarnings={{this.urlWarnings}}
         @onUpdate={{this.update}}

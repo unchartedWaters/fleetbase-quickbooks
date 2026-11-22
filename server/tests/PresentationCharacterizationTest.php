@@ -179,18 +179,19 @@ test('save keeps stored credentials and never stores a redirect', function () {
 
     try {
         $store->rows[SettingsKeys::adminAuth()] = [
-            'sandbox_client_id'     => 'stored-id',
-            'sandbox_client_secret' => 'stored-secret',
-            'redirect_uri'          => 'https://8.8.8.8/callback',
+            'client_id'     => 'stored-id',
+            'client_secret' => 'stored-secret',
+            'redirect_uri'  => 'https://8.8.8.8/callback',
+            'environment'   => 'sandbox',
         ];
-        $sent = ['sandbox_client_id' => 'stored-id', 'redirect_uri' => 'https://console.example.test:4200/cb'];
+        $sent = ['client_id' => 'stored-id', 'redirect_uri' => 'https://console.example.test:4200/cb'];
         $kept = pctSave($controller, $sent, pctSync());
 
         expect($kept->getStatusCode())->toBe(200)
             ->and($store->rows[SettingsKeys::adminAuth()])->not->toHaveKey('redirect_uri')
-            ->and($store->rows[SettingsKeys::adminAuth()]['sandbox_client_id'])->toBe('stored-id')
-            ->and($store->rows[SettingsKeys::adminAuth()])->not->toHaveKey('environment')
-            ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['sandbox_client_secret']))->toBe('stored-secret');
+            ->and($store->rows[SettingsKeys::adminAuth()]['client_id'])->toBe('stored-id')
+            ->and($store->rows[SettingsKeys::adminAuth()]['environment'])->toBe('sandbox')
+            ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['client_secret']))->toBe('stored-secret');
     } finally {
         session(['company' => $previousCompany]);
         config()->set('app.url', $previousAppUrl);
@@ -207,23 +208,25 @@ test('save validates the merged auth so a blank secret uses the stored one and n
 
     try {
         $rejected = pctSave($controller, [
-            'production_client_id'     => 'id',
-            'production_client_secret' => '',
-            'redirect_uri'             => 'https://example.com/callback',
+            'client_id'     => 'id',
+            'client_secret' => '',
+            'redirect_uri'  => 'https://example.com/callback',
+            'environment'   => 'production',
         ], pctSync());
         $body = $rejected->getData(true);
 
         expect($rejected->getStatusCode())->toBe(422)
             ->and($body['message'])->toBe('Some QuickBooks settings are missing or invalid.')
-            ->and(array_keys($body['errors']))->toBe(['production_client_secret'])
+            ->and(array_keys($body['errors']))->toBe(['client_secret'])
             ->and($store->rows)->not->toHaveKey(SettingsKeys::adminAuth())
             ->and($store->rows)->not->toHaveKey(SettingsKeys::adminSync());
 
-        $missing = pctSave($controller, ['production_client_secret' => ['not', 'a', 'string']], ['interval_minutes' => 0]);
+        $missing = pctSave($controller, ['client_secret' => ['not', 'a', 'string']], ['interval_minutes' => 0]);
         expect($missing->getStatusCode())->toBe(422)
             ->and(array_keys($missing->getData(true)['errors']))->toBe([
-                'production_client_id',
-                'production_client_secret',
+                'client_id',
+                'environment',
+                'client_secret',
                 'interval_minutes',
                 'periodic_interval_hours',
                 'retry_limit',
@@ -239,15 +242,16 @@ test('save validates the merged auth so a blank secret uses the stored one and n
             ]);
 
         $store->rows[SettingsKeys::adminAuth()] = [
-            'production_client_id'     => 'stored-id',
-            'production_client_secret' => 'stored-secret',
+            'client_id'     => 'stored-id',
+            'client_secret' => 'stored-secret',
+            'environment'   => 'production',
         ];
-        $accepted = pctSave($controller, ['production_client_secret' => '   '], pctSync());
+        $accepted = pctSave($controller, ['client_secret' => '   '], pctSync());
 
         expect($accepted->getStatusCode())->toBe(200)
-            ->and($store->rows[SettingsKeys::adminAuth()]['production_client_id'])->toBe('stored-id')
+            ->and($store->rows[SettingsKeys::adminAuth()]['client_id'])->toBe('stored-id')
             ->and($store->rows[SettingsKeys::adminAuth()])->not->toHaveKey('redirect_uri')
-            ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['production_client_secret']))->toBe('stored-secret');
+            ->and((new SecretCipher())->decrypt($store->rows[SettingsKeys::adminAuth()]['client_secret']))->toBe('stored-secret');
     } finally {
         session(['company' => $previousCompany]);
         config()->set('app.url', $previousAppUrl);
@@ -274,9 +278,10 @@ test('save merges sync onto the stored allowlisted keys and normalizes every dir
         $store->rows[SettingsKeys::adminSync()] = $existing;
 
         $saved = pctSave($controller, [
-            'sandbox_client_id'     => 'id',
-            'sandbox_client_secret' => 'secret',
-            'redirect_uri'          => 'https://example.com/callback',
+            'client_id'     => 'id',
+            'client_secret' => 'secret',
+            'redirect_uri'  => 'https://example.com/callback',
+            'environment'   => 'sandbox',
         ], [
             'retry_limit'                 => 7,
             'wallet_direction'            => '',

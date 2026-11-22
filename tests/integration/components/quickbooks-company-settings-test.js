@@ -148,24 +148,6 @@ class FirstConnectionFetchStubService extends DisconnectedFetchStubService {
     }
 }
 
-// Keys saved for both environments, and a sign-in that records what it was asked to start.
-class BothEnvironmentsFetchStubService extends DisconnectedFetchStubService {
-    async get(path) {
-        if (path === 'connection') {
-            return { connection: null, environments: ['production', 'sandbox'], environment: 'production' };
-        }
-
-        return super.get(path);
-    }
-
-    async post(path, body) {
-        this.posts.push({ path, body });
-        this.postCalls.push(path);
-
-        return path === 'oauth/start' ? { message: 'stopped before leaving the page' } : {};
-    }
-}
-
 class SettingsLoadFailedFetchStubService extends FetchStubService {
     async get(path) {
         if (path === 'settings') {
@@ -295,28 +277,6 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         assert.deepEqual(this.notifications.messages.at(-1), ['error', 'Configure QuickBooks Client ID, Client secret, and Redirect URI before connecting.']);
     });
 
-    test('an administrator chooses the environment and the sign-in starts for it', async function (assert) {
-        class AdministratorAbilitiesStubService extends Service {
-            can() {
-                return true;
-            }
-        }
-
-        this.owner.register('service:abilities', AdministratorAbilitiesStubService);
-        this.owner.register('service:fetch', BothEnvironmentsFetchStubService);
-        const fetch = this.owner.lookup('service:fetch');
-
-        await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
-
-        assert.dom('[data-test-environment-select]').hasValue('production');
-        await click('[data-test-connect]');
-        assert.strictEqual(fetch.posts.find((call) => call.path === 'oauth/start').body.environment, 'production');
-
-        await fillIn('[data-test-environment-select]', 'sandbox');
-        await click('[data-test-connect]');
-        assert.strictEqual(fetch.posts.filter((call) => call.path === 'oauth/start').at(-1).body.environment, 'sandbox');
-    });
-
     test('connect is off when the server says only an administrator can make the first connection', async function (assert) {
         this.owner.register('service:fetch', FirstConnectionFetchStubService);
         const fetch = this.owner.lookup('service:fetch');
@@ -394,12 +354,9 @@ module('Integration | Component | quickbooks-company-settings', function (hooks)
         await render(hbs`<QuickbooksCompanySettings @title="Connection" />`);
 
         [
-            'production_client_id',
-            'production_client_secret',
-            'production_webhook_verifier',
-            'sandbox_client_id',
-            'sandbox_client_secret',
-            'sandbox_webhook_verifier',
+            'client_id',
+            'client_secret',
+            'webhook_verifier',
             'environment',
             'redirect_uri',
             'public_webhook_receiver_url',

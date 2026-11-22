@@ -16,9 +16,7 @@ class SettingsValidator
     }
 
     /**
-     * The global Intuit credentials: one set of keys per environment. A set nobody has filled in is skipped; a set
-     * with any key in it needs its Client ID and Client secret. At least one set must be complete.
-     * Organization sync settings never carry these.
+     * The global Intuit credentials. Organization sync settings never carry these.
      *
      * @param array<string, mixed> $auth
      *
@@ -26,41 +24,21 @@ class SettingsValidator
      */
     public function credentialErrors(array $auth): array
     {
-        $errors   = [];
-        $complete = 0;
-        foreach (SettingsKeys::ENVIRONMENTS as $environment) {
-            $idField     = SettingsKeys::credentialField($environment, 'client_id');
-            $secretField = SettingsKeys::credentialField($environment, 'client_secret');
-            $clientId    = $this->credential($auth, $environment, 'client_id');
-            $secret      = $this->credential($auth, $environment, 'client_secret');
-            $verifier    = $this->credential($auth, $environment, 'webhook_verifier');
-            if ($clientId === '' && $secret === '' && $verifier === '') {
-                continue;
-            }
-            if ($clientId === '') {
-                $errors[$idField] = 'quickbooks.validation.client-id';
-            }
-            if ($secret === '') {
-                $errors[$secretField] = 'quickbooks.validation.client-secret';
-            }
-            $complete += $clientId !== '' && $secret !== '' ? 1 : 0;
+        $errors = [];
+        if (trim((string) ($auth['client_id'] ?? '')) === '') {
+            $errors['client_id'] = 'quickbooks.validation.client-id';
         }
-        if ($complete === 0 && $errors === []) {
-            $required = ['client_id' => 'client-id', 'client_secret' => 'client-secret'];
-            foreach ($required as $name => $message) {
-                $errors[SettingsKeys::credentialField('production', $name)] = 'quickbooks.validation.' . $message;
-            }
+
+        $environment = (string) ($auth['environment'] ?? '');
+        if (in_array($environment, ['sandbox', 'production'], true) === false) {
+            $errors['environment'] = 'quickbooks.validation.environment';
+        }
+
+        if (trim((string) ($auth['client_secret'] ?? '')) === '') {
+            $errors['client_secret'] = 'quickbooks.validation.client-secret';
         }
 
         return $errors;
-    }
-
-    /**
-     * @param array<string, mixed> $auth
-     */
-    private function credential(array $auth, string $environment, string $name): string
-    {
-        return trim((string) ($auth[SettingsKeys::credentialField($environment, $name)] ?? ''));
     }
 
     /**

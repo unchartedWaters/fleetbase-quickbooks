@@ -162,7 +162,7 @@ class WebhookController extends Controller
     }
 
     /**
-     * Connections on the body's realms when one of the install's verifiers matches (Development or Production).
+     * Connections on the body's realms when the install-wide verifier matches.
      * An organization verifier is not consulted, and a second organization's
      * secret is not a fallback. Null means the signature did not match. An empty
      * array means it matched but the body names no realm with a connection.
@@ -171,7 +171,7 @@ class WebhookController extends Controller
      */
     private function matchingConnections(string $rawBody, string $signature): ?array
     {
-        $verifiers = $this->settings->webhookVerifiersFor($this->store);
+        $verifiers = $this->settings->webhookVerifiersFor($this->store, '');
         if ($this->signatures->accepts($rawBody, $signature, $verifiers) === false) {
             return null;
         }

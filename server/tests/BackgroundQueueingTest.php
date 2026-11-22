@@ -128,7 +128,7 @@ test('a global save queues nothing for any organization', function () {
         $jobs = CapturedJobs::capture(function () use ($controller): void {
             $saved = $controller->save(InstallAdminRequest::create('/settings', 'POST', [
                 'scope' => 'admin',
-                'auth'  => ['sandbox_client_id' => 'client-id', 'sandbox_client_secret' => 'secret', 'redirect_uri' => 'https://example.com/callback'],
+                'auth'  => ['client_id' => 'client-id', 'client_secret' => 'secret', 'redirect_uri' => 'https://example.com/callback', 'environment' => 'sandbox'],
                 'sync'  => qbSettings(['wallet_enabled' => true]),
             ]));
             expect($saved->getStatusCode())->toBe(200);

@@ -14,7 +14,7 @@ use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 function orgSyncStore(): MemorySettingsStore
 {
     $store                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::adminAuth()] = ['production_client_id' => 'global-client-id', 'production_client_secret' => (new SecretCipher())->encrypt('global-secret-value')];
+    $store->rows[SettingsKeys::adminAuth()] = ['client_id' => 'global-client-id', 'client_secret' => (new SecretCipher())->encrypt('global-secret-value')];
     $store->rows[SettingsKeys::adminSync()] = qbSettings(['interval_minutes' => 15, 'wallet_enabled' => false]);
 
     return $store;
@@ -177,7 +177,7 @@ test('read-only, public URL and global keys are never stored in an organization 
         ->and($row['interval_minutes'])->toBe(45)
         ->and(array_keys($store->rows))->toContain(SettingsKeys::companySync('org-a'))
         ->and(array_key_exists(SettingsKeys::companyAuth('org-a'), $store->rows))->toBeFalse()
-        ->and($store->rows[SettingsKeys::adminAuth()]['production_client_id'])->toBe('global-client-id');
+        ->and($store->rows[SettingsKeys::adminAuth()]['client_id'])->toBe('global-client-id');
 });
 
 test('connecting gives the organization its own copy before it queues, and reconnecting keeps that copy', function () {

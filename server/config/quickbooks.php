@@ -7,6 +7,7 @@ return [
             'internal_prefix' => 'int',
         ],
     ],
+    'environment'   => env('QUICKBOOKS_ENVIRONMENT', 'production'),
     'console_host'  => env('QUICKBOOKS_CONSOLE_HOST', env('CONSOLE_HOST')),
     // Seconds before an organization can start the same manual action again (Sync now,
     // reconcile, customer import, Connect). A repeat inside it answers HTTP 429. 0 turns it off.

@@ -213,7 +213,7 @@ test('a missing or bad signature returns 401 and does not dispatch events', func
 
     qboChangedWithoutVerifier(function () use ($settings, $body) {
         $store                                  = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
         $controller                             = qboChangedController($settings, $store, ['realm-1' => 'company-a'], []);
         qboChangedCollect();
 
@@ -248,8 +248,8 @@ JSON;
 
     qboChangedWithoutVerifier(function () use ($settings, $body) {
         $store                                               = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminAuth()]              = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
-        $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::adminAuth()]              = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
         $controller                                          = qboChangedController($settings, $store, ['realm-1' => 'company-a'], [
             'company-a' => ['realm-1' => ['Invoice|8' => 'inv-1']],
         ]);
@@ -300,7 +300,7 @@ test('a merge dispatches the surviving record as an update and the merged-away r
     ]]]);
 
     qboChangedWithoutVerifier(function () use ($settings, $body) {
-        $verifier = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
+        $verifier = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
 
         $store                                               = new MemorySettingsStore();
         $store->rows[SettingsKeys::adminAuth()]              = $verifier;
@@ -349,9 +349,9 @@ JSON;
 
     qboChangedWithoutVerifier(function () use ($settings, $body) {
         $store                                               = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminAuth()]              = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
-        $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
-        $store->rows[SettingsKeys::companyAuth('company-b')] = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::adminAuth()]              = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::companyAuth('company-b')] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
         $controller                                          = qboChangedController($settings, $store, [
             'realm-shared' => ['company-a', 'company-b'],
         ], [
@@ -392,8 +392,8 @@ test('the same quickbooks id resolves only through the event realm', function ()
 
     qboChangedWithoutVerifier(function () use ($settings, $body) {
         $store                                               = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminAuth()]              = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
-        $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::adminAuth()]              = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
         $controller                                          = qboChangedController($settings, $store, ['realm-new' => 'company-a'], [
             'company-a' => [
                 'realm-old' => ['Invoice|8' => 'old-invoice'],
@@ -511,8 +511,8 @@ test('a controller link lookup failure propagates without dispatching an event o
 
     $settings                                            = qboChangedSettings();
     $store                                               = new MemorySettingsStore();
-    $store->rows[SettingsKeys::adminAuth()]              = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
-    $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
+    $store->rows[SettingsKeys::adminAuth()]              = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
+    $store->rows[SettingsKeys::companyAuth('company-a')] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
 
     $controller = new class($settings, $store, new WebhookSignature()) extends WebhookController {
         public function __construct(
@@ -2135,7 +2135,7 @@ test('a connection is not shared with another organization on the same realm', f
 
         $settings                               = qboChangedSettings();
         $store                                  = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
         $store->rows[SettingsKeys::adminSync()] = [
             'invoice_direction' => 'both',
         ];
@@ -2231,7 +2231,7 @@ test('a signed webhook delete older than ten minutes is not applied and a down r
 
     qboChangedWithoutVerifier(function () use ($settings, $stale, $fresh) {
         $store                                  = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
         $controller                             = qboChangedController($settings, $store, ['realm-replay' => 'company-a'], []);
         qboChangedCollect();
 
@@ -2272,7 +2272,7 @@ test('a replayed signed webhook body is not applied again and a bad signature is
 
     qboChangedWithoutVerifier(function () use ($settings, $body, $other) {
         $store                                  = new MemorySettingsStore();
-        $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['production_webhook_verifier' => 'verifier-token'], []);
+        $store->rows[SettingsKeys::adminAuth()] = $settings->storeAuth(['webhook_verifier' => 'verifier-token'], []);
         $controller                             = qboChangedController($settings, $store, ['realm-replay' => 'company-a'], []);
         qboChangedCollect();
 

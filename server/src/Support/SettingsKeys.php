@@ -13,8 +13,8 @@ class SettingsKeys
     public const ORGANIZATION_MARKER_VALUE = 'organization';
 
     /**
-     * Sync options an organization holds its own copy of. Credentials, the webhook verifier and the
-     * public URLs are global and are never stored on an organization row.
+     * Sync options an organization holds its own copy of. Credentials, the webhook verifier, the
+     * environment and the public URLs are global and are never stored on an organization row.
      *
      * @var array<int, string>
      */
@@ -71,30 +71,6 @@ class SettingsKeys
     public static function adminAuth(): string
     {
         return 'system.quickbooks.auth';
-    }
-
-    /**
-     * Intuit issues a separate set of keys for its Development (sandbox) and Production apps. The admin row holds
-     * one set per environment, each field prefixed with its environment (production_client_id, sandbox_client_id).
-     *
-     * @var array<int, string>
-     */
-    public const ENVIRONMENTS = ['production', 'sandbox'];
-
-    /** @var array<int, string> */
-    public const CREDENTIAL_FIELDS = ['client_id', 'client_secret', 'webhook_verifier'];
-
-    public static function credentialField(string $environment, string $field): string
-    {
-        return $environment . '_' . $field;
-    }
-
-    /**
-     * Intuit's two environments. Anything that is not production is sandbox, as the API client reads it.
-     */
-    public static function environment(?string $environment): string
-    {
-        return $environment === 'production' ? 'production' : 'sandbox';
     }
 
     public static function companySync(string $companyUuid): string

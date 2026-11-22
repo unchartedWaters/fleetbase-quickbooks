@@ -7,7 +7,7 @@ use Fleetbase\Quickbooks\Support\SettingsValidator;
 /**
  * An organization's own copy of the sync options. The global sync row is only a template: it is copied
  * to an organization when it connects, saves, or resets, and later global edits do not change the copy.
- * Global settings (credentials, verifier, URLs) are never read from or written to an organization here.
+ * Global settings (credentials, verifier, environment, URLs) are never read from or written to an organization here.
  */
 class OrganizationSyncSettings
 {
@@ -78,17 +78,21 @@ class OrganizationSyncSettings
     }
 
     /**
-     * The organization view: sync options only. No credential, secret flag or URL.
+     * The organization view: sync options only. No credential, secret flag, environment or URL.
      *
      * @return array<string, mixed>
      */
     public function view(string $companyUuid, bool $canEdit): array
     {
+        $auth     = $this->settings->resolveAuth([], $this->store->adminAuth(), $this->store->envAuth());
+        $secret   = $auth['client_secret'] ?? null;
+        $clientId = trim((string) ($auth['client_id'] ?? ''));
+
         return [
             'can_edit'               => $canEdit,
             'sync'                   => SettingsStore::onlySyncFields($this->effective($companyUuid)),
             'has_copy'               => $this->store->hasCompanyCopy($companyUuid),
-            'credentials_configured' => $this->settings->configuredEnvironments($this->store) !== [],
+            'credentials_configured' => $clientId !== '' && is_string($secret) === true && trim($secret) !== '',
         ];
     }
 

@@ -252,7 +252,7 @@ test('connecting another company asks first, keeps the handle and clears only on
         $controller = ChoiceController::make(new MemorySettingsStore());
 
         try {
-            $state   = (string) $controller->start(Request::create('/oauth/start', 'POST', ['environment' => 'sandbox']))->getData(true)['state'];
+            $state   = (string) $controller->start(Request::create('/oauth/start', 'POST'))->getData(true)['state'];
             $asked   = $controller->complete(Request::create('/oauth/complete', 'POST', [
                 'state' => $state, 'code' => 'code', 'realmId' => '9341453000000009',
             ]));

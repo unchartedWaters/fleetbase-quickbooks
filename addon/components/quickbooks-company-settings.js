@@ -22,9 +22,6 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     @tracked connectionLoading = true;
     // False when only a QuickBooks Administrator may make this organization's first connection.
     @tracked canConnectNew = true;
-    // The Intuit environments with saved keys, and the one the connect button uses. An administrator picks between them.
-    @tracked environments = [];
-    @tracked environment = null;
     // How many records are linked to QuickBooks, by kind. Null until the connection request answers.
     @tracked linked = null;
     // Set when Intuit returned a different company than the linked records belong to: the handle, the code and the counts.
@@ -71,8 +68,6 @@ export default class QuickbooksCompanySettingsComponent extends Component {
             this.connection = result?.connection ?? null;
             this.canConnectNew = result?.can_connect_new !== false;
             this.linked = result?.linked ?? null;
-            this.environments = result?.environments ?? [];
-            this.environment = result?.environment ?? null;
             this.connectionLoadFailed = false;
         } catch (error) {
             this.connection = null;
@@ -125,8 +120,6 @@ export default class QuickbooksCompanySettingsComponent extends Component {
                 {
                     company_uuid: this.currentUser.companyId,
                     user_uuid: this.currentUser.id,
-                    // The server uses the organization's own environment for anyone who may not choose.
-                    environment: this.environment,
                 },
                 { namespace: NAMESPACE }
             );
@@ -140,11 +133,6 @@ export default class QuickbooksCompanySettingsComponent extends Component {
         } finally {
             this.busy = false;
         }
-    }
-
-    @action
-    selectEnvironment(environment) {
-        this.environment = environment;
     }
 
     // Returns false when the server refused, so the question stays open for another try.
