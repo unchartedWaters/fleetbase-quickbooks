@@ -31,7 +31,7 @@ if (!email || !password) {
     process.exit(1);
 }
 
-const ENGINE = '@unchartedwaters/quickbooks-engine';
+const ENGINE = '@unchartedwaters/fleetbase-quickbooks';
 const PAGES = [
     {
         name: 'QuickBooks Setup',

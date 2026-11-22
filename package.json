@@ -1,5 +1,5 @@
 {
-  "name": "@unchartedwaters/quickbooks-engine",
+  "name": "@unchartedwaters/fleetbase-quickbooks",
   "version": "0.0.2",
   "description": "Sync Fleetbase customers, invoices, payments, wallets, and products with QuickBooks Online.",
   "keywords": [

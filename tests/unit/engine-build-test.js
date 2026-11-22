@@ -1,6 +1,6 @@
 import { module, test } from 'qunit';
 
-const ENGINE = '@unchartedwaters/quickbooks-engine';
+const ENGINE = '@unchartedwaters/fleetbase-quickbooks';
 
 // ember-asset-loader's app modules read a meta tag the Fleetbase console never renders.
 // Bundled into this engine, they stop the lazy engine from booting and every QuickBooks screen stays blank.

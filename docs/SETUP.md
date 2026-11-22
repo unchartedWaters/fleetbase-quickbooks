@@ -10,7 +10,7 @@ Package names:
 | | Name |
 | --- | --- |
 | Composer | `unchartedwaters/quickbooks-api` |
-| npm / Ember engine | `@unchartedwaters/quickbooks-engine` |
+| npm / Ember engine | `@unchartedwaters/fleetbase-quickbooks` |
 | PHP namespace | `Fleetbase\Quickbooks` |
 
 Composer package names and npm scopes are lowercase, so those two fields use `unchartedwaters`. The GitHub organization is `unchartedWaters`. The PHP namespace stays `Fleetbase\Quickbooks`.
@@ -961,29 +961,41 @@ A company with no QuickBooks connection is looked up at most once per 30 seconds
 
 ## Requirements and install
 
-This package needs PHP `^8.2`, `fleetbase/core-api` `^2.0.2`,
-`fleetbase/fleetops-api` `^0.7.1`, and `fleetbase/ledger-api` `^0.1.0`. It
-runs on Fleetbase 0.8 and later (Laravel 12); Fleetbase 0.7 and `core-api` 1.x
-are not supported. The ranges accept later patch releases of the same series on
-purpose: Fleetbase raises its own requirements with each release, and a
-narrower range would stop `composer require` (and the Docker start-up script)
-from installing this package next to it.
+This extension works only with **Fleetbase 0.8.1 or later**. It needs PHP
+`^8.2`, `fleetbase/core-api` `^2.0`, `fleetbase/fleetops-api` `^0.7.1`, and
+`fleetbase/ledger-api` `^0.1.0`. Fleetbase 0.8.0 and earlier, including 0.7 and
+`core-api` 1.x, are not supported (Laravel 12 is required). The release check
+runs against Fleetbase 0.8.1, which ships `core-api` 2.0.2. The ranges accept later patch releases of
+the same series on purpose: Fleetbase raises its own requirements with each
+release, and a narrower range would stop `composer require` (and the Docker
+start-up script) from installing this package next to it.
 The Ember engine needs Node `>= 22`.
 
-From the Fleetbase directory, install the extension from the Fleetbase registry:
+Before you install, have:
+
+- a running Fleetbase 0.8.1 or later, with queue workers and the Laravel
+  scheduler (cron every minute);
+- a public https address for the console and for the API, because Intuit's
+  sign-in redirect and webhooks need them (see Developing locally below);
+- a QuickBooks app on the Intuit Developer Portal (see
+  [Create a QuickBooks app](#create-a-quickbooks-app)).
+
+### Install from the registry
+
+From the Fleetbase directory, install the extension from the Fleetbase
+registry:
 
 ```bash
-flb install @unchartedwaters/quickbooks-engine
+flb install @unchartedwaters/fleetbase-quickbooks
 ```
 
-Pass `--path` with the Fleetbase directory when that directory is not the current one. `flb install` looks the package up on `https://api.fleetbase.io/~registry/v1/lookup` and installs `@unchartedwaters/quickbooks-engine` and `unchartedwaters/quickbooks-api`.
+Pass `--path` with the Fleetbase directory when that directory is not the
+current one. `flb install` looks the package up on
+`https://api.fleetbase.io/~registry/v1/lookup` and installs
+`@unchartedwaters/fleetbase-quickbooks` and `unchartedwaters/quickbooks-api`.
 
-`flb install` only adds the packages. From the Fleetbase API directory, run
-`php artisan migrate --force` and `php artisan fleetbase:create-permissions`
-(both are part of Fleetbase's `api/deploy.sh`), then rebuild or restart the
-console so it includes the engine. Make sure queue workers and the Laravel
-scheduler (cron every minute) run, and set `CONSOLE_HOST` on the API to the
-console address.
+`flb install` only adds the packages. Continue with
+[After installing](#after-installing).
 
 `.github/workflows/deploy.yml` publishes this package to the Fleetbase registry with `flb publish` when a `v*` tag is pushed. The tag has to contain that workflow, and the GitHub secrets named in it have to exist.
 
@@ -1006,9 +1018,45 @@ When upgrading from 0.0.2, also check these one-time effects first:
 - Run `php artisan fleetbase:create-permissions` for the new
   `quickbooks change-company connection` permission.
 
-As an installation administrator, open Admin → QuickBooks → Settings and save
-the Intuit Client ID and Client secret. Then open Organization settings →
-QuickBooks Setup and connect.
+### Install from a checkout
+
+To install without the registry, use a checkout of this repository. The
+release check (`.github/workflows/fleetbase-release.yml`) installs it the same
+way against each Fleetbase release.
+
+1. API: from the Fleetbase API directory, add the checkout as a Composer path
+   repository and require the package.
+
+   ```bash
+   composer config repositories.quickbooks path /path/to/fleetbase-quickbooks
+   composer require 'unchartedwaters/quickbooks-api:*'
+   ```
+
+2. Console: pack the engine and add it to the Fleetbase console.
+
+   ```bash
+   (cd /path/to/fleetbase-quickbooks && npm pack --pack-destination /tmp)
+   cd /path/to/fleetbase/console
+   pnpm add /tmp/unchartedwaters-fleetbase-quickbooks-*.tgz
+   ```
+
+3. Turn the engine on: list `@unchartedwaters/fleetbase-quickbooks` in
+   `EXTENSIONS` (the console's `fleetbase.config.json`, or the `EXTENSIONS`
+   environment variable when building), then build the console.
+4. Continue with [After installing](#after-installing).
+
+### After installing
+
+1. From the Fleetbase API directory, run `php artisan migrate --force` and
+   `php artisan fleetbase:create-permissions` (both are part of Fleetbase's
+   `api/deploy.sh`).
+2. Rebuild or restart the console so it includes the engine.
+3. Make sure queue workers and the Laravel scheduler run, and set
+   `CONSOLE_HOST` on the API to the console address.
+4. As an installation administrator, open Admin → QuickBooks → Settings and
+   save the Intuit Client ID and Client secret.
+5. In each organization, open Organization settings → QuickBooks Setup and
+   connect (see [Connect and disconnect](#connect-and-disconnect)).
 
 ### Server configuration
 
@@ -1047,7 +1095,14 @@ On this machine the repository is checked out at `/opt/fleetbase-quickbooks` on 
    `application` migrates on startup. A later application start skips the
    require when the installed package still matches, and migrate applies only
    pending migrations.
-6. Install console dependencies from `console/`. `console/package.json` links `@unchartedwaters/quickbooks-engine` to `../../fleetbase-quickbooks`. `console/fleetbase.config.json` lists `@unchartedwaters/quickbooks-engine` in `EXTENSIONS`. The running console bakes the engine into the image at `/usr/share/nginx/html/engines-dist/@unchartedwaters/quickbooks-engine`, from the BuildKit context named `quickbooks`. That container's bind is `console/fleetbase.config.json`.
+6. Install console dependencies from `console/`. `console/package.json` links
+   `@unchartedwaters/fleetbase-quickbooks` to `../../fleetbase-quickbooks`.
+   `console/fleetbase.config.json` lists
+   `@unchartedwaters/fleetbase-quickbooks` in `EXTENSIONS`. The running
+   console bakes the engine into the image at
+   `/usr/share/nginx/html/engines-dist/@unchartedwaters/fleetbase-quickbooks`,
+   from the BuildKit context named `quickbooks`. That container's bind is
+   `console/fleetbase.config.json`.
 
 ### Developing locally
 

@@ -1,8 +1,8 @@
 import { module, test } from 'qunit';
 import { setupTest } from 'dummy/tests/helpers';
 import { settled } from '@ember/test-helpers';
-import SettingsRoute from '@unchartedwaters/quickbooks-engine/routes/settings';
-import SettingsController from '@unchartedwaters/quickbooks-engine/controllers/settings';
+import SettingsRoute from '@unchartedwaters/fleetbase-quickbooks/routes/settings';
+import SettingsController from '@unchartedwaters/fleetbase-quickbooks/controllers/settings';
 import Service from '@ember/service';
 
 module('Unit | Route | settings', function (hooks) {

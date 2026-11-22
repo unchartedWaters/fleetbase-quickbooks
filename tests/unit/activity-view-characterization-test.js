@@ -1,5 +1,5 @@
 import { module, test } from 'qunit';
-import { activityRows } from '@unchartedwaters/quickbooks-engine/utils/activity-view';
+import { activityRows } from '@unchartedwaters/fleetbase-quickbooks/utils/activity-view';
 
 // Characterization tests: they pin the rows activityRows() returns today so a
 // refactor of activity-view.js can be shown to keep the same output.

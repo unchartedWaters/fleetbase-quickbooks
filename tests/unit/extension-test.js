@@ -1,6 +1,6 @@
 import { module, test } from 'qunit';
 import { setupTest } from 'dummy/tests/helpers';
-import extension from '@unchartedwaters/quickbooks-engine/extension';
+import extension from '@unchartedwaters/fleetbase-quickbooks/extension';
 
 function captureRegistration(intl = null) {
     const headerItems = [];
@@ -133,7 +133,7 @@ module('Unit | extension', function (hooks) {
         assert.strictEqual(settingsItems[0].view, 'index');
         assert.strictEqual(settingsItems[0].index, 0);
         assert.strictEqual(settingsItems[0].icon, 'plug');
-        assert.strictEqual(settingsItems[0].component.engine, '@unchartedwaters/quickbooks-engine');
+        assert.strictEqual(settingsItems[0].component.engine, '@unchartedwaters/fleetbase-quickbooks');
         assert.strictEqual(settingsItems[0].component.path, 'quickbooks-company-settings');
         assert.strictEqual(settingsItems[0].permission, 'quickbooks see extension');
         assert.false(settingsItems[0].overwriteWrapperClass);
@@ -145,7 +145,7 @@ module('Unit | extension', function (hooks) {
         assert.strictEqual(settingsItems[1].view, 'index');
         assert.strictEqual(settingsItems[1].index, 1);
         assert.strictEqual(settingsItems[1].icon, 'clock-rotate-left');
-        assert.strictEqual(settingsItems[1].component.engine, '@unchartedwaters/quickbooks-engine');
+        assert.strictEqual(settingsItems[1].component.engine, '@unchartedwaters/fleetbase-quickbooks');
         assert.strictEqual(settingsItems[1].component.path, 'quickbooks-activity');
         assert.strictEqual(settingsItems[1].permission, 'quickbooks see extension');
         assert.false(settingsItems[1].overwriteWrapperClass);
@@ -168,14 +168,14 @@ module('Unit | extension', function (hooks) {
         assert.strictEqual(adminPanels[0].title, 'QuickBooks');
         assert.strictEqual(adminPanels[0].items.length, 1);
         assert.strictEqual(adminPanels[0].items[0].title, 'Settings');
-        assert.strictEqual(adminPanels[0].items[0].component.engine, '@unchartedwaters/quickbooks-engine');
+        assert.strictEqual(adminPanels[0].items[0].component.engine, '@unchartedwaters/fleetbase-quickbooks');
         assert.strictEqual(adminPanels[0].items[0].component.path, 'quickbooks-admin-settings');
         assert.strictEqual(adminPanels[0].options.slug, 'quickbooks');
     });
 
     test('QuickBooks widgets register on the ledger and dashboard', function (assert) {
         const { widgetCalls } = captureRegistration();
-        const component = '#extension-component:@unchartedwaters/quickbooks-engine:widget/quickbooks-sync';
+        const component = '#extension-component:@unchartedwaters/fleetbase-quickbooks:widget/quickbooks-sync';
 
         assert.deepEqual(
             widgetCalls.map((call) => call.dashboard),

@@ -155,7 +155,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/engine"
           (cd quickbooks && npm pack --pack-destination "$RUNNER_TEMP/engine")
           cd fleetbase/console
-          pnpm add "$RUNNER_TEMP"/engine/unchartedwaters-quickbooks-engine-*.tgz
+          pnpm add "$RUNNER_TEMP"/engine/unchartedwaters-fleetbase-quickbooks-*.tgz
 
       # A production console reads its settings at build time (runtime config is off). It
       # points at the API the stack job serves on this runner, and EXTENSIONS turns the
@@ -166,7 +166,7 @@ jobs:
         timeout-minutes: 30
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-          EXTENSIONS: '@unchartedwaters/quickbooks-engine'
+          EXTENSIONS: '@unchartedwaters/fleetbase-quickbooks'
           API_HOST: http://localhost:8000
           API_SECURE: 'false'
           SOCKETCLUSTER_HOST: localhost
@@ -180,8 +180,8 @@ jobs:
         working-directory: fleetbase/console
         run: |
           set -euo pipefail
-          test -d dist/engines-dist/@unchartedwaters/quickbooks-engine
-          jq -e 'map(.name) | index("@unchartedwaters/quickbooks-engine")' dist/extensions.json > /dev/null
+          test -d dist/engines-dist/@unchartedwaters/fleetbase-quickbooks
+          jq -e 'map(.name) | index("@unchartedwaters/fleetbase-quickbooks")' dist/extensions.json > /dev/null
           echo "The QuickBooks engine is in dist/engines-dist and dist/extensions.json."
 
       - name: Keep the build for the stack job
@@ -258,7 +258,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/results"
           npm pack --pack-destination "$RUNNER_TEMP"
-          tar -xzf "$RUNNER_TEMP"/unchartedwaters-quickbooks-engine-*.tgz -C "$RUNNER_TEMP"
+          tar -xzf "$RUNNER_TEMP"/unchartedwaters-fleetbase-quickbooks-*.tgz -C "$RUNNER_TEMP"
 
       - name: Download the console build
         uses: actions/download-artifact@v8

@@ -3,7 +3,7 @@ name: Release deployment
 # On a v* tag this publishes both packages under the `release` environment,
 # so the jobs show as one deployment. It does not run on branch pushes.
 #
-# npmjs publishes @unchartedwaters/quickbooks-engine to registry.npmjs.org
+# npmjs publishes @unchartedwaters/fleetbase-quickbooks to registry.npmjs.org
 # with the organization secret NPM_AUTH_TOKEN. ember.yml job github_publish
 # still publishes that engine to GitHub Packages and does not publish to npmjs.
 #

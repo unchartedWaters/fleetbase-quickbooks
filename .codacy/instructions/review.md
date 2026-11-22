@@ -5,7 +5,7 @@
 - Fleetbase extension that syncs customers, invoices, payments and wallets with
   QuickBooks Online: a Laravel API package (`unchartedwaters/quickbooks-api`,
   namespace `Fleetbase\Quickbooks`) plus an Ember engine
-  (`@unchartedwaters/quickbooks-engine`).
+  (`@unchartedwaters/fleetbase-quickbooks`).
 
 ## Architecture
 
@@ -65,9 +65,9 @@
 
 ## Stack
 
-- PHP 8.2 (CI), Laravel 12 via `fleetbase/core-api ^2.0.2`,
-  `fleetbase/fleetops-api ^0.7.1`, `fleetbase/ledger-api ^0.1.0`. Fleetbase
-  0.7 and core-api 1.x are not supported.
+- PHP 8.2 (CI), Laravel 12 via `fleetbase/core-api ^2.0`,
+  `fleetbase/fleetops-api ^0.7.1`, `fleetbase/ledger-api ^0.1.0`. Supports
+  only Fleetbase 0.8.1 or later; 0.7 and core-api 1.x are not supported.
   QuickBooks HTTP goes through Laravel's `Http` client in `QuickBooksClient`.
 - Ember 4.8 engine (`ember-engines`, Glimmer), Node 22+, pnpm.
   `ember-engines` is a peer and dev dependency only: as a runtime dependency
