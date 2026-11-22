@@ -8,6 +8,7 @@ use Fleetbase\Quickbooks\Models\SyncBatch;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Carbon;
 
 class PruneQuickbooks extends Command
@@ -25,7 +26,7 @@ class PruneQuickbooks extends Command
         $attempts = $this->prune(SyncAttempt::class, $this->cutoff('attempt_days', 90, $now), null);
         $batches  = $this->prune(SyncBatch::class, $this->cutoff('batch_days', 180, $now), function (Builder $query): void {
             $query->whereIn('status', ['finished', 'skipped'])
-                ->whereNotExists(function ($attempts): void {
+                ->whereNotExists(function (QueryBuilder $attempts): void {
                     $attempts->selectRaw('1')
                         ->from((new SyncAttempt())->getTable())
                         ->whereColumn((new SyncAttempt())->getTable() . '.batch_uuid', (new SyncBatch())->getTable() . '.uuid');
@@ -52,8 +53,8 @@ class PruneQuickbooks extends Command
     }
 
     /**
-     * @param class-string<Model>            $class
-     * @param (callable(Builder): void)|null $scope
+     * @param class-string<Model>                   $class
+     * @param (callable(Builder<Model>): void)|null $scope
      */
     private function prune(string $class, ?Carbon $cutoff, ?callable $scope, string $column = 'created_at'): int
     {

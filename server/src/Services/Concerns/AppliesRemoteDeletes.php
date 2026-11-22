@@ -8,6 +8,7 @@ use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
@@ -469,9 +470,9 @@ trait AppliesRemoteDeletes
     }
 
     /**
-     * @param class-string $class
+     * @param class-string<Model> $class
      */
-    private function invoiceTable(string $class, string $companyUuid, string $uuid): \Illuminate\Database\Query\Builder
+    private function invoiceTable(string $class, string $companyUuid, string $uuid): QueryBuilder
     {
         $model = new $class();
 
@@ -482,7 +483,7 @@ trait AppliesRemoteDeletes
     }
 
     /**
-     * @param class-string         $class
+     * @param class-string<Model>  $class
      * @param array<string, mixed> $extra
      */
     private function retireLocal(string $class, string $companyUuid, string $uuid, array $extra): void

@@ -1,521 +1,811 @@
 parameters:
 	ignoreErrors:
 		-
-			message: "#^Instanceof between stdClass and Fleetbase\\\\Quickbooks\\\\Models\\\\Connection will always evaluate to false\\.$#"
-			count: 1
-			path: server/src/Console/Commands/SyncQuickbooks.php
-
-		-
-			message: "#^Unreachable statement \\- code above always terminates\\.$#"
-			count: 1
-			path: server/src/Console/Commands/SyncQuickbooks.php
-
-		-
-			message: "#^Cannot call method apply\\(\\) on mixed\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Http\\Controllers\\ConnectionController\:\:batchPage\(\) should return array\{array\<int, mixed\>, array\{current_page\: int, last_page\: int, per_page\: int, total\: int\}\} but returns array\{array\<mixed\>, array\{current_page\: int, last_page\: int, per_page\: int, total\: int\}\}\.$#'
+			identifier: return.type
 			count: 2
 			path: server/src/Http/Controllers/ConnectionController.php
 
 		-
-			message: "#^Empty array passed to foreach\\.$#"
+			message: '#^Parameter \#1 \$bag of method Fleetbase\\Quickbooks\\Http\\Controllers\\SettingController\:\:stripReadOnly\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Http/Controllers/ConnectionController.php
+			path: server/src/Http/Controllers/SettingController.php
 
 		-
-			message: "#^Instanceof between stdClass and Fleetbase\\\\Quickbooks\\\\Models\\\\SyncAttempt will always evaluate to false\\.$#"
+			message: '#^Parameter \#1 \$sync of method Fleetbase\\Quickbooks\\Http\\Controllers\\SettingController\:\:onlySyncKeys\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Http/Controllers/ConnectionController.php
+			path: server/src/Http/Controllers/SettingController.php
 
 		-
-			message: "#^Instanceof between stdClass\\|null and Fleetbase\\\\Quickbooks\\\\Models\\\\SyncBatch will always evaluate to false\\.$#"
+			message: '#^Parameter \#4 \$qboIds of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:rememberCustomerLinks\(\) expects array\<int, string\>, array given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Http/Controllers/ConnectionController.php
+			path: server/src/Jobs/ImportCustomers.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between false and true will always evaluate to false\\.$#"
+			message: '#^Parameter \#5 \$localUuids of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:rememberCustomerLinks\(\) expects array\<int, string\>, array given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Http/Controllers/ConnectionController.php
+			path: server/src/Jobs/ImportCustomers.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 1
-			path: server/src/Http/Controllers/ConnectionController.php
-
-		-
-			message: "#^Unreachable statement \\- code above always terminates\\.$#"
-			count: 1
-			path: server/src/Http/Controllers/ConnectionController.php
-
-		-
-			message: "#^Cannot call method flush\\(\\) on mixed\\.$#"
-			count: 1
-			path: server/src/Http/Controllers/WebhookController.php
-
-		-
-			message: "#^Instanceof between stdClass and Fleetbase\\\\Quickbooks\\\\Models\\\\Link will always evaluate to false\\.$#"
-			count: 2
-			path: server/src/Http/Controllers/WebhookController.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between false and true will always evaluate to false\\.$#"
-			count: 1
-			path: server/src/Http/Controllers/WebhookController.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 1
-			path: server/src/Http/Controllers/WebhookController.php
-
-		-
-			message: "#^Unreachable statement \\- code above always terminates\\.$#"
-			count: 1
-			path: server/src/Http/Controllers/WebhookController.php
-
-		-
-			message: "#^Call to function is_int\\(\\) with string will always evaluate to false\\.$#"
-			count: 1
-			path: server/src/Jobs/ApplyRemoteChange.php
-
-		-
-			message: "#^Offset 'entity' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Jobs/ApplyRemoteChange.php
-
-		-
-			message: "#^Offset 'id' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Jobs/ApplyRemoteChange.php
-
-		-
-			message: "#^Offset 'operation' on array\\{entity\\: string, id\\: string, operation\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Jobs/ApplyRemoteChange.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between false and true will always evaluate to false\\.$#"
-			count: 1
-			path: server/src/Jobs/ApplyRemoteChange.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 5
-			path: server/src/Jobs/ApplyRemoteChange.php
-
-		-
-			message: "#^Instanceof between stdClass and Fleetbase\\\\Quickbooks\\\\Models\\\\PendingSync will always evaluate to false\\.$#"
-			count: 1
-			path: server/src/Jobs/SyncWebhookBatch.php
-
-		-
-			message: "#^Offset 'local_type' on array\\{local_type\\: string, local_uuid\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Jobs/SyncWebhookBatch.php
-
-		-
-			message: "#^Offset 'local_uuid' on array\\{local_type\\: string, local_uuid\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Jobs/SyncWebhookBatch.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 2
-			path: server/src/Jobs/SyncWebhookBatch.php
-
-		-
-			message: "#^Unreachable statement \\- code above always terminates\\.$#"
-			count: 1
-			path: server/src/Jobs/SyncWebhookBatch.php
-
-		-
-			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
+			message: '#^Parameter \#3 \$paymentIds of method Fleetbase\\Quickbooks\\Listeners\\EnqueueWebhookSync\:\:quickbooksInvoiceIdsForPayments\(\) expects array\<int, string\>, array given\.$#'
+			identifier: argument.type
 			count: 1
 			path: server/src/Listeners/EnqueueWebhookSync.php
 
 		-
-			message: "#^Offset 'invoice' on array\\{invoice\\: string, invoices\\: array\\<int, string\\>, keyed_by_payment\\: bool, quickbooks_invoices\\: array\\<int, string\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			message: '#^Parameter \#1 \$ledger of method Fleetbase\\Quickbooks\\Services\\SyncFlagger\:\:fromCustomerEvent\(\) expects Fleetbase\\Quickbooks\\Services\\SyncLedger, mixed given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Listeners/EnqueueWebhookSync.php
+			path: server/src/Listeners/FlagCustomerListener.php
 
 		-
-			message: "#^Offset 'invoices' on array\\{invoice\\: string, invoices\\: array\\<int, string\\>, keyed_by_payment\\: bool, quickbooks_invoices\\: array\\<int, string\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			message: '#^Parameter \#1 \$ledger of method Fleetbase\\Quickbooks\\Services\\SyncFlagger\:\:fromInvoiceEvent\(\) expects Fleetbase\\Quickbooks\\Services\\SyncLedger, mixed given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Listeners/EnqueueWebhookSync.php
+			path: server/src/Listeners/FlagInvoiceListener.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			message: '#^Parameter \#1 \$ledger of method Fleetbase\\Quickbooks\\Services\\SyncFlagger\:\:fromProductEvent\(\) expects Fleetbase\\Quickbooks\\Services\\SyncLedger, mixed given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Listeners/EnqueueWebhookSync.php
+			path: server/src/Listeners/FlagProductListener.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			message: '#^Parameter \#1 \$ledger of method Fleetbase\\Quickbooks\\Services\\SyncFlagger\:\:fromWalletEvent\(\) expects Fleetbase\\Quickbooks\\Services\\SyncLedger, mixed given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Observers/FlagInvoiceItemObserver.php
+			path: server/src/Listeners/FlagWalletListener.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 2
-			path: server/src/Observers/FlagPlaceObserver.php
-
-		-
-			message: "#^Parameter \\#1 \\$connection of method Fleetbase\\\\Quickbooks\\\\Services\\\\BatchRunner\\:\\:intervalElapsed\\(\\) expects array\\<string, mixed\\>, mixed given\\.$#"
+			message: '#^Offset int\|null might not exist on array\<int, string\>\.$#'
+			identifier: offsetAccess.notFound
 			count: 1
 			path: server/src/Services/BatchRunner.php
 
 		-
-			message: "#^Parameter \\#1 \\$connection of static method Fleetbase\\\\Quickbooks\\\\Services\\\\ConnectionTokens\\:\\:blockedMessage\\(\\) expects array\\<string, mixed\\>, mixed given\\.$#"
-			count: 2
-			path: server/src/Services/BatchRunner.php
-
-		-
-			message: "#^Property Fleetbase\\\\Quickbooks\\\\Services\\\\SyncLedger\\:\\:\\$connections \\(array\\<string, array\\<string, mixed\\>\\>\\) does not accept array\\<string, mixed\\>\\.$#"
-			count: 2
-			path: server/src/Services/BatchRunner.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$email\\.$#"
-			count: 1
-			path: server/src/Services/CustomerImporter.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$name\\.$#"
-			count: 1
-			path: server/src/Services/CustomerImporter.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$phone\\.$#"
-			count: 1
-			path: server/src/Services/CustomerImporter.php
-
-		-
-			message: "#^Call to an undefined method object\\:\\:getConnectionName\\(\\)\\.$#"
-			count: 1
-			path: server/src/Services/CustomerImporter.php
-
-		-
-			message: "#^Call to an undefined method object\\:\\:getTable\\(\\)\\.$#"
-			count: 1
-			path: server/src/Services/CustomerImporter.php
-
-		-
-			message: "#^Call to an undefined method object\\:\\:getConnection\\(\\)\\.$#"
-			count: 2
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Call to an undefined method object\\:\\:getTable\\(\\)\\.$#"
-			count: 2
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Instanceof between Illuminate\\\\Database\\\\Eloquent\\\\Model\\|null and Fleetbase\\\\Models\\\\User will always evaluate to false\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Instanceof between stdClass and Fleetbase\\\\Quickbooks\\\\Models\\\\Link will always evaluate to false\\.$#"
-			count: 2
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Offset 'columns' on array\\{uuid\\: non\\-empty\\-string, columns\\: array\\<string, mixed\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Offset 'keep' on array\\{link\\: array\\<string, mixed\\>, keep\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Offset 'uuid' on array\\{uuid\\: string, columns\\: array\\<string, mixed\\>\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 17
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Unreachable statement \\- code above always terminates\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Argument of an invalid type mixed supplied for foreach, only iterables are supported\\.$#"
-			count: 1
-			path: server/src/Services/QuickBooksClient.php
-
-		-
-			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
-			count: 4
-			path: server/src/Services/QuickBooksClient.php
-
-		-
-			message: "#^Offset 'status' on array\\{ok\\: bool, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			message: '#^Binary operation "\+" between mixed and 1 results in an error\.$#'
+			identifier: binaryOp.invalid
 			count: 3
-			path: server/src/Services/QuickBooksClient.php
+			path: server/src/Services/CustomerImporter.php
 
 		-
-			message: "#^Parameter \\#2 \\$invoiceIds of method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksClient\\:\\:findPaymentsForInvoiceTargets\\(\\) expects array\\<int, string\\>, array\\<int, int\\|string\\> given\\.$#"
+			message: '#^Parameter \#1 \$bill of method Fleetbase\\Quickbooks\\Support\\CustomerMapper\:\:addressFromBillAddr\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Services/QuickBooksClient.php
+			path: server/src/Services/CustomerImporter.php
 
 		-
-			message: "#^Parameter \\#2 \\$items of method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksClient\\:\\:postBatch\\(\\) expects array\\<int, array\\{bId\\: string, operation\\?\\: string, entity\\?\\: string, payload\\?\\: array\\<string, mixed\\>, query\\?\\: string, key\\?\\: string\\}\\>, array\\<int, array\\{bId\\?\\: string, operation\\?\\: string, entity\\?\\: string, payload\\?\\: array\\<string, mixed\\>, query\\?\\: string\\}\\> given\\.$#"
+			message: '#^Parameter \#1 \$remote of method Fleetbase\\Quickbooks\\Services\\CustomerImporter\:\:displayName\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Services/QuickBooksClient.php
+			path: server/src/Services/CustomerImporter.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			message: '#^Parameter \#1 \$remote of method Fleetbase\\Quickbooks\\Services\\CustomerImporter\:\:skippedRemote\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: '#^Parameter \#2 \$customer of method Fleetbase\\Quickbooks\\Services\\SyncLedger\:\:rememberCustomer\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: '#^Parameter \#2 \$customer of method Fleetbase\\Quickbooks\\Services\\SyncLedger\:\:rememberCustomer\(\) expects array\<string, mixed\>, mixed given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: '#^Parameter \#4 \$remote of method Fleetbase\\Quickbooks\\Services\\CustomerImporter\:\:importOne\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: '#^Parameter &\$fleetbaseCustomers by\-ref type of method Fleetbase\\Quickbooks\\Services\\CustomerImporter\:\:createImportedCustomer\(\) expects array\<int, array\<string, mixed\>\>, array\<int, mixed\> given\.$#'
+			identifier: parameterByRef.type
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: '#^Possibly invalid array key type mixed\.$#'
+			identifier: offsetAccess.invalidOffset
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: '#^Property Fleetbase\\Quickbooks\\Services\\SyncLedger\:\:\$customers \(array\<string, array\<string, mixed\>\>\) does not accept array\.$#'
+			identifier: assign.propertyType
+			count: 1
+			path: server/src/Services/CustomerImporter.php
+
+		-
+			message: '#^Binary operation "\." between mixed and ''\|'' results in an error\.$#'
+			identifier: binaryOp.invalid
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Binary operation "\." between non\-falsy\-string and mixed results in an error\.$#'
+			identifier: binaryOp.invalid
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:changedBillingAddress\(\) should return array\<string, mixed\>\|null but returns array\<mixed, mixed\>\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:changedBillingAddress\(\) should return array\<string, mixed\>\|null but returns array\<mixed, mixed\>\|null\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:claimPending\(\) should return array\<int, mixed\> but returns array\<mixed\>\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:linksForRemoteIds\(\) should return array\<int, array\<string, mixed\>\> but returns list\<array\>\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:retiredUuids\(\) should return array\<int, string\> but returns array\<string\>\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:storedCustomerLinks\(\) should return array\<int, array\<string, mixed\>\> but returns list\<mixed\>\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:walletsHoldingBalance\(\) should return array\<int, string\> but returns array\<string\>\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#1 \$address of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:billingAddressHasContent\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
 			count: 3
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#1 \$item of static method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:replacedLineMeta\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#1 \$item of static method Fleetbase\\Quickbooks\\Support\\ProductMapper\:\:lineProduct\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#1 \$meta of static method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:storedLine\(\) expects array\<string, mixed\>\|null, array\<mixed, mixed\>\|null given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#1 \$query of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:excludeClaimed\(\) expects Illuminate\\Database\\Eloquent\\Builder\<Illuminate\\Database\\Eloquent\\Model\>\|Illuminate\\Database\\Query\\Builder, Illuminate\\Database\\Eloquent\\Builder\<Fleetbase\\Quickbooks\\Models\\PendingSync\> given\.$#'
+			identifier: argument.type
+			count: 2
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#1 \$query of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:withFlaggedTrashed\(\) expects Illuminate\\Database\\Eloquent\\Builder\<Illuminate\\Database\\Eloquent\\Model\>, Illuminate\\Database\\Eloquent\\Builder\<Fleetbase\\FleetOps\\Models\\Customer\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#1 \$query of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:withFlaggedTrashed\(\) expects Illuminate\\Database\\Eloquent\\Builder\<Illuminate\\Database\\Eloquent\\Model\>, Illuminate\\Database\\Eloquent\\Builder\<Fleetbase\\Ledger\\Models\\Wallet\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#1 \$row of static method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:toTimestamps\(\) expects array\<string, mixed\>, array given\.$#'
+			identifier: argument.type
+			count: 2
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#1 \$uuids of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:deletedCustomerUuids\(\) expects array\<int, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#2 \$items of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:replaceInvoiceLines\(\) expects array\<int, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#2 \$link of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:rememberLoadedLink\(\) expects array\<string, mixed\>, array given\.$#'
+			identifier: argument.type
+			count: 3
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#2 \$state of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:applyDeletionBatch\(\) expects array\{void_invoices\: array\<int, string\>, sent_invoices\: array\<int, string\>, customers\: array\<int, string\>, wallets\: array\<int, string\>, link_uuids\: array\<int, string\>, wallet_links\: array\<string, array\<int, string\>\>, void_realms\: array\<string, array\<string, true\>\>, named_payments\: array\<string, true\>, \.\.\.\}, array\<string, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#3 \$lineMap of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:replaceInvoiceLines\(\) expects array\{realm\?\: string, invoice\?\: string\}\|null, array\<mixed, mixed\>\|null given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#4 \$address of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:insertCustomerPlace\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Parameter \#4 \$ids of method Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:claimedRemoteIds\(\) expects array\<int, string\>, array given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Possibly invalid array key type mixed\.$#'
+			identifier: offsetAccess.invalidOffset
+			count: 3
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Property Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:\$lineMeta \(array\<string, array\{live\: array\<string, array\<string, mixed\>\|null\>, trashed\: array\<string, array\<string, mixed\>\|null\>\}\>\) does not accept non\-empty\-array\<string, array\{live\: array\<string, array\<mixed\>\|null\>, trashed\: array\<string, array\<mixed\>\|null\>\}\>\.$#'
+			identifier: assign.propertyType
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Property Fleetbase\\Quickbooks\\Services\\SyncLedger\:\:\$products \(array\<string, array\<string, mixed\>\>\) does not accept array\<array\<string, mixed\>\>\.$#'
+			identifier: assign.propertyType
+			count: 2
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Static property Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:\$claimSupport \(WeakMap\<object, bool\>\|null\) does not accept WeakMap\<object, mixed\>\.$#'
+			identifier: assign.propertyType
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Static property Fleetbase\\Quickbooks\\Services\\FleetbaseDirectory\:\:\$prioritySupport \(WeakMap\<object, bool\>\|null\) does not accept WeakMap\<object, mixed\>\.$#'
+			identifier: assign.propertyType
+			count: 1
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\OAuthFlow\:\:validState\(\) should return array\<string, mixed\> but returns array\<mixed\>\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Services/OAuthFlow.php
+
+		-
+			message: '#^Parameter \#1 \$stored of method Fleetbase\\Quickbooks\\Services\\OAuthFlow\:\:startedBy\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 3
+			path: server/src/Services/OAuthFlow.php
+
+		-
+			message: '#^Parameter \#1 \$sync of static method Fleetbase\\Quickbooks\\Services\\SettingsStore\:\:onlySyncFields\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/OrganizationSyncSettings.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:batchEntityBody\(\) should return array\<string, mixed\>\|null but returns array\<mixed, mixed\>\.$#'
+			identifier: return.type
+			count: 1
 			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:batch\\(\\) should return array\\<string, array\\{ok\\: bool, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\}\\> but returns mixed\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:batchQueryRows\(\) should return array\<int, array\<string, mixed\>\> but returns list\<array\<mixed\>\>\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:createAccount\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:companyInfo\(\) should return array\<string, mixed\> but returns array\<mixed\>\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:createCustomer\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:decodeBody\(\) should return array\<string, mixed\> but returns array\<mixed\>\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:createInvoice\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:entity\(\) should return array\<string, mixed\> but returns array\<mixed\>\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:createPayment\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:preferences\(\) should return array\<string, mixed\> but returns array\<mixed\>\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:customTxnNumbers\\(\\) should return bool but returns mixed\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:query\(\) should return array\<int, array\<string, mixed\>\> but returns list\<array\<mixed, mixed\>\>\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:ensureServiceItem\\(\\) should return string but returns mixed\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:read\(\) should return array\<string, mixed\>\|null but returns array\<mixed, mixed\>\|null\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findAccountByAcctNum\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:voidInvoice\(\) should return array\<string, mixed\> but returns array\<mixed\>\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findAccountsByName\\(\\) should return array\\<int, array\\<string, mixed\\>\\> but returns mixed\\.$#"
+			message: '#^Parameter \#1 \$fault of method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:batchFaultResult\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findCustomerByDisplayName\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			message: '#^Parameter \#1 \$response of method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:batchQueryResult\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findCustomerByEmail\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
-			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			message: '#^Parameter \#1 \$row of method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:batchItemResult\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 2
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findInvoiceByDocNumber\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
-			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			message: '#^Parameter \#1 \$row of static method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:isAuthenticationFault\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 2
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findPaymentForInvoice\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			message: '#^Parameter \#2 \$invoiceIds of method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:findPaymentsForInvoiceTargets\(\) expects array\<int, string\>, list\<int\|string\> given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:findPaymentsForCustomers\\(\\) should return array\\<int, array\\<string, mixed\\>\\> but returns mixed\\.$#"
+			message: '#^Parameter \#2 \$items of method Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:postBatch\(\) expects array\<int, array\{bId\: string, operation\?\: string, entity\?\: string, payload\?\: array\<string, mixed\>, query\?\: string, key\?\: string\}\>, array\<int, array\{bId\?\: string, operation\?\: string, entity\?\: string, payload\?\: array\<string, mixed\>, query\?\: string\}\> given\.$#'
+			identifier: argument.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:getAccount\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			message: '#^Property Fleetbase\\Quickbooks\\Services\\QuickBooksClient\:\:\$preferencesByRealm \(array\<string, array\<string, mixed\>\>\) does not accept array\<string, array\<mixed\>\>\.$#'
+			identifier: assign.propertyType
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/QuickBooksClient.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:getCustomer\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\SettingsStore\:\:defaultSync\(\) should return array\<string, mixed\> but returns array\<mixed\>\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/SettingsStore.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:getInvoice\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\SettingsStore\:\:get\(\) should return array\<string, mixed\> but returns array\<mixed\>\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/SettingsStore.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:getPayment\\(\\) should return array\\<string, mixed\\>\\|null but returns mixed\\.$#"
+			message: '#^Binary operation "\*" between mixed and 60 results in an error\.$#'
+			identifier: binaryOp.invalid
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:homeCurrency\\(\\) should return string\\|null but returns mixed\\.$#"
+			message: '#^Binary operation "\+" between mixed and 1 results in an error\.$#'
+			identifier: binaryOp.invalid
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:nextInvoiceDocNumber\\(\\) should return string\\|null but returns mixed\\.$#"
+			message: '#^Binary operation "\+\=" between mixed and int results in an error\.$#'
+			identifier: assignOp.invalid
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:nextInvoiceDocNumbers\\(\\) should return array\\<int, string\\> but returns mixed\\.$#"
+			message: '#^Binary operation "\." between mixed and ''\:'' results in an error\.$#'
+			identifier: binaryOp.invalid
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:updateAccount\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
+			message: '#^Binary operation "\." between non\-falsy\-string and mixed results in an error\.$#'
+			identifier: binaryOp.invalid
 			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
+			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:updateCustomer\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
-			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
-
-		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:updateInvoice\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
-			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
-
-		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:updatePayment\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
-			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
-
-		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:voidInvoice\\(\\) should return array\\<string, mixed\\> but returns mixed\\.$#"
-			count: 1
-			path: server/src/Services/QuickBooksHttpGate.php
-
-		-
-			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
+			message: '#^Call to function is_array\(\) with array\<int, array\<string, mixed\>\> will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
 			count: 2
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:commitFinished\\(\\) has parameter \\$batch with no value type specified in iterable type array\\.$#"
+			message: '#^Call to function is_array\(\) with array\<string, mixed\> will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
 			count: 1
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:commitFinished\\(\\) has parameter \\$connection with no value type specified in iterable type array\\.$#"
+			message: '#^Cannot use \+\+ on mixed\.$#'
+			identifier: postInc.type
+			count: 11
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Comparison operation "\<" between 0 and 100 is always true\.$#'
+			identifier: smaller.alwaysTrue
 			count: 1
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:direction\\(\\) has parameter \\$settings with no value type specified in iterable type array\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:reattachWallet\(\) should return array\<string, mixed\>\|null but returns array\<mixed\>\.$#'
+			identifier: return.type
 			count: 1
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:persistSuccessfulInvoiceWrites\\(\\) has parameter \\$connection with no value type specified in iterable type array\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:removedLines\(\) should return array\<int, mixed\> but returns array\<mixed\>\.$#'
+			identifier: return.type
 			count: 1
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:prefetchInvoices\\(\\) has parameter \\$connection with no value type specified in iterable type array\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:withoutRemoteMarkers\(\) should return array\<string, mixed\>\|null but returns array\<mixed\>\.$#'
+			identifier: return.type
 			count: 1
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:prefetchInvoices\\(\\) has parameter \\$rows with no value type specified in iterable type array\\.$#"
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:queryWhereIn\\(\\) has parameter \\$readOne with no value type specified in iterable type array\\.$#"
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:settlePaymentBuffer\\(\\) has parameter \\$connection with no value type specified in iterable type array\\.$#"
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: "#^Offset 'body' on array\\{ok\\: bool, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: "#^Offset 'body' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: "#^Offset 'rows' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			message: '#^Offset ''rows'' on array\{ok\: bool, body\: array\<string, mixed\>, rows\: array\<int, array\<string, mixed\>\>, error\: string\|null, status\: int, halt\: false\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
 			count: 2
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Offset 'status' on array\\{ok\\: bool, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 7
+			message: '#^Offset ''status'' on array\{ok\: bool, body\: array\<string, mixed\>, rows\: array\<int, array\<string, mixed\>\>, error\: string\|null, status\: int, halt\: false\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Offset string does not exist on array\\<string, array\\<string, mixed\\>\\|null\\>\\|null\\.$#"
+			message: '#^Parameter \#1 \$address of method Fleetbase\\Quickbooks\\Support\\CustomerMapper\:\:hasAddress\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
 			count: 1
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Parameter \\#2 \\$array of function array_key_exists expects array, array\\<string, array\\<string, mixed\\>\\|null\\>\\|null given\\.$#"
+			message: '#^Parameter \#1 \$bill of method Fleetbase\\Quickbooks\\Support\\CustomerMapper\:\:addressFromBillAddr\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
 			count: 1
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 10
+			message: '#^Parameter \#1 \$bill of method Fleetbase\\Quickbooks\\Support\\CustomerMapper\:\:addressFromBillAddr\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 2
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			message: '#^Parameter \#1 \$invoice of method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:salesLineIds\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#1 \$item of static method Fleetbase\\Quickbooks\\Support\\ProductMapper\:\:lineProduct\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#1 \$items of method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:hashableInvoiceItems\(\) expects array\<int, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 2
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#1 \$items of static method Fleetbase\\Quickbooks\\Support\\FleetbaseTax\:\:total\(\) expects array\<int, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 3
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#1 \$line of method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:lineLinksInvoice\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#1 \$localItems of method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:pairedLineIds\(\) expects array\<int, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#2 \$array of function array_key_exists expects array, array\<string, array\<string, mixed\>\|null\>\|null given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#2 \$items of method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:quickBooksTax\(\) expects array\<int, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#2 \$items of static method Fleetbase\\Quickbooks\\Support\\FleetbaseTax\:\:apply\(\) expects array\<int, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#2 \$localItems of method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:comparedInvoiceTotals\(\) expects array\<int, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#2 \$localItems of method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:ownTaxCompared\(\) expects array\<int, array\<string, mixed\>\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#2 \$localItems of method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:fromQuickBooks\(\) expects array\<int, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 2
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#3 \$current of method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:withFleetbaseRates\(\) expects array\<int, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#3 \$current of method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:withLineProducts\(\) expects array\<int, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#3 \$item of method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:lineKey\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#3 \$item of method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:lineKey\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#4 \$payment of method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:storeSentPayment\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#6 \$remote of method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:putMatchedLink\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter &\$found by\-ref type of method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:collectPageRows\(\) expects array\{rows\: array\<int, array\<string, mixed\>\>, failed\: array\<string, Fleetbase\\Quickbooks\\Support\\QuickBooksException\>\}, array\{rows\: non\-empty\-array\<int, array\<mixed\>\>, failed\: array\<string, Fleetbase\\Quickbooks\\Support\\QuickBooksException\>\} given\.$#'
+			identifier: parameterByRef.type
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Property Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:\$customerRemoteCache \(array\<string, array\<string, mixed\>\|null\>\|null\) does not accept array\<string, array\<mixed\>\|null\>\.$#'
+			identifier: assign.propertyType
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: '#^Parameter \#1 \$address of method Fleetbase\\Quickbooks\\Support\\CustomerMapper\:\:addressHasContent\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/CustomerMapper.php
+
+		-
+			message: '#^Parameter \#1 \$address of method Fleetbase\\Quickbooks\\Support\\CustomerMapper\:\:billAddr\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/CustomerMapper.php
+
+		-
+			message: '#^Parameter \#2 \$items of static method Fleetbase\\Quickbooks\\Support\\FleetbaseTax\:\:global\(\) expects array\<int, array\<string, mixed\>\>, list\<array\<mixed, mixed\>\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/FleetbaseTax.php
+
+		-
+			message: '#^Parameter \#2 \$items of static method Fleetbase\\Quickbooks\\Support\\FleetbaseTax\:\:unitedStates\(\) expects array\<int, array\<string, mixed\>\>, list\<array\<mixed, mixed\>\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/FleetbaseTax.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:extraRemoteLines\(\) should return array\<int, array\<string, mixed\>\> but returns list\<array\<mixed\>\>\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:quickBooksUsTax\(\) should return array\{tax\: int, items\: array\<int, array\<string, mixed\>\>, inclusive\: bool\} but returns array\{tax\: int, items\: array\<int, non\-empty\-array\<mixed\>\>, inclusive\: bool\}\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:rateShares\(\) should return array\<int, array\{tax\: int, rate\: string\}\>\|null but returns array\<int, array\{tax\: int, rate\?\: string\}\>\|null\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:remoteSalesLines\(\) should return array\<int, array\<string, mixed\>\> but returns list\<array\<mixed, mixed\>\>\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:salesLines\(\) should return array\<int, array\<string, mixed\>\> but returns list\<array\<mixed, mixed\>\>\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:withLineShares\(\) should return array\{tax\: int, items\: array\<int, array\<string, mixed\>\>, inclusive\: bool\} but returns array\{tax\: int, items\: array\<int, non\-empty\-array\<mixed\>\>, inclusive\: bool\}\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Parameter \#1 \$detail of method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:ratesOf\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Parameter \#1 \$item of static method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:heldLineId\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Parameter \#1 \$item of static method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:heldLineId\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Parameter \#1 \$line of method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:isProductSalesLine\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 8
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Parameter \#1 \$line of method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:isRemovedLine\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 2
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Parameter \#1 \$line of static method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:fleetbaseDescription\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Parameter \#1 \$line of static method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:withRemoteLineCodes\(\) expects array\<string, mixed\>, array\<mixed, mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Parameter \#1 \$lines of method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:applyPairedLineIds\(\) expects array\<int, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Parameter \#1 \$taxDetail of static method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:taxPercent\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Parameter \#2 \$line of static method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:sameDescription\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Parameter \#4 \$taxDetail of method Fleetbase\\Quickbooks\\Support\\InvoiceMapper\:\:lineTaxes\(\) expects array\<string, mixed\>, array\<mixed\> given\.$#'
+			identifier: argument.type
+			count: 1
+			path: server/src/Support/InvoiceMapper.php
+
+		-
+			message: '#^Method Fleetbase\\Quickbooks\\Support\\ProductMapper\:\:metaProduct\(\) should return array\<string, mixed\>\|null but returns array\<mixed, mixed\>\|null\.$#'
+			identifier: return.type
+			count: 1
+			path: server/src/Support/ProductMapper.php
+
+		-
+			message: '#^Call to function is_array\(\) with array will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
 			count: 1
 			path: server/src/Support/PublicHttps.php
 
 		-
-			message: "#^Offset 'rows' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Support\\Translation\:\:decode\(\) should return array\{key\: string, params\: array\<string, bool\|float\|int\|string\|null\>\}\|null but returns array\{key\: string, params\: array\<bool\|float\|int\|string\|null\>\}\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Support/QuickBooksPaymentReader.php
+			path: server/src/Support/Translation.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 2
-			path: server/src/Support/QuickBooksPaymentReader.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
-			count: 2
-			path: server/src/Support/WebhookPaymentLinks.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
-			count: 2
-			path: server/src/Support/WebhookPaymentLinks.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$realm_id\\.$#"
-			count: 2
-			path: server/src/Support/WebhookPaymentLinks.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Support\\WebhookPayload\:\:changes\(\) should return array\<int, array\{realm\: mixed, name\: mixed, id\: mixed, operation\: mixed, time\?\: mixed, merged_into\?\: string\}\> but returns array\<int, array\<string, mixed\>\>\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Support/WebhookPaymentLinks.php
+			path: server/src/Support/WebhookPayload.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			message: '#^Method Fleetbase\\Quickbooks\\Support\\WebhookPayload\:\:legacyChanges\(\) should return array\<int, array\{realm\: mixed, name\: mixed, id\: mixed, operation\: mixed, time\?\: mixed\}\> but returns array\<int, array\<string, mixed\>\>\.$#'
+			identifier: return.type
 			count: 1
-			path: server/src/Support/WebhookSignature.php
+			path: server/src/Support/WebhookPayload.php
+
+		-
+			message: '#^Call to function is_array\(\) with array\<int, string\> will always evaluate to true\.$#'
+			identifier: function.alreadyNarrowedType
+			count: 1
+			path: server/src/Support/WebhookPaymentReads.php

@@ -272,6 +272,7 @@ trait BatchesInvoices
      *     ok: bool, body: array<string, mixed>, rows: array<int, array<string, mixed>>,
      *     error: string|null, status: int, halt: bool
      * }> $results
+     * @param array<string, mixed> $connection
      * @param array<string, mixed> $settings
      */
     private function persistSuccessfulInvoiceWrites(
@@ -492,6 +493,10 @@ trait BatchesInvoices
         return [array_values(array_unique($ids)), array_values(array_unique($docs))];
     }
 
+    /**
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $rows
+     */
     private function prefetchInvoices(array $connection, SyncLedger $ledger, array $rows): void
     {
         $this->invoiceById          = [];

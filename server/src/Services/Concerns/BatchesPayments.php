@@ -35,6 +35,7 @@ trait BatchesPayments
      * Record payment writes, then record each invoice. A failed payment is that invoice's result.
      * A 401 stops the block and leaves this invoice and every invoice after it pending.
      *
+     * @param array<string, mixed>       $connection
      * @param array<string, PaymentItem> $finished
      * @param array<string, mixed>       $batch
      * @param array<string, mixed>       $settings

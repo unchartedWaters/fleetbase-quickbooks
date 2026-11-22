@@ -31,6 +31,14 @@ if (function_exists('response') === false) {
 }
 
 if (function_exists('app') === false) {
+    /**
+     * @template T of object
+     *
+     * @param class-string<T>|null $abstract
+     * @param array<string, mixed> $parameters
+     *
+     * @return ($abstract is null ? Illuminate\Container\Container : T)
+     */
     function app(?string $abstract = null, array $parameters = []): mixed
     {
         return Illuminate\Container\Container::getInstance()->make($abstract, $parameters);

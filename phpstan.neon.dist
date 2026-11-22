@@ -20,9 +20,12 @@ parameters:
     universalObjectCratesClasses:
         - Illuminate\Database\Eloquent\Model
 
-    checkMissingIterableValueType: true
-    checkGenericClassInNonGenericObjectType: false
     reportUnmatchedIgnoredErrors: true
+
+    # Record shapes are documented as array<string, mixed> and similar, but JSON from QuickBooks, queued
+    # payloads and stored settings can still hold anything. Guards such as is_array() on those values
+    # are kept on purpose, so a PHPDoc type alone is not treated as proof they are dead code.
+    treatPhpDocTypesAsCertain: false
     ignoreErrors:
         - identifier: cast.string
         - identifier: cast.int

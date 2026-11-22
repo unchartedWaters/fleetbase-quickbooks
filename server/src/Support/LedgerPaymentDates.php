@@ -3,6 +3,7 @@
 namespace Fleetbase\Quickbooks\Support;
 
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Carbon;
 
 /**
@@ -142,7 +143,7 @@ class LedgerPaymentDates
             ->selectRaw('subject_uuid as latest_uuid, max(created_at) as latest_at');
 
         $found = $payments($database, 'transactions')
-            ->joinSub($latest, 'latest', static function ($join): void {
+            ->joinSub($latest, 'latest', static function (JoinClause $join): void {
                 $join->on('transactions.subject_uuid', '=', 'latest.latest_uuid')
                     ->on('transactions.created_at', '=', 'latest.latest_at');
             })

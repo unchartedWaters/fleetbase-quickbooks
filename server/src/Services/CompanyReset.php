@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
@@ -40,16 +41,18 @@ class CompanyReset
     /** Key in a customer's meta that marks it as created by a QuickBooks import. */
     public const IMPORT_META = 'quickbooks_import';
 
+    /** @var class-string<Model> */
     private const CUSTOMER_CLASS = 'Fleetbase\\FleetOps\\Models\\Customer';
 
+    /** @var class-string<Model> */
     private const PLACE_CLASS = 'Fleetbase\\FleetOps\\Models\\Place';
 
     /** Tables whose rows refer to a customer by uuid. A customer one of them refers to is kept. */
     private const USED_BY = ['orders' => 'customer_uuid', 'ledger_invoices' => 'customer_uuid'];
 
     /**
-     * @param string                $customerClass the Fleetbase customer model
-     * @param string                $placeClass    the Fleetbase place model, which holds billing addresses
+     * @param class-string<Model>   $customerClass the Fleetbase customer model
+     * @param class-string<Model>   $placeClass    the Fleetbase place model, which holds billing addresses
      * @param array<string, string> $usedBy        table => column of the records that refer to a customer
      */
     public function __construct(
@@ -184,6 +187,8 @@ class CompanyReset
     /**
      * Customers created by a QuickBooks import, found by their marker. Null without Fleet-Ops. With $deletable,
      * the ones an order or an invoice refers to are left out: deleting them would blank those records.
+     *
+     * @return Builder<Model>|null
      */
     private function importedCustomers(string $companyUuid, bool $deletable = false): ?Builder
     {
@@ -206,7 +211,7 @@ class CompanyReset
             if ($schema->hasTable($table) === false) {
                 continue;
             }
-            $query->whereNotExists(static function ($used) use ($table, $column, $ownedTable): void {
+            $query->whereNotExists(static function (QueryBuilder $used) use ($table, $column, $ownedTable): void {
                 $used->selectRaw('1')->from($table)->whereColumn($table . '.' . $column, $ownedTable . '.uuid');
             });
         }

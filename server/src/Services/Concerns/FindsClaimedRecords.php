@@ -5,6 +5,7 @@ namespace Fleetbase\Quickbooks\Services\Concerns;
 use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Services\SyncEngine;
+use Illuminate\Database\Eloquent\Builder;
 
 /**
  * FleetbaseDirectory's link lookups by QuickBooks id: which QuickBooks records another
@@ -126,7 +127,7 @@ trait FindsClaimedRecords
             ->where('qbo_entity', $entity)
             ->whereIn('qbo_id', $ids)
             ->where('local_uuid', '!=', $exceptLocalUuid)
-            ->where(static function ($owner) use ($companyUuid, $connections): void {
+            ->where(static function (Builder $owner) use ($companyUuid, $connections): void {
                 $owner->where('company_uuid', $companyUuid)->orWhereIn('company_uuid', $connections);
             })
             ->get(['qbo_id', 'local_type', 'local_uuid']);
@@ -159,12 +160,12 @@ trait FindsClaimedRecords
         if ($realm !== '') {
             $query->where('realm_id', $realm);
         }
-        $query->where(function ($scope) use ($idsByEntity): void {
+        $query->where(function (Builder $scope) use ($idsByEntity): void {
             $started = false;
             foreach ($idsByEntity as $entity => $ids) {
                 $idList = array_keys($ids);
                 $method = $started === true ? 'orWhere' : 'where';
-                $scope->{$method}(function ($inner) use ($entity, $idList): void {
+                $scope->{$method}(function (Builder $inner) use ($entity, $idList): void {
                     $inner->where('qbo_entity', $entity)->whereIn('qbo_id', $idList);
                 });
                 $started = true;

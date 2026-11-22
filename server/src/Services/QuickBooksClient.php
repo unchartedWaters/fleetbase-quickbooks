@@ -886,7 +886,7 @@ class QuickBooksClient
     private function linkedPaymentIds(array $invoice): array
     {
         $ids = [];
-        foreach ($invoice['LinkedTxn'] ?? [] as $txn) {
+        foreach ((array) ($invoice['LinkedTxn'] ?? []) as $txn) {
             if (is_array($txn) === false || (string) ($txn['TxnType'] ?? '') !== 'Payment') {
                 continue;
             }

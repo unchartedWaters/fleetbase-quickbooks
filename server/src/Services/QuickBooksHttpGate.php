@@ -39,7 +39,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?string => $this->inner->homeCurrency($connection)
+            fn ($connection): ?string => $this->inner->homeCurrency($connection)
         );
     }
 
@@ -47,7 +47,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): bool => $this->inner->customTxnNumbers($connection)
+            fn ($connection): bool => $this->inner->customTxnNumbers($connection)
         );
     }
 
@@ -55,7 +55,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         $enabled = $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): bool => $this->inner->multiCurrencyEnabled($connection)
+            fn ($connection): bool => $this->inner->multiCurrencyEnabled($connection)
         );
 
         return $enabled === true;
@@ -65,7 +65,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->createCustomer($connection, $payload)
+            fn ($connection): array => $this->inner->createCustomer($connection, $payload)
         );
     }
 
@@ -73,7 +73,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->updateCustomer($connection, $remoteId, $syncToken, $payload)
+            fn ($connection): array => $this->inner->updateCustomer($connection, $remoteId, $syncToken, $payload)
         );
     }
 
@@ -81,7 +81,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?array => $this->inner->getCustomer($connection, $remoteId)
+            fn ($connection): ?array => $this->inner->getCustomer($connection, $remoteId)
         );
     }
 
@@ -89,7 +89,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->createInvoice($connection, $payload)
+            fn ($connection): array => $this->inner->createInvoice($connection, $payload)
         );
     }
 
@@ -97,7 +97,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->updateInvoice($connection, $remoteId, $syncToken, $payload)
+            fn ($connection): array => $this->inner->updateInvoice($connection, $remoteId, $syncToken, $payload)
         );
     }
 
@@ -105,7 +105,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?string => $this->inner->nextInvoiceDocNumber($connection)
+            fn ($connection): ?string => $this->inner->nextInvoiceDocNumber($connection)
         );
     }
 
@@ -113,7 +113,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->nextInvoiceDocNumbers($connection, $count)
+            fn ($connection): array => $this->inner->nextInvoiceDocNumbers($connection, $count)
         );
     }
 
@@ -121,7 +121,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?array => $this->inner->findInvoiceByDocNumber($connection, $docNumber)
+            fn ($connection): ?array => $this->inner->findInvoiceByDocNumber($connection, $docNumber)
         );
     }
 
@@ -129,7 +129,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?array => $this->inner->getInvoice($connection, $remoteId)
+            fn ($connection): ?array => $this->inner->getInvoice($connection, $remoteId)
         );
     }
 
@@ -137,7 +137,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->voidInvoice($connection, $remoteId, $syncToken)
+            fn ($connection): array => $this->inner->voidInvoice($connection, $remoteId, $syncToken)
         );
     }
 
@@ -145,7 +145,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->createPayment($connection, $payload)
+            fn ($connection): array => $this->inner->createPayment($connection, $payload)
         );
     }
 
@@ -153,7 +153,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->updatePayment($connection, $remoteId, $syncToken, $payload)
+            fn ($connection): array => $this->inner->updatePayment($connection, $remoteId, $syncToken, $payload)
         );
     }
 
@@ -161,7 +161,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?array => $this->inner->getPayment($connection, $remoteId)
+            fn ($connection): ?array => $this->inner->getPayment($connection, $remoteId)
         );
     }
 
@@ -169,7 +169,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?array => $this->inner->findPaymentForInvoice($connection, $customerId, $invoiceId)
+            fn ($connection): ?array => $this->inner->findPaymentForInvoice($connection, $customerId, $invoiceId)
         );
     }
 
@@ -177,7 +177,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->findPaymentsForCustomers($connection, $customerIds, $asBatch)
+            fn ($connection): array => $this->inner->findPaymentsForCustomers($connection, $customerIds, $asBatch)
         );
     }
 
@@ -185,7 +185,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?array => $this->inner->findCustomerByDisplayName($connection, $name)
+            fn ($connection): ?array => $this->inner->findCustomerByDisplayName($connection, $name)
         );
     }
 
@@ -193,7 +193,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?array => $this->inner->findCustomerByEmail($connection, $email)
+            fn ($connection): ?array => $this->inner->findCustomerByEmail($connection, $email)
         );
     }
 
@@ -201,7 +201,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->createAccount($connection, $payload)
+            fn ($connection): array => $this->inner->createAccount($connection, $payload)
         );
     }
 
@@ -209,7 +209,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->updateAccount($connection, $remoteId, $syncToken, $payload)
+            fn ($connection): array => $this->inner->updateAccount($connection, $remoteId, $syncToken, $payload)
         );
     }
 
@@ -217,7 +217,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?array => $this->inner->getAccount($connection, $remoteId)
+            fn ($connection): ?array => $this->inner->getAccount($connection, $remoteId)
         );
     }
 
@@ -225,7 +225,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?array => $this->inner->findAccountByAcctNum($connection, $acctNum)
+            fn ($connection): ?array => $this->inner->findAccountByAcctNum($connection, $acctNum)
         );
     }
 
@@ -233,7 +233,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->findAccountsByName($connection, $name)
+            fn ($connection): array => $this->inner->findAccountsByName($connection, $name)
         );
     }
 
@@ -241,7 +241,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->batch($connection, $items)
+            fn ($connection): array => $this->inner->batch($connection, $items)
         );
     }
 
@@ -250,7 +250,7 @@ class QuickBooksHttpGate extends QuickBooksClient
         /** @var InvoiceTaxSettings $settings */
         $settings = $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->salesTax($connection)
+            fn ($connection): array => $this->inner->salesTax($connection)
         );
 
         return $settings;
@@ -261,7 +261,7 @@ class QuickBooksHttpGate extends QuickBooksClient
         /** @var FleetbaseTaxRates $rates */
         $rates = $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->taxRates($connection)
+            fn ($connection): array => $this->inner->taxRates($connection)
         );
 
         return $rates;
@@ -272,7 +272,7 @@ class QuickBooksHttpGate extends QuickBooksClient
         /** @var array<string, mixed>|null $item */
         $item = $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): ?array => $this->inner->item($connection, $remoteId)
+            fn ($connection): ?array => $this->inner->item($connection, $remoteId)
         );
 
         return $item;
@@ -283,7 +283,7 @@ class QuickBooksHttpGate extends QuickBooksClient
         /** @var array<string, mixed> $item */
         $item = $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->createItem($connection, $payload)
+            fn ($connection): array => $this->inner->createItem($connection, $payload)
         );
 
         return $item;
@@ -294,7 +294,7 @@ class QuickBooksHttpGate extends QuickBooksClient
         /** @var array<string, mixed> $item */
         $item = $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): array => $this->inner->updateItem($connection, $remoteId, $syncToken, $payload)
+            fn ($connection): array => $this->inner->updateItem($connection, $remoteId, $syncToken, $payload)
         );
 
         return $item;
@@ -304,7 +304,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         return $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): string => $this->inner->ensureServiceItem($connection)
+            fn ($connection): string => $this->inner->ensureServiceItem($connection)
         );
     }
 
@@ -312,7 +312,7 @@ class QuickBooksHttpGate extends QuickBooksClient
     {
         $active = $this->engine->runAuthorized(
             $connection,
-            fn (array $connection): bool => $this->inner->itemActive($connection, $remoteId)
+            fn ($connection): bool => $this->inner->itemActive($connection, $remoteId)
         );
 
         return $active === true;

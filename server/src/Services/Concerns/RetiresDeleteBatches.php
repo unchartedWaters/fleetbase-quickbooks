@@ -7,6 +7,8 @@ use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\Translation;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 
 /**
@@ -430,7 +432,7 @@ trait RetiresDeleteBatches
     }
 
     /**
-     * @param class-string         $class
+     * @param class-string<Model>  $class
      * @param array<int, string>   $uuids
      * @param array<string, mixed> $extra
      */
@@ -466,7 +468,7 @@ trait RetiresDeleteBatches
 
         try {
             $links = Link::query()->where('company_uuid', $companyUuid);
-            $links->where(function ($query) use ($linkUuids, $voidInvoicesByRealm): void {
+            $links->where(function (Builder $query) use ($linkUuids, $voidInvoicesByRealm): void {
                 $started = false;
                 if ($linkUuids !== []) {
                     $query->whereIn('uuid', $linkUuids);
@@ -478,7 +480,7 @@ trait RetiresDeleteBatches
                         continue;
                     }
                     $method = $started === true ? 'orWhere' : 'where';
-                    $query->{$method}(function ($inner) use ($realm, $invoiceUuids): void {
+                    $query->{$method}(function (Builder $inner) use ($realm, $invoiceUuids): void {
                         $inner->where('local_type', 'payment')->whereIn('local_uuid', $invoiceUuids);
                         if ($realm !== '') {
                             $inner->where('realm_id', $realm);
@@ -517,10 +519,10 @@ trait RetiresDeleteBatches
             PendingSync::query()
                 ->where('company_uuid', $companyUuid)
                 ->where('status', 'pending')
-                ->where(function ($query) use ($pairs): void {
+                ->where(function (Builder $query) use ($pairs): void {
                     foreach ($pairs as $index => $pair) {
                         $method = $index === 0 ? 'where' : 'orWhere';
-                        $query->{$method}(function ($inner) use ($pair): void {
+                        $query->{$method}(function (Builder $inner) use ($pair): void {
                             $inner->where('local_type', $pair[0])->where('local_uuid', $pair[1]);
                         });
                     }

@@ -6,6 +6,7 @@ use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
 use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\PaymentTokens;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
@@ -483,10 +484,10 @@ trait StoresLinks
         }
 
         foreach (array_chunk($groups, 200) as $chunk) {
-            Link::query()->where(function ($query) use ($chunk): void {
+            Link::query()->where(function (Builder $query) use ($chunk): void {
                 foreach ($chunk as $index => $group) {
                     $method = $index === 0 ? 'where' : 'orWhere';
-                    $query->{$method}(function ($inner) use ($group): void {
+                    $query->{$method}(function (Builder $inner) use ($group): void {
                         $inner->where('company_uuid', $group['company'])
                             ->where('local_type', $group['type'])
                             ->where('local_uuid', $group['local']);

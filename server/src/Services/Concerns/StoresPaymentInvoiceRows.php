@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Services\Concerns;
 
 use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Services\SyncLedger;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
@@ -84,10 +85,10 @@ trait StoresPaymentInvoiceRows
         // The kept payment-id rows were inserted or updated above. One delete removes
         // every invoice-uuid row for those payments.
         foreach (array_chunk(array_values($groups), 200) as $chunk) {
-            Link::query()->where(function ($query) use ($chunk): void {
+            Link::query()->where(function (Builder $query) use ($chunk): void {
                 foreach ($chunk as $index => $group) {
                     $method = $index === 0 ? 'where' : 'orWhere';
-                    $query->{$method}(function ($inner) use ($group): void {
+                    $query->{$method}(function (Builder $inner) use ($group): void {
                         $inner->where('company_uuid', $group['company'])
                             ->where('realm_id', $group['realm'])
                             ->where('local_type', 'payment')

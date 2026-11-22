@@ -67,6 +67,7 @@ trait PersistsRecords
     }
 
     /**
+     * @param class-string<Model> $class
      * @param array<string, true> $skipped
      * @param array<string, true> $present
      *
@@ -99,6 +100,7 @@ trait PersistsRecords
     }
 
     /**
+     * @param class-string<Model>       $class
      * @param array<string, mixed>      $customer
      * @param array<string, mixed>      $values
      * @param array<string, mixed>|null $address
@@ -159,7 +161,7 @@ trait PersistsRecords
     }
 
     /**
-     * @param class-string         $class
+     * @param class-string<Model>  $class
      * @param array<string, mixed> $invoice
      * @param array<string, true>  $skipped
      */
@@ -472,8 +474,8 @@ trait PersistsRecords
     }
 
     /**
-     * @param class-string       $class
-     * @param array<int, string> $uuids
+     * @param class-string<Model> $class
+     * @param array<int, string>  $uuids
      *
      * @return array<string, true>
      */
@@ -494,7 +496,7 @@ trait PersistsRecords
     }
 
     /**
-     * @param class-string                     $class
+     * @param class-string<Model>              $class
      * @param array<int, array<string, mixed>> $customers
      */
     private function insertCustomers(string $class, array $customers): void
@@ -511,7 +513,7 @@ trait PersistsRecords
     }
 
     /**
-     * @param class-string                     $class
+     * @param class-string<Model>              $class
      * @param array<int, array<string, mixed>> $customers
      *
      * @return array<int, array<string, mixed>>
@@ -574,6 +576,9 @@ trait PersistsRecords
         return $row;
     }
 
+    /**
+     * @param class-string<Model> $class
+     */
     private function customerColumnExists(string $class, string $column): bool
     {
         if (class_exists($class) === false) {
