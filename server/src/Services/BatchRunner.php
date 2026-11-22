@@ -515,9 +515,10 @@ class BatchRunner
 
         // A customer whose pending row another run holds is that run's work. The cursor
         // still moves past it, since that run is sending it now.
-        $page   = $ids;
-        $ids    = array_values(array_diff($ids, $this->directory->claimedLocalUuids($companyUuid, 'customer', $ids, $now)));
-        $loaded = $ids === [] ? null : $this->directory->loadCustomerBlock($companyUuid, $ids);
+        $page    = $ids;
+        $claimed = $this->directory->claimedLocalUuids($companyUuid, 'customer', $ids, $now);
+        $ids     = array_values(array_diff($ids, $claimed));
+        $loaded  = $ids === [] ? null : $this->directory->loadCustomerBlock($companyUuid, $ids);
         if ($loaded === null) {
             return new Batch('catalog', 'skipped');
         }
