@@ -9,6 +9,7 @@ const HOST_COMPONENTS = [
     'quickbooks-settings',
     'quickbooks-settings-fields',
     'quickbooks-connection',
+    'quickbooks-data-choice',
     'quickbooks-activity',
     'widget/quickbooks-sync',
 ];

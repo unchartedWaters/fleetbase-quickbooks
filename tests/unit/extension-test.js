@@ -198,6 +198,7 @@ module('Unit | extension', function (hooks) {
             'component:quickbooks-settings',
             'component:quickbooks-settings-fields',
             'component:quickbooks-connection',
+            'component:quickbooks-data-choice',
             'component:quickbooks-activity',
             'component:widget/quickbooks-sync',
         ]);
@@ -228,6 +229,7 @@ module('Unit | extension', function (hooks) {
             'component:quickbooks-admin-settings',
             'component:quickbooks-settings-fields',
             'component:quickbooks-connection',
+            'component:quickbooks-data-choice',
             'component:quickbooks-activity',
             'component:widget/quickbooks-sync',
         ]);
