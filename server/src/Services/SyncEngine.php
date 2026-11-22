@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Services\Concerns\BatchesWallets;
 use Fleetbase\Quickbooks\Services\Concerns\ComparesInvoices;
 use Fleetbase\Quickbooks\Services\Concerns\CopiesRemoteInvoices;
 use Fleetbase\Quickbooks\Services\Concerns\DeactivatesRemote;
+use Fleetbase\Quickbooks\Services\Concerns\ReadsRemoteSets;
 use Fleetbase\Quickbooks\Services\Concerns\StoresPaymentLinks;
 use Fleetbase\Quickbooks\Services\Concerns\SyncsCustomers;
 use Fleetbase\Quickbooks\Services\Concerns\SyncsInvoices;
@@ -110,6 +111,7 @@ class SyncEngine
     use ComparesInvoices;
     use CopiesRemoteInvoices;
     use DeactivatesRemote;
+    use ReadsRemoteSets;
     use StoresPaymentLinks;
     use SyncsCustomers;
     use SyncsInvoices;
@@ -2950,106 +2952,6 @@ class SyncEngine
         }
 
         return [$count, $added];
-    }
-
-    /**
-     * One id uses a direct read. Null is a real miss. A thrown error stays thrown.
-     * Several ids are queried in chunks of BATCH_LIMIT. Each query is paged with
-     * startposition and maxresults so a row past QuickBooks' default page is not
-     * treated as missing. A successful query that omits an id is a miss.
-     * A failed batch throws. Those ids are not returned as an empty success.
-     *
-     * @param array<string, mixed> $connection
-     * @param array<int, string>   $ids
-     *
-     * @return array<string, array<string, mixed>>
-     */
-    private function readRemoteSet(array $connection, string $entity, array $ids): array
-    {
-        $ids = array_values(array_unique(array_filter($ids, static fn (string $id): bool => $id !== '')));
-        if ($ids === []) {
-            return [];
-        }
-        if (count($ids) === 1) {
-            $id     = $ids[0];
-            $remote = match ($entity) {
-                'Customer' => $this->client->getCustomer($connection, $id),
-                'Invoice'  => $this->client->getInvoice($connection, $id),
-                'Payment'  => $this->client->getPayment($connection, $id),
-                'Account'  => $this->client->getAccount($connection, $id),
-                default    => null,
-            };
-
-            return is_array($remote) === true ? [$id => $remote] : [];
-        }
-
-        $mapped = [];
-        foreach (array_chunk($ids, QuickBooksClient::BATCH_LIMIT) as $chunkIndex => $chunk) {
-            if (count($chunk) === 1) {
-                foreach ($this->readRemoteSet($connection, $entity, $chunk) as $id => $remote) {
-                    $mapped[$id] = $remote;
-                }
-                continue;
-            }
-
-            $start = 1;
-            $pages = 0;
-            while ($pages < 100) {
-                $pages++;
-                $query = 'select * from ' . $entity . ' where Id IN (' . QuickBooksClient::quotedList($chunk) . ')'
-                    . ' startposition ' . $start . ' maxresults ' . self::QUERY_PAGE_SIZE;
-                $bId = 'read-' . $chunkIndex . '-' . $start;
-                try {
-                    $results = $this->client->batch($connection, [[
-                        'bId'   => $bId,
-                        'query' => $query,
-                    ]]);
-                } catch (QuickBooksException $exception) {
-                    if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
-                        throw $exception;
-                    }
-
-                    $wrapped = new QuickBooksException(
-                        $exception->status,
-                        $this->exceptionError($exception),
-                        $exception->retryAfter,
-                        $exception->faultCode
-                    );
-
-                    throw $wrapped;
-                }
-
-                $result = $results[$bId] ?? null;
-                if (is_array($result) === true && empty($result['halt']) === false) {
-                    throw new QuickBooksException((int) ($result['status'] ?? 0), (string) ($result['error'] ?? ''));
-                }
-                if (is_array($result) === false || empty($result['ok']) === true) {
-                    $message = is_array($result) === true ? (string) ($result['error'] ?? '') : '';
-                    $status  = is_array($result) === true ? (int) ($result['status'] ?? 0) : 0;
-                    $error   = $this->batchItemAttemptError($message, $status);
-                    throw new QuickBooksException($status, $error !== '' ? $error : self::SYNC_FAILED_MESSAGE);
-                }
-
-                $pageRows = is_array($result['rows'] ?? null) === true ? $result['rows'] : [];
-                $count    = 0;
-                foreach ($pageRows as $remote) {
-                    if (is_array($remote) === false) {
-                        continue;
-                    }
-                    $count++;
-                    $id = (string) ($remote['Id'] ?? '');
-                    if ($id !== '') {
-                        $mapped[$id] = $remote;
-                    }
-                }
-                if ($count < self::QUERY_PAGE_SIZE) {
-                    break;
-                }
-                $start += self::QUERY_PAGE_SIZE;
-            }
-        }
-
-        return $mapped;
     }
 
     /**

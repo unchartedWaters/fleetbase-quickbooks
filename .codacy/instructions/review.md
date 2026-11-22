@@ -32,8 +32,7 @@
   `scope: organization`) has its own complete copy of the sync options, made
   when it connects, saves or resets. Template edits must never change or queue
   an organization that has a copy. `SyncSettingsResolver` merges config
-  defaults, global row, organization row. The default Primary is QuickBooks;
-  the snapshot migration pins Fleetbase for organizations that synced before.
+  defaults, global row, organization row. The default Primary is QuickBooks.
 - User-visible server text is a translation key in `translations/en-us.yaml`.
   Activity errors are rendered and named per record by `ActivityErrors`;
   a note not about its record goes in `ActivityErrors::GENERAL_NOTES`.

@@ -955,7 +955,7 @@ class ConnectionController extends QuickbooksController
     {
         $credentials                 = $this->settings->credentialsFor($this->store, $companyUuid);
         $redirect                    = ConsoleHost::oauthRedirectUrl();
-        $credentials['redirect_uri'] = PublicHttps::isPublicHttpsUrl($redirect, false) === true ? $redirect : '';
+        $credentials['redirect_uri'] = PublicHttps::isPublicHttpsUrl($redirect) === true ? $redirect : '';
 
         return $credentials;
     }

@@ -19,7 +19,6 @@ class SettingsKeys
      * @var array<int, string>
      */
     public const SYNC_FIELDS = [
-        'enabled',
         'interval_minutes',
         'periodic_interval_hours',
         'batch_size',

@@ -219,30 +219,6 @@ test('targeted payment lookups batch invoice and payment ids in chunks of 30', f
     });
 });
 
-test('listing invoices pages past the 1000 row query cap', function () {
-    $full = [];
-    for ($i = 1; $i <= 1000; $i++) {
-        $full[] = ['Id' => (string) $i];
-    }
-    Http::fake(function (Request $request) use ($full) {
-        $url = urldecode($request->url());
-        if (str_contains($url, 'startposition 1 ') === true) {
-            return Http::response(['QueryResponse' => ['Invoice' => $full]], 200);
-        }
-        if (str_contains($url, 'startposition 1001 ') === true) {
-            return Http::response(['QueryResponse' => ['Invoice' => [['Id' => '1001']]]], 200);
-        }
-
-        return Http::response(['QueryResponse' => []], 200);
-    });
-
-    $rows = (new QuickBooksClient())->listInvoices(clientConnection());
-
-    expect($rows)->toHaveCount(1001)
-        ->and($rows[1000]['Id'])->toBe('1001');
-    Http::assertSentCount(2);
-});
-
 test('a failed request includes the quickbooks fault detail', function () {
     Http::fake([
         'sandbox-quickbooks.api.intuit.com/*' => Http::response([

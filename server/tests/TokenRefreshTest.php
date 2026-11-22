@@ -158,7 +158,6 @@ test('a stored sync enabled flag does not skip a due scheduled sync', function (
         'next_attempt_at' => null,
     ];
     $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companySync('company-uuid')] = ['enabled' => false];
 
     $scheduled = withBatchDispatcher(fn () => batchRunner($directory, $tokens, $client, $store)->run('company-uuid'));
 

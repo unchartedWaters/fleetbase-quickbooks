@@ -89,8 +89,6 @@ class FakeQuickBooks extends QuickBooksClient
     public ?QuickBooksException $rejectInvoicesWith = null;
 
     /** @var array<int, array<string, mixed>> */
-    public array $remoteInvoiceList = [];
-
     /**
      * How the company taxes invoices (InvoiceTax::settings). Sales tax is off unless a test turns it on.
      *
@@ -976,18 +974,6 @@ class FakeQuickBooks extends QuickBooksClient
         }
 
         return $this->serviceItemId;
-    }
-
-    /**
-     * @param array<string, mixed> $connection
-     *
-     * @return array<int, array<string, mixed>>
-     */
-    public function listInvoices(array $connection): array
-    {
-        $this->calls[] = 'listInvoices';
-
-        return $this->remoteInvoiceList;
     }
 
     /**

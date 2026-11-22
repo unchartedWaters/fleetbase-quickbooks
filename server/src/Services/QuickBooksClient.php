@@ -1010,26 +1010,6 @@ class QuickBooksClient
     }
 
     /**
-     * @param array<string, mixed> $connection
-     *
-     * @return array<int, array<string, mixed>>
-     */
-    public function listInvoices(array $connection): array
-    {
-        // QuickBooks returns at most 1000 rows per query; startposition is 1-based.
-        $pageSize = 1000;
-        $start    = 1;
-        $rows     = [];
-        do {
-            $page  = $this->query($connection, 'select Id, DocNumber, TotalAmt from Invoice startposition ' . $start . ' maxresults ' . $pageSize, 'Invoice');
-            $rows  = array_merge($rows, $page);
-            $start += $pageSize;
-        } while (count($page) === $pageSize);
-
-        return $rows;
-    }
-
-    /**
      * QuickBooks Batch API. Call this only when the set has more than one record.
      * A set of one uses the entity or query endpoint instead, so this method is not
      * the single-record path. Queries, creates, and voids are posted in chunks of 30.

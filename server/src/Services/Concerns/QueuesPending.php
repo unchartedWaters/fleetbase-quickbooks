@@ -315,7 +315,7 @@ trait QueuesPending
     }
 
     /**
-     * Whether the priority column exists (migration 2026_10_24_130000). Remembered per connection once true.
+     * Whether the priority column exists. Remembered per connection once true.
      */
     private function prioritySupported(): bool
     {

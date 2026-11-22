@@ -5,7 +5,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 
 /*
  * Characterization tests for internal-address detection and secret encryption.
- * Every URL here is an IP literal or is rejected before any DNS lookup.
+ * No URL here causes a DNS lookup.
  */
 
 function sctPrivate(string $method, mixed ...$args): mixed

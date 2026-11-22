@@ -6,7 +6,6 @@ use Fleetbase\Quickbooks\Models\Connection;
 
 /**
  * Whether an organization has a QuickBooks company to sync.
- * A stored sync.enabled flag is not part of this check.
  */
 class ConnectionGate
 {

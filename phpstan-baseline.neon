@@ -445,18 +445,6 @@ parameters:
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: '#^Call to function is_array\(\) with array\<string, mixed\> will always evaluate to true\.$#'
-			identifier: function.alreadyNarrowedType
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: '#^Comparison operation "\<" between 0 and 100 is always true\.$#'
-			identifier: smaller.alwaysTrue
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
 			message: '#^Method Fleetbase\\Quickbooks\\Services\\SyncEngine\:\:reattachWallet\(\) should return array\<string, mixed\>\|null but returns array\<mixed\>\.$#'
 			identifier: return.type
 			count: 1
@@ -755,12 +743,6 @@ parameters:
 			identifier: return.type
 			count: 1
 			path: server/src/Support/ProductMapper.php
-
-		-
-			message: '#^Call to function is_array\(\) with array will always evaluate to true\.$#'
-			identifier: function.alreadyNarrowedType
-			count: 1
-			path: server/src/Support/PublicHttps.php
 
 		-
 			message: '#^Method Fleetbase\\Quickbooks\\Support\\Translation\:\:decode\(\) should return array\{key\: string, params\: array\<string, bool\|float\|int\|string\|null\>\}\|null but returns array\{key\: string, params\: array\<bool\|float\|int\|string\|null\>\}\.$#'

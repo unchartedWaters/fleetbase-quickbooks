@@ -6,13 +6,13 @@ namespace Fleetbase\Quickbooks\Support;
  * Public https check for QuickBooks redirect and receiver URLs.
  * IP literals are normalized, including short, octal, decimal, and hexadecimal
  * forms. 6to4 and NAT64 addresses are rejected when the embedded IPv4 is not
- * public. A hostname is resolved, and the URL is rejected when DNS fails or any
- * address is not a public unicast address. With $resolve false a well-formed
- * hostname is accepted without a lookup, for a URL that already passed on save.
+ * public. A well-formed hostname is accepted without a DNS lookup: the URLs
+ * checked here come from server config and are only shown and used as the
+ * OAuth redirect, never fetched.
  */
 class PublicHttps
 {
-    public static function isPublicHttpsUrl(string $url, bool $resolve = true): bool
+    public static function isPublicHttpsUrl(string $url): bool
     {
         $url = trim($url);
         if ($url === '' || str_starts_with(strtolower($url), 'https://') === false) {
@@ -30,10 +30,10 @@ class PublicHttps
             return false;
         }
 
-        return self::hostIsInternal($host, $resolve) === false;
+        return self::hostIsInternal($host) === false;
     }
 
-    private static function hostIsInternal(string $host, bool $resolve): bool
+    private static function hostIsInternal(string $host): bool
     {
         $host = trim($host, '[]');
         if (str_ends_with($host, '.') === true) {
@@ -65,11 +65,7 @@ class PublicHttps
             return true;
         }
 
-        if ($resolve === false) {
-            return self::hostnameIsWellFormed($host) === false;
-        }
-
-        return self::hostnameResolvesToPublic($host) === false;
+        return self::hostnameIsWellFormed($host) === false;
     }
 
     private static function hostnameIsLoopback(string $hostname): bool
@@ -280,56 +276,10 @@ class PublicHttps
         return false;
     }
 
-    private static function addressIsInternal(string $ip): bool
-    {
-        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
-            return self::ipv4IsInternal($ip);
-        }
-        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) !== false) {
-            return self::ipv6IsInternal($ip);
-        }
-
-        return true;
-    }
-
     private static function hostnameIsWellFormed(string $host): bool
     {
         $label = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
 
         return strlen($host) <= 253 && preg_match('/^(?:' . $label . ')(?:\.(?:' . $label . '))*$/', $host) === 1;
-    }
-
-    private static function hostnameResolvesToPublic(string $host): bool
-    {
-        if (self::hostnameIsWellFormed($host) === false) {
-            return false;
-        }
-        // dns_get_record warns when lookup fails. The @ keeps Laravel from turning
-        // that warning into an ErrorException; a non-array result is treated as failure.
-        $records = @dns_get_record($host, DNS_A | DNS_AAAA);
-        if (is_array($records) === false || $records === []) {
-            return false;
-        }
-        $sawAddress = false;
-        foreach ($records as $record) {
-            if (is_array($record) === false) {
-                continue;
-            }
-            $ip = null;
-            if (isset($record['ip']) === true && is_string($record['ip']) === true) {
-                $ip = $record['ip'];
-            } elseif (isset($record['ipv6']) === true && is_string($record['ipv6']) === true) {
-                $ip = $record['ipv6'];
-            }
-            if ($ip === null || $ip === '') {
-                continue;
-            }
-            $sawAddress = true;
-            if (self::addressIsInternal($ip) === true) {
-                return false;
-            }
-        }
-
-        return $sawAddress;
     }
 }

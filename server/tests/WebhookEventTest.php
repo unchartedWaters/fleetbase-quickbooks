@@ -665,22 +665,21 @@ SQL);
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
-test('apply does not call Intuit and the webhook url is the computed receiver url', function () {
+test('apply does not call Intuit and the receiver url is computed', function () {
     config()->set('app.url', 'https://api.example.test');
     Http::fake();
 
     $subscriptions = new WebhookSubscriptions();
     $subscriptions->apply('company', 'company-a');
 
-    expect(SettingController::publicReceiverUrl())->toBe('https://api.example.test/quickbooks/int/v1/webhooks')
-        ->and($subscriptions->webhookUrl('company-a'))->toBe('https://api.example.test/quickbooks/int/v1/webhooks');
+    expect(SettingController::publicReceiverUrl())->toBe('https://api.example.test/quickbooks/int/v1/webhooks');
 
     config()->set('app.url', '   ');
     config()->set('fleetbase.url', null);
     config()->set('quickbooks.console_host', null);
     config()->set('fleetbase.console.host', null);
 
-    expect($subscriptions->webhookUrl('company-a'))->toBe('/quickbooks/int/v1/webhooks');
+    expect(SettingController::publicReceiverUrl())->toBe('/quickbooks/int/v1/webhooks');
 
     Http::assertNothingSent();
 });

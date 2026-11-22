@@ -130,7 +130,6 @@ function scheduleTriggerRun(int $lastBatchAt, int $pending, string $trigger = 's
 
     $store                                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::companySync('company-uuid')] = [
-        'enabled'                 => true,
         'interval_minutes'        => 5,
         'batch_size'              => 7,
         'periodic_interval_hours' => 24,

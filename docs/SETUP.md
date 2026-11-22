@@ -271,11 +271,9 @@ values.
 ![QuickBooks Setup before connecting: Connect to QuickBooks, and a note
 that the settings shown are the current global defaults][setup-not-connected]
 
-To upgrade, run `php artisan migrate`. The new migration gives every existing
-organization (with a QuickBooks connection or an organization settings row) a
-copy of its current effective settings, so nothing changes for them at upgrade.
-It is also required for the earlier `quickbooks_links` index migration, and
-for the column that holds the income account shown on the connection card.
+Run `php artisan migrate` to create the extension's tables. One migration
+builds all of them, including the `quickbooks_links` indexes and the column that
+holds the income account shown on the connection card.
 
 Organization settings lists **QuickBooks Setup** and **QuickBooks Activity**
 with Organization, Two Factor, and Notifications. QuickBooks Setup is route
@@ -409,8 +407,7 @@ changed the record again, the record stays queued for the next run, and a
 QuickBooks change to it is copied without emptying anything in Fleetbase.
 
 Sync frequency is the schedule. It is separate from each entity switch. There is
-no Enable schedule control, and a stored `enabled` flag does not stop the
-scheduler. Sync now with no connection returns HTTP 422 and does not save an
+no Enable schedule control. Sync now with no connection returns HTTP 422 and does not save an
 activity row. The console shows that error. A stored realm that needs reconnect
 returns HTTP 422 and saves a skipped activity row, at most once per cooldown.
 
@@ -650,15 +647,13 @@ off, the import is skipped. An import does not run while a sync is running.
 ## Sync
 
 `quickbooks:sync` stays registered on the Laravel scheduler, which the system
-cron invokes every minute. There is no Enable schedule control. The form does
-not send `sync.enabled`, and the command does not read a stored `enabled` flag,
-so `enabled: false` does not stop a due sync. The command does not start when no
-connection can be synced, or while a schedule hold is still in the future. It
-queues an organization when the connection does not need reconnect, QuickBooks
-is not rate limited, and either Sync frequency has elapsed with at least one due
-pending row, or at least 20 pending rows are already due. The customer catalog
-is the other reason a minute can start work. It is skipped when Customers is
-off.
+cron invokes every minute. There is no Enable schedule control. The command
+does not start when no connection can be synced, or while a schedule hold is
+still in the future. It queues an organization when the connection does not need
+reconnect, QuickBooks is not rate limited, and either Sync frequency has elapsed
+with at least one due pending row, or at least 20 pending rows are already due.
+The customer catalog is the other reason a minute can start work. It is skipped
+when Customers is off.
 
 One flagged row does not start the next minute. Flagging clears a stored
 schedule hold, so the next `schedule:run` may start the command, but the command

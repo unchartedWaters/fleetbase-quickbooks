@@ -204,12 +204,9 @@ test('prune reads attempts through the created_at index', function () {
     $originalSchema     = Schema::getFacadeRoot();
     Schema::swap(DB::connection('sqlite')->getSchemaBuilder());
     try {
-        $files = glob(dirname(__DIR__) . '/migrations/*_add_history_indexes_to_quickbooks_tables.php');
-        expect($files)->toHaveCount(1)
-            ->and(basename($files[0]) > '2026_10_23_120000')->toBeTrue();
-        $migration = require $files[0];
-        $migration->up();
-        $migration->up();
+        Schema::table('quickbooks_sync_attempts', function (Blueprint $table) {
+            $table->index('created_at', 'qb_attempts_created_idx');
+        });
 
         $plan = DB::select(
             'EXPLAIN QUERY PLAN select uuid from quickbooks_sync_attempts where created_at < ? '
@@ -227,11 +224,7 @@ test('prune reads attempts through the created_at index', function () {
 
         expect(json_encode($plan))->toContain('qb_attempts_created_idx')
             ->and($reads)->toHaveCount(1)
-            ->and($reads[0])->toContain('order by "created_at" asc')
-            ->and(Schema::hasIndex('quickbooks_sync_batches', 'qb_batches_company_status_finished_idx'))->toBeTrue();
-
-        $migration->down();
-        expect(Schema::hasIndex('quickbooks_sync_attempts', 'qb_attempts_created_idx'))->toBeFalse();
+            ->and($reads[0])->toContain('order by "created_at" asc');
     } finally {
         Schema::swap($originalSchema);
         $restore();

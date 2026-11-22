@@ -57,7 +57,6 @@ function pctOriginFor(array $config): string
 function pctSync(array $overrides = []): array
 {
     return array_merge([
-        'enabled'                 => true,
         'interval_minutes'        => 5,
         'periodic_interval_hours' => 24,
         'batch_size'              => 100,

@@ -380,21 +380,6 @@ trait PersistsRecords
     }
 
     /**
-     * Write a signed minor-unit integer without the Money cast.
-     */
-    public static function writeSignedMinor(Model $model, string $field, int $minor): void
-    {
-        $attributes = $model->getAttributes();
-        $current    = $attributes[$field] ?? null;
-        if ($current === $minor || (is_string($current) === true && $current === (string) $minor)) {
-            return;
-        }
-
-        $attributes[$field] = $minor;
-        $model->setRawAttributes($attributes);
-    }
-
-    /**
      * Replace every current line for one invoice with the inbound lines.
      * One delete of the current lines, then one insert. Integers are written
      * on the table so a negative amount does not pass through the Money cast.

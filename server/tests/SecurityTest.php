@@ -270,14 +270,14 @@ test('there is no redirect when only the fleetbase.io default host is known', fu
 test('string booleans in sync settings are read as booleans', function () {
     $resolver = new SyncSettingsResolver();
 
-    $off      = $resolver->resolve([], ['override' => true, 'enabled' => 'false'], ['enabled' => true]);
-    $fallback = $resolver->resolve([], ['override' => true, 'enabled' => 'nonsense'], ['enabled' => true]);
+    $off      = $resolver->resolve([], ['override' => true, 'customer_enabled' => 'false'], ['customer_enabled' => true]);
+    $fallback = $resolver->resolve([], ['override' => true, 'customer_enabled' => 'nonsense'], ['customer_enabled' => true]);
 
-    expect($off['enabled'])->toBeFalse()
-        ->and($off['sources']['enabled'])->toBe('admin')
+    expect($off['customer_enabled'])->toBeFalse()
+        ->and($off['sources']['customer_enabled'])->toBe('admin')
         ->and($off)->not->toHaveKey('override')
-        ->and($fallback['enabled'])->toBeTrue()
-        ->and($fallback['sources']['enabled'])->toBe('default');
+        ->and($fallback['customer_enabled'])->toBeTrue()
+        ->and($fallback['sources']['customer_enabled'])->toBe('default');
 });
 
 test('the reauth notification carries only the organization and realm', function () {

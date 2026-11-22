@@ -87,25 +87,21 @@ accounts), and products with QuickBooks Online.
   template). Reconnecting keeps the existing copy. There is no override toggle
   and no per-field inheritance. Before an organization has a copy, its settings
   screen shows the current global defaults as starting values.
-- On upgrade, run `php artisan migrate`. The snapshot migration gives every
-  existing organization (with a QuickBooks connection or an organization
-  settings row) a copy of its current effective settings, so nothing changes at
-  upgrade. The same command runs the earlier `quickbooks_links` index migration.
+- Run `php artisan migrate` to create the tables. One migration builds all of
+  them, with their indexes.
 - An import does not run while a sync is running.
 - Home currency comes from QuickBooks Preferences.
 - QuickBooks Setup → Data Resolution lists Customers, Invoices, Payments, and
   Accounts / Wallets. Each has a switch, then Primary (Fleetbase or QuickBooks)
   and Sync direction. Primary decides which system wins when records differ and
   which system supplies identifiers. The Schedule panel holds Sync frequency and
-  the retry fields. There is no Enable schedule control, and the form does not
-  send `sync.enabled`. A stored `enabled` flag does not stop the scheduler. The
-  schedule runs when a connection does not need reconnect, QuickBooks is not
-  rate limited, and either Sync frequency has elapsed with at least one due
-  pending row, or at least 20 pending rows are already due. The customer catalog
-  can also start a minute, and it is skipped when Customers is off. Sync now
-  still runs before that interval. One flagged row does not start the next
-  minute. Sync now processes one pending page and does not drain the rest of the
-  queue.
+  the retry fields. There is no Enable schedule control. The schedule runs when
+  a connection does not need reconnect, QuickBooks is not rate limited, and
+  either Sync frequency has elapsed with at least one due pending row, or at
+  least 20 pending rows are already due. The customer catalog can also start a
+  minute, and it is skipped when Customers is off. Sync now still runs before
+  that interval. One flagged row does not start the next minute. Sync now
+  processes one pending page and does not drain the rest of the queue.
 - Deletes: a Fleetbase customer or wallet delete makes the linked QuickBooks
   record inactive, and a deleted invoice line is removed from the QuickBooks
   invoice (item `meta` keeps each line's QuickBooks id). A QuickBooks delete

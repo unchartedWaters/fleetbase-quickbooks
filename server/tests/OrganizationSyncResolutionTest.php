@@ -93,7 +93,6 @@ test('changing every global sync field leaves an organization copy unchanged', f
     $before = orgResolve($store, 'org-a');
 
     $store->rows[SettingsKeys::adminSync()] = qbSettings([
-        'enabled'                 => false,
         'interval_minutes'        => 77,
         'periodic_interval_hours' => 3,
         'batch_size'              => 9,
@@ -134,14 +133,18 @@ test('the batch runner schedules each organization with its own copy', function 
         $reflection->setValue($runner, $value);
     }
 
-    expect($runner->deferSeconds('org-a'))->toBe(180)
-        ->and($runner->deferSeconds('org-b'))->toBe(600);
+    $interval = static fn (string $company): int => BatchRunner::intervalSeconds(
+        (new ReflectionMethod(BatchRunner::class, 'settingsFor'))->invoke($runner, $company)
+    );
+
+    expect($interval('org-a'))->toBe(180)
+        ->and($interval('org-b'))->toBe(600);
 
     // A later global edit moves an organization without a copy, never one with a copy.
     $store->rows[SettingsKeys::adminSync()] = qbSettings(['interval_minutes' => 20]);
 
-    expect($runner->deferSeconds('org-a'))->toBe(180)
-        ->and($runner->deferSeconds('org-b'))->toBe(1200);
+    expect($interval('org-a'))->toBe(180)
+        ->and($interval('org-b'))->toBe(1200);
 });
 
 test('the webhook flush uses the copy of the company it is flushing', function () {

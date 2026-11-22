@@ -29,7 +29,6 @@ class SyncSettingsResolver
             $admin[$field] = $value;
         }
 
-        $enabled  = $this->pickBool('enabled', $admin, (bool) ($defaults['enabled'] ?? true));
         $interval = $this->pickInt('interval_minutes', $admin, (int) ($defaults['interval_minutes'] ?? 5), 1);
         $periodic = $this->pickInt('periodic_interval_hours', $admin, (int) ($defaults['periodic_interval_hours'] ?? 24), 1);
         $batch    = $this->pickInt('batch_size', $admin, (int) ($defaults['batch_size'] ?? 100), 1);
@@ -61,14 +60,12 @@ class SyncSettingsResolver
         ];
 
         $resolved = [
-            'enabled'                 => $enabled['value'],
             'interval_minutes'        => $interval['value'],
             'periodic_interval_hours' => $periodic['value'],
             'batch_size'              => $batch['value'],
             'retry_limit'             => $retry['value'],
             'default_backoff_seconds' => $backoff['value'],
             'sources'                 => [
-                'enabled'                 => $enabled['source'],
                 'interval_minutes'        => $interval['source'],
                 'periodic_interval_hours' => $periodic['source'],
                 'batch_size'              => $batch['source'],

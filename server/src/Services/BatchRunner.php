@@ -410,15 +410,6 @@ class BatchRunner
     }
 
     /**
-     * True when this organization has a QuickBooks company that can be synced.
-     * A stored sync.enabled flag is not read.
-     */
-    public function hasConnection(string $companyUuid): bool
-    {
-        return ConnectionGate::usable($this->directory->connection($companyUuid));
-    }
-
-    /**
      * The customer catalog is not part of the fast pending loop.
      * A missing periodic_interval_hours does not scan customers unless a stamp is already stored.
      *
@@ -645,15 +636,6 @@ class BatchRunner
     }
 
     /**
-     * Seconds until an idle schedule should look at this organization again.
-     * A stored sync.enabled flag does not turn the schedule off.
-     */
-    public function deferSeconds(string $companyUuid): int
-    {
-        return self::intervalSeconds($this->settingsFor($companyUuid));
-    }
-
-    /**
      * @param array<string, mixed> $settings
      */
     public static function intervalSeconds(array $settings): int
@@ -712,15 +694,6 @@ class BatchRunner
         }
 
         return ($now - (int) $last) >= ((int) $settings['interval_minutes'] * 60);
-    }
-
-    /**
-     * Worker timeout for a company sync. Shorter than the company lock by LOCK_MARGIN_SECONDS,
-     * and longer than REDIS_RETRY_AFTER_SECONDS so a full batch is not killed at 90 seconds.
-     */
-    public static function jobTimeout(): int
-    {
-        return self::LOCK_SECONDS - self::LOCK_MARGIN_SECONDS;
     }
 
     /**
