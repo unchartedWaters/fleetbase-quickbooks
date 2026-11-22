@@ -9,6 +9,7 @@ use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
@@ -197,6 +198,7 @@ class CompanyReset
         if ($deletable === false) {
             return $query;
         }
+        /** @var Model $model */
         $model      = new $class();
         $schema     = $model->getConnection()->getSchemaBuilder();
         $ownedTable = $model->getTable();
