@@ -102,9 +102,10 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         await click('[data-test-disconnect]');
         assert.dom('[data-test-data-choice="disconnect"]').exists('the question replaces the buttons');
         assert.dom('[data-test-connection-actions]').doesNotExist();
-        assert.dom('[data-test-choice-code]').hasText('ABC234');
+        assert.dom('[data-test-choice-code]').doesNotExist('keeping the data needs no code');
 
         await click('[data-test-choice-option="sync"]');
+        assert.dom('[data-test-choice-code]').hasText('ABC234');
         await fillIn('[data-test-choice-input]', 'ABC234');
         await click('[data-test-choice-confirm]');
         assert.deepEqual(this.disconnects, [{ level: 'sync', confirm: 'ABC234' }]);
