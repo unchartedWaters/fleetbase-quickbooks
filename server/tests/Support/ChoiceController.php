@@ -68,7 +68,7 @@ class ChoiceController extends ConnectionController
 
     protected function reset(): CompanyReset
     {
-        return new CompanyReset($this->memory, TestCustomer::class, TestPlace::class);
+        return DataChoiceDatabase::reset($this->memory);
     }
 
     protected function persist(array $connection): void

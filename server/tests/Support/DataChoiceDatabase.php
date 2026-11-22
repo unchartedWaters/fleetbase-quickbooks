@@ -48,7 +48,7 @@ class DataChoiceDatabase
      */
     public static function reset(MemorySettingsStore $store): CompanyReset
     {
-        return new CompanyReset($store, TestCustomer::class, TestPlace::class);
+        return new CompanyReset($store, TestCustomer::class, TestPlace::class, ['test_orders' => 'customer_uuid']);
     }
 
     private static function tables(): void
@@ -93,6 +93,10 @@ class DataChoiceDatabase
             $table->char('uuid', 36)->primary();
             $table->char('company_uuid', 36)->index();
             $table->text('meta')->nullable();
+        });
+        $schema->create('test_orders', function (Blueprint $table) {
+            $table->char('uuid', 36)->primary();
+            $table->char('customer_uuid', 36)->index();
         });
         $schema->create('test_places', function (Blueprint $table) {
             $table->char('uuid', 36)->primary();
@@ -141,25 +145,30 @@ class DataChoiceDatabase
         $customers = [
             ['imported-1', 'company-uuid', $marker],
             ['native-1', 'company-uuid', null],
+            ['imported-3', 'company-uuid', $marker],
             ['imported-2', 'other-company', $marker],
         ];
         foreach ($customers as [$uuid, $company, $meta]) {
             TestCustomer::query()->create(['uuid' => $uuid, 'company_uuid' => $company, 'meta' => $meta]);
             TestPlace::query()->create(['uuid' => 'place-' . $uuid, 'owner_uuid' => $uuid, 'company_uuid' => $company]);
         }
+        // imported-3 has an order, so a wipe keeps it.
+        DB::table('test_orders')->insert(['uuid' => 'order-1', 'customer_uuid' => 'imported-3']);
     }
 
     /**
+     * @param array<int, string> $except tables to leave out, such as one a test dropped
+     *
      * @return array<string, int> the rows each table holds for $company
      */
-    public static function rows(string $company): array
+    public static function rows(string $company, array $except = []): array
     {
         $count  = [];
         $tables = [
             'quickbooks_connections', 'quickbooks_links', 'quickbooks_pending_syncs', 'quickbooks_sync_batches',
             'quickbooks_sync_attempts', 'test_customers', 'test_places',
         ];
-        foreach ($tables as $table) {
+        foreach (array_diff($tables, $except) as $table) {
             $count[$table] = DB::table($table)->where('company_uuid', $company)->count();
         }
 

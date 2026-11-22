@@ -1,6 +1,6 @@
 <?php
 
-use Fleetbase\Quickbooks\Models\Connection;
+use Fleetbase\Quickbooks\Services\BatchRunner;
 use Fleetbase\Quickbooks\Services\CompanyReset;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Tests\Support\ChoiceController;
@@ -43,10 +43,11 @@ test('the import marker names QuickBooks, the company and the customer', functio
     ]);
 });
 
-test('link counts are per kind for this organization and count the imported customers', function () {
+test('link counts are per kind, and imported customers are counted only on request', function () {
     DataChoiceDatabase::with(function () {
         DataChoiceDatabase::seed();
-        $counts = DataChoiceDatabase::reset(new MemorySettingsStore())->linkCounts('company-uuid');
+        $reset  = DataChoiceDatabase::reset(new MemorySettingsStore());
+        $counts = $reset->linkCounts('company-uuid', true);
 
         expect($counts)->toBe([
             'customers' => 2,
@@ -55,7 +56,8 @@ test('link counts are per kind for this organization and count the imported cust
             'products'  => 1,
             'total'     => 5,
             'imported'  => 1,
-        ]);
+            'kept'      => 1,
+        ])->and($reset->linkCounts('company-uuid'))->toMatchArray(['imported' => 0, 'kept' => 0, 'total' => 5]);
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, QB_SQLITE_SKIP);
 
@@ -94,14 +96,15 @@ test('clearing removes this organization sync data at each level and only custom
             ->and($store->rows[SettingsKeys::companySync('other-company')])->toBe(['customer_direction' => 'both'])
             ->and($store->rows[SettingsKeys::companySync('company-uuid')] ?? null)
             ->toBe($settingsReset === true ? [] : ['customer_direction' => 'both']);
-        if ($customersLeft === 1) {
-            expect(TestCustomer::query()->where('company_uuid', 'company-uuid')->value('uuid'))->toBe('native-1');
+        if ($customersLeft === 2) {
+            $left = TestCustomer::query()->where('company_uuid', 'company-uuid')->orderBy('uuid')->pluck('uuid')->all();
+            expect($left)->toBe(['imported-3', 'native-1']);
         }
     });
 })->with([
-    'sync data only'          => [CompanyReset::SYNC, false, 2],
-    'plus the sync settings'  => [CompanyReset::SETTINGS, true, 2],
-    'plus imported customers' => [CompanyReset::EVERYTHING, true, 1],
+    'sync data only'          => [CompanyReset::SYNC, false, 3],
+    'plus the sync settings'  => [CompanyReset::SETTINGS, true, 3],
+    'plus imported customers' => [CompanyReset::EVERYTHING, true, 2],
 ])->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, QB_SQLITE_SKIP);
 
 test('clearing while a switch is under way keeps the connection row', function () {
@@ -132,8 +135,8 @@ test('disconnect with a level needs the code shown to the user and then clears t
                 'quickbooks_pending_syncs' => 1,
                 'quickbooks_sync_batches'  => 1,
                 'quickbooks_sync_attempts' => 1,
-                'test_customers'           => 2,
-                'test_places'              => 2,
+                'test_customers'           => 3,
+                'test_places'              => 3,
             ])
             ->and(Http::recorded())->toHaveCount(0);
 
@@ -147,8 +150,8 @@ test('disconnect with a level needs the code shown to the user and then clears t
                 'quickbooks_pending_syncs' => 0,
                 'quickbooks_sync_batches'  => 0,
                 'quickbooks_sync_attempts' => 0,
-                'test_customers'           => 1,
-                'test_places'              => 1,
+                'test_customers'           => 2,
+                'test_places'              => 2,
             ])
             ->and(DataChoiceDatabase::rows('other-company')['quickbooks_links'])->toBe(5)
             ->and($controller->disconnectWith('sync', $code)->getStatusCode())->toBe(422);
@@ -175,33 +178,53 @@ test('a plain disconnect keeps the links, and an operator cannot ask for a level
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, QB_SQLITE_SKIP);
 
-test('another company or the other environment leaves links behind, the same company does not', function (
-    string $realm,
-    string $environment,
-    bool $leaves,
-) {
-    DataChoiceDatabase::with(function () use ($realm, $environment, $leaves) {
+test('another company leaves links behind, the same company does not', function (string $realm, bool $leaves) {
+    DataChoiceDatabase::with(function () use ($realm, $leaves) {
         DataChoiceDatabase::seed();
-        Connection::query()->where('company_uuid', 'company-uuid')->update(['environment' => $environment]);
         session(['company' => 'company-uuid', 'user' => 'user-uuid']);
 
         expect(ChoiceController::make(new MemorySettingsStore())->leaves('company-uuid', $realm))->toBe($leaves);
     });
 })->with([
-    'same company and environment'    => ['9341453000000001', 'sandbox', false],
-    'another company'                 => ['9341453000000009', 'sandbox', true],
-    'same company, other environment' => ['9341453000000001', 'production', true],
+    'same company'    => ['9341453000000001', false],
+    'another company' => ['9341453000000009', true],
 ])->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, QB_SQLITE_SKIP);
 
-test('an environment change with nothing linked leaves nothing behind', function () {
+test('a clear that fails part-way leaves everything as it was', function () {
     DataChoiceDatabase::with(function () {
         DataChoiceDatabase::seed();
-        DB::table('quickbooks_links')->delete();
-        Connection::query()->where('company_uuid', 'company-uuid')->update(['environment' => 'production']);
+        $store = new MemorySettingsStore();
+        // The sync history table is gone, so the delete after the links fails.
+        DB::connection('sqlite')->getSchemaBuilder()->drop('quickbooks_sync_attempts');
 
+        expect(fn () => DataChoiceDatabase::reset($store)->clear('company-uuid', CompanyReset::EVERYTHING, false))
+            ->toThrow(Illuminate\Database\QueryException::class);
+
+        $rows = DataChoiceDatabase::rows('company-uuid', ['quickbooks_sync_attempts']);
+        expect($rows['quickbooks_links'])->toBe(5)
+            ->and($rows['quickbooks_connections'])->toBe(1)
+            ->and($rows['test_customers'])->toBe(3);
+    });
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, QB_SQLITE_SKIP);
+
+test('clearing waits for a running sync and keeps the code for the retry', function () {
+    DataChoiceDatabase::with(function () {
+        DataChoiceDatabase::seed();
+        Http::swap(new Illuminate\Http\Client\Factory());
+        Http::fake(['developer.api.intuit.com/*' => Http::response('', 200)]);
+        session(['company' => 'company-uuid', 'user' => 'user-uuid']);
         $controller = ChoiceController::make(new MemorySettingsStore());
+        $code       = $controller->resetCode(Request::create('/reset-code', 'POST'))->getData(true)['code'];
+        $running    = BatchRunner::lock('company-uuid');
+        expect($running?->get())->toBeTrue();
 
-        expect($controller->leaves('company-uuid', '9341453000000001'))->toBeFalse();
+        $busy = $controller->disconnectWith('sync', $code);
+        expect($busy->getStatusCode())->toBe(409)
+            ->and(DataChoiceDatabase::rows('company-uuid')['quickbooks_links'])->toBe(5);
+
+        $running->release();
+        expect($controller->disconnectWith('sync', $code)->getStatusCode())->toBe(200)
+            ->and(DataChoiceDatabase::rows('company-uuid')['quickbooks_links'])->toBe(0);
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, QB_SQLITE_SKIP);
 
@@ -243,6 +266,7 @@ test('connecting another company asks first, keeps the handle and clears only on
                 ->and($answer['code'])->toMatch('/^[A-Z2-9]{6}$/')
                 ->and($answer['linked']['total'])->toBe(5)
                 ->and($answer['linked']['imported'])->toBe(1)
+                ->and($answer['linked']['kept'])->toBe(1)
                 ->and($exchanged)->toHaveCount(0)
                 ->and($controller->saved)->toBeNull()
                 ->and(DataChoiceDatabase::rows('company-uuid')['quickbooks_links'])->toBe(5);
@@ -268,7 +292,7 @@ test('connecting another company asks first, keeps the handle and clears only on
                 ->and($done->getData(true))->toBe(['connected' => true])
                 ->and($controller->saved['realm_id'])->toBe('9341453000000009')
                 ->and(DataChoiceDatabase::rows('company-uuid')['quickbooks_links'])->toBe(0)
-                ->and(DataChoiceDatabase::rows('company-uuid')['test_customers'])->toBe(2)
+                ->and(DataChoiceDatabase::rows('company-uuid')['test_customers'])->toBe(3)
                 ->and(DataChoiceDatabase::rows('other-company')['quickbooks_links'])->toBe(5)
                 ->and($jobs)->not->toBe([]);
         } finally {

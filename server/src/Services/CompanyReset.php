@@ -8,14 +8,15 @@ use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
-use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * What an organization's QuickBooks data is made of, and clearing it at one of three levels:
  * sync data (links, queued work, history), plus the organization's sync settings, or plus the
- * Fleetbase customers that were imported from QuickBooks. Other Fleetbase records are never touched.
+ * Fleetbase customers that were imported from QuickBooks and nothing else refers to. Other Fleetbase records
+ * are never touched.
  */
 class CompanyReset
 {
@@ -42,14 +43,19 @@ class CompanyReset
 
     private const PLACE_CLASS = 'Fleetbase\\FleetOps\\Models\\Place';
 
+    /** Tables whose rows refer to a customer by uuid. A customer one of them refers to is kept. */
+    private const USED_BY = ['orders' => 'customer_uuid', 'ledger_invoices' => 'customer_uuid'];
+
     /**
-     * @param string $customerClass the Fleetbase customer model
-     * @param string $placeClass    the Fleetbase place model, whose rows hold customers' billing addresses
+     * @param string                $customerClass the Fleetbase customer model
+     * @param string                $placeClass    the Fleetbase place model, which holds billing addresses
+     * @param array<string, string> $usedBy        table => column of the records that refer to a customer
      */
     public function __construct(
         private SettingsStore $store,
         private string $customerClass = self::CUSTOMER_CLASS,
         private string $placeClass = self::PLACE_CLASS,
+        private array $usedBy = self::USED_BY,
     ) {
     }
 
@@ -107,11 +113,12 @@ class CompanyReset
 
     /**
      * How many Fleetbase records are linked to QuickBooks records, by kind, all links together, and
-     * how many Fleetbase customers were imported from QuickBooks.
+     * how many imported Fleetbase customers a wipe would delete and keep. The imported counts scan the
+     * customers, so they are only worked out when $withImported is set.
      *
-     * @return array{customers: int, invoices: int, wallets: int, products: int, total: int, imported: int}
+     * @return array{customers: int, invoices: int, wallets: int, products: int, total: int, imported: int, kept: int}
      */
-    public function linkCounts(string $companyUuid): array
+    public function linkCounts(string $companyUuid, bool $withImported = false): array
     {
         $byType = Link::query()
             ->where('company_uuid', $companyUuid)
@@ -125,13 +132,17 @@ class CompanyReset
         }
         $countOf = static fn (string $type): int => (int) ($byType[$type] ?? 0);
 
+        $imported = $withImported === true ? $this->importedCustomers($companyUuid, true)?->count() ?? 0 : 0;
+        $marked   = $withImported === true ? $this->importedCustomers($companyUuid)?->count() ?? 0 : 0;
+
         return [
             'customers' => $countOf('customer'),
             'invoices'  => $countOf('invoice'),
             'wallets'   => $countOf('wallet'),
             'products'  => $countOf('item'),
             'total'     => $total,
-            'imported'  => $this->importedCustomers($companyUuid)?->count() ?? 0,
+            'imported'  => $imported,
+            'kept'      => $marked - $imported,
         ];
     }
 
@@ -149,60 +160,75 @@ class CompanyReset
      */
     public function clear(string $companyUuid, string $level, bool $keepConnection): void
     {
-        if ($level === self::EVERYTHING) {
-            $this->deleteImportedCustomers($companyUuid);
-        }
-        Link::query()->where('company_uuid', $companyUuid)->delete();
-        PendingSync::query()->where('company_uuid', $companyUuid)->delete();
-        SyncAttempt::query()->where('company_uuid', $companyUuid)->delete();
-        SyncBatch::query()->where('company_uuid', $companyUuid)->delete();
-        if ($keepConnection === false) {
-            Connection::query()->where('company_uuid', $companyUuid)->delete();
-            $this->store->put(SettingsKeys::companyLastRealm($companyUuid), []);
-        }
-        if ($level !== self::SYNC) {
-            // No saved copy shows the global defaults again, and connecting makes a fresh copy.
-            $this->store->put(SettingsKeys::companySync($companyUuid), []);
-        }
+        // One transaction, so a failure part-way leaves everything as it was.
+        DB::transaction(function () use ($companyUuid, $level, $keepConnection): void {
+            if ($level === self::EVERYTHING) {
+                $this->deleteImportedCustomers($companyUuid);
+            }
+            Link::query()->where('company_uuid', $companyUuid)->delete();
+            PendingSync::query()->where('company_uuid', $companyUuid)->delete();
+            SyncAttempt::query()->where('company_uuid', $companyUuid)->delete();
+            SyncBatch::query()->where('company_uuid', $companyUuid)->delete();
+            if ($keepConnection === false) {
+                Connection::query()->where('company_uuid', $companyUuid)->delete();
+                $this->store->put(SettingsKeys::companyLastRealm($companyUuid), []);
+            }
+            if ($level !== self::SYNC) {
+                // No saved copy shows the global defaults again, and connecting makes a fresh copy.
+                $this->store->put(SettingsKeys::companySync($companyUuid), []);
+            }
+        });
     }
 
     /**
-     * Customers created by a QuickBooks import, found by their marker. Null without Fleet-Ops.
+     * Customers created by a QuickBooks import, found by their marker. Null without Fleet-Ops. With $deletable,
+     * the ones an order or an invoice refers to are left out: deleting them would blank those records.
      */
-    private function importedCustomers(string $companyUuid): ?Builder
+    private function importedCustomers(string $companyUuid, bool $deletable = false): ?Builder
     {
         $class = $this->customerClass;
         if (class_exists($class) === false) {
             return null;
         }
 
-        return $class::query()
+        $query = $class::query()
             ->where('company_uuid', $companyUuid)
             ->where('meta->' . self::IMPORT_META . '->source', 'quickbooks');
+        if ($deletable === false) {
+            return $query;
+        }
+        $model      = new $class();
+        $schema     = $model->getConnection()->getSchemaBuilder();
+        $ownedTable = $model->getTable();
+        foreach ($this->usedBy as $table => $column) {
+            if ($schema->hasTable($table) === false) {
+                continue;
+            }
+            $query->whereNotExists(static function ($used) use ($table, $column, $ownedTable): void {
+                $used->selectRaw('1')->from($table)->whereColumn($table . '.' . $column, $ownedTable . '.uuid');
+            });
+        }
+
+        return $query;
     }
 
     /**
-     * Delete the imported customers and the billing places made for them. The deletes are not sent to QuickBooks.
+     * Delete the imported customers nothing refers to, and the billing places made for them.
+     * The delete is a query, so no model event is raised and nothing is sent to QuickBooks.
      */
     private function deleteImportedCustomers(string $companyUuid): void
     {
-        $customers = $this->importedCustomers($companyUuid);
+        $customers = $this->importedCustomers($companyUuid, true);
         if ($customers === null) {
             return;
         }
-        SyncSuppressor::pause();
-        try {
-            $uuids = $customers->pluck('uuid')->all();
-            foreach (array_chunk($uuids, 200) as $chunk) {
-                $place = $this->placeClass;
-                if (class_exists($place) === true) {
-                    $place::query()->whereIn('owner_uuid', $chunk)->delete();
-                }
-                $class = $this->customerClass;
-                $class::query()->where('company_uuid', $companyUuid)->whereIn('uuid', $chunk)->delete();
+        $place = $this->placeClass;
+        $class = $this->customerClass;
+        foreach (array_chunk($customers->pluck('uuid')->all(), 200) as $chunk) {
+            if (class_exists($place) === true) {
+                $place::query()->whereIn('owner_uuid', $chunk)->delete();
             }
-        } finally {
-            SyncSuppressor::resume();
+            $class::query()->where('company_uuid', $companyUuid)->whereIn('uuid', $chunk)->delete();
         }
     }
 }

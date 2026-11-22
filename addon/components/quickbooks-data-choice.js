@@ -36,6 +36,7 @@ export default class QuickbooksDataChoiceComponent extends Component {
             wallets: linked.wallets ?? 0,
             products: linked.products ?? 0,
             imported: linked.imported ?? 0,
+            kept: linked.kept ?? 0,
         };
 
         return counts;

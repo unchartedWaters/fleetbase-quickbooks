@@ -330,7 +330,7 @@ quickbooks:
     settings: Clear the sync data and settings
     settings-detail: Also resets this organization's QuickBooks sync settings to the global defaults.
     everything: Clear everything, including imported customers
-    everything-detail: "Also deletes the {imported, plural, one {# Fleetbase customer} other {# Fleetbase customers}} that were imported from QuickBooks. This cannot be undone."
+    everything-detail: "Also deletes the {imported, plural, one {# Fleetbase customer} other {# Fleetbase customers}} that were imported from QuickBooks{kept, plural, =0 {} one { (# more is kept because an order or invoice refers to it)} other { (# more are kept because an order or invoice refers to them)}}. This cannot be undone."
     type-code: "To confirm, type the code"
     code-rejected: The code did not match. A new code is shown.
     confirm-switch: Connect this company

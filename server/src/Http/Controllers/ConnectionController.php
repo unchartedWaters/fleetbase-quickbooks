@@ -10,6 +10,7 @@ use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
+use Fleetbase\Quickbooks\Services\BatchRunner;
 use Fleetbase\Quickbooks\Services\CompanyReset;
 use Fleetbase\Quickbooks\Services\ConnectionProbe;
 use Fleetbase\Quickbooks\Services\ConnectionTokens;
@@ -267,6 +268,40 @@ class ConnectionController extends QuickbooksController
             return response()->json(['connected' => false]);
         }
 
+        // Clearing data waits for no sync to be running, and takes the answer's code only once it may go ahead.
+        if (CompanyReset::isLevel((string) $request->input('level')) === true) {
+            return $this->whileSyncIdle(
+                $companyUuid,
+                fn (): JsonResponse => $this->finishConnection($request, $companyUuid, $userUuid)
+            );
+        }
+
+        return $this->finishConnection($request, $companyUuid, $userUuid);
+    }
+
+    /**
+     * Run $work while no sync of this organization is running and none can start, so a running sync cannot write
+     * links after they were cleared. Answers 409 when a sync is running. Nothing has changed yet then, and the
+     * answer's code is still good.
+     *
+     * @param \Closure(): JsonResponse $work
+     */
+    private function whileSyncIdle(string $companyUuid, \Closure $work): JsonResponse
+    {
+        $lock = BatchRunner::lock($companyUuid);
+        if ($lock !== null && $lock->get() === false) {
+            return response()->json(['message' => Translation::get('quickbooks.messages.sync-running')], 409);
+        }
+
+        try {
+            return $work();
+        } finally {
+            $lock?->release();
+        }
+    }
+
+    private function finishConnection(Request $request, string $companyUuid, string $userUuid): JsonResponse
+    {
         $level = $this->chosenLevel($request, $companyUuid);
         try {
             $connection = $this->finishOAuth($request, $companyUuid, $userUuid, $level);
@@ -325,7 +360,7 @@ class ConnectionController extends QuickbooksController
             'handle'          => $handle,
             'code'            => $this->reset()->issueCode($companyUuid, $userUuid),
             'code_rejected'   => $request->filled('level'),
-            'linked'          => $this->reset()->linkCounts($companyUuid),
+            'linked'          => $this->reset()->linkCounts($companyUuid, true),
         ]);
     }
 
@@ -338,7 +373,7 @@ class ConnectionController extends QuickbooksController
 
         return response()->json([
             'code'   => $this->reset()->issueCode($this->companyUuid($request), (string) session('user', '')),
-            'linked' => $this->reset()->linkCounts($this->companyUuid($request)),
+            'linked' => $this->reset()->linkCounts($this->companyUuid($request), true),
         ]);
     }
 
@@ -350,7 +385,19 @@ class ConnectionController extends QuickbooksController
     {
         $this->authorizeQuickbooks('quickbooks disconnect connection', $request);
         $companyUuid = $this->companyUuid($request);
-        $level       = (string) $request->input('level', CompanyReset::KEEP);
+        if ((string) $request->input('level', CompanyReset::KEEP) === CompanyReset::KEEP) {
+            return $this->disconnectCompany($request, $companyUuid);
+        }
+
+        return $this->whileSyncIdle(
+            $companyUuid,
+            fn (): JsonResponse => $this->disconnectCompany($request, $companyUuid)
+        );
+    }
+
+    private function disconnectCompany(Request $request, string $companyUuid): JsonResponse
+    {
+        $level = (string) $request->input('level', CompanyReset::KEEP);
         if ($level !== CompanyReset::KEEP && $this->chosenLevel($request, $companyUuid) === null) {
             return response()->json(['message' => Translation::get('quickbooks.messages.reset-code-rejected')], 422);
         }
@@ -560,28 +607,12 @@ class ConnectionController extends QuickbooksController
     }
 
     /**
-     * Whether connecting $realmId would leave the organization's links pointing at another QuickBooks
-     * company, or at the same company in the other environment (sandbox or production).
+     * Whether connecting $realmId would leave the organization's links pointing at another QuickBooks company.
+     * Sandbox and production are different companies, so a change of environment is a change of company too.
      */
     protected function leavesLinksBehind(string $companyUuid, string $realmId): bool
     {
-        $reset = $this->reset();
-        if ($reset->linksOutsideRealm($companyUuid, $realmId) > 0) {
-            return true;
-        }
-
-        return $this->environmentChanged($companyUuid) === true && $reset->linkCounts($companyUuid)['total'] > 0;
-    }
-
-    /**
-     * The connection was made in another environment than the one the settings name now.
-     */
-    protected function environmentChanged(string $companyUuid): bool
-    {
-        $existing = $this->latestConnection($companyUuid);
-        $stored   = $existing instanceof Connection === true ? trim((string) $existing->environment) : '';
-
-        return $stored !== '' && $stored !== $this->credentials($companyUuid)['environment'];
+        return $this->reset()->linksOutsideRealm($companyUuid, $realmId) > 0;
     }
 
     /**

@@ -532,9 +532,10 @@ note beside the buttons says so). The current connection stays until that
 sign-in finishes, so cancelling at Intuit changes nothing.
 
 Records linked to QuickBooks belong to the company they were linked in, so a
-change of company, or of environment (sandbox or production), needs an answer
-before anything is exchanged or saved. Disconnect asks the same question
-whenever records are linked. The administrator chooses what happens to this
+change of company needs an answer before anything is exchanged or saved.
+Sandbox and production are different QuickBooks companies, so moving between
+them is a change of company too. Disconnect asks the same question whenever
+records are linked. The administrator chooses what happens to this
 organization's QuickBooks data:
 
 - **Keep** (Disconnect only): nothing is removed, and reconnecting to the same
@@ -544,8 +545,10 @@ organization's QuickBooks data:
   to the global defaults.
 - **Everything, including customers imported from QuickBooks**: also
   deletes the Fleetbase customers (and the billing places made for them) that
-  a QuickBooks import created. Other Fleetbase records are never touched,
-  and the deletes are not sent to QuickBooks.
+  a QuickBooks import created. A customer that an order (`orders`) or a
+  Ledger invoice (`ledger_invoices`) refers to is kept, and the question says
+  how many. Other Fleetbase records are never touched, and the deletes are
+  not sent to QuickBooks.
 
 The answer is confirmed by typing a random six-character code that the
 console shows (`POST /quickbooks/int/v1/reset-code`). The code is issued to
@@ -554,7 +557,13 @@ and works once. `oauth/complete` answers `choice_required` with a `handle`
 and the counts of linked records, and is finished again with the handle, a
 `level` (`sync`, `settings` or `everything`) and the typed `confirm` code.
 `disconnect` takes the same `level` and `confirm`; without a `level` it keeps
-the links. A wrong code changes nothing.
+the links. A wrong code changes nothing. The handle lives in the open page, so
+reloading it drops the question: connect again, and nothing has changed.
+
+Clearing runs in one database transaction, so a failure leaves everything as
+it was. It also needs the organization's sync lock: while a sync is running,
+`oauth/complete` and `disconnect` answer HTTP 409 and change nothing, and the
+code is still good for the retry.
 
 Customers created by an import carry a marker in their `meta`
 (`quickbooks_import`: source, realm and QuickBooks id). The last option

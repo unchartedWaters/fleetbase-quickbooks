@@ -9,9 +9,17 @@ use Fleetbase\Quickbooks\Services\CompanyReset;
  */
 class EmptyReset extends CompanyReset
 {
-    public function linkCounts(string $companyUuid): array
+    public function linkCounts(string $companyUuid, bool $withImported = false): array
     {
-        return ['customers' => 0, 'invoices' => 0, 'wallets' => 0, 'products' => 0, 'total' => 0, 'imported' => 0];
+        return [
+            'customers' => 0,
+            'invoices'  => 0,
+            'wallets'   => 0,
+            'products'  => 0,
+            'total'     => 0,
+            'imported'  => 0,
+            'kept'      => 0,
+        ];
     }
 
     public function linksOutsideRealm(string $companyUuid, string $realm): int
