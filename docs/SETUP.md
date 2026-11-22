@@ -407,9 +407,10 @@ changed the record again, the record stays queued for the next run, and a
 QuickBooks change to it is copied without emptying anything in Fleetbase.
 
 Sync frequency is the schedule. It is separate from each entity switch. There is
-no Enable schedule control. Sync now with no connection returns HTTP 422 and does not save an
-activity row. The console shows that error. A stored realm that needs reconnect
-returns HTTP 422 and saves a skipped activity row, at most once per cooldown.
+no Enable schedule control. Sync now with no connection returns HTTP 422 and
+does not save an activity row. The console shows that error. A stored realm that
+needs reconnect returns HTTP 422 and saves a skipped activity row, at most once
+per cooldown.
 
 ### Tax
 
