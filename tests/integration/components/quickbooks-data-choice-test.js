@@ -5,7 +5,7 @@ import { hbs } from 'ember-cli-htmlbars';
 
 const LINKED = { customers: 3, invoices: 5, wallets: 1, products: 2, total: 11, imported: 2 };
 
-module('Integration | Component | quickbooks-data-choice', function (hooks) {
+module('Integration | Component | quickbooks-data-choice', (hooks) => {
     setupRenderingTest(hooks);
 
     hooks.beforeEach(function () {
