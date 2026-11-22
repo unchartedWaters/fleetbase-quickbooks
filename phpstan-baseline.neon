@@ -276,11 +276,6 @@ parameters:
 			path: server/src/Services/SyncEngine.php
 
 		-
-			message: "#^Strict comparison using \\=\\=\\= between false and true will always evaluate to false\\.$#"
-			count: 1
-			path: server/src/Services/SyncEngine.php
-
-		-
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
 			count: 10
 			path: server/src/Services/SyncEngine.php
@@ -456,8 +451,13 @@ parameters:
 			path: server/src/Services/SyncEngine.php
 
 		-
+			message: "#^Offset 'body' on array\\{ok\\: bool, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
+			count: 1
+			path: server/src/Services/SyncEngine.php
+
+		-
 			message: "#^Offset 'body' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
-			count: 2
+			count: 1
 			path: server/src/Services/SyncEngine.php
 
 		-

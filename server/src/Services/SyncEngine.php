@@ -90,6 +90,7 @@ use Fleetbase\Quickbooks\Support\WalletMapper;
  * @phpstan-type PaymentItem array{
  *     row: array<string, mixed>, outcome: string, error: string|null, permanent: bool, planError: string|null
  * }
+ * @phpstan-type WhereInResult array{rows: array<int, array<string, mixed>>, failed: array<string, QuickBooksException>}
  * @phpstan-type PaymentPlan array{copy: bool, push: bool, conflict: string, primary: bool, pushes: bool}
  * @phpstan-type AppliedPayments array{
  *     payments: array<int, array<string, mixed>>, settled: bool, invoice: array<string, mixed>|null, missing: bool
@@ -1666,6 +1667,8 @@ class SyncEngine
 
     /**
      * The QuickBooks id linked to a Fleetbase record, or '' when it has no link.
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Batches* traits.
      */
     private function linkedQuickBooksId(
         SyncLedger $ledger,
@@ -2100,10 +2103,15 @@ class SyncEngine
     }
 
     /**
+     * Sync a block of rows of one kind with one Batch API flush: plan each row, send the buffered
+     * writes, then record each row's result. Invoices also send their payments as one more batch.
+     *
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
      * @param array<string, mixed>             $settings
      * @param array<string, mixed>             $batch
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Batches* traits.
      */
     private function syncBufferedBlock(
         SyncLedger $ledger,
@@ -2116,9 +2124,60 @@ class SyncEngine
         bool $record,
         string $kind,
     ): bool {
-        $companyUuid       = (string) $connection['company_uuid'];
         $this->writeBuffer = [];
-        /** @var array<string, PlannedWrite> $planned */
+
+        $planned = $this->planBlock($ledger, $connection, $rows, $settings, $batch, $now, $trigger, $record, $kind);
+        if ($planned === null) {
+            return true;
+        }
+
+        $results           = $this->flushWrites($connection);
+        $this->writeBuffer = $kind === 'invoice' ? [] : null;
+        $connection        = $ledger->connection((string) $connection['company_uuid']) ?? $connection;
+        if ($kind === 'invoice') {
+            $this->persistSuccessfulInvoiceWrites($ledger, $connection, $planned, $results, $settings);
+            $this->prefetchLinkedPayments($connection, $ledger, $planned, $settings);
+            $this->resolveNewlyLinkedPayments($ledger, $connection, $planned);
+
+            return $this->finishInvoices($ledger, $connection, $planned, $results, $settings, $batch, $now, $trigger);
+        }
+        foreach ($planned as $uuid => $plan) {
+            $result = $results[$kind . ':' . $uuid] ?? null;
+            if (is_array($result) === true && empty($result['halt']) === false) {
+                $this->haltBlockRow($ledger, $connection, $plan, $result, $settings, $batch, $now, $trigger, $record);
+
+                return true;
+            }
+            $item = $this->bufferedItem($ledger, $connection, $kind, (string) $uuid, $plan, $result, $settings, $now);
+            if ($record === true) {
+                $this->recordBufferedItem($ledger, $connection, $item, $batch, $trigger);
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Run each row's sync with writes buffered. Null when a 401 or rate limit stopped the block.
+     *
+     * @param array<string, mixed>             $connection
+     * @param array<int, array<string, mixed>> $rows
+     * @param array<string, mixed>             $settings
+     * @param array<string, mixed>             $batch
+     *
+     * @return array<string, PlannedWrite>|null
+     */
+    private function planBlock(
+        SyncLedger $ledger,
+        array $connection,
+        array $rows,
+        array $settings,
+        array &$batch,
+        int $now,
+        string $trigger,
+        bool $record,
+        string $kind,
+    ): ?array {
         $planned = [];
         foreach ($rows as $row) {
             $uuid       = (string) ($row['local_uuid'] ?? '');
@@ -2135,19 +2194,9 @@ class SyncEngine
                     $exception instanceof QuickBooksException
                     && ($exception->isUnauthorized() === true || $exception->isRateLimit() === true)
                 ) {
-                    $this->writeBuffer = null;
-                    if ($exception->isUnauthorized() === true) {
-                        $this->tokenRejected($ledger, $companyUuid);
-                        $batch['failed']++;
-                    } else {
-                        $this->failure($ledger, $connection, $row, $exception, $settings, $now);
-                        if ($record === true) {
-                            $error = $this->exceptionError($exception);
-                            $this->recordRow($ledger, $connection, $row, 'failed', $batch, $trigger, $error);
-                        }
-                    }
+                    $this->haltPlan($ledger, $connection, $row, $exception, $settings, $batch, $now, $trigger, $record);
 
-                    return true;
+                    return null;
                 }
                 $retryError = $this->exceptionError($exception);
                 $outcome    = $this->failure($ledger, $connection, $row, $exception, $settings, $now);
@@ -2161,190 +2210,383 @@ class SyncEngine
             $this->lastError = null;
         }
 
-        $results           = $this->flushWrites($connection);
-        $this->writeBuffer = $kind === 'invoice' ? [] : null;
-        $connection        = $ledger->connection($companyUuid) ?? $connection;
-        if ($kind === 'invoice') {
-            $this->persistSuccessfulInvoiceWrites($ledger, $connection, $planned, $results, $settings);
-            $this->prefetchLinkedPayments($connection, $ledger, $planned, $settings);
-            $this->resolveNewlyLinkedPayments($ledger, $connection, $planned);
-        }
-        $halt          = false;
-        $unauthorized  = false;
-        /** @var array<string, PaymentItem> $finished */
-        $finished = [];
-        foreach ($planned as $uuid => $plan) {
-            $bId     = $kind . ':' . $uuid;
-            $result  = $results[$bId] ?? null;
-            $outcome = $plan['outcome'];
-            $error   = $plan['error'];
-            if (is_array($result) === true) {
-                if (empty($result['halt']) === false) {
-                    $status = (int) ($result['status'] ?? 0);
-                    if ($status === 401) {
-                        if ($kind === 'invoice') {
-                            $unauthorized = true;
-                        } else {
-                            $this->tokenRejected($ledger, $companyUuid);
-                            $batch['failed']++;
-                        }
-                    } else {
-                        $failed  = new QuickBooksException($status, (string) ($result['error'] ?? ''));
-                        $outcome = $this->failure($ledger, $connection, $plan['row'], $failed, $settings, $now);
-                        $error   = (string) ($result['error'] ?? '');
-                        if ($kind === 'invoice') {
-                            $finished[$uuid] = [
-                                'row'       => $plan['row'],
-                                'outcome'   => $outcome,
-                                'error'     => $error,
-                                'permanent' => false,
-                                'planError' => $plan['error'],
-                            ];
-                        } elseif ($record === true) {
-                            $this->recordRow($ledger, $connection, $plan['row'], 'failed', $batch, $trigger, $error);
-                        }
-                    }
-                    $halt = true;
-                    break;
-                }
-                if (empty($result['ok']) === true) {
-                    $this->lastError = null;
-                    $outcome         = $this->failure(
-                        $ledger,
-                        $connection,
-                        $plan['row'],
-                        new QuickBooksException(
-                            (int) ($result['status'] ?? 400),
-                            (string) ($result['error'] ?? self::ITEM_REJECTED_MESSAGE)
-                        ),
-                        $settings,
-                        $now
-                    );
-                    $code  = $this->batchFaultCode($result);
-                    $this->forgetInactiveServiceItem($ledger, $connection, $kind, $code);
-                    $error = $this->customerNameTakenError($ledger, $kind, (string) $uuid, $code)
-                        ?? $this->batchItemAttemptError(
-                            (string) ($result['error'] ?? ''),
-                            (int) ($result['status'] ?? 0)
-                        );
-                } elseif (is_array($result['body'] ?? null) === true && ($result['body']['Id'] ?? '') !== '') {
-                    $localType = $kind === 'wallet' ? 'wallet' : $kind;
-                    $entity    = match ($kind) {
-                        'customer' => 'Customer',
-                        'wallet'   => 'Account',
-                        'invoice'  => 'Invoice',
-                        default    => 'Invoice',
-                    };
-                    if ($kind !== 'payment') {
-                        $newLink = $this->linkFrom($connection, $localType, (string) $uuid, $entity, $result['body']);
-                        $ledger->putLink($newLink);
-                    }
-                    if ($kind === 'invoice' && $outcome === 'created') {
-                        $reference = (string) ($settings['invoice_reference'] ?? 'fleetbase');
-                        $this->copyInvoiceNumber($ledger, (string) $uuid, $result['body'], $reference);
-                    }
-                }
-            }
-            if (isset($this->refusedTaxRows[(string) $uuid]) === true) {
-                $outcome           = 'failed';
-                $error             = $this->refusedTaxRows[(string) $uuid];
-                $plan['permanent'] = true;
-                $plan['error']     = $error;
-                unset($this->refusedTaxRows[(string) $uuid]);
-            }
-            if ($kind === 'invoice' && $outcome !== 'failed' && $outcome !== 'skipped') {
-                $invoice      = $ledger->invoices[(string) $uuid] ?? null;
-                $realm        = (string) $connection['realm_id'];
-                $link         = $ledger->link($companyUuid, $realm, 'invoice', (string) $uuid);
-                $customerUuid = is_array($invoice) === true ? (string) ($invoice['customer_uuid'] ?? '') : '';
-                $customerLink = $customerUuid === ''
-                    ? null
-                    : $ledger->link($companyUuid, $realm, 'customer', $customerUuid);
-                if (
-                    is_array($invoice) === true
-                    && is_array($link) === true
-                    && is_array($customerLink) === true
-                    && $outcome !== 'voided'
-                ) {
-                    try {
-                        $paymentOutcome = $this->syncPayment(
-                            $ledger,
-                            $connection,
-                            $ledger->invoices[(string) $uuid],
-                            (string) $customerLink['qbo_id'],
-                            (string) $link['qbo_id'],
-                            $settings
-                        );
-                        $outcome = $this->withPayment($outcome, $paymentOutcome);
-                    } catch (\Throwable $exception) {
-                        $this->lastError = null;
-                        if ($exception instanceof QuickBooksException && $exception->isUnauthorized() === true) {
-                            $finished[$uuid] = [
-                                'row'       => $plan['row'],
-                                'outcome'   => $outcome,
-                                'error'     => $error,
-                                'permanent' => $plan['permanent'],
-                                'planError' => $plan['error'],
-                            ];
-                            $this->commitFinished($ledger, $connection, $finished, $batch, $trigger, $record);
-                            $this->writeBuffer = null;
-                            $this->tokenRejected($ledger, $companyUuid);
-                            $batch['failed']++;
+        return $planned;
+    }
 
-                            return true;
-                        }
-                        $outcome = $this->failure($ledger, $connection, $plan['row'], $exception, $settings, $now);
-                        $error   = $this->exceptionError($exception);
-                    }
+    /**
+     * A 401 or rate limit while planning a block: nothing buffered is sent.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $batch
+     */
+    private function haltPlan(
+        SyncLedger $ledger,
+        array $connection,
+        array $row,
+        QuickBooksException $exception,
+        array $settings,
+        array &$batch,
+        int $now,
+        string $trigger,
+        bool $record,
+    ): void {
+        $this->writeBuffer = null;
+        if ($exception->isUnauthorized() === true) {
+            $this->tokenRejected($ledger, (string) $connection['company_uuid']);
+            $batch['failed']++;
+
+            return;
+        }
+        $this->failure($ledger, $connection, $row, $exception, $settings, $now);
+        if ($record === true) {
+            $error = $this->exceptionError($exception);
+            $this->recordRow($ledger, $connection, $row, 'failed', $batch, $trigger, $error);
+        }
+    }
+
+    /**
+     * A customer or wallet write that stopped the batch (401 or rate limit).
+     *
+     * @param array<string, mixed> $connection
+     * @param PlannedWrite         $plan
+     * @param BatchResult          $result
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $batch
+     */
+    private function haltBlockRow(
+        SyncLedger $ledger,
+        array $connection,
+        array $plan,
+        array $result,
+        array $settings,
+        array &$batch,
+        int $now,
+        string $trigger,
+        bool $record,
+    ): void {
+        $failed = $this->haltedItem($ledger, $connection, $plan, $result, $settings, $now);
+        if ($failed === null) {
+            $this->tokenRejected($ledger, (string) $connection['company_uuid']);
+            $batch['failed']++;
+        } elseif ($record === true) {
+            $this->recordRow($ledger, $connection, $failed['row'], 'failed', $batch, $trigger, $failed['error']);
+        }
+    }
+
+    /**
+     * The failed item for a write that stopped the batch. Null when QuickBooks rejected the token.
+     *
+     * @param array<string, mixed> $connection
+     * @param PlannedWrite         $plan
+     * @param BatchResult          $result
+     * @param array<string, mixed> $settings
+     *
+     * @return PaymentItem|null
+     */
+    private function haltedItem(
+        SyncLedger $ledger,
+        array $connection,
+        array $plan,
+        array $result,
+        array $settings,
+        int $now,
+    ): ?array {
+        $status = (int) ($result['status'] ?? 0);
+        if ($status === 401) {
+            return null;
+        }
+        $error   = (string) ($result['error'] ?? '');
+        $failed  = new QuickBooksException($status, $error);
+        $outcome = $this->failure($ledger, $connection, $plan['row'], $failed, $settings, $now);
+
+        return [
+            'row'       => $plan['row'],
+            'outcome'   => $outcome,
+            'error'     => $error,
+            'permanent' => false,
+            'planError' => $plan['error'],
+        ];
+    }
+
+    /**
+     * A planned row with its batch result applied: a refused item fails, an accepted one is linked,
+     * and a row whose tax QuickBooks refused fails for good.
+     *
+     * @param array<string, mixed> $connection
+     * @param PlannedWrite         $plan
+     * @param BatchResult|null     $result
+     * @param array<string, mixed> $settings
+     *
+     * @return PaymentItem
+     */
+    private function bufferedItem(
+        SyncLedger $ledger,
+        array $connection,
+        string $kind,
+        string $uuid,
+        array $plan,
+        ?array $result,
+        array $settings,
+        int $now,
+    ): array {
+        $item = [
+            'row'       => $plan['row'],
+            'outcome'   => $plan['outcome'],
+            'error'     => $plan['error'],
+            'permanent' => $plan['permanent'],
+            'planError' => $plan['error'],
+        ];
+        if (is_array($result) === true && empty($result['ok']) === true) {
+            $item = $this->refusedBufferedItem($ledger, $connection, $kind, $uuid, $item, $result, $settings, $now);
+        } elseif (is_array($result) === true) {
+            $this->linkBufferedWrite($ledger, $connection, $kind, $uuid, $item['outcome'], $result, $settings);
+        }
+        if (isset($this->refusedTaxRows[$uuid]) === true) {
+            $item['outcome']   = 'failed';
+            $item['error']     = $this->refusedTaxRows[$uuid];
+            $item['permanent'] = true;
+            $item['planError'] = $item['error'];
+            unset($this->refusedTaxRows[$uuid]);
+        }
+
+        return $item;
+    }
+
+    /**
+     * A batch item QuickBooks refused: the row fails and keeps the reason QuickBooks gave.
+     *
+     * @param array<string, mixed> $connection
+     * @param PaymentItem          $item
+     * @param BatchResult          $result
+     * @param array<string, mixed> $settings
+     *
+     * @return PaymentItem
+     */
+    private function refusedBufferedItem(
+        SyncLedger $ledger,
+        array $connection,
+        string $kind,
+        string $uuid,
+        array $item,
+        array $result,
+        array $settings,
+        int $now,
+    ): array {
+        $this->lastError = null;
+        $refused         = new QuickBooksException(
+            (int) ($result['status'] ?? 400),
+            (string) ($result['error'] ?? self::ITEM_REJECTED_MESSAGE)
+        );
+        $item['outcome'] = $this->failure($ledger, $connection, $item['row'], $refused, $settings, $now);
+        $code            = $this->batchFaultCode($result);
+        $this->forgetInactiveServiceItem($ledger, $connection, $kind, $code);
+        $item['error'] = $this->customerNameTakenError($ledger, $kind, $uuid, $code)
+            ?? $this->batchItemAttemptError((string) ($result['error'] ?? ''), (int) ($result['status'] ?? 0));
+
+        return $item;
+    }
+
+    /**
+     * Link a record QuickBooks created or updated in the batch, and copy a new invoice's number.
+     *
+     * @param array<string, mixed> $connection
+     * @param BatchResult          $result
+     * @param array<string, mixed> $settings
+     */
+    private function linkBufferedWrite(
+        SyncLedger $ledger,
+        array $connection,
+        string $kind,
+        string $uuid,
+        string $outcome,
+        array $result,
+        array $settings,
+    ): void {
+        $body = $result['body'] ?? null;
+        if (is_array($body) === false || ($body['Id'] ?? '') === '') {
+            return;
+        }
+        $entity = match ($kind) {
+            'customer' => 'Customer',
+            'wallet'   => 'Account',
+            default    => 'Invoice',
+        };
+        $ledger->putLink($this->linkFrom($connection, $kind, $uuid, $entity, $body));
+        if ($kind === 'invoice' && $outcome === 'created') {
+            $reference = (string) ($settings['invoice_reference'] ?? 'fleetbase');
+            $this->copyInvoiceNumber($ledger, $uuid, $body, $reference);
+        }
+    }
+
+    /**
+     * Record a customer or wallet row of a block.
+     *
+     * @param array<string, mixed> $connection
+     * @param PaymentItem          $item
+     * @param array<string, mixed> $batch
+     */
+    private function recordBufferedItem(
+        SyncLedger $ledger,
+        array $connection,
+        array $item,
+        array &$batch,
+        string $trigger,
+    ): void {
+        $this->lastError = ($item['permanent'] === true && $item['outcome'] === 'failed') ? $item['planError'] : null;
+        $this->recordRow($ledger, $connection, $item['row'], $item['outcome'], $batch, $trigger, $item['error']);
+    }
+
+    /**
+     * Record an invoice block: link the sent invoices, send their payments, then commit each row.
+     *
+     * @param array<string, mixed>        $connection
+     * @param array<string, PlannedWrite> $planned
+     * @param array<string, BatchResult>  $results
+     * @param array<string, mixed>        $settings
+     * @param array<string, mixed>        $batch
+     */
+    private function finishInvoices(
+        SyncLedger $ledger,
+        array $connection,
+        array $planned,
+        array $results,
+        array $settings,
+        array &$batch,
+        int $now,
+        string $trigger,
+    ): bool {
+        $finished     = [];
+        $halt         = false;
+        $unauthorized = false;
+        foreach ($planned as $uuid => $plan) {
+            $uuid   = (string) $uuid;
+            $result = $results['invoice:' . $uuid] ?? null;
+            if (is_array($result) === true && empty($result['halt']) === false) {
+                $failed       = $this->haltedItem($ledger, $connection, $plan, $result, $settings, $now);
+                $unauthorized = $failed === null;
+                if ($failed !== null) {
+                    $finished[$uuid] = $failed;
                 }
-            }
-            if ($kind === 'invoice') {
-                $finished[$uuid] = [
-                    'row'       => $plan['row'],
-                    'outcome'   => $outcome,
-                    'error'     => $error,
-                    'permanent' => $plan['permanent'],
-                    'planError' => $plan['error'],
-                ];
-            } elseif ($record === true) {
-                $this->lastError = ($plan['permanent'] === true && $outcome === 'failed') ? $plan['error'] : null;
-                $this->recordRow($ledger, $connection, $plan['row'], $outcome, $batch, $trigger, $error);
-            }
-            if ($halt === true) {
+                $halt = true;
                 break;
             }
-        }
-
-        if ($kind !== 'invoice') {
-            $this->writeBuffer = null;
-
-            return $halt;
-        }
-
-        if ($unauthorized === true || empty($ledger->connections[$companyUuid]['needs_reauth']) === false) {
-            $queued            = $this->queuedPaymentUuids();
-            $this->writeBuffer = null;
-            $keep              = [];
-            foreach ($finished as $uuid => $item) {
-                if (isset($queued[(string) $uuid]) === false) {
-                    $keep[$uuid] = $item;
-                }
-            }
-            $this->commitFinished($ledger, $connection, $keep, $batch, $trigger, $record);
-            if ($unauthorized === true) {
-                $this->tokenRejected($ledger, $companyUuid);
+            $item = $this->bufferedItem($ledger, $connection, 'invoice', $uuid, $plan, $result, $settings, $now);
+            $paid = $this->payBufferedInvoice($ledger, $connection, $uuid, $item, $settings, $now);
+            if ($paid === null) {
+                $finished[$uuid] = $item;
+                $this->commitFinished($ledger, $connection, $finished, $batch, $trigger, true);
+                $this->writeBuffer = null;
+                $this->tokenRejected($ledger, (string) $connection['company_uuid']);
                 $batch['failed']++;
+
+                return true;
             }
-
-            return true;
+            $finished[$uuid] = $paid;
         }
 
-        $done = $this->settlePaymentBuffer($ledger, $connection, $finished, $batch, $settings, $now, $trigger, $record);
-        if ($done === true) {
-            return true;
+        $settled = $this->settleInvoices(
+            $ledger,
+            $connection,
+            $finished,
+            $unauthorized,
+            $batch,
+            $settings,
+            $now,
+            $trigger
+        );
+
+        return $settled || $halt;
+    }
+
+    /**
+     * Buffer the payment of an invoice the batch just sent. Null when QuickBooks rejected the token.
+     *
+     * @param array<string, mixed> $connection
+     * @param PaymentItem          $item
+     * @param array<string, mixed> $settings
+     *
+     * @return PaymentItem|null
+     */
+    private function payBufferedInvoice(
+        SyncLedger $ledger,
+        array $connection,
+        string $uuid,
+        array $item,
+        array $settings,
+        int $now,
+    ): ?array {
+        $outcome = $item['outcome'];
+        if ($outcome === 'failed' || $outcome === 'skipped') {
+            return $item;
+        }
+        $companyUuid  = (string) $connection['company_uuid'];
+        $realm        = (string) $connection['realm_id'];
+        $invoice      = $ledger->invoices[$uuid] ?? null;
+        $link         = $ledger->link($companyUuid, $realm, 'invoice', $uuid);
+        $customerUuid = is_array($invoice) === true ? (string) ($invoice['customer_uuid'] ?? '') : '';
+        $customerLink = $customerUuid === '' ? null : $ledger->link($companyUuid, $realm, 'customer', $customerUuid);
+        if (is_array($invoice) === false || is_array($link) === false || is_array($customerLink) === false) {
+            return $item;
+        }
+        if ($outcome === 'voided') {
+            return $item;
+        }
+        try {
+            $customerId      = (string) $customerLink['qbo_id'];
+            $invoiceId       = (string) $link['qbo_id'];
+            $paid            = $this->syncPayment($ledger, $connection, $invoice, $customerId, $invoiceId, $settings);
+            $item['outcome'] = $this->withPayment($outcome, $paid);
+        } catch (\Throwable $exception) {
+            $this->lastError = null;
+            if ($exception instanceof QuickBooksException && $exception->isUnauthorized() === true) {
+                return null;
+            }
+            $item['outcome'] = $this->failure($ledger, $connection, $item['row'], $exception, $settings, $now);
+            $item['error']   = $this->exceptionError($exception);
         }
 
-        return $halt;
+        return $item;
+    }
+
+    /**
+     * Commit an invoice block. After a 401 the rows waiting on a payment stay pending.
+     *
+     * @param array<string, mixed>       $connection
+     * @param array<string, PaymentItem> $finished
+     * @param array<string, mixed>       $batch
+     * @param array<string, mixed>       $settings
+     */
+    private function settleInvoices(
+        SyncLedger $ledger,
+        array $connection,
+        array $finished,
+        bool $unauthorized,
+        array &$batch,
+        array $settings,
+        int $now,
+        string $trigger,
+    ): bool {
+        $companyUuid = (string) $connection['company_uuid'];
+        if ($unauthorized === false && empty($ledger->connections[$companyUuid]['needs_reauth']) === true) {
+            return $this->settlePaymentBuffer($ledger, $connection, $finished, $batch, $settings, $now, $trigger, true);
+        }
+        $queued            = $this->queuedPaymentUuids();
+        $this->writeBuffer = null;
+        $keep              = [];
+        foreach ($finished as $uuid => $item) {
+            if (isset($queued[(string) $uuid]) === false) {
+                $keep[$uuid] = $item;
+            }
+        }
+        $this->commitFinished($ledger, $connection, $keep, $batch, $trigger, true);
+        if ($unauthorized === true) {
+            $this->tokenRejected($ledger, $companyUuid);
+            $batch['failed']++;
+        }
+
+        return true;
     }
 
     /**
@@ -2554,7 +2796,9 @@ class SyncEngine
      * @param array<int, string>         $values
      * @param callable(string): (?array) $readOne
      *
-     * @return array{rows: array<int, array<string, mixed>>, failed: array<string, QuickBooksException>}
+     * @return WhereInResult
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Batches* and Syncs* traits.
      */
     private function queryWhereIn(
         array $connection,
@@ -2574,95 +2818,174 @@ class SyncEngine
             return ['rows' => [], 'failed' => []];
         }
         if (count($values) === 1) {
-            try {
-                $remote = $readOne($values[0]);
-            } catch (QuickBooksException $exception) {
-                if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
-                    throw $exception;
-                }
-
-                return ['rows' => [], 'failed' => [$values[0] => $exception]];
-            }
-
-            return ['rows' => is_array($remote) === true ? [$remote] : [], 'failed' => []];
+            return $this->queryOneValue($values[0], $readOne);
         }
 
-        $rows    = [];
-        $failed  = [];
+        $found   = ['rows' => [], 'failed' => []];
         $seenIds = [];
         foreach (array_chunk($values, QuickBooksClient::BATCH_LIMIT) as $chunkIndex => $chunk) {
-            $start    = 1;
-            $matched  = [];
-            $pages    = 0;
-            while ($pages < 100) {
-                $pages++;
-                $query = 'select * from ' . $entity . ' where ' . $field
-                    . ' IN (' . QuickBooksClient::quotedList($chunk) . ')'
-                    . ' startposition ' . $start . ' maxresults ' . self::QUERY_PAGE_SIZE;
-                try {
-                    $results = $this->client->batch($connection, [[
-                        'bId'   => 'read-' . $chunkIndex . '-' . $start,
-                        'query' => $query,
-                    ]]);
-                } catch (QuickBooksException $exception) {
-                    if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
-                        throw $exception;
-                    }
-                    foreach ($chunk as $value) {
-                        if (isset($matched[$value]) === false) {
-                            $failed[$value] = $exception;
-                        }
-                    }
-                    break;
-                }
+            $found = $this->queryChunk(
+                $connection,
+                $entity,
+                $field,
+                $chunk,
+                'read-' . $chunkIndex . '-',
+                $found,
+                $seenIds
+            );
+        }
 
-                $bId    = 'read-' . $chunkIndex . '-' . $start;
-                $result = $results[$bId] ?? null;
-                if (is_array($result) === true && empty($result['halt']) === false) {
-                    throw new QuickBooksException((int) ($result['status'] ?? 0), (string) ($result['error'] ?? ''));
-                }
-                if (is_array($result) === false || empty($result['ok']) === true) {
-                    $message = is_array($result) === true ? (string) ($result['error'] ?? '') : '';
-                    $status  = is_array($result) === true ? (int) ($result['status'] ?? 0) : 0;
-                    $error   = $this->batchItemFailure($message, $status);
-                    foreach ($chunk as $value) {
-                        if (isset($matched[$value]) === false) {
-                            $failed[$value] = $error;
-                        }
-                    }
-                    break;
-                }
+        return $found;
+    }
 
-                $pageRows = is_array($result['rows'] ?? null) === true ? $result['rows'] : [];
-                $count    = 0;
-                $added    = 0;
-                foreach ($pageRows as $remote) {
-                    if (is_array($remote) === false) {
-                        continue;
-                    }
-                    $count++;
-                    $id = trim((string) ($remote['Id'] ?? ''));
-                    if ($id !== '') {
-                        if (isset($seenIds[$id]) === true) {
-                            continue;
-                        }
-                        $seenIds[$id] = true;
-                    }
-                    $added++;
-                    $rows[] = $remote;
-                    $value  = trim((string) ($remote[$field] ?? ''));
-                    if ($value !== '') {
-                        $matched[$value] = true;
+    /**
+     * @param callable(string): (array<string, mixed>|null) $readOne
+     *
+     * @return WhereInResult
+     */
+    private function queryOneValue(string $value, callable $readOne): array
+    {
+        try {
+            $remote = $readOne($value);
+        } catch (QuickBooksException $exception) {
+            if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
+                throw $exception;
+            }
+
+            return ['rows' => [], 'failed' => [$value => $exception]];
+        }
+
+        return ['rows' => is_array($remote) === true ? [$remote] : [], 'failed' => []];
+    }
+
+    /**
+     * Page through one chunk of values. A failed page marks the chunk's unmatched values failed.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<int, string>   $chunk
+     * @param WhereInResult        $found
+     * @param array<string, true>  $seenIds
+     *
+     * @return WhereInResult
+     */
+    private function queryChunk(
+        array $connection,
+        string $entity,
+        string $field,
+        array $chunk,
+        string $bIdPrefix,
+        array $found,
+        array &$seenIds,
+    ): array {
+        $start   = 1;
+        $matched = [];
+        $pages   = 0;
+        while ($pages < 100) {
+            $pages++;
+            $page = $this->queryPage($connection, $entity, $field, $chunk, $start, $bIdPrefix . $start);
+            if ($page instanceof QuickBooksException) {
+                foreach ($chunk as $value) {
+                    if (isset($matched[$value]) === false) {
+                        $found['failed'][$value] = $page;
                     }
                 }
-                if ($added === 0 || $count < self::QUERY_PAGE_SIZE) {
-                    break;
+                break;
+            }
+            [$count, $added] = $this->collectPageRows($page, $field, $found, $matched, $seenIds);
+            if ($added === 0 || $count < self::QUERY_PAGE_SIZE) {
+                break;
+            }
+            $start += self::QUERY_PAGE_SIZE;
+        }
+
+        return $found;
+    }
+
+    /**
+     * One page of a chunk query: its rows, or the error that marks the chunk failed.
+     * A 401 or rate limit stays thrown.
+     *
+     * @param array<string, mixed> $connection
+     * @param array<int, string>   $chunk
+     *
+     * @return array<int, mixed>|QuickBooksException
+     */
+    private function queryPage(
+        array $connection,
+        string $entity,
+        string $field,
+        array $chunk,
+        int $start,
+        string $bId,
+    ): array|QuickBooksException {
+        $query = 'select * from ' . $entity . ' where ' . $field
+            . ' IN (' . QuickBooksClient::quotedList($chunk) . ')'
+            . ' startposition ' . $start . ' maxresults ' . self::QUERY_PAGE_SIZE;
+        try {
+            $results = $this->client->batch($connection, [['bId' => $bId, 'query' => $query]]);
+        } catch (QuickBooksException $exception) {
+            if ($exception->isUnauthorized() === true || $exception->isRateLimit() === true) {
+                throw $exception;
+            }
+
+            return $exception;
+        }
+
+        $result = $results[$bId] ?? null;
+        if (is_array($result) === true && empty($result['halt']) === false) {
+            throw new QuickBooksException((int) ($result['status'] ?? 0), (string) ($result['error'] ?? ''));
+        }
+        if (is_array($result) === false || empty($result['ok']) === true) {
+            $message = is_array($result) === true ? (string) ($result['error'] ?? '') : '';
+            $status  = is_array($result) === true ? (int) ($result['status'] ?? 0) : 0;
+
+            return $this->batchItemFailure($message, $status);
+        }
+
+        return is_array($result['rows'] ?? null) === true ? $result['rows'] : [];
+    }
+
+    /**
+     * Add a page's new rows, skipping ids an earlier page returned. Returns the page's row count
+     * and how many rows were new.
+     *
+     * @param array<int, mixed>   $pageRows
+     * @param WhereInResult       $found
+     * @param array<string, true> $matched
+     * @param array<string, true> $seenIds
+     *
+     * @return array{0: int, 1: int}
+     */
+    private function collectPageRows(
+        array $pageRows,
+        string $field,
+        array &$found,
+        array &$matched,
+        array &$seenIds,
+    ): array {
+        $count = 0;
+        $added = 0;
+        foreach ($pageRows as $remote) {
+            if (is_array($remote) === false) {
+                continue;
+            }
+            $count++;
+            $remoteId = trim((string) ($remote['Id'] ?? ''));
+            if ($remoteId !== '') {
+                if (isset($seenIds[$remoteId]) === true) {
+                    continue;
                 }
-                $start += self::QUERY_PAGE_SIZE;
+                $seenIds[$remoteId] = true;
+            }
+            $added++;
+            $found['rows'][] = $remote;
+            $value           = trim((string) ($remote[$field] ?? ''));
+            if ($value !== '') {
+                $matched[$value] = true;
             }
         }
 
-        return ['rows' => $rows, 'failed' => $failed];
+        return [$count, $added];
     }
 
     /**
