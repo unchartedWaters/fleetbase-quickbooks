@@ -161,10 +161,10 @@ Otherwise the run stops after the lookup. The rules are in
 
 Each run that checks a release keeps its screenshots and logs for 90 days as
 the `fleetbase-<version>-results` artifact, such as
-`fleetbase-v0.7.74-results`, passed or failed. A release with that artifact
+`fleetbase-v0.8.1-results`, passed or failed. A release with that artifact
 counts as checked, so the schedule does not retry a failed release: run the
 workflow by hand from the Actions tab after a fix. A run by hand always
-checks; to check an older release, give its tag, such as `v0.7.74`, as
+checks; to check an older release, give its tag, such as `v0.8.1`, as
 `fleetbase_version`. A release of this extension (a `v*` tag) is also checked
 against the newest Fleetbase release. Pull requests do not run it. The
 schedule runs only on the default branch, and the Actions tab offers the run

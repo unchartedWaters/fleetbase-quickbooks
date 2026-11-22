@@ -1,8 +1,48 @@
 parameters:
 	ignoreErrors:
 		-
+			message: "#^Instanceof between stdClass and Fleetbase\\\\Quickbooks\\\\Models\\\\Connection will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Console/Commands/SyncQuickbooks.php
+
+		-
+			message: "#^Unreachable statement \\- code above always terminates\\.$#"
+			count: 1
+			path: server/src/Console/Commands/SyncQuickbooks.php
+
+		-
 			message: "#^Cannot call method apply\\(\\) on mixed\\.$#"
 			count: 2
+			path: server/src/Http/Controllers/ConnectionController.php
+
+		-
+			message: "#^Empty array passed to foreach\\.$#"
+			count: 1
+			path: server/src/Http/Controllers/ConnectionController.php
+
+		-
+			message: "#^Instanceof between stdClass and Fleetbase\\\\Quickbooks\\\\Models\\\\SyncAttempt will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Http/Controllers/ConnectionController.php
+
+		-
+			message: "#^Instanceof between stdClass\\|null and Fleetbase\\\\Quickbooks\\\\Models\\\\SyncBatch will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Http/Controllers/ConnectionController.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between false and true will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Http/Controllers/ConnectionController.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Http/Controllers/ConnectionController.php
+
+		-
+			message: "#^Unreachable statement \\- code above always terminates\\.$#"
+			count: 1
 			path: server/src/Http/Controllers/ConnectionController.php
 
 		-
@@ -11,7 +51,22 @@ parameters:
 			path: server/src/Http/Controllers/WebhookController.php
 
 		-
+			message: "#^Instanceof between stdClass and Fleetbase\\\\Quickbooks\\\\Models\\\\Link will always evaluate to false\\.$#"
+			count: 2
+			path: server/src/Http/Controllers/WebhookController.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between false and true will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Http/Controllers/WebhookController.php
+
+		-
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Http/Controllers/WebhookController.php
+
+		-
+			message: "#^Unreachable statement \\- code above always terminates\\.$#"
 			count: 1
 			path: server/src/Http/Controllers/WebhookController.php
 
@@ -46,6 +101,11 @@ parameters:
 			path: server/src/Jobs/ApplyRemoteChange.php
 
 		-
+			message: "#^Instanceof between stdClass and Fleetbase\\\\Quickbooks\\\\Models\\\\PendingSync will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Jobs/SyncWebhookBatch.php
+
+		-
 			message: "#^Offset 'local_type' on array\\{local_type\\: string, local_uuid\\: string\\} on left side of \\?\\? always exists and is not nullable\\.$#"
 			count: 1
 			path: server/src/Jobs/SyncWebhookBatch.php
@@ -61,14 +121,9 @@ parameters:
 			path: server/src/Jobs/SyncWebhookBatch.php
 
 		-
-			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
-			count: 2
-			path: server/src/Listeners/EnqueueWebhookSync.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
+			message: "#^Unreachable statement \\- code above always terminates\\.$#"
 			count: 1
-			path: server/src/Listeners/EnqueueWebhookSync.php
+			path: server/src/Jobs/SyncWebhookBatch.php
 
 		-
 			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
@@ -88,6 +143,16 @@ parameters:
 		-
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
 			count: 1
+			path: server/src/Listeners/EnqueueWebhookSync.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Observers/FlagInvoiceItemObserver.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			count: 2
 			path: server/src/Observers/FlagPlaceObserver.php
 
 		-
@@ -131,71 +196,6 @@ parameters:
 			path: server/src/Services/CustomerImporter.php
 
 		-
-			message: "#^Cannot access property \\$uuid on mixed\\.$#"
-			count: 1
-			path: server/src/Services/CustomerImporter.php
-
-		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\CustomerImporter\\:\\:candidateContacts\\(\\) should return array\\<int, object\\> but returns array\\<int\\<0, max\\>, mixed\\>\\.$#"
-			count: 1
-			path: server/src/Services/CustomerImporter.php
-
-		-
-			message: "#^Property Fleetbase\\\\Quickbooks\\\\Services\\\\CustomerImporter\\:\\:\\$companyCandidates \\(array\\{company\\: string, rows\\: array\\<int, object\\>\\}\\|null\\) does not accept array\\{company\\: string, rows\\: array\\<int\\<0, max\\>, mixed\\>\\}\\.$#"
-			count: 1
-			path: server/src/Services/CustomerImporter.php
-
-		-
-			message: "#^Access to an undefined property Illuminate\\\\Database\\\\Eloquent\\\\Builder\\|Illuminate\\\\Database\\\\Eloquent\\\\Model\\:\\:\\$local_type\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Access to an undefined property Illuminate\\\\Database\\\\Eloquent\\\\Builder\\|Illuminate\\\\Database\\\\Eloquent\\\\Model\\:\\:\\$local_uuid\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Access to an undefined property Illuminate\\\\Database\\\\Eloquent\\\\Builder\\|Illuminate\\\\Database\\\\Eloquent\\\\Model\\:\\:\\$qbo_id\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Access to an undefined property Illuminate\\\\Database\\\\Eloquent\\\\Builder\\|Illuminate\\\\Database\\\\Eloquent\\\\Model\\:\\:\\$realm_id\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Access to an undefined property Illuminate\\\\Database\\\\Eloquent\\\\Builder\\|Illuminate\\\\Database\\\\Eloquent\\\\Model\\:\\:\\$uuid\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$company_uuid\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$realm_id\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$uuid\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
 			message: "#^Call to an undefined method object\\:\\:getConnection\\(\\)\\.$#"
 			count: 2
 			path: server/src/Services/FleetbaseDirectory.php
@@ -206,18 +206,13 @@ parameters:
 			path: server/src/Services/FleetbaseDirectory.php
 
 		-
-			message: "#^Cannot access property \\$uuid on mixed\\.$#"
+			message: "#^Instanceof between Illuminate\\\\Database\\\\Eloquent\\\\Model\\|null and Fleetbase\\\\Models\\\\User will always evaluate to false\\.$#"
 			count: 1
 			path: server/src/Services/FleetbaseDirectory.php
 
 		-
-			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory\\:\\:placesByUuid\\(\\) should return array\\<string, object\\> but returns array\\<string, mixed\\>\\.$#"
-			count: 1
-			path: server/src/Services/FleetbaseDirectory.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 16
+			message: "#^Instanceof between stdClass and Fleetbase\\\\Quickbooks\\\\Models\\\\Link will always evaluate to false\\.$#"
+			count: 2
 			path: server/src/Services/FleetbaseDirectory.php
 
 		-
@@ -236,7 +231,12 @@ parameters:
 			path: server/src/Services/FleetbaseDirectory.php
 
 		-
-			message: "#^Parameter \\#1 \\$customers of method Fleetbase\\\\Quickbooks\\\\Services\\\\FleetbaseDirectory\\:\\:customerPlaceIds\\(\\) expects iterable\\<Illuminate\\\\Database\\\\Eloquent\\\\Model\\>, array\\<Illuminate\\\\Database\\\\Eloquent\\\\Builder\\>\\|Illuminate\\\\Database\\\\Eloquent\\\\Collection given\\.$#"
+			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			count: 17
+			path: server/src/Services/FleetbaseDirectory.php
+
+		-
+			message: "#^Unreachable statement \\- code above always terminates\\.$#"
 			count: 1
 			path: server/src/Services/FleetbaseDirectory.php
 
@@ -269,16 +269,6 @@ parameters:
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
 			count: 3
 			path: server/src/Services/QuickBooksClient.php
-
-		-
-			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
-			count: 2
-			path: server/src/Services/SyncEngine.php
-
-		-
-			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
-			count: 10
-			path: server/src/Services/SyncEngine.php
 
 		-
 			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\QuickBooksHttpGate\\:\\:batch\\(\\) should return array\\<string, array\\{ok\\: bool, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\}\\> but returns mixed\\.$#"
@@ -411,6 +401,11 @@ parameters:
 			path: server/src/Services/QuickBooksHttpGate.php
 
 		-
+			message: "#^Else branch is unreachable because ternary operator condition is always true\\.$#"
+			count: 2
+			path: server/src/Services/SyncEngine.php
+
+		-
 			message: "#^Method Fleetbase\\\\Quickbooks\\\\Services\\\\SyncEngine\\:\\:commitFinished\\(\\) has parameter \\$batch with no value type specified in iterable type array\\.$#"
 			count: 1
 			path: server/src/Services/SyncEngine.php
@@ -482,23 +477,13 @@ parameters:
 
 		-
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			count: 10
+			path: server/src/Services/SyncEngine.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
 			count: 1
 			path: server/src/Support/PublicHttps.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
-			count: 3
-			path: server/src/Support/WebhookPaymentLinks.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
-			count: 3
-			path: server/src/Support/WebhookPaymentLinks.php
-
-		-
-			message: "#^Access to an undefined property object\\:\\:\\$realm_id\\.$#"
-			count: 3
-			path: server/src/Support/WebhookPaymentLinks.php
 
 		-
 			message: "#^Offset 'rows' on array\\{ok\\: true, body\\: array\\<string, mixed\\>, rows\\: array\\<int, array\\<string, mixed\\>\\>, error\\: string\\|null, status\\: int, halt\\: bool\\} on left side of \\?\\? always exists and is not nullable\\.$#"
@@ -509,6 +494,26 @@ parameters:
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
 			count: 2
 			path: server/src/Support/QuickBooksPaymentReader.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$local_uuid\\.$#"
+			count: 2
+			path: server/src/Support/WebhookPaymentLinks.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$qbo_id\\.$#"
+			count: 2
+			path: server/src/Support/WebhookPaymentLinks.php
+
+		-
+			message: "#^Access to an undefined property object\\:\\:\\$realm_id\\.$#"
+			count: 2
+			path: server/src/Support/WebhookPaymentLinks.php
+
+		-
+			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"
+			count: 1
+			path: server/src/Support/WebhookPaymentLinks.php
 
 		-
 			message: "#^Strict comparison using \\=\\=\\= between true and false will always evaluate to false\\.$#"

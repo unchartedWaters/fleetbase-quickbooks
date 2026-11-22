@@ -9,9 +9,9 @@
             <directory suffix=".php">./server/tests</directory>
         </testsuite>
     </testsuites>
-    <coverage processUncoveredFiles="true">
+    <source>
         <include>
             <directory suffix=".php">./server/src</directory>
         </include>
-    </coverage>
+    </source>
 </phpunit>

@@ -961,10 +961,11 @@ A company with no QuickBooks connection is looked up at most once per 30 seconds
 
 ## Requirements and install
 
-This package needs PHP `^8.2`, `fleetbase/core-api` `^1.6`,
-`fleetbase/fleetops-api` `^0.6.73`, and `fleetbase/ledger-api`
-`>=0.0.13 <0.1`. The Ledger range is open to later `0.0.x` releases on purpose:
-Fleetbase raises its own Ledger requirement with each Ledger release, and a
+This package needs PHP `^8.2`, `fleetbase/core-api` `^2.0.3`,
+`fleetbase/fleetops-api` `^0.7.1`, and `fleetbase/ledger-api` `^0.1.0`. It
+runs on Fleetbase 0.8 and later (Laravel 12); Fleetbase 0.7 and `core-api` 1.x
+are not supported. The ranges accept later patch releases of the same series on
+purpose: Fleetbase raises its own requirements with each release, and a
 narrower range would stop `composer require` (and the Docker start-up script)
 from installing this package next to it.
 The Ember engine needs Node `>= 22`.

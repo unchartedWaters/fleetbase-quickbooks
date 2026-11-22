@@ -22,9 +22,9 @@ test('the Fleetbase package ranges accept the next releases of the same series',
         expect(Semver::satisfies($version, $constraint))->toBeFalse();
     }
 })->with([
-    'ledger'   => ['fleetbase/ledger-api', '0.0.13', ['0.0.14', '0.0.30'], ['0.0.12', '0.1.0']],
-    'fleetops' => ['fleetbase/fleetops-api', '0.6.73', ['0.6.74', '0.6.99'], ['0.6.72', '0.7.0']],
-    'core'     => ['fleetbase/core-api', '1.6.0', ['1.6.68', '1.7.0'], ['1.5.9', '2.0.0']],
+    'ledger'   => ['fleetbase/ledger-api', '0.1.0', ['0.1.1', '0.1.30'], ['0.0.13', '0.2.0']],
+    'fleetops' => ['fleetbase/fleetops-api', '0.7.1', ['0.7.2', '0.7.99'], ['0.6.75', '0.8.0']],
+    'core'     => ['fleetbase/core-api', '2.0.3', ['2.0.4', '2.1.0'], ['1.6.74', '3.0.0']],
 ]);
 
 // A package the engine imports at runtime must come with it; a devDependency is only there for its own tests.
