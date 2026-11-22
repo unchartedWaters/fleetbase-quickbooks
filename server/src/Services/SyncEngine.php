@@ -1592,6 +1592,8 @@ class SyncEngine
      * The currency check is skipped while the QuickBooks home currency is unknown.
      *
      * @param array<string, mixed> $connection
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Concerns traits.
      */
     private function currencyError(SyncLedger $ledger, array $connection, string $currency, string $key): ?string
     {
@@ -1759,6 +1761,8 @@ class SyncEngine
      *
      * @param array<string, mixed> $connection
      * @param array<string, mixed> $remote
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Concerns traits.
      */
     private function putMatchedLink(
         SyncLedger $ledger,
@@ -1899,6 +1903,8 @@ class SyncEngine
      * @param array<string, mixed>      $connection
      * @param array<string, mixed>      $remote
      * @param array<string, mixed>|null $baseline
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Concerns traits.
      */
     private function syncedIf(
         SyncLedger $ledger,
@@ -2613,6 +2619,8 @@ class SyncEngine
     /**
      * @param array<string, PaymentItem> $finished
      * @param array<string, true>        $queued
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Concerns traits.
      */
     private function firstQueuedUuid(array $finished, array $queued): ?string
     {
@@ -2629,6 +2637,8 @@ class SyncEngine
      * @param array<string, PaymentItem> $finished
      *
      * @return array<string, PaymentItem>
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Concerns traits.
      */
     private function finishedThrough(array $finished, ?string $stopUuid, bool $includeStop = true): array
     {
@@ -3113,6 +3123,8 @@ class SyncEngine
 
     /**
      * @param array<string, mixed> $settings
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Concerns traits.
      */
     private function entityPaused(array $settings, string $kind): bool
     {
@@ -3151,6 +3163,8 @@ class SyncEngine
     /**
      * A push sends a Fleetbase clear when Fleetbase wins, and also when QuickBooks
      * is primary but this direction does not copy QuickBooks back onto the clear.
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Concerns traits.
      */
     private function sendsClears(string $conflict, bool $push, bool $copy): bool
     {
@@ -3284,6 +3298,8 @@ class SyncEngine
      * @param array<string, mixed>             $connection
      * @param array<int, array<string, mixed>> $rows
      * @param array<string, mixed>             $batch
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Concerns traits.
      */
     private function recordDisabledRows(
         SyncLedger $ledger,
