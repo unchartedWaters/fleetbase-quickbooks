@@ -4,7 +4,9 @@ namespace Fleetbase\Quickbooks\Services\Concerns;
 
 use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Carbon;
 
 /**
@@ -133,8 +135,8 @@ trait FindsDeletedLinks
     }
 
     /**
-     * @param class-string       $class
-     * @param array<int, string> $uuids
+     * @param class-string<Model> $class
+     * @param array<int, string>  $uuids
      *
      * @return array<int, string>
      */
@@ -152,7 +154,7 @@ trait FindsDeletedLinks
             $query = $model->getConnection()->table($model->getTable())
                 ->where('company_uuid', $companyUuid)
                 ->whereIn('uuid', $uuids)
-                ->where(function ($retired) use ($type): void {
+                ->where(function (QueryBuilder $retired) use ($type): void {
                     $retired->whereNotNull('deleted_at');
                     if ($type === 'invoice') {
                         $retired->orWhereRaw("lower(status) in ('void', 'voided', 'cancelled', 'canceled')");
@@ -312,7 +314,7 @@ trait FindsDeletedLinks
      * @param array<int, array{type: string, realm: string, qbo: string, local: string}> $clauses
      * @param array<int, string>                                                         $paymentIds
      *
-     * @return iterable<Model|\Illuminate\Database\Eloquent\Builder>
+     * @return iterable<int, Link>
      */
     private function queryDeletionLinks(string $companyUuid, array $clauses, array $paymentIds): iterable
     {
@@ -325,34 +327,36 @@ trait FindsDeletedLinks
     }
 
     /**
+     * @param Builder<Link>                                                              $scope
      * @param array<int, array{type: string, realm: string, qbo: string, local: string}> $clauses
      * @param array<int, string>                                                         $paymentIds
      */
     private function constrainDeletionScope(
-        \Illuminate\Database\Eloquent\Builder $scope,
+        Builder $scope,
         array $clauses,
         array $paymentIds,
     ): void {
         $started = false;
         foreach ($clauses as $clause) {
             $method = $started === true ? 'orWhere' : 'where';
-            $scope->{$method}(function ($inner) use ($clause): void {
+            $scope->{$method}(function (Builder $inner) use ($clause): void {
                 $this->constrainDeletionClause($inner, $clause);
             });
             $started = true;
         }
         if ($paymentIds !== []) {
             $method = $started === true ? 'orWhere' : 'where';
-            $scope->{$method}(function ($inner) use ($paymentIds): void {
+            $scope->{$method}(function (Builder $inner) use ($paymentIds): void {
                 $inner->where('local_type', 'payment-invoice')->whereIn('local_uuid', $paymentIds);
             });
         }
     }
 
     /**
+     * @param Builder<Link>                                                  $inner
      * @param array{type: string, realm: string, qbo: string, local: string} $clause
      */
-    private function constrainDeletionClause(\Illuminate\Database\Eloquent\Builder $inner, array $clause): void
+    private function constrainDeletionClause(Builder $inner, array $clause): void
     {
         $inner->where('local_type', $clause['type']);
         if ($clause['realm'] !== '') {
@@ -364,9 +368,10 @@ trait FindsDeletedLinks
     }
 
     /**
+     * @param Builder<Link>                                                  $match
      * @param array{type: string, realm: string, qbo: string, local: string} $clause
      */
-    private function constrainDeletionMatch(\Illuminate\Database\Eloquent\Builder $match, array $clause): void
+    private function constrainDeletionMatch(Builder $match, array $clause): void
     {
         $open = false;
         if ($clause['qbo'] !== '') {
@@ -380,7 +385,7 @@ trait FindsDeletedLinks
     }
 
     /**
-     * @param iterable<Model|\Illuminate\Database\Eloquent\Builder> $links
+     * @param iterable<int, Link> $links
      *
      * @return array<int, array<string, mixed>>
      */

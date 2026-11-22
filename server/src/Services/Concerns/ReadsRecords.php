@@ -11,8 +11,11 @@ use Fleetbase\Quickbooks\Support\LedgerPaymentDates;
 use Fleetbase\Quickbooks\Support\ProductMapper;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 
 /**
  * FleetbaseDirectory's reads of Fleetbase records: customers, invoices and their lines, wallets
@@ -193,7 +196,7 @@ trait ReadsRecords
         string $class,
         string $companyUuid,
         bool $withTrashed,
-    ): \Illuminate\Database\Query\Builder {
+    ): QueryBuilder {
         $query       = (new $class())->newQuery();
         $softDeletes = in_array(\Illuminate\Database\Eloquent\SoftDeletes::class, class_uses_recursive($class), true);
         if ($withTrashed === true && $softDeletes === true) {
@@ -308,8 +311,10 @@ trait ReadsRecords
         // This read copies line items only; those three relations stay unloaded. Deleted items
         // that carry meta are read too: one holding a QuickBooks line id is a line Fleetbase removed.
         $this->lineMeta = [];
-        $withItems      = static function ($items): void {
-            $items->withTrashed()->where(static function ($scope): void {
+        /** @param Relation<Model, Model, mixed> $items */
+        $withItems      = static function (Relation $items): void {
+            $trashed = $items->getQuery()->withoutGlobalScope(SoftDeletingScope::class);
+            $trashed->where(static function (Builder $scope): void {
                 $scope->whereNull('deleted_at')->orWhereNotNull('meta->' . self::LINE_META);
             });
         };
@@ -655,12 +660,15 @@ trait ReadsRecords
     /**
      * Also reads the soft-deleted rows among these uuids, so a flagged delete reaches QuickBooks.
      *
+     * @param Builder<Model>     $query
      * @param array<int, string> $flaggedUuids
+     *
+     * @return Builder<Model>
      */
     private function withFlaggedTrashed(
-        \Illuminate\Database\Eloquent\Builder $query,
+        Builder $query,
         array $flaggedUuids,
-    ): \Illuminate\Database\Eloquent\Builder {
+    ): Builder {
         $flaggedUuids = array_values(array_filter($flaggedUuids, static fn (string $uuid): bool => $uuid !== ''));
         if ($flaggedUuids === []) {
             return $query;

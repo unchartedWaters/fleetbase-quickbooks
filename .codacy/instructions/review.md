@@ -111,7 +111,10 @@
   concatenating English. Console output, logs and Intuit-facing webhook
   replies stay English.
 - php-cs-fixer covers `server/src` and `server/tests`; PHPStan covers
-  `server/src` only. New code must not add `phpstan-baseline.neon` entries.
+  `server/src` only (PHPStan 2). New code must not add `phpstan-baseline.neon`
+  entries; its entries are bare `array` where `array<string, mixed>` is
+  declared. `is_array()`-style guards on decoded or queued data are kept on
+  purpose (`treatPhpDocTypesAsCertain: false`).
 - Codacy runs Lizard's 50-line function limit on `server/src`; split long
   methods rather than suppressing.
 - JS: Prettier from the `prettier` key in `package.json` (4 spaces, width 190,

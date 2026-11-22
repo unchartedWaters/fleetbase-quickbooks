@@ -28,7 +28,7 @@ declares to Composer. `webit/eval-math` declares none. Refresh them after every
 | carbonphp/carbon-doctrine-types | 3.2.1 | MIT |
 | cknow/laravel-money | 8.5.0 | MIT |
 | colinodell/json5 | 2.3.0 | MIT |
-| composer/pcre | 3.3.2 | MIT |
+| composer/pcre | 3.4.0 | MIT |
 | composer/semver | 3.6.0 | MIT |
 | cuyz/valinor | 2.7.0 | MIT |
 | defuse/php-encryption | 2.4.0 | MIT |
@@ -278,7 +278,7 @@ These only run tests and linters. Fleetbase does not ship them.
 | phpdocumentor/reflection-docblock | 6.0.3 | MIT |
 | phpdocumentor/type-resolver | 2.1.0 | MIT |
 | phpstan/phpdoc-parser | 2.4.1 | MIT |
-| phpstan/phpstan | 1.12.34 | MIT |
+| phpstan/phpstan | 2.3.7 | MIT |
 | phpunit/php-code-coverage | 11.0.12 | BSD-3-Clause |
 | phpunit/php-file-iterator | 5.1.1 | BSD-3-Clause |
 | phpunit/php-invoker | 5.0.1 | BSD-3-Clause |

@@ -194,7 +194,7 @@ class FlagInvoiceItemObserver
             return '';
         }
 
-        return (string) $class::withoutEagerLoads()->where('uuid', $invoiceUuid)->value('company_uuid');
+        return (string) $class::query()->withoutEagerLoads()->where('uuid', $invoiceUuid)->value('company_uuid');
     }
 
     protected function loadParent(string $invoiceUuid): ?object

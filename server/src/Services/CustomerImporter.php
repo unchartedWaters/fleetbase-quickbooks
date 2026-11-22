@@ -6,6 +6,7 @@ use Fleetbase\Quickbooks\Models\Connection;
 use Fleetbase\Quickbooks\Support\CustomerMapper;
 use Fleetbase\Quickbooks\Support\SafeLog;
 use Fleetbase\Quickbooks\Support\SyncSuppressor;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -42,7 +43,7 @@ class CustomerImporter
     /**
      * Customer identity rows for one import(), keyed by company. Reset when import() starts.
      *
-     * @var array{company: string, rows: array<int, object>}|null
+     * @var array{company: string, rows: array<int, \stdClass>}|null
      */
     private ?array $companyCandidates = null;
 
@@ -467,9 +468,9 @@ class CustomerImporter
     /**
      * The local customers that share an email or name with the page, keyed by uuid.
      *
-     * @param iterable<mixed>    $candidates
-     * @param array<int, string> $emails
-     * @param array<int, string> $names
+     * @param iterable<int, \stdClass> $candidates
+     * @param array<int, string>       $emails
+     * @param array<int, string>       $names
      *
      * @return array<string, array<string, mixed>>
      */
@@ -483,9 +484,6 @@ class CustomerImporter
         $nameSet  = array_fill_keys($names, true);
         $matching = [];
         foreach ($candidates as $customer) {
-            if (is_object($customer) === false) {
-                continue;
-            }
             $uuid = (string) ($customer->uuid ?? '');
             if ($uuid === '' || $this->candidateMatches($customer, $emailSet, $nameSet) === false) {
                 continue;
@@ -507,7 +505,7 @@ class CustomerImporter
      * @param array<string, true> $emailSet
      * @param array<string, true> $nameSet
      */
-    private function candidateMatches(object $customer, array $emailSet, array $nameSet): bool
+    private function candidateMatches(\stdClass $customer, array $emailSet, array $nameSet): bool
     {
         $email = strtolower(trim((string) ($customer->email ?? '')));
         $name  = CustomerMapper::displayName((string) ($customer->name ?? ''));
@@ -688,9 +686,9 @@ class CustomerImporter
      * The query filters on company and type so it can use that index. Email
      * case and name punctuation are compared in PHP, not in SQL.
      *
-     * @param class-string $class
+     * @param class-string<Model> $class
      *
-     * @return array<int, object>
+     * @return array<int, \stdClass>
      */
     private function candidateContacts(string $class, string $companyUuid): array
     {

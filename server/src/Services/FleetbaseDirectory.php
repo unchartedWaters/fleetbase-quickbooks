@@ -23,6 +23,7 @@ use Fleetbase\Quickbooks\Support\SyncSuppressor;
 use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -1108,7 +1109,7 @@ class FleetbaseDirectory
     /**
      * One page of catalog ids, ordered by uuid, after the previous page.
      *
-     * @param class-string $class
+     * @param class-string<Model> $class
      *
      * @return array<int, string>
      */
@@ -1142,7 +1143,7 @@ class FleetbaseDirectory
     }
 
     /**
-     * @param class-string $class
+     * @param class-string<Model> $class
      */
     private function queueCatalog(string $class, string $companyUuid, bool $customersOnly, string $localType): void
     {
@@ -1229,24 +1230,24 @@ class FleetbaseDirectory
         }
 
         $query = (new Link())->newQuery()->where('company_uuid', $companyUuid);
-        $query->where(function ($scope) use ($companyUuid, $customerIds, $invoiceIds, $walletIds): void {
+        $query->where(function (Builder $scope) use ($companyUuid, $customerIds, $invoiceIds, $walletIds): void {
             $started = false;
             if ($customerIds !== []) {
-                $scope->where(function ($inner) use ($customerIds): void {
+                $scope->where(function (Builder $inner) use ($customerIds): void {
                     $inner->where('local_type', 'customer')->whereIn('local_uuid', $customerIds);
                 });
                 $started = true;
             }
             if ($walletIds !== []) {
                 $method = $started === true ? 'orWhere' : 'where';
-                $scope->{$method}(function ($inner) use ($walletIds): void {
+                $scope->{$method}(function (Builder $inner) use ($walletIds): void {
                     $inner->where('local_type', 'wallet')->whereIn('local_uuid', $walletIds);
                 });
                 $started = true;
             }
             if ($invoiceIds !== []) {
                 $method = $started === true ? 'orWhere' : 'where';
-                $scope->{$method}(function ($inner) use ($invoiceIds, $companyUuid): void {
+                $scope->{$method}(function (Builder $inner) use ($invoiceIds, $companyUuid): void {
                     self::scopeInvoiceLinks($inner, $invoiceIds, $companyUuid);
                 });
             }
@@ -1263,19 +1264,20 @@ class FleetbaseDirectory
      * Links of these invoices: their invoice and payment rows, their payment-invoice rows,
      * and the payment links those rows point at.
      *
+     * @param Builder<Link>      $inner
      * @param array<int, string> $invoiceIds
      */
     private static function scopeInvoiceLinks(Builder $inner, array $invoiceIds, string $companyUuid): void
     {
-        $inner->where(function ($typed) use ($invoiceIds): void {
+        $inner->where(function (Builder $typed) use ($invoiceIds): void {
             $typed->whereIn('local_type', ['invoice', 'payment'])->whereIn('local_uuid', $invoiceIds);
-        })->orWhere(function ($mapped) use ($invoiceIds): void {
+        })->orWhere(function (Builder $mapped) use ($invoiceIds): void {
             // qbo_id holds the Fleetbase invoice on a payment-invoice row.
             $mapped->where('local_type', 'payment-invoice')->whereIn('qbo_id', $invoiceIds);
-        })->orWhere(function ($payments) use ($invoiceIds, $companyUuid): void {
+        })->orWhere(function (Builder $payments) use ($invoiceIds, $companyUuid): void {
             // The payment link itself is stored under the QuickBooks payment id.
             $payments->where('local_type', 'payment');
-            $payments->whereIn('local_uuid', function ($sub) use ($invoiceIds, $companyUuid): void {
+            $payments->whereIn('local_uuid', function (QueryBuilder $sub) use ($invoiceIds, $companyUuid): void {
                 $sub->select('local_uuid')
                     ->from((new Link())->getTable())
                     ->where('company_uuid', $companyUuid)

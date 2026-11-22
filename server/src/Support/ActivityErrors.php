@@ -3,7 +3,9 @@
 namespace Fleetbase\Quickbooks\Support;
 
 use Fleetbase\Quickbooks\Models\Link;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\SoftDeletingScope;
 
 /**
  * Activity shows a few errors per run, as sentences, each naming the record it is about.
@@ -128,8 +130,8 @@ class ActivityErrors
     }
 
     /**
-     * @param class-string       $class
-     * @param array<int, string> $uuids
+     * @param class-string<Model> $class
+     * @param array<int, string>  $uuids
      *
      * @return iterable<int, object> plain rows: no relations or attributes are loaded
      */
@@ -137,10 +139,10 @@ class ActivityErrors
     {
         $query = $class::query();
         if (in_array(SoftDeletes::class, class_uses_recursive($class), true) === true) {
-            $query->withTrashed();
+            $query->withoutGlobalScope(SoftDeletingScope::class);
         }
 
-        return $query->where('company_uuid', $companyUuid)->whereIn('uuid', $uuids)->toBase()->get(['uuid', $field]);
+        return $query->toBase()->where('company_uuid', $companyUuid)->whereIn('uuid', $uuids)->get(['uuid', $field]);
     }
 
     /**

@@ -4,6 +4,7 @@ namespace Fleetbase\Quickbooks\Support;
 
 use Fleetbase\Ledger\Models\Invoice;
 use Fleetbase\Quickbooks\Models\Link;
+use Illuminate\Database\Eloquent\Builder;
 
 /**
  * Link discovery for WebhookPaymentInvoices: the payment links, the stored payment-invoice
@@ -124,7 +125,7 @@ class WebhookPaymentLinks
      */
     private function rememberStoredPaymentInvoice(mixed $link, array &$mapped): void
     {
-        if (is_object($link) === false) {
+        if ($link instanceof Link === false) {
             return;
         }
         $paymentId   = trim((string) $link->local_uuid);
@@ -164,7 +165,7 @@ class WebhookPaymentLinks
             ->where('company_uuid', $companyUuid)
             ->whereIn('realm_id', $realmIds)
             ->where('local_type', 'invoice')
-            ->where(function ($query) use ($candidateUuids, $qboInvoiceIds): void {
+            ->where(function (Builder $query) use ($candidateUuids, $qboInvoiceIds): void {
                 if ($candidateUuids !== []) {
                     $query->whereIn('local_uuid', $candidateUuids);
                 }
@@ -187,7 +188,7 @@ class WebhookPaymentLinks
      */
     private function rememberInvoiceLink(mixed $link, array &$linkedByUuid, array &$uuidByQbo): void
     {
-        if (is_object($link) === false) {
+        if ($link instanceof Link === false) {
             return;
         }
         $realm = (string) $link->realm_id;

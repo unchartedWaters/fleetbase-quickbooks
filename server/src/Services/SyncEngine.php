@@ -559,6 +559,12 @@ class SyncEngine
     /**
      * One QuickBooks HTTP call. The batch boundary releases the company lock
      * around $call so the request is not inside that lock.
+     *
+     * @template T
+     *
+     * @param callable(): T $call
+     *
+     * @return T
      */
     public function runHttp(callable $call): mixed
     {
@@ -567,7 +573,11 @@ class SyncEngine
             return $call();
         }
 
-        return $boundary($call);
+        // The boundary only brackets the call, so it returns what $call returned.
+        /** @var T $result */
+        $result = $boundary($call);
+
+        return $result;
     }
 
     /**
@@ -578,8 +588,12 @@ class SyncEngine
      * Intuit refused the refresh token or the freshly issued token was refused as well. A
      * refresh that failed for any other reason is temporary and is not a 401.
      *
-     * @param array<string, mixed> $connection
-     * @param callable             $call       function(array $connection): mixed
+     * @template T
+     *
+     * @param array<string, mixed>              $connection
+     * @param callable(array<string, mixed>): T $call
+     *
+     * @return T
      */
     public function runAuthorized(array $connection, callable $call): mixed
     {
@@ -2598,7 +2612,9 @@ class SyncEngine
     }
 
     /**
+     * @param array<string, mixed>       $connection
      * @param array<string, PaymentItem> $finished
+     * @param array<string, mixed>       $batch
      */
     private function commitFinished(
         SyncLedger $ledger,
@@ -2804,9 +2820,9 @@ class SyncEngine
      * and does not call them missing. One value uses $readOne. Larger sets use batch() in chunks of 30,
      * and each query is paged until a short page.
      *
-     * @param array<string, mixed>       $connection
-     * @param array<int, string>         $values
-     * @param callable(string): (?array) $readOne
+     * @param array<string, mixed>                          $connection
+     * @param array<int, string>                            $values
+     * @param callable(string): (array<string, mixed>|null) $readOne
      *
      * @return WhereInResult
      *
@@ -3133,6 +3149,9 @@ class SyncEngine
         return $this->entityEnabled($settings, $kind) === false || $this->direction($settings, $kind) === 'off';
     }
 
+    /**
+     * @param array<string, mixed> $settings
+     */
     private function direction(array $settings, string $kind): string
     {
         $value = $settings[$kind . '_direction'] ?? 'both';

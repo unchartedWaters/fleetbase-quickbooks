@@ -479,6 +479,7 @@ class ConnectionController extends QuickbooksController
             ->orderByDesc('finished_at')
             ->first();
         $savedKeys   = $this->syncCredentialStatus($companyUuid);
+        $finishedAt  = $last?->finished_at;
 
         return response()->json([
             'connection'             => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
@@ -486,7 +487,7 @@ class ConnectionController extends QuickbooksController
             'queue'                  => PendingSync::query()->where('company_uuid', $companyUuid)->where('status', 'pending')->count(),
             'failed'                 => PendingSync::failedRecordCount($companyUuid),
             'last_sync'              => $last instanceof SyncBatch === true ? [
-                'finished_at'   => $last->finished_at?->toIso8601String(),
+                'finished_at'   => $finishedAt instanceof Carbon === true ? $finishedAt->toIso8601String() : null,
                 'status'        => $last->status,
                 'trigger'       => $last->trigger,
                 'created_count' => (int) $last->created_count,

@@ -7,6 +7,9 @@ use Fleetbase\Quickbooks\Services\SyncLedger;
 use Fleetbase\Quickbooks\Support\BackoffPolicy;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
 use Fleetbase\Quickbooks\Support\SafeLog;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 
@@ -343,11 +346,11 @@ trait QueuesPending
     /**
      * Rows with no lease, or a lease that has run out.
      *
-     * @param \Illuminate\Database\Eloquent\Builder|\Illuminate\Database\Query\Builder $query
+     * @param Builder<Model>|QueryBuilder $query
      */
     private function excludeClaimed($query, Carbon $moment): void
     {
-        $query->where(function ($claim) use ($moment): void {
+        $query->where(function (Builder|QueryBuilder $claim) use ($moment): void {
             $claim->whereNull('claimed_until')->orWhere('claimed_until', '<=', $moment);
         });
     }
