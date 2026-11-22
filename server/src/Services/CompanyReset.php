@@ -42,14 +42,6 @@ class CompanyReset
 
     private const PLACE_CLASS = 'Fleetbase\\FleetOps\\Models\\Place';
 
-    /** Link types shown to the user, by the name of the count. */
-    private const COUNTED = [
-        'customers' => 'customer',
-        'invoices'  => 'invoice',
-        'wallets'   => 'wallet',
-        'products'  => 'item',
-    ];
-
     /**
      * @param string $customerClass the Fleetbase customer model
      * @param string $placeClass    the Fleetbase place model, whose rows hold customers' billing addresses
@@ -127,14 +119,20 @@ class CompanyReset
             ->groupBy('local_type')
             ->pluck('total', 'local_type')
             ->all();
-        $counts = [];
-        foreach (self::COUNTED as $name => $type) {
-            $counts[$name] = (int) ($byType[$type] ?? 0);
+        $total = 0;
+        foreach ($byType as $count) {
+            $total += (int) $count;
         }
-        $counts['total']    = (int) array_sum(array_map('intval', $byType));
-        $counts['imported'] = $this->importedCustomers($companyUuid)?->count() ?? 0;
+        $of = static fn (string $type): int => (int) ($byType[$type] ?? 0);
 
-        return $counts;
+        return [
+            'customers' => $of('customer'),
+            'invoices'  => $of('invoice'),
+            'wallets'   => $of('wallet'),
+            'products'  => $of('item'),
+            'total'     => $total,
+            'imported'  => $this->importedCustomers($companyUuid)?->count() ?? 0,
+        ];
     }
 
     /**
