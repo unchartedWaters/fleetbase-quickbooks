@@ -56,6 +56,9 @@ foreach ($args as $arg) {
         break;
     }
 }
+// Pest finds Pest.php (its shared hooks and helpers) under the test directory, `tests` by default.
+// The bootstrap is a PHPUnit option: preloading the autoloader with auto_prepend_file leaves Pest silent.
+array_unshift($args, '--test-directory=server/tests', '--bootstrap=' . $bootstrap);
 $configuration = getcwd() . '/phpunit.xml.dist';
 
 if ($hasConfiguration === false && is_file($configuration) === true) {
@@ -68,8 +71,6 @@ $command = array_merge([
     'display_errors=1',
     '-d',
     'error_reporting=8191',
-    '-d',
-    'auto_prepend_file=' . $bootstrap,
     $pest,
 ], $args);
 

@@ -18,20 +18,20 @@
     ],
     "require": {
         "php": "^8.2",
-        "fleetbase/core-api": "^1.6",
-        "fleetbase/fleetops-api": "^0.6.73",
-        "fleetbase/ledger-api": ">=0.0.13 <0.1",
+        "fleetbase/core-api": "^2.0.2",
+        "fleetbase/fleetops-api": "^0.7.1",
+        "fleetbase/ledger-api": "^0.1.0",
         "php-http/guzzle7-adapter": "^1.0",
         "psr/http-factory-implementation": "*",
         "symfony/yaml": "^6.4|^7.0"
     },
     "require-dev": {
         "friendsofphp/php-cs-fixer": "^3.34.1",
-        "illuminate/encryption": "^10.0",
-        "nunomaduro/collision": "^5.11.0|^6.4.0",
-        "pestphp/pest": "^1.22.6",
+        "illuminate/encryption": "^12.0",
+        "nunomaduro/collision": "^8.5",
+        "pestphp/pest": "^3.8",
         "phpstan/phpstan": "^1.10.38",
-        "symfony/var-dumper": "^5.4.29"
+        "symfony/var-dumper": "^7.4"
     },
     "autoload": {
         "psr-4": {
@@ -60,12 +60,8 @@
             "pestphp/pest-plugin": true,
             "php-http/discovery": true
         },
-        "policy": {
-            "advisories": {
-                "ignore-id": {
-                    "PKSA-zwc5-qtrz-zm1n": "Inherited CVE-2026-48019 via fleetbase/core-api ^1.6 (newest 1.6.68 still requires illuminate/notifications 9 or 10). Not fixable in this package."
-                }
-            }
+        "platform": {
+            "php": "8.2.0"
         }
     },
     "scripts": {

@@ -121,13 +121,13 @@ test('links, images and anchors in the docs point at something that exists', fun
 
 // Markdown is wrapped at 80 columns, so a needed phrase can break across lines.
 test('a needed phrase is found when a line wrap splits it', function () {
-    $text = "This package needs `fleetbase/fleetops-api`\n`^0.6.73`, and   `fleetbase/ledger-api` `^0.0.13`.";
+    $text = "This package needs `fleetbase/fleetops-api`\n`^0.7.1`, and   `fleetbase/ledger-api` `^0.1.0`.";
 
     expect(DocsSource::absentFrom($text, [
-        '`fleetbase/fleetops-api` `^0.6.73`',
-        '`fleetbase/ledger-api` `^0.0.13`',
-        '`fleetbase/core-api` `^1.6`',
-    ]))->toBe(['`fleetbase/core-api` `^1.6`']);
+        '`fleetbase/fleetops-api` `^0.7.1`',
+        '`fleetbase/ledger-api` `^0.1.0`',
+        '`fleetbase/core-api` `^2.0.2`',
+    ]))->toBe(['`fleetbase/core-api` `^2.0.2`']);
 });
 
 test('the link check reports a missing file, heading or reference', function () {

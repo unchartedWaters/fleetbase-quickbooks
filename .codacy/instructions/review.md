@@ -65,8 +65,9 @@
 
 ## Stack
 
-- PHP 8.2 (CI), Laravel via `fleetbase/core-api ^1.6`,
-  `fleetbase/fleetops-api ^0.6.73`, `fleetbase/ledger-api >=0.0.13 <0.1`.
+- PHP 8.2 (CI), Laravel 12 via `fleetbase/core-api ^2.0.2`,
+  `fleetbase/fleetops-api ^0.7.1`, `fleetbase/ledger-api ^0.1.0`. Fleetbase
+  0.7 and core-api 1.x are not supported.
   QuickBooks HTTP goes through Laravel's `Http` client in `QuickBooksClient`.
 - Ember 4.8 engine (`ember-engines`, Glimmer), Node 22+, pnpm.
   `ember-engines` is a peer and dev dependency only: as a runtime dependency
@@ -82,7 +83,7 @@
 
 ## Testing
 
-- PHP: Pest 1 in `server/tests` (`composer test` = php-cs-fixer + PHPStan +
+- PHP: Pest 3 in `server/tests` (`composer test` = php-cs-fixer + PHPStan +
   Pest). Tests use `FakeQuickBooks` and `Http::swap`; no real Intuit calls. They
   run against stubs, not a real Fleetbase app, so code relying on new core-api
   behavior may need a stub in `scripts/test-support/`.
