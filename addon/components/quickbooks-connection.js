@@ -2,7 +2,7 @@ import Component from '@glimmer/component';
 import { action } from '@ember/object';
 import { inject as service } from '@ember/service';
 import { connectionState } from '../utils/connection-view';
-import { canConnect, canDisconnect, canRunSyncNow } from '../utils/sync-access';
+import { canChangeCompany, canConnect, canDisconnect, canRunSyncNow } from '../utils/sync-access';
 
 export default class QuickbooksConnectionComponent extends Component {
     @service intl;
@@ -73,6 +73,20 @@ export default class QuickbooksConnectionComponent extends Component {
         return !this.isConnected;
     }
 
+    // Only an administrator may point the organization at another QuickBooks company, so the others never see it.
+    get showChangeCompany() {
+        return this.isConnected && canChangeCompany(this.abilities) && canConnect(this.abilities);
+    }
+
+    get changeCompanyDisabled() {
+        return this.busy || !this.isConfigured;
+    }
+
+    // Intuit's sign-in page is where the company is chosen, so say so wherever it is about to open.
+    get showCompanyHint() {
+        return this.showChangeCompany || (this.showConnect && !this.connectDisabled);
+    }
+
     // A saved realm can be removed, including one that needs to be connected again.
     get showDisconnect() {
         return this.isConnected || this.needsReauth;
@@ -132,6 +146,21 @@ export default class QuickbooksConnectionComponent extends Component {
         }
 
         await this.args.onConnect?.();
+    }
+
+    // The current connection is kept until the sign-in at Intuit finishes, so cancelling there changes nothing.
+    @action
+    changeCompany() {
+        if (this.changeCompanyDisabled) {
+            return;
+        }
+
+        this.modalsManager.confirm({
+            title: this.intl.t('quickbooks.connection.change-company-confirm-title'),
+            body: this.intl.t('quickbooks.connection.change-company-confirm'),
+            acceptButtonText: this.intl.t('quickbooks.connection.change-company'),
+            confirm: () => this.args.onConnect?.(),
+        });
     }
 
     // Setup owns the disconnect request. This does not unsubscribe Intuit.

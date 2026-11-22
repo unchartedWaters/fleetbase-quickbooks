@@ -51,6 +51,9 @@ function revokeWithDatabase(callable $work): void
         $table->boolean('needs_reauth')->default(false);
         $table->string('home_currency', 3)->nullable();
         $table->timestamp('last_batch_at')->nullable();
+        $table->timestamp('customer_import_start')->nullable();
+        $table->timestamp('rate_limited_until')->nullable();
+        $table->unsignedInteger('last_rate_limit_wait')->nullable();
         $table->timestamps();
     });
     $schema->create('quickbooks_pending_syncs', function (Blueprint $table) {
@@ -402,4 +405,44 @@ test('connection show tells an operator whether it may make a first connection',
             ->and($connected['can_connect_new'])->toBeTrue()
             ->and($connected['connection']['realm_id'])->toBe('9341453000000001');
     });
+})->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
+
+test('connecting a different company revokes the old token, and the same company does not', function () {
+    foreach ([['9341453000000009', 1], ['9341453000000001', 0]] as [$newRealm, $revokes]) {
+        revokeWithDatabase(function () use ($newRealm, $revokes) {
+            revokeSeed(false);
+            Http::swap(new Illuminate\Http\Client\Factory());
+            Http::fake(['developer.api.intuit.com/*' => Http::response('', 200)]);
+            $settings   = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
+            $controller = new class(
+                new Authorizer(static fn () => true),
+                new OAuthFlow(new QuickBooksClient()),
+                $settings,
+                revokeStore(),
+                new ConnectionProbe(new QuickBooksClient()),
+                new QuickBooksClient()
+            ) extends ConnectionController {
+                /** @param array<string, mixed> $connection */
+                public function save(array $connection): void
+                {
+                    $this->persist($connection);
+                }
+            };
+
+            $controller->save([
+                'company_uuid'  => 'company-uuid',
+                'realm_id'      => $newRealm,
+                'refresh_token' => 'refresh-token-new',
+                'environment'   => 'sandbox',
+                'needs_reauth'  => false,
+            ]);
+
+            $recorded = Http::recorded();
+            expect($recorded)->toHaveCount($revokes)
+                ->and(Connection::query()->where('company_uuid', 'company-uuid')->pluck('realm_id')->all())->toBe([$newRealm]);
+            if ($revokes === 1) {
+                expect($recorded[0][0]->data())->toBe(['token' => 'refresh-token-one']);
+            }
+        });
+    }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');

@@ -28,6 +28,10 @@ quickbooks:
     disconnect-confirm-title: Disconnect QuickBooks?
     disconnect-confirm: This removes the saved QuickBooks connection. Syncing stops until you connect again.
     connect: Connect to QuickBooks
+    change-company: Connect a different company
+    change-company-confirm-title: Connect a different QuickBooks company?
+    change-company-confirm: You choose the company on the Intuit sign-in page. The current connection stays in place until you finish there. Once you do, this organization syncs with the new company and all of its records are queued to it.
+    company-hint: You choose which QuickBooks company to connect on the Intuit sign-in page.
     disconnected-toast: QuickBooks disconnected.
     connected-toast: Connected to QuickBooks.
     connect-failed: Unable to start QuickBooks connection.

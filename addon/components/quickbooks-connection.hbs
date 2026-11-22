@@ -94,6 +94,22 @@
                                 data-test-disconnect
                             />
                         {{/if}}
+                        {{#if this.showChangeCompany}}
+                            <Button
+                                @type="default"
+                                @size="sm"
+                                @icon="rotate"
+                                @text={{t "quickbooks.connection.change-company"}}
+                                @disabled={{this.changeCompanyDisabled}}
+                                @onClick={{this.changeCompany}}
+                                data-test-change-company
+                            />
+                        {{/if}}
+                        {{#if this.showCompanyHint}}
+                            <p class="basis-full text-sm text-gray-500 dark:text-gray-400" data-test-company-hint>
+                                {{t "quickbooks.connection.company-hint"}}
+                            </p>
+                        {{/if}}
                         {{#if this.credentialsMissing}}
                             <p class="text-sm text-gray-500 dark:text-gray-400" data-test-credentials-missing>
                                 {{t "quickbooks.widget.credentials-missing"}}

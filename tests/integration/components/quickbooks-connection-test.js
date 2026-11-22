@@ -55,6 +55,33 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-reauth]').doesNotIncludeText('You do not have permission');
     });
 
+    test('only an administrator can connect a different company, after a confirmation', async function (assert) {
+        let permissions = ['quickbooks connect connection', 'quickbooks change-company connection'];
+        class AbilitiesStubService extends Service {
+            can(permission) {
+                return permissions.includes(permission);
+            }
+        }
+
+        this.owner.register('service:abilities', AbilitiesStubService);
+        this.set('connection', { realm_id: '123', environment: 'sandbox' });
+        this.set('connects', 0);
+        this.set('onConnect', () => this.set('connects', this.connects + 1));
+
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @onConnect={{this.onConnect}} />`);
+        assert.dom('[data-test-change-company]').isNotDisabled();
+        assert.dom('[data-test-company-hint]').hasText('You choose which QuickBooks company to connect on the Intuit sign-in page.');
+        assert.dom('[data-test-connect]').doesNotExist();
+
+        await click('[data-test-change-company]');
+        assert.strictEqual(this.connects, 1, 'the sign-in starts once it is confirmed');
+
+        permissions = ['quickbooks connect connection'];
+        this.set('connection', { realm_id: '456', environment: 'sandbox' });
+        assert.dom('[data-test-change-company]').doesNotExist('an operator does not get the button');
+        assert.dom('[data-test-company-hint]').doesNotExist();
+    });
+
     test('sync now stays off without the operator permission', async function (assert) {
         class DeniedAbilitiesStubService extends Service {
             can() {

@@ -406,7 +406,7 @@ class ConnectionController extends QuickbooksController
 
     /**
      * Ask Intuit to revoke this organization's refresh tokens. A failure or timeout is logged
-     * without any token and never stops the disconnect.
+     * without any token and never stops the disconnect or the switch to another company.
      */
     private function revokeAtIntuit(string $companyUuid): void
     {
@@ -558,6 +558,8 @@ class ConnectionController extends QuickbooksController
         $model       = $existing instanceof Connection === true ? $existing : new Connection();
         // A different QuickBooks company starts clean. A reconnect to the same one keeps its cursor and limits.
         if ($existing instanceof Connection === true && (string) $existing->realm_id !== (string) ($connection['realm_id'] ?? '')) {
+            // The old company's token is no longer used, so end it at Intuit like Disconnect does (best effort).
+            $this->revokeAtIntuit($companyUuid);
             $model->customer_import_start = null;
             $model->rate_limited_until    = null;
             $model->last_rate_limit_wait  = null;

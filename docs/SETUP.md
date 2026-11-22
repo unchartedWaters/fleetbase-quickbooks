@@ -525,6 +525,16 @@ connected it offers **Sync now** and **Disconnect**. When QuickBooks must be
 connected again it offers **Connect to QuickBooks** and **Disconnect**. An
 action the user lacks permission for stays visible but disabled.
 
+An administrator (`quickbooks change-company connection`) also gets **Connect
+a different company** while connected; nobody else sees it. It asks to
+confirm, then opens the Intuit sign-in page, where the company is chosen (a
+note beside the buttons says so). The current connection stays until that
+sign-in finishes, so cancelling at Intuit changes nothing. If the company
+Intuit returns differs from the current one, the old refresh token is revoked
+at Intuit (best effort, and skipped while another organization uses that
+company), the new company starts clean, and all of the organization's records
+are queued to it.
+
 ![QuickBooks Setup when connected: company, environment, home currency
 notes, Sync now, and Disconnect][setup-connected]
 
