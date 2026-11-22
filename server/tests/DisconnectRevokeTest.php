@@ -15,6 +15,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Tests\Support\DetachedController;
+use Fleetbase\Quickbooks\Tests\Support\EmptyReset;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Fleetbase\Quickbooks\Tests\Support\PersistingController;
 use Fleetbase\TestSupport\LoggerManager;
@@ -402,7 +403,7 @@ test('connection show tells an operator whether it may make a first connection',
         revokeSeed();
         $connected = $show($authorizer);
 
-        $nothingLinked = ['customers' => 0, 'invoices' => 0, 'wallets' => 0, 'products' => 0, 'total' => 0, 'imported' => 0];
+        $nothingLinked = (new EmptyReset(new MemorySettingsStore()))->linkCounts('company-uuid');
 
         expect($neverConnected)->toBe(['connection' => null, 'can_connect_new' => false, 'linked' => $nothingLinked])
             ->and($administrator['can_connect_new'])->toBeTrue()

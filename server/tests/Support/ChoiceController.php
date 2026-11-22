@@ -14,9 +14,12 @@ use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 /**
- * A connection controller over the DataChoiceDatabase: customers are the test table, and a saved connection is kept in memory.
+ * A connection controller over the DataChoiceDatabase: customers are the test table,
+ * and a saved connection is kept in memory.
  */
 class ChoiceController extends ConnectionController
 {
@@ -48,6 +51,14 @@ class ChoiceController extends ConnectionController
         $controller->memory = $store;
 
         return $controller;
+    }
+
+    /**
+     * Disconnect with the given answer, as the console posts it.
+     */
+    public function disconnectWith(string $level, string $code): JsonResponse
+    {
+        return $this->disconnect(Request::create('/disconnect', 'POST', ['level' => $level, 'confirm' => $code]));
     }
 
     public function leaves(string $companyUuid, string $realmId): bool

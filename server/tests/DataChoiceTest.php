@@ -7,7 +7,6 @@ use Fleetbase\Quickbooks\Tests\Support\ChoiceController;
 use Fleetbase\Quickbooks\Tests\Support\DataChoiceDatabase;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
 use Fleetbase\Quickbooks\Tests\Support\TestCustomer;
-use Fleetbase\Quickbooks\Tests\Support\TestPlace;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -47,7 +46,7 @@ test('the import marker names QuickBooks, the company and the customer', functio
 test('link counts are per kind for this organization and count the imported customers', function () {
     DataChoiceDatabase::with(function () {
         DataChoiceDatabase::seed();
-        $counts = (new CompanyReset(new MemorySettingsStore(), TestCustomer::class, TestPlace::class))->linkCounts('company-uuid');
+        $counts = DataChoiceDatabase::reset(new MemorySettingsStore())->linkCounts('company-uuid');
 
         expect($counts)->toBe([
             'customers' => 2,
@@ -71,7 +70,7 @@ test('clearing removes this organization sync data at each level and only custom
         $store->rows[SettingsKeys::companySync('company-uuid')]  = ['customer_direction' => 'both'];
         $store->rows[SettingsKeys::companySync('other-company')] = ['customer_direction' => 'both'];
 
-        (new CompanyReset($store, TestCustomer::class, TestPlace::class))->clear('company-uuid', $level, false);
+        DataChoiceDatabase::reset($store)->clear('company-uuid', $level, false);
 
         $rows  = DataChoiceDatabase::rows('company-uuid');
         $other = DataChoiceDatabase::rows('other-company');
@@ -109,7 +108,7 @@ test('clearing while a switch is under way keeps the connection row', function (
     DataChoiceDatabase::with(function () {
         DataChoiceDatabase::seed();
 
-        (new CompanyReset(new MemorySettingsStore(), TestCustomer::class, TestPlace::class))->clear('company-uuid', CompanyReset::SYNC, true);
+        DataChoiceDatabase::reset(new MemorySettingsStore())->clear('company-uuid', CompanyReset::SYNC, true);
 
         expect(DataChoiceDatabase::rows('company-uuid')['quickbooks_connections'])->toBe(1)
             ->and(DataChoiceDatabase::rows('company-uuid')['quickbooks_links'])->toBe(0);
@@ -125,7 +124,7 @@ test('disconnect with a level needs the code shown to the user and then clears t
         $store      = new MemorySettingsStore();
         $controller = ChoiceController::make($store);
 
-        $refused = $controller->disconnect(Request::create('/disconnect', 'POST', ['level' => 'everything', 'confirm' => 'ABC234']));
+        $refused = $controller->disconnectWith('everything', 'ABC234');
         expect($refused->getStatusCode())->toBe(422)
             ->and(DataChoiceDatabase::rows('company-uuid'))->toBe([
                 'quickbooks_connections'   => 1,
@@ -139,7 +138,7 @@ test('disconnect with a level needs the code shown to the user and then clears t
             ->and(Http::recorded())->toHaveCount(0);
 
         $code = $controller->resetCode(Request::create('/reset-code', 'POST'))->getData(true)['code'];
-        $done = $controller->disconnect(Request::create('/disconnect', 'POST', ['level' => 'everything', 'confirm' => $code]));
+        $done = $controller->disconnectWith('everything', $code);
 
         expect($done->getStatusCode())->toBe(200)
             ->and(DataChoiceDatabase::rows('company-uuid'))->toBe([
@@ -152,8 +151,7 @@ test('disconnect with a level needs the code shown to the user and then clears t
                 'test_places'              => 1,
             ])
             ->and(DataChoiceDatabase::rows('other-company')['quickbooks_links'])->toBe(5)
-            ->and($controller->disconnect(Request::create('/disconnect', 'POST', ['level' => 'sync', 'confirm' => $code]))
-                ->getStatusCode())->toBe(422);
+            ->and($controller->disconnectWith('sync', $code)->getStatusCode())->toBe(422);
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, QB_SQLITE_SKIP);
 
@@ -166,7 +164,7 @@ test('a plain disconnect keeps the links, and an operator cannot ask for a level
 
         $operator = ChoiceController::make(new MemorySettingsStore(), false);
         $code     = (new CompanyReset(new MemorySettingsStore()))->issueCode('company-uuid', 'user-uuid');
-        $refused  = $operator->disconnect(Request::create('/disconnect', 'POST', ['level' => 'sync', 'confirm' => $code]));
+        $refused  = $operator->disconnectWith('sync', $code);
         expect($refused->getStatusCode())->toBe(422)
             ->and(DataChoiceDatabase::rows('company-uuid')['quickbooks_links'])->toBe(5);
 
@@ -201,11 +199,13 @@ test('an environment change with nothing linked leaves nothing behind', function
         DB::table('quickbooks_links')->delete();
         Connection::query()->where('company_uuid', 'company-uuid')->update(['environment' => 'production']);
 
-        expect(ChoiceController::make(new MemorySettingsStore())->leaves('company-uuid', '9341453000000001'))->toBeFalse();
+        $controller = ChoiceController::make(new MemorySettingsStore());
+
+        expect($controller->leaves('company-uuid', '9341453000000001'))->toBeFalse();
     });
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, QB_SQLITE_SKIP);
 
-test('connecting another company asks first, keeps the handle for the answer and clears only on the right code', function () {
+test('connecting another company asks first, keeps the handle and clears only on the right code', function () {
     DataChoiceDatabase::with(function () {
         DataChoiceDatabase::seed();
         session(['company' => 'company-uuid', 'user' => 'user-uuid']);
@@ -215,7 +215,11 @@ test('connecting another company asks first, keeps the handle for the answer and
         config()->set('quickbooks.console_host', 'https://fleet.example.com');
         Http::swap(new Illuminate\Http\Client\Factory());
         Http::fake([
-            'oauth.platform.intuit.com/*'         => Http::response(['access_token' => 'a', 'refresh_token' => 'r', 'expires_in' => 3600]),
+            'oauth.platform.intuit.com/*'         => Http::response([
+                'access_token'  => 'a',
+                'refresh_token' => 'r',
+                'expires_in'    => 3600,
+            ]),
             'sandbox-quickbooks.api.intuit.com/*' => Http::response([
                 'CompanyInfo'   => ['CompanyName' => 'Other', 'Country' => 'US'],
                 'Preferences'   => ['CurrencyPrefs' => ['HomeCurrency' => ['value' => 'USD']]],

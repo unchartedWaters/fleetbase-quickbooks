@@ -48,7 +48,9 @@ export default class SettingsRoute extends Route {
             const result = await this.complete({ state, code, realmId });
             if (result?.choice_required) {
                 // A different company than the linked records belong to: the page asks what to do with them first.
-                return { choice: result };
+                return {
+                    choice: result,
+                };
             }
             this.notifications.success(this.intl.t('quickbooks.connection.connected-toast'));
         } catch (failure) {

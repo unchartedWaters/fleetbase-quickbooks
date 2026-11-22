@@ -43,6 +43,14 @@ class DataChoiceDatabase
         }
     }
 
+    /**
+     * The reset service over the test customer and place tables.
+     */
+    public static function reset(MemorySettingsStore $store): CompanyReset
+    {
+        return new CompanyReset($store, TestCustomer::class, TestPlace::class);
+    }
+
     private static function tables(): void
     {
         $schema = DB::connection('sqlite')->getSchemaBuilder();
@@ -62,7 +70,10 @@ class DataChoiceDatabase
             $table->unsignedInteger('last_rate_limit_wait')->nullable();
             $table->timestamps();
         });
-        foreach (['quickbooks_pending_syncs', 'quickbooks_links', 'quickbooks_sync_batches', 'quickbooks_sync_attempts'] as $name) {
+        $names = [
+            'quickbooks_pending_syncs', 'quickbooks_links', 'quickbooks_sync_batches', 'quickbooks_sync_attempts',
+        ];
+        foreach ($names as $name) {
             $schema->create($name, function (Blueprint $table) use ($name) {
                 $table->char('uuid', 36)->primary();
                 $table->char('company_uuid', 36)->index();
@@ -98,21 +109,41 @@ class DataChoiceDatabase
     {
         foreach (['company-uuid' => '9341453000000001', 'other-company' => '9341453000000002'] as $company => $realm) {
             $connection = new Connection();
-            $connection->fill(['uuid' => 'conn-' . $company, 'company_uuid' => $company, 'realm_id' => $realm, 'refresh_token' => 'token-' . $company]);
+            $connection->fill([
+                'uuid'          => 'conn-' . $company,
+                'company_uuid'  => $company,
+                'realm_id'      => $realm,
+                'refresh_token' => 'token-' . $company,
+            ]);
             $connection->save();
             foreach (['customer', 'customer', 'invoice', 'wallet', 'item'] as $index => $type) {
                 $link = new Link();
-                $link->forceFill(['uuid' => 'link-' . $company . $index, 'company_uuid' => $company, 'realm_id' => $realm, 'local_type' => $type]);
+                $link->forceFill([
+                    'uuid'         => 'link-' . $company . $index,
+                    'company_uuid' => $company,
+                    'realm_id'     => $realm,
+                    'local_type'   => $type,
+                ]);
                 $link->save();
             }
-            foreach ([[PendingSync::class, 'pending-'], [SyncBatch::class, 'batch-'], [SyncAttempt::class, 'attempt-']] as [$class, $prefix]) {
+            $history = [
+                [PendingSync::class, 'pending-'],
+                [SyncBatch::class, 'batch-'],
+                [SyncAttempt::class, 'attempt-'],
+            ];
+            foreach ($history as [$class, $prefix]) {
                 $row = new $class();
                 $row->forceFill(['uuid' => $prefix . $company, 'company_uuid' => $company]);
                 $row->save();
             }
         }
-        $marker = CompanyReset::importMarker('9341453000000001', '5');
-        foreach ([['imported-1', 'company-uuid', $marker], ['native-1', 'company-uuid', null], ['imported-2', 'other-company', $marker]] as [$uuid, $company, $meta]) {
+        $marker    = CompanyReset::importMarker('9341453000000001', '5');
+        $customers = [
+            ['imported-1', 'company-uuid', $marker],
+            ['native-1', 'company-uuid', null],
+            ['imported-2', 'other-company', $marker],
+        ];
+        foreach ($customers as [$uuid, $company, $meta]) {
             TestCustomer::query()->create(['uuid' => $uuid, 'company_uuid' => $company, 'meta' => $meta]);
             TestPlace::query()->create(['uuid' => 'place-' . $uuid, 'owner_uuid' => $uuid, 'company_uuid' => $company]);
         }

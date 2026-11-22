@@ -161,7 +161,9 @@ export default class QuickbooksCompanySettingsComponent extends Component {
     @action
     async requestCode() {
         try {
-            return await this.fetch.post('reset-code', { company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
+            const issued = await this.fetch.post('reset-code', { company_uuid: this.currentUser.companyId }, { namespace: NAMESPACE });
+
+            return issued;
         } catch (error) {
             this.notifications.serverError(error);
 

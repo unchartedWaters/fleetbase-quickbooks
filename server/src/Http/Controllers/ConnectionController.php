@@ -589,10 +589,9 @@ class ConnectionController extends QuickbooksController
      */
     private function chosenLevel(Request $request, string $companyUuid): ?string
     {
-        $level = (string) $request->input('level');
-        if (CompanyReset::isLevel($level) === false
-            || $this->authorizer->can('quickbooks change-company connection', $request) === false
-        ) {
+        $level     = (string) $request->input('level');
+        $mayChange = $this->authorizer->can('quickbooks change-company connection', $request);
+        if (CompanyReset::isLevel($level) === false || $mayChange === false) {
             return null;
         }
         $typed = (string) $request->input('confirm');
