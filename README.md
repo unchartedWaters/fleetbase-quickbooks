@@ -19,7 +19,7 @@ and earlier, including 0.7.x and `core-api` 1.x, are not supported.
 
 - Fleetbase 0.8.1 or later (`fleetbase/core-api` `^2.0`,
   `fleetbase/fleetops-api` `^0.7.1`, `fleetbase/ledger-api` `^0.1.0`)
-- PHP `^8.2` on the API, Node `>= 22` for the console build
+- PHP `>=8.2 <8.5` on the API, Node `>= 22` for the console build
 - A [QuickBooks app](docs/SETUP.md#create-a-quickbooks-app) on the Intuit
   Developer Portal
 - A public https address for the console and the API, which Intuit's sign-in

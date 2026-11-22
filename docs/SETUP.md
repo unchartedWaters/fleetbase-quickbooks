@@ -1016,7 +1016,7 @@ A company with no QuickBooks connection is looked up at most once per 30 seconds
 ## Requirements and install
 
 This extension works only with **Fleetbase 0.8.1 or later**. It needs PHP
-`^8.2`, `fleetbase/core-api` `^2.0`, `fleetbase/fleetops-api` `^0.7.1`, and
+`>=8.2 <8.5`, `fleetbase/core-api` `^2.0`, `fleetbase/fleetops-api` `^0.7.1`, and
 `fleetbase/ledger-api` `^0.1.0`. Fleetbase 0.8.0 and earlier, including 0.7 and
 `core-api` 1.x, are not supported (Laravel 12 is required). The release check
 runs against Fleetbase 0.8.1, which ships `core-api` 2.0.2. The ranges accept later patch releases of
