@@ -30,13 +30,15 @@ export default class QuickbooksDataChoiceComponent extends Component {
     get counts() {
         const linked = this.args.linked ?? {};
 
-        return {
+        const counts = {
             customers: linked.customers ?? 0,
             invoices: linked.invoices ?? 0,
             wallets: linked.wallets ?? 0,
             products: linked.products ?? 0,
             imported: linked.imported ?? 0,
         };
+
+        return counts;
     }
 
     get needsCode() {
