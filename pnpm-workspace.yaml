@@ -17,6 +17,7 @@ overrides:
   "linkify-it@<5.0.2": "5.0.2"
   "babel-traverse@6": "npm:@babel/traverse@7.23.2"
   "braces@2": "3.0.3"
+  "broccoli-rollup@2": "5.0.0"
 allowBuilds:
   '@fortawesome/fontawesome-common-types': false
   '@fortawesome/fontawesome-svg-core': false
