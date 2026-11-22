@@ -163,6 +163,17 @@ once a day and the old one then stops working. When a run fails with
 
 Front end: run `pnpm install --frozen-lockfile`, then `pnpm lint` and `pnpm test:ember`. Ember tests need Chrome. Skip them when Chrome is not installed.
 
+## Third-party licenses
+
+`THIRD-PARTY-LICENSES.md` lists every package in `composer.lock` with its
+version and license. After a `composer.lock` change, refresh it:
+
+```bash
+php scripts/third-party-licenses.php > THIRD-PARTY-LICENSES.md
+```
+
+A test fails when the file is out of date.
+
 ## Fleetbase release check
 
 `.github/workflows/fleetbase-release.yml` checks this extension against each
