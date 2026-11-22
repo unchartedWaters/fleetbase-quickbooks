@@ -413,15 +413,15 @@ test('connecting a different company revokes the old token, and the same company
             revokeSeed(false);
             Http::swap(new Illuminate\Http\Client\Factory());
             Http::fake(['developer.api.intuit.com/*' => Http::response('', 200)]);
-            $settings   = new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher());
-            $controller = new class(
+            $arguments  = [
                 new Authorizer(static fn () => true),
                 new OAuthFlow(new QuickBooksClient()),
-                $settings,
+                new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
                 revokeStore(),
                 new ConnectionProbe(new QuickBooksClient()),
-                new QuickBooksClient()
-            ) extends ConnectionController {
+                new QuickBooksClient(),
+            ];
+            $controller = new class(...$arguments) extends ConnectionController {
                 /** @param array<string, mixed> $connection */
                 public function save(array $connection): void
                 {
