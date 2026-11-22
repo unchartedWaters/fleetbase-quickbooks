@@ -238,7 +238,7 @@ module('Unit | QuickBooks views', function (hooks) {
         assert.deepEqual(Object.keys(check({ production_client_id: 'live', production_client_secret: 's', sandbox_client_id: 'dev' })), ['sandbox_client_secret']);
         assert.deepEqual(Object.keys(check({ sandbox_webhook_verifier: 'token' })), ['sandbox_client_id', 'sandbox_client_secret']);
         // Nothing saved and nothing typed: one set is needed, and production is where it is asked for.
-        assert.deepEqual(Object.keys(check({ production_client_id: '', sandbox_client_id: '' })), ['production_client_id']);
+        assert.deepEqual(Object.keys(check({ production_client_id: '', sandbox_client_id: '' })), ['production_client_id', 'production_client_secret']);
         // A saved secret of one environment does not satisfy the other.
         assert.deepEqual(Object.keys(check({ production_client_id: 'live', sandbox_client_id: 'dev' }, { production_client_id: 'live', production_client_secret_set: true })), [
             'sandbox_client_secret',

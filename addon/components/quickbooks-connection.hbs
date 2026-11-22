@@ -91,8 +91,8 @@
                                     data-test-environment-select
                                     {{on "change" this.chooseEnvironment}}
                                 >
-                                    {{#each this.environmentOptions key="value" as |option|}}
-                                        <option value={{option.value}} selected={{option.selected}}>{{option.label}}</option>
+                                    {{#each this.environmentOptions key="value" as |choice|}}
+                                        <option value={{choice.value}} selected={{choice.selected}}>{{choice.label}}</option>
                                     {{/each}}
                                 </select>
                                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400" data-test-environment-help>{{t "quickbooks.connection.environment-help"}}</p>
