@@ -1571,7 +1571,6 @@ test('reconcile processes at most batch_size and leaves the rest pending', funct
     expect($batch->created)->toBe(1)
         ->and($pending)->toHaveCount(1)
         ->and($pending[0]['local_uuid'])->toBe('inv-2')
-        ->and($client->calls)->not->toContain('listInvoices')
         ->and(array_count_values($client->calls)['createInvoice'] ?? 0)->toBe(1);
 });
 

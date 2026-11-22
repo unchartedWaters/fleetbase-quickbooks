@@ -51,8 +51,7 @@ afterEach(function () {
 test('the sync job stops one margin before the company lock and still outlasts redis retry_after', function () {
     $job = new SyncCompanyBatch('company-uuid');
 
-    expect(BatchRunner::jobTimeout())->toBe(BatchRunner::LOCK_SECONDS - BatchRunner::LOCK_MARGIN_SECONDS)
-        ->and($job->timeout)->toBe(BatchRunner::jobTimeout())
+    expect($job->timeout)->toBe(BatchRunner::LOCK_SECONDS - BatchRunner::LOCK_MARGIN_SECONDS)
         ->and($job->timeout)->toBeLessThan(BatchRunner::LOCK_SECONDS)
         ->and($job->timeout)->toBeGreaterThan(BatchRunner::REDIS_RETRY_AFTER_SECONDS)
         ->and($job->tries)->toBe(BatchRunner::SYNC_JOB_TRIES)

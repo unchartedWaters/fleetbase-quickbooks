@@ -29,23 +29,19 @@ trait QueuesPending
         $pendingColumns = [
             'company_uuid', 'local_type', 'local_uuid', 'reason', 'status', 'attempts', 'next_attempt_at',
         ];
-        if ($this->claimsSupported() === true) {
-            // A row flagged again during this run stays pending for the next run, but still records
-            // the attempt and backoff, so a row that keeps failing cannot skip its backoff. An
-            // expired re-flag mark (its run died) no longer holds the row.
-            $now      = Carbon::now()->toDateTimeString();
-            $reflag   = self::REFLAG_PREFIX . '%';
-            $this->updateByUuid(new PendingSync(), $changedPending, $pendingColumns, [
-                '(claimed_by IS NULL OR claimed_by NOT LIKE ? OR claimed_until IS NULL OR claimed_until <= ?)',
-                [$reflag, $now],
-            ]);
-            $this->updateByUuid(new PendingSync(), $changedPending, ['attempts', 'next_attempt_at'], [
-                'claimed_by LIKE ? AND claimed_until > ?',
-                [$reflag, $now],
-            ]);
-        } else {
-            $this->updateByUuid(new PendingSync(), $changedPending, $pendingColumns);
-        }
+        // A row flagged again during this run stays pending for the next run, but still records
+        // the attempt and backoff, so a row that keeps failing cannot skip its backoff. An
+        // expired re-flag mark (its run died) no longer holds the row.
+        $now    = Carbon::now()->toDateTimeString();
+        $reflag = self::REFLAG_PREFIX . '%';
+        $this->updateByUuid(new PendingSync(), $changedPending, $pendingColumns, [
+            '(claimed_by IS NULL OR claimed_by NOT LIKE ? OR claimed_until IS NULL OR claimed_until <= ?)',
+            [$reflag, $now],
+        ]);
+        $this->updateByUuid(new PendingSync(), $changedPending, ['attempts', 'next_attempt_at'], [
+            'claimed_by LIKE ? AND claimed_until > ?',
+            [$reflag, $now],
+        ]);
     }
 
     /**
@@ -182,9 +178,7 @@ trait QueuesPending
                 );
             });
         // A row another run holds is not due work for this one.
-        if ($this->claimsSupported() === true) {
-            $this->excludeClaimed($query, Carbon::createFromTimestamp($now));
-        }
+        $this->excludeClaimed($query, Carbon::createFromTimestamp($now));
 
         return (int) $query->count();
     }
@@ -194,13 +188,9 @@ trait QueuesPending
      */
     protected function writePending(array $row): void
     {
-        $values = self::toDates($row, self::PENDING_TIMES);
-        unset($values['priority']);
-        $priority = null;
-        if ($this->prioritySupported() === true) {
-            $priority           = SyncLedger::pendingPriority($row);
-            $values['priority'] = $priority;
-        }
+        $values             = self::toDates($row, self::PENDING_TIMES);
+        $priority           = SyncLedger::pendingPriority($row);
+        $values['priority'] = $priority;
         try {
             $pending = PendingSync::query()->firstOrCreate(
                 [
@@ -247,7 +237,6 @@ trait QueuesPending
         if (
             $holder === ''
             || str_starts_with($holder, self::REFLAG_PREFIX) === true
-            || $this->claimsSupported() === false
         ) {
             return;
         }
@@ -283,60 +272,6 @@ trait QueuesPending
 
         return in_array($driverCode, [19, 1555, 2067], true) === true
             && preg_match('/(?:UNIQUE|PRIMARY KEY) constraint failed/i', $message) === 1;
-    }
-
-    /**
-     * Whether quickbooks_pending_syncs has the lease columns. A deploy that has not run
-     * the migration yet keeps working, unclaimed. Only a positive answer is remembered,
-     * per connection object, so a purged connection is asked again.
-     */
-    private function claimsSupported(): bool
-    {
-        $model              = new PendingSync();
-        $connection         = $model->getConnection();
-        $supported          = self::$claimSupport ?? new \WeakMap();
-        self::$claimSupport = $supported;
-        if (($supported[$connection] ?? false) === true) {
-            return true;
-        }
-
-        try {
-            $schema = $connection->getSchemaBuilder();
-            $has    = $schema->hasColumn($model->getTable(), 'claimed_until') === true
-                && $schema->hasColumn($model->getTable(), 'claimed_by') === true;
-        } catch (\Throwable) {
-            return false;
-        }
-        if ($has === true) {
-            $supported[$connection] = true;
-        }
-
-        return $has;
-    }
-
-    /**
-     * Whether the priority column exists (migration 2026_10_24_130000). Remembered per connection once true.
-     */
-    private function prioritySupported(): bool
-    {
-        $model                 = new PendingSync();
-        $connection            = $model->getConnection();
-        $supported             = self::$prioritySupport ?? new \WeakMap();
-        self::$prioritySupport = $supported;
-        if (($supported[$connection] ?? false) === true) {
-            return true;
-        }
-
-        try {
-            $has = $connection->getSchemaBuilder()->hasColumn($model->getTable(), 'priority') === true;
-        } catch (\Throwable) {
-            return false;
-        }
-        if ($has === true) {
-            $supported[$connection] = true;
-        }
-
-        return $has;
     }
 
     private function claimSeconds(): int
@@ -471,7 +406,7 @@ trait QueuesPending
      */
     private function deferClaimedRows(array $settings, int $now): int
     {
-        if ($this->claimTokens === [] || $this->claimsSupported() === false) {
+        if ($this->claimTokens === []) {
             return 0;
         }
 
@@ -534,7 +469,7 @@ trait QueuesPending
      */
     public function claimedLocalUuids(string $companyUuid, string $localType, array $uuids, int $now): array
     {
-        if ($uuids === [] || $this->memory !== null || $this->claimsSupported() === false) {
+        if ($uuids === [] || $this->memory !== null) {
             return [];
         }
 
@@ -565,7 +500,6 @@ trait QueuesPending
         }
 
         $now      = Carbon::now()->toDateTimeString();
-        $priority = $this->prioritySupported();
         $payload  = [];
         foreach ($rows as $row) {
             $companyUuid = (string) ($row['company_uuid'] ?? '');
@@ -585,10 +519,8 @@ trait QueuesPending
                 'next_attempt_at' => null,
                 'created_at'      => $now,
                 'updated_at'      => $now,
+                'priority'        => SyncLedger::pendingPriority($row),
             ];
-            if ($priority === true) {
-                $insert['priority'] = SyncLedger::pendingPriority($row);
-            }
             $payload[] = $insert;
         }
         foreach (array_chunk($payload, 200) as $chunk) {
@@ -603,7 +535,7 @@ trait QueuesPending
                 }
             }
         }
-        $this->raiseOpenRows(array_filter($payload, static fn (array $row): bool => ($row['priority'] ?? 1) === 0));
+        $this->raiseOpenRows(array_filter($payload, static fn (array $row): bool => $row['priority'] === 0));
     }
 
     /**

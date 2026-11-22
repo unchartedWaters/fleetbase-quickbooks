@@ -64,8 +64,7 @@ test('another organization connection does not sync this organization and a miss
     $empty = new SyncLedger();
     $idle  = gateRunner($empty);
 
-    expect($idle->hasConnection('company-uuid'))->toBeFalse()
-        ->and($idle->run('company-uuid', 'now')->status)->toBe('skipped')
+    expect($idle->run('company-uuid', 'now')->status)->toBe('skipped')
         ->and($empty->batches)->toBe([])
         ->and($empty->attempts)->toBe([]);
 
@@ -98,9 +97,6 @@ test('another organization connection does not sync this organization and a miss
     ];
     [$runner, $client] = gateRunnerWith($ledger, new MemorySettingsStore());
 
-    expect($runner->hasConnection('company-uuid'))->toBeFalse()
-        ->and($runner->hasConnection('other-company'))->toBeTrue();
-
     $batch = null;
     gateDispatch(function () use ($runner, &$batch) {
         $batch = $runner->run('company-uuid', 'now');
@@ -114,7 +110,7 @@ test('another organization connection does not sync this organization and a miss
         ->and($ledger->pending[0]['status'])->toBe('pending');
 });
 
-test('a connected organization still syncs when due even if sync enabled is stored false', function () {
+test('a connected organization syncs when due', function () {
     $now                         = time();
     $ledger                      = gateConnectedLedger($now - 400);
     $ledger->customers['cust-1'] = [
@@ -132,11 +128,10 @@ test('a connected organization still syncs when due even if sync enabled is stor
         'next_attempt_at' => null,
     ];
     $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companySync('company-uuid')] = ['enabled' => false, 'interval_minutes' => 5];
+    $store->rows[SettingsKeys::companySync('company-uuid')] = ['interval_minutes' => 5];
     [$runner, $client]                                      = gateRunnerWith($ledger, $store);
 
-    expect($runner->hasConnection('company-uuid'))->toBeTrue()
-        ->and($runner->isScheduledDue('company-uuid', $now))->toBeTrue();
+    expect($runner->isScheduledDue('company-uuid', $now))->toBeTrue();
 
     $batch = null;
     gateDispatch(function () use ($runner, &$batch) {
@@ -184,7 +179,6 @@ test('the scheduler does not queue work when no organization is connected', func
     $ledger                                                 = new SyncLedger();
     $store                                                  = new MemorySettingsStore();
     $store->rows[SettingsKeys::companySync('company-uuid')] = [
-        'enabled'                 => true,
         'periodic_interval_hours' => 1,
     ];
     [$runner] = gateRunnerWith($ledger, $store);
@@ -201,7 +195,7 @@ test('the scheduler does not queue work when no organization is connected', func
     });
 });
 
-test('the scheduler queues a connected organization that is due when sync enabled is stored false', function () {
+test('the scheduler queues a connected organization that is due', function () {
     $now               = time();
     $ledger            = gateConnectedLedger(null);
     $ledger->pending[] = [
@@ -213,7 +207,7 @@ test('the scheduler queues a connected organization that is due when sync enable
         'next_attempt_at' => null,
     ];
     $store                                                  = new MemorySettingsStore();
-    $store->rows[SettingsKeys::companySync('company-uuid')] = ['enabled' => false, 'interval_minutes' => 5];
+    $store->rows[SettingsKeys::companySync('company-uuid')] = ['interval_minutes' => 5];
     [$runner]                                               = gateRunnerWith($ledger, $store);
 
     gateDispatch(function ($dispatcher) use ($runner, $now) {

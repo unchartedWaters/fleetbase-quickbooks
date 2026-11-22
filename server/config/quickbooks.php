@@ -25,7 +25,6 @@ return [
         'stale_replay_seconds' => 604800,
     ],
     'sync'          => [
-        'enabled'                 => true,
         'interval_minutes'        => 5,
         'periodic_interval_hours' => 24,
         'batch_size'              => 100,

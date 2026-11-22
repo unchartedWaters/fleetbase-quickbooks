@@ -628,6 +628,9 @@ test('a duplicate pending insert does not discard a later new row', function () 
             $table->char('local_uuid', 36);
             $table->string('reason')->nullable();
             $table->string('status');
+            $table->timestamp('claimed_until')->nullable();
+            $table->string('claimed_by', 64)->nullable();
+            $table->unsignedTinyInteger('priority')->default(0);
             $table->unsignedInteger('attempts');
             $table->timestamp('next_attempt_at')->nullable();
             $table->timestamps();
@@ -665,22 +668,21 @@ SQL);
     }
 })->skip(in_array('sqlite', PDO::getAvailableDrivers(), true) === false, 'PDO SQLite is unavailable.');
 
-test('apply does not call Intuit and the webhook url is the computed receiver url', function () {
+test('apply does not call Intuit and the receiver url is computed', function () {
     config()->set('app.url', 'https://api.example.test');
     Http::fake();
 
     $subscriptions = new WebhookSubscriptions();
     $subscriptions->apply('company', 'company-a');
 
-    expect(SettingController::publicReceiverUrl())->toBe('https://api.example.test/quickbooks/int/v1/webhooks')
-        ->and($subscriptions->webhookUrl('company-a'))->toBe('https://api.example.test/quickbooks/int/v1/webhooks');
+    expect(SettingController::publicReceiverUrl())->toBe('https://api.example.test/quickbooks/int/v1/webhooks');
 
     config()->set('app.url', '   ');
     config()->set('fleetbase.url', null);
     config()->set('quickbooks.console_host', null);
     config()->set('fleetbase.console.host', null);
 
-    expect($subscriptions->webhookUrl('company-a'))->toBe('/quickbooks/int/v1/webhooks');
+    expect(SettingController::publicReceiverUrl())->toBe('/quickbooks/int/v1/webhooks');
 
     Http::assertNothingSent();
 });
@@ -733,6 +735,9 @@ test('a quickbooks delete voids the invoice and retires customers and wallets wi
             $table->char('local_uuid', 36);
             $table->string('reason')->nullable();
             $table->string('status');
+            $table->timestamp('claimed_until')->nullable();
+            $table->string('claimed_by', 64)->nullable();
+            $table->unsignedTinyInteger('priority')->default(0);
             $table->unsignedInteger('attempts')->default(0);
             $table->timestamp('next_attempt_at')->nullable();
             $table->timestamps();
@@ -917,6 +922,9 @@ test('a deleted payment stored under its quickbooks id unmarks the invoice and d
             $table->string('local_type');
             $table->char('local_uuid', 36);
             $table->string('status');
+            $table->timestamp('claimed_until')->nullable();
+            $table->string('claimed_by', 64)->nullable();
+            $table->unsignedTinyInteger('priority')->default(0);
             $table->unsignedInteger('attempts')->default(0);
             $table->timestamps();
         });
@@ -1033,6 +1041,9 @@ test('a deleted or voided payment quickbooks no longer returns unmarks only the 
             $table->string('local_type');
             $table->char('local_uuid', 36);
             $table->string('status');
+            $table->timestamp('claimed_until')->nullable();
+            $table->string('claimed_by', 64)->nullable();
+            $table->unsignedTinyInteger('priority')->default(0);
             $table->unsignedInteger('attempts')->default(0);
             $table->timestamps();
         });
@@ -1152,6 +1163,9 @@ test('a payment read does not unmark an invoice that payment did not pay', funct
             $table->string('local_type');
             $table->char('local_uuid', 36);
             $table->string('status');
+            $table->timestamp('claimed_until')->nullable();
+            $table->string('claimed_by', 64)->nullable();
+            $table->unsignedTinyInteger('priority')->default(0);
             $table->unsignedInteger('attempts')->default(0);
             $table->timestamps();
         });
@@ -1267,6 +1281,9 @@ test('a deleted payment unmarks every invoice it paid and leaves the others', fu
             $table->string('local_type');
             $table->char('local_uuid', 36);
             $table->string('status');
+            $table->timestamp('claimed_until')->nullable();
+            $table->string('claimed_by', 64)->nullable();
+            $table->unsignedTinyInteger('priority')->default(0);
             $table->unsignedInteger('attempts')->default(0);
             $table->timestamps();
         });
@@ -1388,6 +1405,9 @@ test('a missing payment read unmarks every stored invoice on that payment', func
             $table->string('local_type');
             $table->char('local_uuid', 36);
             $table->string('status');
+            $table->timestamp('claimed_until')->nullable();
+            $table->string('claimed_by', 64)->nullable();
+            $table->unsignedTinyInteger('priority')->default(0);
             $table->unsignedInteger('attempts')->default(0);
             $table->timestamps();
         });
@@ -1562,6 +1582,9 @@ function qboChangedUnreadPaymentDelete(string $failure): void
             $table->string('local_type');
             $table->char('local_uuid', 36);
             $table->string('status');
+            $table->timestamp('claimed_until')->nullable();
+            $table->string('claimed_by', 64)->nullable();
+            $table->unsignedTinyInteger('priority')->default(0);
             $table->unsignedInteger('attempts')->default(0);
             $table->timestamps();
         });
@@ -1730,6 +1753,9 @@ test('a delete or void webhook does not create a pending sync row', function () 
             $table->char('local_uuid', 36);
             $table->string('reason')->nullable();
             $table->string('status');
+            $table->timestamp('claimed_until')->nullable();
+            $table->string('claimed_by', 64)->nullable();
+            $table->unsignedTinyInteger('priority')->default(0);
             $table->unsignedInteger('attempts');
             $table->timestamp('next_attempt_at')->nullable();
             $table->timestamps();
@@ -2097,6 +2123,9 @@ test('a connection is not shared with another organization on the same realm', f
             $table->char('local_uuid', 36);
             $table->string('reason')->nullable();
             $table->string('status');
+            $table->timestamp('claimed_until')->nullable();
+            $table->string('claimed_by', 64)->nullable();
+            $table->unsignedTinyInteger('priority')->default(0);
             $table->unsignedInteger('attempts');
             $table->timestamp('next_attempt_at')->nullable();
             $table->timestamps();

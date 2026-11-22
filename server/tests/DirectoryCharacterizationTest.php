@@ -96,6 +96,8 @@ function dctSchema(Illuminate\Database\Schema\Builder $schema): void
         $table->unsignedInteger('attempts')->default(0);
         $table->unsignedTinyInteger('priority')->default(0);
         $table->timestamp('next_attempt_at')->nullable();
+        $table->timestamp('claimed_until')->nullable();
+        $table->string('claimed_by', 64)->nullable();
         $table->timestamps();
     });
     // Production has the same rule: one open row per record (see the open-identity migration).
@@ -488,7 +490,9 @@ test('a pending load takes rows without a next attempt first, then by uuid, up t
         dctLoadRows();
         DB::table('quickbooks_pending_syncs')->where('uuid', 'p1')->update(['next_attempt_at' => now()->subMinute()]);
 
-        $two = (new FleetbaseDirectory())->loadPending('company-uuid', 2, time());
+        $first = new FleetbaseDirectory();
+        $two   = $first->loadPending('company-uuid', 2, time());
+        $first->releaseClaims();
         $one = (new FleetbaseDirectory())->loadPending('company-uuid', 0, time());
 
         expect(dctPendingUuids($two['ledger']->pending))->toBe(['p2', 'p3'])

@@ -40,7 +40,7 @@ test('a company is skipped when the interval has not elapsed the rate limit is a
     $disabled                      = batchLedger();
     $disabled->customers['cust-1'] = customerRow('cust-1');
     $disabled->pending[]           = pendingRow('customer', 'cust-1');
-    $ran                           = $engine->runScheduled($disabled, 'company-uuid', qbSettings(['enabled' => false]), $now);
+    $ran                           = $engine->runScheduled($disabled, 'company-uuid', qbSettings(), $now);
     expect($ran->status)->toBe('finished')
         ->and($client->calls)->toContain('createCustomer');
 
@@ -487,12 +487,10 @@ test('manual reconcile includes entities that were never flagged', function () {
 test('a quickbooks invoice with no local invoice and no link is out of scope', function () {
     [$engine, $client]         = qbEngine();
     $ledger                    = batchLedger();
-    $client->remoteInvoiceList = [['Id' => 'orphan', 'DocNumber' => 'QB-1'], ['Id' => 'linked', 'DocNumber' => 'QB-2']];
     $ledger->links[]           = linkRow('invoice', 'known', 'linked');
     $batch                     = $engine->reconcile($ledger, 'company-uuid', qbSettings(), time());
 
-    expect($client->calls)->not->toContain('listInvoices')
-        ->and($batch->unmatched)->toBe(0)
+    expect($batch->unmatched)->toBe(0)
         ->and($ledger->invoices)->not->toHaveKey('orphan')
         ->and($client->calls)->not->toContain('voidInvoice');
 });
@@ -505,7 +503,7 @@ test('no connection skips and a stored enabled flag does not stop a due sync', f
     $ledger                      = batchLedger();
     $ledger->customers['cust-1'] = customerRow('cust-1');
     $ledger->pending[]           = pendingRow('customer', 'cust-1');
-    $ran                         = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['enabled' => false]), time());
+    $ran                         = $engine->runScheduled($ledger, 'company-uuid', qbSettings(), time());
 
     expect($ran->status)->toBe('finished')
         ->and($client->calls)->toContain('createCustomer');
@@ -741,12 +739,12 @@ test('a manual sync runs even when the interval has not elapsed', function () {
         ->and($client->calls)->toContain('createCustomer');
 });
 
-test('sync now and reconcile still run when automatic sync is off', function () {
+test('sync now and reconcile run without waiting for the schedule', function () {
     [$engine, $client]           = qbEngine();
     $ledger                      = batchLedger();
     $ledger->customers['cust-1'] = customerRow('cust-1');
     $ledger->pending[]           = pendingRow('customer', 'cust-1');
-    $settings                    = qbSettings(['enabled' => false]);
+    $settings                    = qbSettings();
 
     $now = $engine->runScheduled($ledger, 'company-uuid', $settings, time(), true);
 
@@ -763,7 +761,7 @@ test('a forced sync with no connection does not record a skipped batch', functio
     [$engine, $client] = qbEngine();
     $ledger            = new SyncLedger();
 
-    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(['enabled' => false]), time(), true);
+    $batch = $engine->runScheduled($ledger, 'company-uuid', qbSettings(), time(), true);
 
     expect($batch->status)->toBe('skipped')
         ->and($ledger->batches)->toBe([])

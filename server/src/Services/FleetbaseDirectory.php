@@ -111,12 +111,6 @@ class FleetbaseDirectory
     /** How long a company without a connection is remembered by flag(). */
     public const UNTRACKED_SECONDS = 30;
 
-    /** @var \WeakMap<object, bool>|null */
-    private static ?\WeakMap $claimSupport = null;
-
-    /** @var \WeakMap<object, bool>|null */
-    private static ?\WeakMap $prioritySupport = null;
-
     /**
      * Companies flag() found without a connection, mapped to the time the answer expires.
      *
@@ -664,9 +658,7 @@ class FleetbaseDirectory
             ->whereIn('local_uuid', $invoiceUuids);
         (clone $invoices)->where('status', 'failed')->delete();
         $waiting = (clone $invoices)->where('status', 'pending')->whereNotNull('next_attempt_at');
-        if ($this->claimsSupported() === true) {
-            $waiting->whereNull('claimed_by');
-        }
+        $waiting->whereNull('claimed_by');
         $waiting->update(['attempts' => 0, 'next_attempt_at' => null, 'updated_at' => now()]);
     }
 
@@ -978,13 +970,7 @@ class FleetbaseDirectory
             $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', $moment);
         });
         // Edits first, then the reconcile and catalog backlog; each by due time, then uuid.
-        if ($this->prioritySupported() === true) {
-            $pendingQuery->orderBy('priority');
-        }
-        $pendingQuery->orderBy('next_attempt_at')->orderBy('uuid')->limit($pendingLimit);
-        if ($this->claimsSupported() === false) {
-            return $pendingQuery->get();
-        }
+        $pendingQuery->orderBy('priority')->orderBy('next_attempt_at')->orderBy('uuid')->limit($pendingLimit);
         $this->excludeClaimed($pendingQuery, $moment);
 
         return $this->claimPending($pendingQuery->get(), $now ?? time());

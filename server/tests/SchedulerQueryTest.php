@@ -64,6 +64,9 @@ test('the schedule reads each connection once per tick', function () {
         $table->string('local_type');
         $table->char('local_uuid', 36);
         $table->string('status')->default('pending');
+        $table->timestamp('claimed_until')->nullable();
+        $table->string('claimed_by', 64)->nullable();
+        $table->unsignedTinyInteger('priority')->default(0);
         $table->timestamp('next_attempt_at')->nullable();
         $table->timestamps();
     });

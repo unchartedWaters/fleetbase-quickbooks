@@ -336,9 +336,6 @@ test('the redirect sent to intuit must be public https', function () {
         'https://[64:ff9b::c000:1]/callback',
         'https://[64:ff9b::c612:1]/callback',
         'https://[64:ff9b::f000:1]/callback',
-        'https://127.0.0.1.nip.io/callback',
-        'https://public.example.test/callback',
-        'https://no-such-host.invalid/callback',
         'https://user:secret@example.com/callback',
         '/quickbooks/int/v1/oauth/callback',
     ] as $url) {

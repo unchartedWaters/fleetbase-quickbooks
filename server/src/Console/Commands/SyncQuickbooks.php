@@ -33,7 +33,7 @@ class SyncQuickbooks extends Command
         $queued    = 0;
         $now       = time();
         $companies = $this->connectedCompanies();
-        // Connection is the gate. A stored sync.enabled flag is not read.
+        // Connection is the gate.
         // Saved credentials are not read. Stop before any log, defer, or queue.
         if ($companies === []) {
             return self::SUCCESS;
@@ -67,7 +67,6 @@ class SyncQuickbooks extends Command
 
     /**
      * Organizations with a QuickBooks company id that can be synced.
-     * sync.enabled is not read.
      *
      * @return array<int, string>
      */

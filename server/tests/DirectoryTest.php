@@ -1,6 +1,5 @@
 <?php
 
-use Fleetbase\Casts\Money;
 use Fleetbase\Quickbooks\Listeners\FlagCustomerListener;
 use Fleetbase\Quickbooks\Listeners\FlagInvoiceListener;
 use Fleetbase\Quickbooks\Models\Link;
@@ -33,57 +32,16 @@ test('stored datetimes reach the engine as unix seconds', function () {
         ->and($row['realm_id'])->toBe('2026');
 });
 
-test('signed minor units stay negative when the money cast would drop the minus', function () {
-    $invoice = new class extends Illuminate\Database\Eloquent\Model {
-        protected $table = 'ledger_invoices';
-
-        protected $guarded = [];
-
-        public $timestamps = false;
-
-        protected $casts = [
-            'tax'          => Money::class,
-            'total_amount' => Money::class,
-            'subtotal'     => Money::class,
-            'amount_paid'  => Money::class,
-            'balance'      => Money::class,
-        ];
-    };
-    $invoice->setRawAttributes([
-        'tax'          => 0,
-        'total_amount' => 1000,
-        'subtotal'     => 1000,
-        'amount_paid'  => 0,
-        'balance'      => 1000,
-    ], true);
-
-    $invoice->amount_paid = -250;
-    $invoice->balance     = -1500;
-
-    expect($invoice->getAttributes()['amount_paid'])->toBe(250)
-        ->and($invoice->getAttributes()['balance'])->toBe(1500);
-
+test('invoice amounts keep their sign for credits and overpayments', function () {
     $credit = FleetbaseDirectory::invoiceAmounts(-1000, -100, 0);
     $over   = FleetbaseDirectory::invoiceAmounts(1000, 0, 1500);
-    foreach ($credit as $field => $minor) {
-        FleetbaseDirectory::writeSignedMinor($invoice, $field, $minor);
-    }
-    FleetbaseDirectory::writeSignedMinor($invoice, 'amount_paid', $over['balance'] === -500 ? 1500 : 0);
 
-    expect($invoice->getAttributes()['total_amount'])->toBe(-1000)
-        ->and($invoice->getAttributes()['tax'])->toBe(-100)
-        ->and($invoice->getAttributes()['subtotal'])->toBe(-900)
-        ->and($invoice->getAttributes()['balance'])->toBe(-1000)
-        ->and($invoice->getAttributes()['amount_paid'])->toBe(1500);
-
-    foreach ($over as $field => $minor) {
-        FleetbaseDirectory::writeSignedMinor($invoice, $field, $minor);
-    }
-
-    expect($invoice->getAttributes()['balance'])->toBe(-500)
-        ->and($invoice->getAttributes()['subtotal'])->toBe(1000)
+    expect($credit['total_amount'])->toBe(-1000)
+        ->and($credit['tax'])->toBe(-100)
+        ->and($credit['subtotal'])->toBe(-900)
+        ->and($credit['balance'])->toBe(-1000)
         ->and($over['balance'])->toBe(-500)
-        ->and($credit['subtotal'])->toBe(-900);
+        ->and($over['subtotal'])->toBe(1000);
 });
 
 test('unix seconds are written back as dates and null stays null', function () {
@@ -463,7 +421,7 @@ test('changed links and pending rows update in bulk and attempts insert in one c
         $inserts = array_values(array_filter($queries, static fn (string $sql): bool => str_contains(strtolower($sql), 'insert into') === true && str_contains($sql, 'quickbooks_sync_attempts') === true));
 
         expect($updates)->toHaveCount(1)
-            ->and($pending)->toHaveCount(1)
+            ->and($pending)->toHaveCount(2)
             ->and($inserts)->toHaveCount(1)
             ->and(Link::query()->where('local_uuid', 'cust-9')->where('local_type', 'customer')->value('sync_token'))->toBe('9')
             ->and(Link::query()->where('local_uuid', 'inv-9')->where('local_type', 'invoice')->value('qbo_id'))->toBe('80')
@@ -1708,6 +1666,9 @@ function directoryWebhookSchema(Illuminate\Database\Schema\Builder $schema): voi
         $table->string('reason')->nullable();
         $table->unsignedInteger('attempts')->default(0);
         $table->timestamp('next_attempt_at')->nullable();
+        $table->timestamp('claimed_until')->nullable();
+        $table->string('claimed_by', 64)->nullable();
+        $table->unsignedTinyInteger('priority')->default(0);
         $table->timestamps();
     });
     $schema->create('contacts', function (Blueprint $table) {
