@@ -15,6 +15,7 @@ use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
+use Fleetbase\Quickbooks\Tests\Support\PersistingController;
 use Fleetbase\TestSupport\LoggerManager;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Client\ConnectionException;
@@ -413,21 +414,14 @@ test('connecting a different company revokes the old token, and the same company
             revokeSeed(false);
             Http::swap(new Illuminate\Http\Client\Factory());
             Http::fake(['developer.api.intuit.com/*' => Http::response('', 200)]);
-            $arguments  = [
+            $controller = new PersistingController(
                 new Authorizer(static fn () => true),
                 new OAuthFlow(new QuickBooksClient()),
                 new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
                 revokeStore(),
                 new ConnectionProbe(new QuickBooksClient()),
-                new QuickBooksClient(),
-            ];
-            $controller = new class(...$arguments) extends ConnectionController {
-                /** @param array<string, mixed> $connection */
-                public function save(array $connection): void
-                {
-                    $this->persist($connection);
-                }
-            };
+                new QuickBooksClient()
+            );
 
             $controller->save([
                 'company_uuid'  => 'company-uuid',
@@ -438,8 +432,9 @@ test('connecting a different company revokes the old token, and the same company
             ]);
 
             $recorded = Http::recorded();
+            $realms   = Connection::query()->where('company_uuid', 'company-uuid')->pluck('realm_id')->all();
             expect($recorded)->toHaveCount($revokes)
-                ->and(Connection::query()->where('company_uuid', 'company-uuid')->pluck('realm_id')->all())->toBe([$newRealm]);
+                ->and($realms)->toBe([$newRealm]);
             if ($revokes === 1) {
                 expect($recorded[0][0]->data())->toBe(['token' => 'refresh-token-one']);
             }
