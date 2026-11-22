@@ -28,6 +28,10 @@ quickbooks:
     disconnect-confirm-title: Disconnect QuickBooks?
     disconnect-confirm: This removes the saved QuickBooks connection. Syncing stops until you connect again.
     connect: Connect to QuickBooks
+    change-company: Connect a different company
+    change-company-confirm-title: Connect a different QuickBooks company?
+    change-company-confirm: You choose the company on the Intuit sign-in page, and the current connection stays in place until you finish there. If the company you pick is not the one connected now, you are first asked what happens to the data already linked.
+    company-hint: You choose which QuickBooks company to connect on the Intuit sign-in page.
     disconnected-toast: QuickBooks disconnected.
     connected-toast: Connected to QuickBooks.
     connect-failed: Unable to start QuickBooks connection.
@@ -224,6 +228,7 @@ quickbooks:
     reauth: QuickBooks needs to be connected again. Choose Connect to QuickBooks on QuickBooks Setup.
     import-reauth: QuickBooks needs to be connected again before import can continue. Choose Connect to QuickBooks on QuickBooks Setup.
     oauth-other-user: This QuickBooks authorization was started by a different user or organization. Connect again from QuickBooks Setup.
+    reset-code-rejected: The code did not match. Use the code shown in the dialog.
     oauth-change-company: Only a QuickBooks Administrator can connect this organization to a new or different QuickBooks company. You can connect again to the QuickBooks company it already uses.
     oauth-connect-failed: QuickBooks could not finish connecting. Connect again from QuickBooks Setup.
     oauth-invalid-link: This QuickBooks authorization link is not valid. Connect again from QuickBooks Setup.
@@ -312,3 +317,22 @@ quickbooks:
     wallet-currency-mismatch: "Wallet currency {currency} does not match the QuickBooks home currency {home}."
     invoice-currency-mismatch: "Invoice currency {currency} does not match the QuickBooks home currency {home}."
     invoice-customer-currency: 'Invoice currency {currency} does not match the currency of QuickBooks customer "{name}" ({customer_currency}). QuickBooks needs a separate customer for each currency.'
+  choice:
+    title-switch: Connect a different QuickBooks company
+    title-disconnect: Disconnect from QuickBooks
+    intro-switch: The company you picked is not the one the existing links belong to. Nothing has changed yet. Choose what happens to that data first.
+    intro-disconnect: Choose what happens to this organization's QuickBooks data.
+    linked: "Linked to QuickBooks: {customers, plural, one {# customer} other {# customers}}, {invoices, plural, one {# invoice} other {# invoices}}, {wallets, plural, one {# wallet} other {# wallets}} and {products, plural, one {# product} other {# products}}."
+    keep: Keep the data
+    keep-detail: The links stay, so connecting the same company again picks them up.
+    sync: Clear the sync data
+    sync-detail: Removes the links, queued work and Activity history. Fleetbase records and sync settings stay.
+    settings: Clear the sync data and settings
+    settings-detail: Also resets this organization's QuickBooks sync settings to the global defaults.
+    everything: Clear everything, including imported customers
+    everything-detail: "Also deletes the {imported, plural, one {# Fleetbase customer} other {# Fleetbase customers}} that were imported from QuickBooks{kept, plural, =0 {} one { (# more is kept because an order or invoice refers to it)} other { (# more are kept because an order or invoice refers to them)}}. This cannot be undone."
+    type-code: "To confirm, type the code"
+    code-rejected: The code did not match. A new code is shown.
+    confirm-switch: Connect this company
+    confirm-disconnect: Disconnect
+    cancel: Cancel

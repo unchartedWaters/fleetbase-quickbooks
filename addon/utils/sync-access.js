@@ -3,6 +3,8 @@ export const VIEW_SYNC_PERMISSION = 'quickbooks view sync';
 // Sync now and reconcile share this permission. QuickBooks Operator grants it.
 export const SYNC_NOW_PERMISSION = 'quickbooks reconcile sync';
 export const CONNECT_PERMISSION = 'quickbooks connect connection';
+// Connecting a new or different QuickBooks company. QuickBooks Administrator grants it.
+export const CHANGE_COMPANY_PERMISSION = 'quickbooks change-company connection';
 export const DISCONNECT_PERMISSION = 'quickbooks disconnect connection';
 
 function allows(abilities, permission) {
@@ -23,4 +25,8 @@ export function canConnect(abilities) {
 
 export function canDisconnect(abilities) {
     return allows(abilities, DISCONNECT_PERMISSION);
+}
+
+export function canChangeCompany(abilities) {
+    return allows(abilities, CHANGE_COMPANY_PERMISSION);
 }

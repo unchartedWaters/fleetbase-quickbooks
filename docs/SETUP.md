@@ -525,6 +525,54 @@ connected it offers **Sync now** and **Disconnect**. When QuickBooks must be
 connected again it offers **Connect to QuickBooks** and **Disconnect**. An
 action the user lacks permission for stays visible but disabled.
 
+An administrator (`quickbooks change-company connection`) also gets **Connect
+a different company** while connected; nobody else sees it. It asks to
+confirm, then opens the Intuit sign-in page, where the company is chosen (a
+note beside the buttons says so). The current connection stays until that
+sign-in finishes, so cancelling at Intuit changes nothing.
+
+Records linked to QuickBooks belong to the company they were linked in, so a
+change of company needs an answer before anything is exchanged or saved.
+Sandbox and production are different QuickBooks companies, so moving between
+them is a change of company too. Disconnect asks the same question whenever
+records are linked. The administrator chooses what happens to this
+organization's QuickBooks data:
+
+- **Keep** (Disconnect only): nothing is removed, and reconnecting to the same
+  company picks the links up again.
+- **Sync data**: removes the links, queued work and Activity history.
+- **Sync data and settings**: also resets the organization's sync settings
+  to the global defaults.
+- **Everything, including customers imported from QuickBooks**: also
+  deletes the Fleetbase customers (and the billing places made for them) that
+  a QuickBooks import created. A customer that an order (`orders`) or a
+  Ledger invoice (`ledger_invoices`) refers to is kept, and the question says
+  how many. Other Fleetbase records are never touched, and the deletes are
+  not sent to QuickBooks.
+
+The answer is confirmed by typing a random six-character code that the
+console shows (`POST /quickbooks/int/v1/reset-code`). The code is issued to
+that user and organization, expires after ten minutes, is case-insensitive
+and works once. `oauth/complete` answers `choice_required` with a `handle`
+and the counts of linked records, and is finished again with the handle, a
+`level` (`sync`, `settings` or `everything`) and the typed `confirm` code.
+`disconnect` takes the same `level` and `confirm`; without a `level` it keeps
+the links. A wrong code changes nothing. The handle lives in the open page, so
+reloading it drops the question: connect again, and nothing has changed.
+
+Clearing runs in one database transaction, so a failure leaves everything as
+it was. It also needs the organization's sync lock: while a sync is running,
+`oauth/complete` and `disconnect` answer HTTP 409 and change nothing, and the
+code is still good for the retry.
+
+Customers created by an import carry a marker in their `meta`
+(`quickbooks_import`: source, realm and QuickBooks id). The last option
+deletes only customers that have it, so customers imported before the marker
+existed are kept. The old company's data in QuickBooks itself is never
+changed. When the new company is connected, all of the organization's
+records are queued to it, and the old refresh token is revoked at Intuit
+(best effort, and skipped while another organization uses that company).
+
 ![QuickBooks Setup when connected: company, environment, home currency
 notes, Sync now, and Disconnect][setup-connected]
 
@@ -568,7 +616,13 @@ because the OAuth redirect is its QuickBooks page. An `http://` or `https://`
 prefix is kept. If the host has no prefix, the API adds `https://`. Without a
 console host, Connect answers HTTP 422 and does not open Intuit.
 
-**Disconnect** revokes the refresh token at Intuit (`developer.api.intuit.com/v2/oauth2/tokens/revoke`) on a best-effort basis, then deletes the local connection row and this organization's still-pending sync rows. A failed revoke does not block the disconnect. `quickbooks_links` rows are kept so a later reconnect restores the mappings. Disconnect does not change the Intuit app or its webhook subscription.
+**Disconnect** revokes the refresh token at Intuit
+(`developer.api.intuit.com/v2/oauth2/tokens/revoke`) on a best-effort basis,
+then deletes the local connection row and this organization's still-pending sync
+rows. A failed revoke does not block the disconnect. `quickbooks_links` rows are
+kept so a later reconnect restores the mappings, unless the administrator
+chooses to clear them (see above). Disconnect does not change the Intuit app or
+its webhook subscription.
 The revoke is skipped while another organization is connected to the same
 QuickBooks company, so that organization stays connected.
 

@@ -11,7 +11,9 @@ use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SyncSettingsResolver;
+use Fleetbase\Quickbooks\Tests\Support\DetachedController;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
+use Fleetbase\Quickbooks\Tests\Support\NoLinkedData;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Database\Schema\Blueprint;
@@ -360,7 +362,7 @@ test('a company with no connection does not receive another company connection',
     ]);
     $owner->save();
 
-    $controller = new ConnectionController(
+    $controller = new DetachedController(
         new Authorizer(static fn () => true),
         new OAuthFlow(new QuickBooksClient()),
         new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()),
@@ -492,6 +494,8 @@ test('connecting one organization leaves the other organization connection in pl
     $owner->save();
 
     $controller = new class(new Authorizer(static fn () => true), new OAuthFlow(new QuickBooksClient()), new SettingsService(new CredentialResolver(), new SyncSettingsResolver(), new SecretCipher()), new MemorySettingsStore(), new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {
+        use NoLinkedData;
+
         /**
          * @param array<string, mixed> $connection
          */

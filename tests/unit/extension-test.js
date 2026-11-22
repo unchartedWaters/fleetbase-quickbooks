@@ -198,6 +198,7 @@ module('Unit | extension', function (hooks) {
             'component:quickbooks-settings',
             'component:quickbooks-settings-fields',
             'component:quickbooks-connection',
+            'component:quickbooks-data-choice',
             'component:quickbooks-activity',
             'component:widget/quickbooks-sync',
         ]);
@@ -228,6 +229,7 @@ module('Unit | extension', function (hooks) {
             'component:quickbooks-admin-settings',
             'component:quickbooks-settings-fields',
             'component:quickbooks-connection',
+            'component:quickbooks-data-choice',
             'component:quickbooks-activity',
             'component:widget/quickbooks-sync',
         ]);
@@ -257,7 +259,7 @@ module('Unit | extension', function (hooks) {
         extension.onEngineLoaded(engine, {}, app);
 
         assert.false(registrations.includes('component:quickbooks-activity'));
-        assert.strictEqual(registrations.length, 6);
+        assert.strictEqual(registrations.length, 7);
     });
 
     test('setupExtension still registers the menus when no widget service is available', function (assert) {

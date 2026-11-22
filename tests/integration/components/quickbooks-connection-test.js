@@ -1,6 +1,6 @@
 import { module, test } from 'qunit';
 import { setupRenderingTest } from 'dummy/tests/helpers';
-import { click, render } from '@ember/test-helpers';
+import { click, fillIn, render } from '@ember/test-helpers';
 import { hbs } from 'ember-cli-htmlbars';
 import Service from '@ember/service';
 import ModalsManagerStub from '../../helpers/modals-manager-stub';
@@ -53,6 +53,90 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-disconnect]').isNotDisabled();
         assert.dom('[data-test-disconnect-denied]').doesNotExist();
         assert.dom('[data-test-reauth]').doesNotIncludeText('You do not have permission');
+    });
+
+    test('only an administrator can connect a different company, after a confirmation', async function (assert) {
+        let permissions = ['quickbooks connect connection', 'quickbooks change-company connection'];
+        class AbilitiesStubService extends Service {
+            can(permission) {
+                return permissions.includes(permission);
+            }
+        }
+
+        this.owner.register('service:abilities', AbilitiesStubService);
+        this.set('connection', { realm_id: '123', environment: 'sandbox' });
+        this.set('connects', 0);
+        this.set('onConnect', () => this.set('connects', this.connects + 1));
+
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @onConnect={{this.onConnect}} />`);
+        assert.dom('[data-test-change-company]').isNotDisabled();
+        assert.dom('[data-test-company-hint]').hasText('You choose which QuickBooks company to connect on the Intuit sign-in page.');
+        assert.dom('[data-test-connect]').doesNotExist();
+
+        await click('[data-test-change-company]');
+        assert.strictEqual(this.connects, 1, 'the sign-in starts once it is confirmed');
+
+        permissions = ['quickbooks connect connection'];
+        this.set('connection', { realm_id: '456', environment: 'sandbox' });
+        assert.dom('[data-test-change-company]').doesNotExist('an operator does not get the button');
+        assert.dom('[data-test-company-hint]').doesNotExist();
+    });
+
+    test('disconnect with linked records asks an administrator what happens to them', async function (assert) {
+        class AdministratorAbilitiesStubService extends Service {
+            can() {
+                return true;
+            }
+        }
+
+        this.owner.register('service:abilities', AdministratorAbilitiesStubService);
+        this.set('connection', { realm_id: '123', environment: 'sandbox' });
+        this.set('linked', { customers: 2, invoices: 4, wallets: 0, products: 1, total: 7, imported: 1 });
+        this.set('disconnects', []);
+        this.set('onRequestCode', async () => ({ code: 'ABC234', linked: this.linked }));
+        this.set('onDisconnect', async (options) => this.disconnects.push(options));
+
+        await render(
+            hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @linked={{this.linked}} @onRequestCode={{this.onRequestCode}} @onDisconnect={{this.onDisconnect}} />`
+        );
+        await click('[data-test-disconnect]');
+        assert.dom('[data-test-data-choice="disconnect"]').exists('the question replaces the buttons');
+        assert.dom('[data-test-connection-actions]').doesNotExist();
+        assert.dom('[data-test-choice-code]').doesNotExist('keeping the data needs no code');
+
+        await click('[data-test-choice-option="sync"]');
+        assert.dom('[data-test-choice-code]').hasText('ABC234');
+        await fillIn('[data-test-choice-input]', 'ABC234');
+        await click('[data-test-choice-confirm]');
+        assert.deepEqual(this.disconnects, [{ level: 'sync', confirm: 'ABC234' }]);
+        assert.dom('[data-test-data-choice]').doesNotExist('answered');
+    });
+
+    test('a different company from Intuit shows the switch question before anything changes', async function (assert) {
+        class AdministratorAbilitiesStubService extends Service {
+            can() {
+                return true;
+            }
+        }
+
+        this.owner.register('service:abilities', AdministratorAbilitiesStubService);
+        this.set('connection', { realm_id: '123', environment: 'sandbox' });
+        this.set('choice', { handle: 'h1', code: 'ZZ9999', linked: { customers: 1, invoices: 2, wallets: 3, products: 4, total: 10, imported: 0 } });
+        this.set('answers', []);
+        this.set('onChoose', (level, code) => this.answers.push([level, code]));
+        this.set('cancelled', false);
+        this.set('onCancelChoice', () => this.set('cancelled', true));
+
+        await render(
+            hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} @configured={{true}} @choice={{this.choice}} @onChoose={{this.onChoose}} @onCancelChoice={{this.onCancelChoice}} />`
+        );
+        assert.dom('[data-test-data-choice="switch"]').exists();
+        assert.dom('[data-test-choice-option="keep"]').doesNotExist();
+        await fillIn('[data-test-choice-input]', 'ZZ9999');
+        await click('[data-test-choice-confirm]');
+        assert.deepEqual(this.answers, [['sync', 'ZZ9999']]);
+        await click('[data-test-choice-cancel]');
+        assert.true(this.cancelled);
     });
 
     test('sync now stays off without the operator permission', async function (assert) {

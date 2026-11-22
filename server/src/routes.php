@@ -27,6 +27,7 @@ Route::prefix($prefix)->group(function ($router) use ($internalPrefix) {
             $router->post('oauth/start', [ConnectionController::class, 'start']);
             $router->post('oauth/complete', [ConnectionController::class, 'complete']);
             $router->post('disconnect', [ConnectionController::class, 'disconnect']);
+            $router->post('reset-code', [ConnectionController::class, 'resetCode']);
             $router->post('import', [ConnectionController::class, 'import']);
             $router->post('reconcile', [ConnectionController::class, 'reconcile']);
             $router->post('sync', [ConnectionController::class, 'sync']);

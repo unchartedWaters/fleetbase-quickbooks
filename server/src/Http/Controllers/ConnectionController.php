@@ -10,6 +10,8 @@ use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
+use Fleetbase\Quickbooks\Services\BatchRunner;
+use Fleetbase\Quickbooks\Services\CompanyReset;
 use Fleetbase\Quickbooks\Services\ConnectionProbe;
 use Fleetbase\Quickbooks\Services\ConnectionTokens;
 use Fleetbase\Quickbooks\Services\FleetbaseDirectory;
@@ -27,6 +29,7 @@ use Fleetbase\Quickbooks\Support\ConsoleHost;
 use Fleetbase\Quickbooks\Support\PublicHttps;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
+use Fleetbase\Quickbooks\Support\SwitchChoiceRequired;
 use Fleetbase\Quickbooks\Support\Translation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -56,6 +59,7 @@ class ConnectionController extends QuickbooksController
         return response()->json([
             'connection'      => $connection instanceof Connection === true ? $this->forBrowser($connection) : null,
             'can_connect_new' => $this->mayConnectFirst($request, $companyUuid),
+            'linked'          => $this->reset()->linkCounts($companyUuid),
         ]);
     }
 
@@ -264,16 +268,45 @@ class ConnectionController extends QuickbooksController
             return response()->json(['connected' => false]);
         }
 
-        try {
-            $connection = $this->oauth->finish(
-                $state,
-                (string) $request->input('code'),
-                (string) $request->input('realmId'),
+        // Clearing data waits for no sync to be running, and takes the answer's code only once it may go ahead.
+        if (CompanyReset::isLevel((string) $request->input('level')) === true) {
+            return $this->whileSyncIdle(
                 $companyUuid,
-                $userUuid,
-                $this->credentials($companyUuid),
-                fn (string $realmId): bool => $this->mayConnectRealm($request, $companyUuid, $realmId)
+                fn (): JsonResponse => $this->finishConnection($request, $companyUuid, $userUuid)
             );
+        }
+
+        return $this->finishConnection($request, $companyUuid, $userUuid);
+    }
+
+    /**
+     * Run $work while no sync of this organization is running and none can start, so a running sync cannot write
+     * links after they were cleared. Answers 409 when a sync is running. Nothing has changed yet then, and the
+     * answer's code is still good.
+     *
+     * @param \Closure(): JsonResponse $work
+     */
+    private function whileSyncIdle(string $companyUuid, \Closure $work): JsonResponse
+    {
+        $lock = BatchRunner::lock($companyUuid);
+        if ($lock !== null && $lock->get() === false) {
+            return response()->json(['message' => Translation::get('quickbooks.messages.sync-running')], 409);
+        }
+
+        try {
+            return $work();
+        } finally {
+            $lock?->release();
+        }
+    }
+
+    private function finishConnection(Request $request, string $companyUuid, string $userUuid): JsonResponse
+    {
+        $level = $this->chosenLevel($request, $companyUuid);
+        try {
+            $connection = $this->finishOAuth($request, $companyUuid, $userUuid, $level);
+        } catch (SwitchChoiceRequired $required) {
+            return $this->choiceRequired($request, $companyUuid, $userUuid, $required->handle);
         } catch (QuickBooksException $exception) {
             $this->releaseCooldown($companyUuid, 'start');
             $status = $exception->getMessage() === OAuthFlow::CHANGE_COMPANY_MESSAGE ? 403 : 422;
@@ -294,6 +327,10 @@ class ConnectionController extends QuickbooksController
             return response()->json(['connected' => true]);
         }
 
+        if ($level !== null && $this->leavesLinksBehind($companyUuid, (string) $connection['realm_id']) === true) {
+            // The confirmed answer for records that belong to the company being left.
+            $this->reset()->clear($companyUuid, $level, true);
+        }
         $this->persist($connection);
         // The webhook endpoint is set in the Intuit developer portal. This does not call Intuit.
         app(WebhookSubscriptions::class)->apply('admin', $companyUuid);
@@ -308,15 +345,70 @@ class ConnectionController extends QuickbooksController
         return response()->json(['connected' => true]);
     }
 
+    /**
+     * Nothing was exchanged or changed. The user answers with the handle, a level and the code shown here.
+     */
+    private function choiceRequired(
+        Request $request,
+        string $companyUuid,
+        string $userUuid,
+        string $handle,
+    ): JsonResponse {
+        return response()->json([
+            'connected'       => false,
+            'choice_required' => true,
+            'handle'          => $handle,
+            'code'            => $this->reset()->issueCode($companyUuid, $userUuid),
+            'code_rejected'   => $request->filled('level'),
+            'linked'          => $this->reset()->linkCounts($companyUuid, true),
+        ]);
+    }
+
+    /**
+     * A random code to type before data is cleared, for a signed-in user who may change the company.
+     */
+    public function resetCode(Request $request): JsonResponse
+    {
+        $this->authorizeQuickbooks('quickbooks change-company connection', $request);
+
+        return response()->json([
+            'code'   => $this->reset()->issueCode($this->companyUuid($request), (string) session('user', '')),
+            'linked' => $this->reset()->linkCounts($this->companyUuid($request), true),
+        ]);
+    }
+
+    /**
+     * Disconnect, keeping the links by default so a reconnect to the same company picks them up. With `level`
+     * and the typed `confirm` code the organization's QuickBooks data is cleared too (CompanyReset).
+     */
     public function disconnect(Request $request): JsonResponse
     {
         $this->authorizeQuickbooks('quickbooks disconnect connection', $request);
         $companyUuid = $this->companyUuid($request);
+        if ((string) $request->input('level', CompanyReset::KEEP) === CompanyReset::KEEP) {
+            return $this->disconnectCompany($request, $companyUuid);
+        }
+
+        return $this->whileSyncIdle(
+            $companyUuid,
+            fn (): JsonResponse => $this->disconnectCompany($request, $companyUuid)
+        );
+    }
+
+    private function disconnectCompany(Request $request, string $companyUuid): JsonResponse
+    {
+        $level = (string) $request->input('level', CompanyReset::KEEP);
+        if ($level !== CompanyReset::KEEP && $this->chosenLevel($request, $companyUuid) === null) {
+            return response()->json(['message' => Translation::get('quickbooks.messages.reset-code-rejected')], 422);
+        }
         // Intuit has no webhook unsubscribe API. The refresh token is revoked first, best effort,
-        // then this organization's connection and its queued work are removed. Links stay for a reconnect.
+        // then this organization's connection and its queued work are removed.
         $this->revokeAtIntuit($companyUuid);
         Connection::query()->where('company_uuid', $companyUuid)->delete();
         PendingSync::query()->where('company_uuid', $companyUuid)->where('status', 'pending')->delete();
+        if ($level !== CompanyReset::KEEP) {
+            $this->reset()->clear($companyUuid, $level, false);
+        }
 
         return response()->json(['disconnected' => true]);
     }
@@ -406,7 +498,7 @@ class ConnectionController extends QuickbooksController
 
     /**
      * Ask Intuit to revoke this organization's refresh tokens. A failure or timeout is logged
-     * without any token and never stops the disconnect.
+     * without any token and never stops the disconnect or the switch to another company.
      */
     private function revokeAtIntuit(string $companyUuid): void
     {
@@ -499,14 +591,74 @@ class ConnectionController extends QuickbooksController
      * to it, so that needs `quickbooks change-company connection` (QuickBooks Administrator).
      * Anyone who may connect may reconnect the company the organization already uses.
      */
-    private function mayConnectRealm(Request $request, string $companyUuid, string $realmId): bool
+    private function mayConnectRealm(Request $request, string $companyUuid, string $realmId, ?string $level): bool
     {
         if ($this->authorizer->can('quickbooks change-company connection', $request) === true) {
+            // Linked records of another company need an answer first, so nothing is exchanged yet.
+            if ($level === null && $this->leavesLinksBehind($companyUuid, $realmId) === true) {
+                throw new SwitchChoiceRequired();
+            }
+
             return true;
         }
         $lastRealm = $this->lastRealm($companyUuid);
 
         return $lastRealm !== null && $lastRealm === $realmId;
+    }
+
+    /**
+     * Whether connecting $realmId would leave the organization's links pointing at another QuickBooks company.
+     * Sandbox and production are different companies, so a change of environment is a change of company too.
+     */
+    protected function leavesLinksBehind(string $companyUuid, string $realmId): bool
+    {
+        return $this->reset()->linksOutsideRealm($companyUuid, $realmId) > 0;
+    }
+
+    /**
+     * The level the user chose, when they may change the company and typed the code shown to them.
+     */
+    private function chosenLevel(Request $request, string $companyUuid): ?string
+    {
+        $level     = (string) $request->input('level');
+        $mayChange = $this->authorizer->can('quickbooks change-company connection', $request);
+        if (CompanyReset::isLevel($level) === false || $mayChange === false) {
+            return null;
+        }
+        $typed = (string) $request->input('confirm');
+
+        return $this->reset()->consumeCode($companyUuid, (string) session('user', ''), $typed) === true ? $level : null;
+    }
+
+    /**
+     * Finish the authorization, either from Intuit's redirect (state, code, realmId) or from the user's answer
+     * to a switch question (handle).
+     *
+     * @return array<string, mixed>|null
+     */
+    private function finishOAuth(Request $request, string $companyUuid, string $userUuid, ?string $level): ?array
+    {
+        $allowed     = fn (string $realmId): bool => $this->mayConnectRealm($request, $companyUuid, $realmId, $level);
+        $credentials = $this->credentials($companyUuid);
+        $handle      = (string) $request->input('handle');
+        if ($handle !== '') {
+            return $this->oauth->complete($handle, $companyUuid, $userUuid, $credentials, $allowed);
+        }
+
+        return $this->oauth->finish(
+            (string) $request->input('state'),
+            (string) $request->input('code'),
+            (string) $request->input('realmId'),
+            $companyUuid,
+            $userUuid,
+            $credentials,
+            $allowed
+        );
+    }
+
+    protected function reset(): CompanyReset
+    {
+        return new CompanyReset($this->store);
     }
 
     /**
@@ -558,6 +710,8 @@ class ConnectionController extends QuickbooksController
         $model       = $existing instanceof Connection === true ? $existing : new Connection();
         // A different QuickBooks company starts clean. A reconnect to the same one keeps its cursor and limits.
         if ($existing instanceof Connection === true && (string) $existing->realm_id !== (string) ($connection['realm_id'] ?? '')) {
+            // The old company's token is no longer used, so end it at Intuit like Disconnect does (best effort).
+            $this->revokeAtIntuit($companyUuid);
             $model->customer_import_start = null;
             $model->rate_limited_until    = null;
             $model->last_rate_limit_wait  = null;

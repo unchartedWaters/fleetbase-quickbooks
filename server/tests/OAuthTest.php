@@ -17,10 +17,12 @@ use Fleetbase\Quickbooks\Support\CredentialResolver;
 use Fleetbase\Quickbooks\Support\QuickBooksException;
 use Fleetbase\Quickbooks\Support\SecretCipher;
 use Fleetbase\Quickbooks\Support\SettingsKeys;
+use Fleetbase\Quickbooks\Tests\Support\DetachedController;
 use Fleetbase\Quickbooks\Tests\Support\FakeQuickBooks;
 use Fleetbase\Quickbooks\Tests\Support\InstallAdminRequest;
 use Fleetbase\Quickbooks\Tests\Support\LastRealmController;
 use Fleetbase\Quickbooks\Tests\Support\MemorySettingsStore;
+use Fleetbase\Quickbooks\Tests\Support\NoLinkedData;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
 use Illuminate\Container\Container;
@@ -501,6 +503,8 @@ test('oauth complete exchanges the code with the console QuickBooks page as the 
         'environment'   => 'sandbox',
     ];
     $controller = new class(new Authorizer(static fn () => true), new OAuthFlow(new QuickBooksClient()), new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()), $store, new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {
+        use NoLinkedData;
+
         /** @var array<string, mixed> */
         public array $saved = [];
 
@@ -590,6 +594,8 @@ test('oauth complete sends the redirect uri used at start even if the console ho
     );
     $probe      = new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient());
     $controller = new class($authorizer, $flow, $settings, $store, $probe) extends ConnectionController {
+        use NoLinkedData;
+
         public bool $stored = false;
 
         protected function persist(array $connection): void
@@ -772,6 +778,8 @@ test('oauth complete skips customer import when customers are turned off', funct
     ];
     $store->rows[SettingsKeys::adminSync()] = ['customer_enabled' => false];
     $controller                             = new class(new Authorizer(static fn () => true), new OAuthFlow(new QuickBooksClient()), new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()), $store, new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {
+        use NoLinkedData;
+
         protected function persist(array $connection): void
         {
         }
@@ -1009,6 +1017,8 @@ test('only the user who started the flow can finish it, and a reload does not ex
     ]);
 
     $controller = new class(new Authorizer(static fn () => true), $flow, new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()), new MemorySettingsStore(), new Fleetbase\Quickbooks\Services\ConnectionProbe(new QuickBooksClient())) extends ConnectionController {
+        use NoLinkedData;
+
         /** @var array<string, mixed> */
         public array $saved = [];
 
@@ -1235,7 +1245,7 @@ test('a failed token exchange and an unreachable probe do not return transport t
 
     session(['company' => 'company-uuid', 'user' => 'user-uuid']);
     try {
-        $response = (new ConnectionController(
+        $response = (new DetachedController(
             new Authorizer(static fn () => true),
             $flow,
             new SettingsService(new CredentialResolver(), new Fleetbase\Quickbooks\Support\SyncSettingsResolver(), new SecretCipher()),

@@ -44,14 +44,20 @@ export default class SettingsRoute extends Route {
             return null;
         }
 
+        let model = null;
         try {
-            await this.complete({ state, code, realmId });
-            this.notifications.success(this.intl.t('quickbooks.connection.connected-toast'));
+            const result = await this.complete({ state, code, realmId });
+            if (result?.choice_required) {
+                // A different company than the linked records belong to: the page asks what to do with them first.
+                model = { choice: result };
+            } else {
+                this.notifications.success(this.intl.t('quickbooks.connection.connected-toast'));
+            }
         } catch (failure) {
             this.notifications.serverError(failure);
         }
 
-        return null;
+        return model;
     }
 
     complete(body) {

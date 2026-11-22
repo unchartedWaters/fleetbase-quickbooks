@@ -59,6 +59,26 @@
 
             {{#unless this.isLoading}}
                 {{#unless this.loadFailed}}
+                    {{#if @choice}}
+                        <QuickbooksDataChoice
+                            @mode="switch"
+                            @linked={{@choice.linked}}
+                            @code={{@choice.code}}
+                            @codeRejected={{@choice.code_rejected}}
+                            @busy={{this.busy}}
+                            @onConfirm={{@onChoose}}
+                            @onCancel={{@onCancelChoice}}
+                        />
+                    {{else if this.disconnecting}}
+                        <QuickbooksDataChoice
+                            @mode="disconnect"
+                            @linked={{this.disconnecting.linked}}
+                            @code={{this.disconnecting.code}}
+                            @busy={{this.busy}}
+                            @onConfirm={{this.chooseDisconnect}}
+                            @onCancel={{this.cancelDisconnect}}
+                        />
+                    {{else}}
                     {{! Only the actions that apply to this state are shown. }}
                     <div class="flex flex-wrap gap-2" data-test-connection-actions>
                         {{#if this.showSyncNow}}
@@ -94,6 +114,22 @@
                                 data-test-disconnect
                             />
                         {{/if}}
+                        {{#if this.showChangeCompany}}
+                            <Button
+                                @type="default"
+                                @size="sm"
+                                @icon="rotate"
+                                @text={{t "quickbooks.connection.change-company"}}
+                                @disabled={{this.changeCompanyDisabled}}
+                                @onClick={{this.changeCompany}}
+                                data-test-change-company
+                            />
+                        {{/if}}
+                        {{#if this.showCompanyHint}}
+                            <p class="basis-full text-sm text-gray-500 dark:text-gray-400" data-test-company-hint>
+                                {{t "quickbooks.connection.company-hint"}}
+                            </p>
+                        {{/if}}
                         {{#if this.credentialsMissing}}
                             <p class="text-sm text-gray-500 dark:text-gray-400" data-test-credentials-missing>
                                 {{t "quickbooks.widget.credentials-missing"}}
@@ -110,6 +146,7 @@
                             </p>
                         {{/if}}
                     </div>
+                    {{/if}}
                 {{/unless}}
             {{/unless}}
         </ContentPanel>
