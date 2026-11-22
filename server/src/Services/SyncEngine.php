@@ -1580,6 +1580,8 @@ class SyncEngine
 
     /**
      * @param array<string, mixed> $connection
+     *
+     * @SuppressWarnings("PHPMD.UnusedPrivateMethod") Called only from the Concerns traits.
      */
     private function customTxnNumbers(array $connection): bool
     {
