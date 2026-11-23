@@ -94,11 +94,11 @@
     "loader.js": "^4.7.0",
     "prettier": "^3.0.3",
     "qunit": "^2.20.0",
-    "qunit-dom": "^2.0.0",
+    "qunit-dom": "^3.6.0",
     "stylelint": "^15.11.0",
     "stylelint-config-standard": "^34.0.0",
     "stylelint-prettier": "^4.0.2",
-    "webpack": "^5.89.0"
+    "webpack": "^5.113.0"
   },
   "peerDependencies": {
     "ember-engines": "^0.9.0"
