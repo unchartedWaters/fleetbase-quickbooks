@@ -9,11 +9,17 @@ updates:
     schedule:
       interval: weekly
     # Shared with Fleetbase 0.8.1, which ships ember-resolver ^11 (13 breaks
-    # ember-can) and ember-intl 6.3.2 exactly. Update only when Fleetbase does.
+    # ember-can), ember-intl 6.3.2, ember-data 4.12, legacy-built-in-components
+    # ^0.4.2 and eslint-plugin-ember ^11. Update only when Fleetbase does.
     ignore:
       - dependency-name: ember-resolver
         update-types: ["version-update:semver-major"]
       - dependency-name: ember-intl
+      - dependency-name: ember-data
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@ember/legacy-built-in-components"
+      - dependency-name: eslint-plugin-ember
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
