@@ -8,6 +8,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Shared with Fleetbase 0.8.1, which ships ember-resolver ^11 (13 breaks
+    # ember-can) and ember-intl 6.3.2 exactly. Update only when Fleetbase does.
+    ignore:
+      - dependency-name: ember-resolver
+        update-types: ["version-update:semver-major"]
+      - dependency-name: ember-intl
   - package-ecosystem: github-actions
     directory: /
     schedule:
