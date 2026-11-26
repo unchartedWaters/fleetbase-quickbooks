@@ -19,6 +19,8 @@ use Illuminate\Support\Collection;
  * Adds a QuickBooks summary to the console's Customers and Invoices rows, in meta.quickbooks, where a
  * table column reads it: status (synced, waiting, failed, not_synced), QuickBooks ID and last sync time.
  * One query for the links and one for the queue cover the whole page.
+ *
+ * @SuppressWarnings("PHPMD.CouplingBetweenObjects") It ties Fleetbase's contracts to the plugin's tables.
  */
 class SyncColumnsTransformer implements ResourceTransformer, PreparesResourceTransformation
 {
@@ -59,6 +61,9 @@ class SyncColumnsTransformer implements ResourceTransformer, PreparesResourceTra
         $context->set(self::SUMMARIES, $summaries);
     }
 
+    /**
+     * @SuppressWarnings("PHPMD.UnusedFormalParameter") The ResourceTransformer contract fixes the signature.
+     */
     public function transform(array $data, JsonResource $resource, Request $request, ResourceTransformerContext $context): array
     {
         $model     = $resource->resource;

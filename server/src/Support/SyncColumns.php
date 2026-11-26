@@ -97,6 +97,8 @@ final class SyncColumns
 
     /**
      * The closure Expandable binds to a model row, so `$this` is that row.
+     *
+     * @SuppressWarnings("PHPMD.UndefinedVariable") Expandable rebinds the closure, so `$this` exists when it runs.
      */
     private static function relation(string $type): \Closure
     {
@@ -113,6 +115,8 @@ final class SyncColumns
     /**
      * The closure Expandable binds to a list filter, so `$this` is that filter: rows whose QuickBooks ID
      * contains the value.
+     *
+     * @SuppressWarnings("PHPMD.UndefinedVariable") Expandable rebinds the closure, so `$this` exists when it runs.
      */
     private static function idFilter(): \Closure
     {
