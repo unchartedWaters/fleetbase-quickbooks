@@ -153,7 +153,9 @@ class SyncColumnsDatabase
         return array_map(static function (object $model) use ($transformer, $request, $context): array {
             $resource = $model instanceof Invoice ? new InvoiceResource($model) : new ContactResource($model);
 
-            return $transformer->transform(['uuid' => $model->uuid, 'meta' => $model->meta ?? []], $resource, $request, $context);
+            $data = ['uuid' => $model->uuid, 'meta' => $model->meta ?? []];
+
+            return $transformer->transform($data, $resource, $request, $context);
         }, $models);
     }
 

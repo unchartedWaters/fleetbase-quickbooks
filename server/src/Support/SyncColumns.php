@@ -2,6 +2,11 @@
 
 namespace Fleetbase\Quickbooks\Support;
 
+use Fleetbase\FleetOps\Http\Filter\ContactFilter;
+use Fleetbase\FleetOps\Models\Contact;
+use Fleetbase\FleetOps\Models\Customer;
+use Fleetbase\Ledger\Http\Filter\InvoiceFilter;
+use Fleetbase\Ledger\Models\Invoice;
 use Fleetbase\Quickbooks\Models\Link;
 use Fleetbase\Support\ResourceTransformerRegistry;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
@@ -31,9 +36,9 @@ final class SyncColumns
      * to the exact class that is queried. Customer is the Contact subclass.
      */
     public const MODELS = [
-        'Fleetbase\\FleetOps\\Models\\Contact'  => ['customer', 'contacts', 'Fleetbase\\FleetOps\\Http\\Filter\\ContactFilter'],
-        'Fleetbase\\FleetOps\\Models\\Customer' => ['customer', 'contacts', 'Fleetbase\\FleetOps\\Http\\Filter\\ContactFilter'],
-        'Fleetbase\\Ledger\\Models\\Invoice'    => ['invoice', 'invoices', 'Fleetbase\\Ledger\\Http\\Filter\\InvoiceFilter'],
+        Contact::class  => ['customer', 'contacts', ContactFilter::class],
+        Customer::class => ['customer', 'contacts', ContactFilter::class],
+        Invoice::class  => ['invoice', 'invoices', InvoiceFilter::class],
     ];
 
     public static function register(): void
@@ -48,7 +53,8 @@ final class SyncColumns
             // Fleetbase models run their own __call, which skips Eloquent's resolveRelationUsing; expand() is theirs.
             $class::expand(self::SEARCH_RELATION, self::relation($type));
             $class::addSearchableColumns([self::SEARCH_RELATION . '.qbo_id']);
-            // The invoice list's search box looks only at its own columns, so the QuickBooks ID is also a filter (?quickbooks_id=).
+            // The invoice list's search box looks only at its own columns,
+            // so the QuickBooks ID is also a filter (?quickbooks_id=).
             if (class_exists($filter) === true) {
                 $filter::expand('quickbooksId', self::idFilter());
             }
@@ -129,7 +135,10 @@ final class SyncColumns
             $text   = is_array($value) === true ? ($value[0] ?? '') : $value;
             $like   = '%' . (is_scalar($text) === true ? (string) $text : '') . '%';
 
-            $filter->builder->whereHas($relation, static fn (EloquentBuilder $links) => $links->where('qbo_id', 'like', $like));
+            $filter->builder->whereHas(
+                $relation,
+                static fn (EloquentBuilder $links) => $links->where('qbo_id', 'like', $like)
+            );
         };
     }
 
@@ -140,7 +149,11 @@ final class SyncColumns
      */
     private static function sorter(string $class, string $type, string $column): \Closure
     {
-        return static function (EloquentBuilder|QueryBuilder $builder, string $direction) use ($class, $type, $column): void {
+        return static function (EloquentBuilder|QueryBuilder $builder, string $direction) use (
+            $class,
+            $type,
+            $column
+        ): void {
             $table = (new $class())->getTable();
             $links = (new Link())->getTable();
             $builder->orderBy(

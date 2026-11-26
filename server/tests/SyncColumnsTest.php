@@ -123,7 +123,8 @@ test('customer rows carry their sync status, QuickBooks ID and last sync time in
         );
         $byUuid = array_column($rows, 'meta', 'uuid');
 
-        expect($byUuid['c-synced']['quickbooks'])->toBe(['status' => 'synced', 'id' => 'QB-1', 'synced_at' => '2026-11-20T10:00:00+00:00'])
+        expect($byUuid['c-synced']['quickbooks'])
+            ->toBe(['status' => 'synced', 'id' => 'QB-1', 'synced_at' => '2026-11-20T10:00:00+00:00'])
             ->and($byUuid['c-synced']['vip'])->toBeTrue()
             ->and($byUuid['c-waiting']['quickbooks']['status'])->toBe('waiting')
             ->and($byUuid['c-failed']['quickbooks']['status'])->toBe('failed')
@@ -211,7 +212,10 @@ test('the transformer serves only the console, not the public API, webhooks or b
     $restore = Fixture::open();
     try {
         $registry      = ResourceTransformerRegistry::instance();
-        $registrations = array_values(array_filter($registry->all(), static fn (array $row): bool => $row['id'] === SyncColumnsTransformer::class));
+        $registrations = array_values(array_filter(
+            $registry->all(),
+            static fn (array $row): bool => $row['id'] === SyncColumnsTransformer::class
+        ));
 
         expect($registrations)->toHaveCount(1)
             ->and($registrations[0]['only'])->toBe('internal')

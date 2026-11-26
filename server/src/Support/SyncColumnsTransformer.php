@@ -46,7 +46,8 @@ class SyncColumnsTransformer implements ResourceTransformer, PreparesResourceTra
         $byType = [];
         if ($this->allowed($request) === true) {
             foreach ($models as $model) {
-                $type = $model instanceof Model && SyncColumns::servesRequest($request, $model) === true ? SyncColumns::localType($model) : null;
+                $serves = $model instanceof Model && SyncColumns::servesRequest($request, $model) === true;
+                $type   = $serves === true ? SyncColumns::localType($model) : null;
                 if ($type !== null) {
                     $byType[$type][] = $model;
                 }
@@ -64,8 +65,12 @@ class SyncColumnsTransformer implements ResourceTransformer, PreparesResourceTra
     /**
      * @SuppressWarnings("PHPMD.UnusedFormalParameter") The ResourceTransformer contract fixes the signature.
      */
-    public function transform(array $data, JsonResource $resource, Request $request, ResourceTransformerContext $context): array
-    {
+    public function transform(
+        array $data,
+        JsonResource $resource,
+        Request $request,
+        ResourceTransformerContext $context,
+    ): array {
         $model     = $resource->resource;
         $summaries = $context->get(self::SUMMARIES, []);
         $type      = $model instanceof Model ? SyncColumns::localType($model) : null;
@@ -79,7 +84,8 @@ class SyncColumnsTransformer implements ResourceTransformer, PreparesResourceTra
         }
 
         $meta                        = $data['meta'] ?? [];
-        $meta                        = is_object($meta) === true ? (array) $meta : (is_array($meta) === true ? $meta : []);
+        $meta                        = is_object($meta) === true ? (array) $meta : $meta;
+        $meta                        = is_array($meta) === true ? $meta : [];
         $meta[SyncColumns::META_KEY] = $summary;
         $data['meta']                = $meta;
 
@@ -101,7 +107,9 @@ class SyncColumnsTransformer implements ResourceTransformer, PreparesResourceTra
     private function summaries(string $type, array $models): array
     {
         $uuids     = array_map(static fn (Model $model): string => (string) $model->uuid, $models);
-        $companies = array_values(array_unique(array_map(static fn (Model $model): string => (string) $model->company_uuid, $models)));
+        $companies = array_values(array_unique(
+            array_map(static fn (Model $model): string => (string) $model->company_uuid, $models)
+        ));
         $links     = Link::query()->toBase()
             ->where('local_type', $type)->whereIn('local_uuid', $uuids)->whereIn('company_uuid', $companies)
             ->get(['company_uuid', 'local_uuid', 'qbo_id', 'updated_at']);
@@ -129,7 +137,9 @@ class SyncColumnsTransformer implements ResourceTransformer, PreparesResourceTra
             $summaries[self::key($model, $type)] = [
                 'status'    => $this->status($state[$key] ?? null, $link !== null),
                 'id'        => $link === null ? null : (string) $link->qbo_id,
-                'synced_at' => $link === null || $link->updated_at === null ? null : Carbon::parse((string) $link->updated_at)->toIso8601String(),
+                'synced_at' => $link?->updated_at === null
+                    ? null
+                    : Carbon::parse((string) $link->updated_at)->toIso8601String(),
             ];
         }
 
