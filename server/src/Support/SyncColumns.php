@@ -149,11 +149,10 @@ final class SyncColumns
      */
     private static function sorter(string $class, string $type, string $column): \Closure
     {
-        return static function (EloquentBuilder|QueryBuilder $builder, string $direction) use (
-            $class,
-            $type,
-            $column
-        ): void {
+        return static function (
+            EloquentBuilder|QueryBuilder $builder,
+            string $direction,
+        ) use ($class, $type, $column): void {
             $table = (new $class())->getTable();
             $links = (new Link())->getTable();
             $builder->orderBy(
