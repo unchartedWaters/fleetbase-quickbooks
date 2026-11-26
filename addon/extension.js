@@ -159,7 +159,9 @@ function registerTableColumns(views, t) {
     }
 
     TABLES.forEach(([extension, resource]) => {
-        TABLE_COLUMNS.forEach((spec) => views.registerTableColumn(extension, resource, tableColumn(spec, t)));
+        TABLE_COLUMNS.forEach((spec) => {
+            views.registerTableColumn(extension, resource, tableColumn(spec, t));
+        });
     });
 }
 
