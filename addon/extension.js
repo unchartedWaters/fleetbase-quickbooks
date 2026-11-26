@@ -1,4 +1,4 @@
-import { MenuItem, ExtensionComponent, Widget } from '@fleetbase/ember-core/contracts';
+import { MenuItem, ExtensionComponent, TableColumn, Widget } from '@fleetbase/ember-core/contracts';
 
 const ENGINE = '@unchartedwaters/fleetbase-quickbooks';
 
@@ -121,6 +121,48 @@ function registerWidgets(widgetService, t) {
     widgetService.registerWidgets('dashboard', [quickbooksWidget(false)]);
 }
 
+// The QuickBooks columns of the Fleet-Ops customers and Ledger invoices tables, read from meta.quickbooks.
+// The server sorts and searches them through the QuickBooks tables. Only people who may see the extension get them.
+const TABLES = [
+    ['fleet-ops', 'customer'],
+    ['ledger', 'invoice'],
+];
+
+const TABLE_COLUMNS = [
+    { id: 'status', label: 'quickbooks.columns.status', fallback: 'QuickBooks status', key: 'status', format: 'status' },
+    { id: 'id', label: 'quickbooks.columns.id', fallback: 'QuickBooks ID', key: 'id', sort: 'quickbooks_id', filter: 'quickbooks_id' },
+    { id: 'synced-at', label: 'quickbooks.columns.synced-at', fallback: 'QuickBooks last synced', key: 'synced_at', format: 'time', sort: 'quickbooks_synced_at' },
+];
+
+function tableColumn(spec, t) {
+    const column = new TableColumn({ id: `quickbooks-${spec.id}`, label: t(spec.label, spec.fallback), valuePath: `meta.quickbooks.${spec.key}`, permission: SEE_EXTENSION });
+
+    if (spec.format) {
+        column.setOption('format', spec.format).withCellComponent(new ExtensionComponent(ENGINE, 'cell/quickbooks-sync'));
+    }
+
+    if (spec.sort) {
+        column.withSort(spec.sort);
+    }
+
+    // A filter param must be registered here, in setupExtension, before the table's controller reads its query params.
+    if (spec.filter) {
+        column.withFilter(spec.filter);
+    }
+
+    return column.inGroup(t('quickbooks.columns.group', 'QuickBooks')).hiddenByDefault();
+}
+
+function registerTableColumns(views, t) {
+    if (!views) {
+        return;
+    }
+
+    TABLES.forEach(([extension, resource]) => {
+        TABLE_COLUMNS.forEach((spec) => views.registerTableColumn(extension, resource, tableColumn(spec, t)));
+    });
+}
+
 // Nested engine components resolve only after they are registered on the host.
 function registerHostComponents(engine, app) {
     HOST_COMPONENTS.forEach((name) => {
@@ -140,6 +182,7 @@ export default {
         registerAdminSettings(menuService, t);
         registerOrganizationSettings(menuService, app, t);
         registerWidgets(universe.getService('universe/widget-service'), t);
+        registerTableColumns(universe.getService('universe/resource-view-service'), t);
     },
 
     onEngineLoaded(engine, universe, app) {

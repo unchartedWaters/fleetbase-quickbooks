@@ -755,6 +755,29 @@ short no-permission note instead, and the widget makes no QuickBooks request.
 ![QuickBooks Sync widget: Connected, last sync time, records waiting,
 and Sync now][dashboard-widget]
 
+### QuickBooks columns on Customers and Invoices
+
+The Fleet-Ops Customers table and the Ledger Invoices table can show three
+QuickBooks columns. They are hidden until someone turns them on in Customize
+Columns, where they sit under their own QuickBooks heading:
+
+- **QuickBooks status**: Synced (linked and nothing waiting), Waiting (a change
+  is queued), Failed (the last attempt could not be sent; see Activity) or Not
+  synced (no QuickBooks record yet).
+- **QuickBooks ID**: the ID of the linked QuickBooks record. Sort by it or
+  filter on it. On Customers, the search box finds it too; the Invoices search
+  box looks only at invoice numbers and notes, so use the filter there.
+- **QuickBooks last synced**: when the link last changed, which is when data
+  last moved either way. A record that was checked and found unchanged keeps its
+  earlier time. Sort by it.
+
+Status has no sort. Only people with `quickbooks see extension` (both QuickBooks
+roles) or installation administrators get the columns and their data. The values
+come from this extension's own tables and are added to the console's list
+response as `meta.quickbooks`; nothing is stored on the customer or invoice, the
+public API and webhooks do not carry it, and a saved record drops it if the
+console sends it back. The columns need `fleetbase/core-api` 2.0.1 or later.
+
 ## Webhooks
 
 There is one public receiver: `POST /quickbooks/int/v1/webhooks`. It is outside
@@ -1012,7 +1035,7 @@ A company with no QuickBooks connection is looked up at most once per 30 seconds
 ## Requirements and install
 
 This extension works only with **Fleetbase 0.8.1 or later**. It needs PHP
-`>=8.2 <8.5`, `fleetbase/core-api` `^2.0`, `fleetbase/fleetops-api` `^0.7.1`, and
+`>=8.2 <8.5`, `fleetbase/core-api` `^2.0.1`, `fleetbase/fleetops-api` `^0.7.1`, and
 `fleetbase/ledger-api` `^0.1.0`. Fleetbase 0.8.0 and earlier, including 0.7 and
 `core-api` 1.x, are not supported (Laravel 12 is required). The release check
 runs against Fleetbase 0.8.1, which ships `core-api` 2.0.2. The ranges accept later patch releases of

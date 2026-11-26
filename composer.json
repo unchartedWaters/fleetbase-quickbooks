@@ -18,7 +18,7 @@
     ],
     "require": {
         "php": ">=8.2 <8.5",
-        "fleetbase/core-api": "^2.0",
+        "fleetbase/core-api": "^2.0.1",
         "fleetbase/fleetops-api": "^0.7.1",
         "fleetbase/ledger-api": "^0.1.0",
         "symfony/yaml": "^6.4|^7.0"
