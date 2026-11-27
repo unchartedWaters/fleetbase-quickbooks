@@ -54,7 +54,7 @@
     "ember-auto-import": "^2.7.4",
     "ember-cli": "~7.4.0",
     "ember-cli-babel": "^8.3.2",
-    "ember-cli-htmlbars": "^6.3.0",
+    "ember-cli-htmlbars": "^7.0.1",
     "ember-concurrency": "^4.0.4",
     "ember-intl": "6.3.2",
     "ember-lifeline": "^7.1.0",
