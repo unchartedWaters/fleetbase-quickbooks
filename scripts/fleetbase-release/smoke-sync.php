@@ -94,7 +94,7 @@ InvoiceItem::create([
 $report->check('saving a Ledger invoice queues it', $queued($invoice->uuid, 'invoice'));
 
 $result   = $app->make(BatchRunner::class)->run($company->uuid, 'now');
-$finished = ($result['status'] ?? '') === 'finished' && ($result['failed'] ?? 1) === 0;
+$finished = $result->status === 'finished' && $result->failed === 0;
 $report->check('Sync now finishes without failures', $finished ? [] : [(string) json_encode($result)]);
 
 $links = DB::table('quickbooks_links')->where('company_uuid', $company->uuid)->pluck('qbo_id', 'local_uuid')->all();
