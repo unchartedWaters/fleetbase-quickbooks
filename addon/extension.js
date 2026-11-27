@@ -52,17 +52,19 @@ function registerHeaderItem(menuService, app, t) {
 }
 
 // Global settings (Client ID, secret, URLs, the sync template) are edited here by installation administrators only.
+// A single item, not a panel: the console's admin sidebar opens a panel group without opening any of its items,
+// so a click on "QuickBooks" would land on a blank page. The item opens Settings directly and is highlighted there.
 function registerAdminSettings(menuService, t) {
-    menuService.registerAdminMenuPanel(
-        'QuickBooks',
-        [
-            new MenuItem({
-                title: t('quickbooks.menu.admin-settings', 'Settings'),
-                icon: 'gear',
-                component: new ExtensionComponent(ENGINE, 'quickbooks-admin-settings'),
-            }),
-        ],
-        { slug: 'quickbooks' }
+    menuService.registerAdminMenuItem(
+        new MenuItem({
+            id: 'quickbooks-admin-settings',
+            label: 'QuickBooks',
+            title: t('quickbooks.menu.admin-settings', 'Settings'),
+            icon: 'file-invoice-dollar',
+            slug: 'quickbooks',
+            view: 'settings',
+            component: new ExtensionComponent(ENGINE, 'quickbooks-admin-settings'),
+        })
     );
 }
 

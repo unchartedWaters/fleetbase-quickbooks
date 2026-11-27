@@ -280,8 +280,9 @@ with Organization, Two Factor, and Notifications. QuickBooks Setup is route
 `console.settings.virtual`, slug `quickbooks-setup`, view `index`
 (`/settings/quickbooks-setup?view=index`). QuickBooks Activity is slug
 `quickbooks-activity` (`/settings/quickbooks-activity?view=index`). The
-QuickBooks header item opens QuickBooks Setup. The Fleetbase Admin panel
-**QuickBooks** has one item, **Settings**. There is no Ledger settings entry.
+QuickBooks header item opens QuickBooks Setup. The Fleetbase Admin menu has one
+**QuickBooks** item that opens **Settings** (`/admin/quickbooks?view=settings`).
+There is no Ledger settings entry.
 
 An installation administrator saves the install's Client ID, Client secret, and
 system webhook verifier on Admin → QuickBooks → Settings. Connect on QuickBooks

@@ -87,24 +87,17 @@ module('Unit | extension', function (hooks) {
     test('setupExtension registers the menus and widgets in a fixed order', function (assert) {
         const { order } = captureRegistration();
 
-        assert.deepEqual(order, [
-            'header:QuickBooks',
-            'admin-panel:QuickBooks',
-            'settings-item:QuickBooks Setup',
-            'settings-item:QuickBooks Activity',
-            'widgets:ledger',
-            'widgets:dashboard',
-        ]);
+        assert.deepEqual(order, ['header:QuickBooks', 'admin-item:Settings', 'settings-item:QuickBooks Setup', 'settings-item:QuickBooks Activity', 'widgets:ledger', 'widgets:dashboard']);
     });
 
     test('menu titles come from translations', (assert) => {
         const intl = { exists: (key) => key !== 'quickbooks.menu.activity', t: (key) => `T:${key}` };
-        const { headerItems, adminPanels, settingsItems, widgetCalls } = captureRegistration(intl);
+        const { headerItems, adminItems, settingsItems, widgetCalls } = captureRegistration(intl);
 
         assert.strictEqual(headerItems[0].title, 'QuickBooks', 'the product name needs no key');
         assert.strictEqual(headerItems[0].description, 'T:quickbooks.menu.header-description');
-        assert.strictEqual(adminPanels[0].title, 'QuickBooks');
-        assert.strictEqual(adminPanels[0].items[0].title, 'T:quickbooks.menu.admin-settings');
+        assert.strictEqual(adminItems[0].label, 'QuickBooks');
+        assert.strictEqual(adminItems[0].title, 'T:quickbooks.menu.admin-settings');
         assert.strictEqual(settingsItems[0].title, 'T:quickbooks.menu.setup');
         assert.strictEqual(settingsItems[1].title, 'QuickBooks Activity', 'a key the service does not know falls back to English');
         assert.strictEqual(settingsItems[0].id, 'quickbooks-setup', 'ids do not follow the translated title');
@@ -130,9 +123,8 @@ module('Unit | extension', function (hooks) {
     });
 
     test('QuickBooks Setup and QuickBooks Activity are organization settings items', (assert) => {
-        const { adminItems, settingsItems, settingsPanels, transitions } = captureRegistration();
+        const { settingsItems, settingsPanels, transitions } = captureRegistration();
 
-        assert.strictEqual(adminItems.length, 0);
         assert.strictEqual(settingsPanels.length, 0);
         assert.strictEqual(settingsItems.length, 2);
 
@@ -169,17 +161,17 @@ module('Unit | extension', function (hooks) {
         ]);
     });
 
-    test('the QuickBooks admin panel holds the global Settings item', function (assert) {
+    test('the QuickBooks admin item opens the global Settings page directly', function (assert) {
         const { adminPanels, adminItems } = captureRegistration();
 
-        assert.strictEqual(adminItems.length, 0);
-        assert.strictEqual(adminPanels.length, 1);
-        assert.strictEqual(adminPanels[0].title, 'QuickBooks');
-        assert.strictEqual(adminPanels[0].items.length, 1);
-        assert.strictEqual(adminPanels[0].items[0].title, 'Settings');
-        assert.strictEqual(adminPanels[0].items[0].component.engine, '@unchartedwaters/fleetbase-quickbooks');
-        assert.strictEqual(adminPanels[0].items[0].component.path, 'quickbooks-admin-settings');
-        assert.strictEqual(adminPanels[0].options.slug, 'quickbooks');
+        assert.strictEqual(adminPanels.length, 0, 'a panel group would open without selecting Settings');
+        assert.strictEqual(adminItems.length, 1);
+        assert.strictEqual(adminItems[0].label, 'QuickBooks');
+        assert.strictEqual(adminItems[0].title, 'Settings');
+        assert.strictEqual(adminItems[0].slug, 'quickbooks');
+        assert.strictEqual(adminItems[0].view, 'settings', 'keeps the /admin/quickbooks?view=settings address');
+        assert.strictEqual(adminItems[0].component.engine, '@unchartedwaters/fleetbase-quickbooks');
+        assert.strictEqual(adminItems[0].component.path, 'quickbooks-admin-settings');
     });
 
     test('QuickBooks widgets register on the ledger and dashboard', function (assert) {
@@ -312,13 +304,13 @@ module('Unit | extension', function (hooks) {
         const order = [];
         const menu = {
             registerHeaderMenuItem: (item) => order.push(`header:${item.title}`),
-            registerAdminMenuPanel: (title) => order.push(`admin-panel:${title}`),
+            registerAdminMenuItem: (item) => order.push(`admin-item:${item.title}`),
             registerSettingsMenuItem: (item) => order.push(`settings-item:${item.title}`),
         };
         const universe = { getService: (name) => (name === 'menu' ? menu : null) };
 
         extension.setupExtension({ lookup: () => null }, universe);
 
-        assert.deepEqual(order, ['header:QuickBooks', 'admin-panel:QuickBooks', 'settings-item:QuickBooks Setup', 'settings-item:QuickBooks Activity']);
+        assert.deepEqual(order, ['header:QuickBooks', 'admin-item:Settings', 'settings-item:QuickBooks Setup', 'settings-item:QuickBooks Activity']);
     });
 });
