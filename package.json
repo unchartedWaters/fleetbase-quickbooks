@@ -81,7 +81,7 @@
     "ember-engines": "^0.9.0",
     "ember-math-helpers": "^4.0.0",
     "ember-page-title": "^9.1.0",
-    "ember-qunit": "^8.0.1",
+    "ember-qunit": "^9.2.1",
     "ember-source": "~5.4.0",
     "ember-template-lint": "^7.9.4",
     "ember-try": "^5.0.0",
