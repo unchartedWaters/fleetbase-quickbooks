@@ -30,8 +30,8 @@ importers:
         specifier: ^7.29.13
         version: 7.29.13(supports-color@8.1.1)
       '@embroider/test-setup':
-        specifier: ^3.0.2
-        version: 3.0.3
+        specifier: ^4.0.0
+        version: 4.0.0
       '@fleetbase/ember-core':
         specifier: ^0.3.27
         version: 0.3.27(c699a17abfa7b11a9f09ddf746dfc995)
@@ -1271,13 +1271,13 @@ packages:
     resolution: {integrity: sha512-IlxD8okTt9cRUFpJKD8gTuQUBuEflrhCUju1xZFdYvmGm5XVqHPfG4I6+bEdKb8NO92aqHxr9SYuYibDmpMM9w==}
     engines: {node: 12.* || 14.* || >= 16}
 
-  '@embroider/test-setup@3.0.3':
-    resolution: {integrity: sha512-3K5KSyTdnxAkZQill6+TdC/XTRr6226LNwZMsrhRbBM0FFZXw2D8qmJSHPvZLheQx3A1jnF9t1lyrAzrKlg6Yw==}
+  '@embroider/test-setup@4.0.0':
+    resolution: {integrity: sha512-1S3Ebk0CEh3XDqD93AWSwQZBCk+oGv03gtkaGgdgyXGIR7jrVyDgEnEuslN/hJ0cuU8TqhiXrzHMw7bJwIGhWw==}
     engines: {node: 12.* || 14.* || >= 16}
     peerDependencies:
-      '@embroider/compat': ^3.3.0
-      '@embroider/core': ^3.4.0
-      '@embroider/webpack': ^3.2.1
+      '@embroider/compat': ^3.4.8
+      '@embroider/core': ^3.4.8
+      '@embroider/webpack': ^4.0.0
     peerDependenciesMeta:
       '@embroider/compat':
         optional: true
@@ -10212,7 +10212,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@embroider/test-setup@3.0.3':
+  '@embroider/test-setup@4.0.0':
     dependencies:
       lodash: 4.18.1
       resolve: 1.22.12
