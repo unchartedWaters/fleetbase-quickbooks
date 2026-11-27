@@ -69,6 +69,38 @@ export default class QuickbooksConnectionComponent extends Component {
         return ['sandbox', 'production'].includes(environment) ? this.intl.t(key) : environment;
     }
 
+    // QuickBooks sends only the code (USD). The name comes from the browser's own currency names, in the user's language.
+    currencyLabel(code) {
+        if (!code) {
+            return null;
+        }
+
+        let name = null;
+        try {
+            name = new Intl.DisplayNames([this.intl.primaryLocale ?? 'en'], { type: 'currency' }).of(code);
+        } catch {
+            // A locale or code the browser cannot name is shown as the code alone.
+        }
+
+        return name && name !== code ? `${name} (${code})` : code;
+    }
+
+    get quickbooksCurrency() {
+        return this.currencyLabel(this.args.connection?.home_currency);
+    }
+
+    get organizationCurrency() {
+        return this.currencyLabel(this.args.connection?.organization_currency);
+    }
+
+    // Only when both currencies are known and differ.
+    get currencyMismatch() {
+        const quickbooks = this.args.connection?.home_currency;
+        const organization = this.args.connection?.organization_currency;
+
+        return Boolean(quickbooks && organization) && quickbooks.toUpperCase() !== organization.toUpperCase();
+    }
+
     get showSyncNow() {
         return this.isConnected;
     }

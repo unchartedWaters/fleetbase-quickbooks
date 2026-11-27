@@ -401,16 +401,43 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
         assert.dom('[data-test-income-account]').doesNotExist('nothing is shown before the account is known');
     });
 
-    test('connected status explains invoice and wallet currency rules', async function (assert) {
-        this.set('connection', { realm_id: '123', environment: 'sandbox', home_currency: 'USD' });
+    test('connected status shows the company name, environment and currency in the card', async function (assert) {
+        this.set('connection', { realm_id: '123', company_name: 'Craig Landscaping', environment: 'sandbox', home_currency: 'USD', organization_currency: 'USD' });
 
         await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} />`);
 
-        assert.dom('[data-test-connected]').hasText('Connected to QuickBooks company 123 (Sandbox).');
+        assert.dom('[data-test-connected]').includesText('Connected to QuickBooks.');
         assert.dom('.panel-title').includesText('Connection', 'the card does not repeat the page title');
         assert.dom('.panel-title').doesNotIncludeText('Setup');
-        assert.dom('[data-test-connected]').doesNotIncludeText('home currency');
-        assert.dom('[data-test-home-currency]').includesText('The QuickBooks home currency is USD.');
+        assert.dom('[data-test-connection-details] [data-test-company-name]').hasText('Craig Landscaping');
+        assert.dom('[data-test-connection-details]').doesNotIncludeText('123', 'the company ID is not shown when the name is known');
+        assert.dom('[data-test-environment]').hasText('Sandbox');
+        assert.dom('[data-test-currency]').hasText('US Dollar (USD)');
+        assert.dom('[data-test-currency-mismatch]').doesNotExist('the same currency raises no warning');
+        assert.dom('[data-test-disconnect]').exists();
+
+        this.set('connection', { realm_id: '123', company_name: 'Craig Landscaping', environment: 'production' });
+        assert.dom('[data-test-environment]').hasText('Production');
+        this.set('connection', { realm_id: '123', company_name: 'Craig Landscaping', environment: 'other' });
+        assert.dom('[data-test-environment]').hasText('other', 'an unknown environment is shown as stored');
+        this.set('connection', { realm_id: '123', company_name: 'Craig Landscaping' });
+        assert.dom('[data-test-environment]').doesNotExist();
+        assert.dom('[data-test-currency]').doesNotExist('no currency row until QuickBooks has answered');
+    });
+
+    test('connected status falls back to the company ID only while the name is unknown', async function (assert) {
+        this.set('connection', { realm_id: '123', environment: 'sandbox' });
+
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} />`);
+
+        assert.dom('[data-test-company-name]').hasText('Name not available right now (company ID 123)');
+    });
+
+    test('connected status explains the currency rules under the details', async function (assert) {
+        this.set('connection', { realm_id: '123', company_name: 'Craig', environment: 'sandbox', home_currency: 'USD' });
+
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} />`);
+
         assert.dom('[data-test-home-currency]').includesText('To check it in QuickBooks, open the gear menu → Account and settings → Advanced → Currency.');
         assert
             .dom('[data-test-home-currency]')
@@ -424,14 +451,21 @@ module('Integration | Component | quickbooks-connection', function (hooks) {
                 "When QuickBooks is Primary for Accounts / Wallets and changes come from QuickBooks (Both or From QuickBooks), the wallet takes the QuickBooks account's currency."
             );
         assert.dom('[data-test-home-currency] li').exists({ count: 4 });
-        assert.dom('[data-test-disconnect]').exists();
+    });
 
-        this.set('connection', { realm_id: '123', environment: 'production' });
-        assert.dom('[data-test-connected]').hasText('Connected to QuickBooks company 123 (Production).');
-        this.set('connection', { realm_id: '123', environment: 'other' });
-        assert.dom('[data-test-connected]').hasText('Connected to QuickBooks company 123 (other).', 'an unknown environment is shown as stored');
-        this.set('connection', { realm_id: '123' });
-        assert.dom('[data-test-connected]').hasText('Connected to QuickBooks company 123.');
+    test('a currency that differs from the organization raises a warning', async function (assert) {
+        this.set('connection', { realm_id: '123', company_name: 'Craig', environment: 'sandbox', home_currency: 'CAD', organization_currency: 'USD' });
+
+        await render(hbs`<QuickbooksConnection @variant="status" @connection={{this.connection}} />`);
+
+        assert.dom('[data-test-currency]').hasText('Canadian Dollar (CAD)');
+        assert.dom('[data-test-currency-mismatch]').includesText('QuickBooks uses Canadian Dollar (CAD), but this organization uses US Dollar (USD).');
+        assert.dom('[data-test-currency-mismatch]').includesText('are sent only when Multicurrency is turned on in QuickBooks');
+
+        this.set('connection', { realm_id: '123', home_currency: 'cad', organization_currency: 'CAD' });
+        assert.dom('[data-test-currency-mismatch]').doesNotExist('case does not matter');
+        this.set('connection', { realm_id: '123', home_currency: 'CAD', organization_currency: null });
+        assert.dom('[data-test-currency-mismatch]').doesNotExist('an unknown organization currency raises no warning');
     });
 
     test('an embedded variant does not show connection status while loading', async function (assert) {
