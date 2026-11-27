@@ -44,7 +44,7 @@
   "dependencies": {
     "@babel/core": "^7.29.13",
     "@embroider/test-setup": "^3.0.2",
-    "@fleetbase/ember-core": "^0.3.27",
+    "@fleetbase/ember-core": "^0.4.0",
     "@fleetbase/ember-ui": "^0.4.7",
     "@fortawesome/ember-fontawesome": "^2.0.0",
     "@fortawesome/fontawesome-svg-core": "6.4.0",
