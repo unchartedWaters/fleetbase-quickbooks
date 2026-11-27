@@ -33,10 +33,10 @@ importers:
         specifier: ^3.0.2
         version: 3.0.3
       '@fleetbase/ember-core':
-        specifier: ^0.3.26
+        specifier: ^0.3.27
         version: 0.3.27(028943c7233dec8d72678ae5dbfd1b6b)
       '@fleetbase/ember-ui':
-        specifier: ^0.4.6
+        specifier: ^0.4.7
         version: 0.4.7(0c0d86a7029c4b53816636e7829fe1f8)
       '@fortawesome/ember-fontawesome':
         specifier: ^2.0.0

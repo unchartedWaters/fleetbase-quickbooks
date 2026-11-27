@@ -87,6 +87,16 @@ quickbooks:
       wallet: Wallet "{name}"
       product: Product "{name}"
       item: Product "{name}"
+  columns:
+    group: QuickBooks
+    status: QuickBooks status
+    id: QuickBooks ID
+    synced-at: QuickBooks last synced
+    state:
+      synced: Synced
+      waiting: Waiting
+      failed: Failed
+      not-synced: Not synced
   menu:
     setup: QuickBooks Setup
     activity: QuickBooks Activity

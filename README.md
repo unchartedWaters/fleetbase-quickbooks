@@ -17,7 +17,7 @@ customers, invoices, payments, wallets, and products with QuickBooks Online.
 This extension works only with **Fleetbase 0.8.1 or later**. Fleetbase 0.8.0
 and earlier, including 0.7.x and `core-api` 1.x, are not supported.
 
-- Fleetbase 0.8.1 or later (`fleetbase/core-api` `^2.0`,
+- Fleetbase 0.8.1 or later (`fleetbase/core-api` `^2.0.1`,
   `fleetbase/fleetops-api` `^0.7.1`, `fleetbase/ledger-api` `^0.1.0`)
 - PHP `>=8.2 <8.5` on the API, Node `>= 22` for the console build
 - A [QuickBooks app](docs/SETUP.md#create-a-quickbooks-app) on the Intuit
