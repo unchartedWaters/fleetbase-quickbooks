@@ -83,7 +83,7 @@
     "ember-page-title": "^9.1.0",
     "ember-qunit": "^8.0.1",
     "ember-source": "~5.4.0",
-    "ember-template-lint": "^5.11.2",
+    "ember-template-lint": "^7.9.4",
     "ember-try": "^5.0.0",
     "eslint": "^8.52.0",
     "eslint-config-prettier": "^9.0.0",
