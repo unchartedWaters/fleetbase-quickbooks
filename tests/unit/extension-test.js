@@ -9,6 +9,7 @@ function captureRegistration(intl = null) {
     const settingsItems = [];
     const settingsPanels = [];
     const widgetCalls = [];
+    const tableColumns = [];
     const transitions = [];
     const order = [];
     const app = {
@@ -63,13 +64,21 @@ function captureRegistration(intl = null) {
                 };
             }
 
+            if (name === 'universe/resource-view-service') {
+                return {
+                    registerTableColumn(extension, resource, column) {
+                        tableColumns.push({ extension, resource, column: column.toObject() });
+                    },
+                };
+            }
+
             return null;
         },
     };
 
     extension.setupExtension(app, universe);
 
-    return { headerItems, adminItems, adminPanels, settingsItems, settingsPanels, widgetCalls, transitions, order };
+    return { headerItems, adminItems, adminPanels, settingsItems, settingsPanels, widgetCalls, tableColumns, transitions, order };
 }
 
 module('Unit | extension', function (hooks) {
@@ -188,6 +197,43 @@ module('Unit | extension', function (hooks) {
         assert.strictEqual(widgetCalls[1].widgets[0].component, component);
         assert.true(widgetCalls[0].widgets[0].isDefault());
         assert.false(widgetCalls[1].widgets[0].isDefault());
+    });
+
+    test('customers and invoices get hidden QuickBooks columns under their own heading', function (assert) {
+        const { tableColumns } = captureRegistration();
+
+        assert.deepEqual(
+            tableColumns.map(({ extension, resource, column }) => `${extension}:${resource}:${column.id}`),
+            [
+                'fleet-ops:customer:quickbooks-status',
+                'fleet-ops:customer:quickbooks-id',
+                'fleet-ops:customer:quickbooks-synced-at',
+                'ledger:invoice:quickbooks-status',
+                'ledger:invoice:quickbooks-id',
+                'ledger:invoice:quickbooks-synced-at',
+            ]
+        );
+
+        const [status, id, syncedAt] = tableColumns.map(({ column }) => column);
+        assert.strictEqual(status.label, 'QuickBooks status');
+        assert.strictEqual(id.label, 'QuickBooks ID');
+        assert.strictEqual(syncedAt.label, 'QuickBooks last synced');
+        assert.deepEqual([status.valuePath, id.valuePath, syncedAt.valuePath], ['meta.quickbooks.status', 'meta.quickbooks.id', 'meta.quickbooks.synced_at']);
+        tableColumns.forEach(({ column }) => {
+            assert.true(column.hidden, `${column.id} stays hidden until it is picked`);
+            assert.strictEqual(column.group, 'QuickBooks');
+            assert.strictEqual(column.permission, 'quickbooks see extension');
+        });
+        assert.false(status.sortable, 'the status has no sort key on the server');
+        assert.deepEqual([id.sortable, id.sortParam, syncedAt.sortable, syncedAt.sortParam], [true, 'quickbooks_id', true, 'quickbooks_synced_at']);
+        assert.deepEqual(
+            [id.filterable, id.filterParam, id.filterComponent, status.filterable, syncedAt.filterable],
+            [true, 'quickbooks_id', 'filter/string', undefined, undefined],
+            'only the ID filters, and the param is the one the server filters on'
+        );
+        assert.strictEqual(status.cellComponent.path, 'cell/quickbooks-sync');
+        assert.strictEqual(status.cellComponent.engine, '@unchartedwaters/fleetbase-quickbooks');
+        assert.strictEqual(id.cellComponent, undefined, 'the ID shows as plain text');
     });
 
     test('onEngineLoaded registers nested settings components on the host', function (assert) {

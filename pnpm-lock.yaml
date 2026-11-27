@@ -33,11 +33,11 @@ importers:
         specifier: ^3.0.2
         version: 3.0.3
       '@fleetbase/ember-core':
-        specifier: ^0.3.26
-        version: 0.3.27(91c6517ac510ec48b89422c4310ad6d5)
+        specifier: ^0.3.27
+        version: 0.3.27(028943c7233dec8d72678ae5dbfd1b6b)
       '@fleetbase/ember-ui':
-        specifier: ^0.4.6
-        version: 0.4.7(825baaeaff3d28eeb18900ff89115352)
+        specifier: ^0.4.7
+        version: 0.4.7(0c0d86a7029c4b53816636e7829fe1f8)
       '@fortawesome/ember-fontawesome':
         specifier: ^2.0.0
         version: 2.0.0(@babel/core@7.29.7(supports-color@8.1.1))(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(rollup@2.80.0)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
@@ -60,8 +60,8 @@ importers:
         specifier: ~5.4.1
         version: 5.4.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/node@26.0.1)(debug@4.4.3(supports-color@8.1.1))(handlebars@4.7.10)(supports-color@8.1.1)(underscore@1.13.8)
       ember-cli-babel:
-        specifier: ^8.2.0
-        version: 8.3.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+        specifier: ^8.3.2
+        version: 8.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-cli-htmlbars:
         specifier: ^6.3.0
         version: 6.3.0(supports-color@8.1.1)
@@ -136,8 +136,8 @@ importers:
         specifier: ^4.0.0
         version: 4.2.1(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
       ember-page-title:
-        specifier: ^8.0.0
-        version: 8.2.4(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
+        specifier: ^9.1.0
+        version: 9.1.0(supports-color@8.1.1)
       ember-qunit:
         specifier: ^8.0.1
         version: 8.1.1(@babel/core@7.29.7(supports-color@8.1.1))(@ember/test-helpers@3.3.1(@babel/core@7.29.7(supports-color@8.1.1))(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(qunit@2.26.0)(supports-color@8.1.1)
@@ -160,11 +160,11 @@ importers:
         specifier: ^11.11.1
         version: 11.12.0(eslint@8.57.1(supports-color@8.1.1))(supports-color@8.1.1)
       eslint-plugin-n:
-        specifier: ^16.2.0
-        version: 16.6.2(eslint@8.57.1(supports-color@8.1.1))
+        specifier: ^18.5.0
+        version: 18.5.0(eslint@8.57.1(supports-color@8.1.1))
       eslint-plugin-prettier:
         specifier: ^5.5.7
-        version: 5.5.7(@types/eslint@8.56.12)(eslint-config-prettier@9.1.2(eslint@8.57.1(supports-color@8.1.1)))(eslint@8.57.1(supports-color@8.1.1))(prettier@3.8.5)
+        version: 5.5.7(@types/eslint@8.56.12)(eslint-config-prettier@9.1.2(eslint@8.57.1(supports-color@8.1.1)))(eslint@8.57.1(supports-color@8.1.1))(prettier@3.10.1)
       eslint-plugin-qunit:
         specifier: ^8.0.1
         version: 8.2.6(eslint@8.57.1(supports-color@8.1.1))
@@ -172,8 +172,8 @@ importers:
         specifier: ^4.7.0
         version: 4.7.0
       prettier:
-        specifier: ^3.0.3
-        version: 3.8.5
+        specifier: ^3.10.1
+        version: 3.10.1
       qunit:
         specifier: ^2.20.0
         version: 2.26.0
@@ -188,7 +188,7 @@ importers:
         version: 34.0.0(stylelint@15.11.0(supports-color@8.1.1))
       stylelint-prettier:
         specifier: ^4.0.2
-        version: 4.1.0(prettier@3.8.5)(stylelint@15.11.0(supports-color@8.1.1))
+        version: 4.1.0(prettier@3.10.1)(stylelint@15.11.0(supports-color@8.1.1))
       webpack:
         specifier: ^5.113.0
         version: 5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)
@@ -2392,6 +2392,9 @@ packages:
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
 
+  argparse@3.0.4:
+    resolution: {integrity: sha512-fwWK3Zq22l4XJJjx5mcBHGikIk+hJqO+32dPm0Jur7+rtG5x1scOjSfdT9ZKeWHPpsya/l0HHK4tDImBkTrtvA==}
+
   aria-query@5.3.1:
     resolution: {integrity: sha512-Z/ZeOgVl7bcSYZ/u/rh0fOpvEpq//LZmdbkXyc7syVzjPAhfOa9ebsdTSjEBDU4vs5nC98Kfduj1uFo0qyET3g==}
     engines: {node: '>= 0.4'}
@@ -2976,15 +2979,8 @@ packages:
   buffer@5.7.1:
     resolution: {integrity: sha512-EHcyIPBQ4BSGlvjB16k5KgAJ27CIsHY/2JBmCRReo48y9rQ3MaUzWX3KVlBa4U7MyX02HdVj0K7C3WaB3ju7FQ==}
 
-  builtin-modules@3.3.0:
-    resolution: {integrity: sha512-zhaCDicdLuWN5UbN5IMnFqNMhNfo919sH85y2/ea+5Yg9TsTkeZxpL+JLbp6cgYFS4sRLp3YV4S6yDuqVWHYOw==}
-    engines: {node: '>=6'}
-
   builtin-status-codes@3.0.0:
     resolution: {integrity: sha512-HpGFw18DgFWlncDfjTa2rcQ4W88O1mC8e8yZ2AvQY5KDaktSTwo+KRf6nHK6FRI5FyRyb/5T6+TSxfP7QyGsmQ==}
-
-  builtins@5.1.0:
-    resolution: {integrity: sha512-SW9lzGTLvWTP1AY8xeAMZimqDrIaSdLQUcVr9DMef51niJ022Ri87SwRRKYm4A6iHfkPaiVUu/Duw2Wc4J7kKg==}
 
   bytes@1.0.0:
     resolution: {integrity: sha512-/x68VkHLeTl3/Ll8IvxdwzhrT+IyKc52e/oyHhA2RwqPqswSnjVbSddfPRwAsJtbilMAPSRWwAlpxdYsSWOTKQ==}
@@ -3894,8 +3890,8 @@ packages:
     resolution: {integrity: sha512-JJYeYjiz/JTn34q7F5DSOjkkZqy8qwFOOxXfE6pe9yEJqWGu4qErKxlz8I22JoVEQ/aBUO+OcKTpmctvykM9YA==}
     engines: {node: 6.* || 8.* || >= 10.*}
 
-  ember-cli-babel@8.3.1:
-    resolution: {integrity: sha512-Pxm5JP0jQ6fCBlXuh1BFmhrg2/5YXjhf16JI/n8ReOR6Nl+fEbudMpdO69LlqZRsMmTgdjCRmfSxMh26Wsw/rw==}
+  ember-cli-babel@8.3.2:
+    resolution: {integrity: sha512-Thvqx+jwGYhimYbkkL0gwhwMlhghTIR3uQ9R0yNaTjBIttZIfSWJ/2W40kaJlwhnsElXq7zbFjZcff22p6nzCg==}
     engines: {node: 16.* || 18.* || >= 20}
     peerDependencies:
       '@babel/core': ^7.12.0
@@ -4221,11 +4217,8 @@ packages:
     resolution: {integrity: sha512-jjafBnWfoA4VSSje476ft5G+urlvvuSDddwAJjKDCjKY9mbe3hAEsJiMBAaPObJRMm1FOglCuKjQZfwDDls6MQ==}
     engines: {node: 8.* || >= 10.*}
 
-  ember-page-title@8.2.4:
-    resolution: {integrity: sha512-ZZ912IRItIEfD5+35w65DT9TmqppK+suXJeaJenD5OSuvujUnYl6KxBpyAbfjw4mYtURwJO/TmSe+4GGJbsJ0w==}
-    engines: {node: 16.* || >= 18}
-    peerDependencies:
-      ember-source: '>= 3.28.0'
+  ember-page-title@9.1.0:
+    resolution: {integrity: sha512-+zBVORfzjnF8eNZ2kesVAV9+LaqIOvFDRK102c7jhpgM1oi3kbKRVh33+fRmF3tOFnWXwxbSiRfOgHS4rpMw+Q==}
 
   ember-power-calendar@0.18.0:
     resolution: {integrity: sha512-bkW5eL8MxS3rmn6XnR7B4QivJZ+Y4SF2kHSZPlUwaVjsw4FqZ7a3I1N1dbC3khcgcFvh1M8aa4/Ek/BwP+sorQ==}
@@ -4496,11 +4489,18 @@ packages:
     peerDependencies:
       eslint: '>=8'
 
-  eslint-plugin-n@16.6.2:
-    resolution: {integrity: sha512-6TyDmZ1HXoFQXnhCTUjVFULReoBPOAjpuiKELMkeP40yffI/1ZRO+d9ug/VC6fqISo2WkuIBk3cvuRPALaWlOQ==}
-    engines: {node: '>=16.0.0'}
+  eslint-plugin-n@18.5.0:
+    resolution: {integrity: sha512-M7uF6MTN/An+AXqvyIbXq7npJIZOkd5eKo8iMMvWrcDVNyZVdA6TF2lw01aKQfCEidRfpnR78GhAjZorlXNHiw==}
+    engines: {node: ^20.19.0 || ^22.13.0 || >=24}
     peerDependencies:
-      eslint: '>=7.0.0'
+      eslint: '>=8.57.1'
+      ts-declaration-location: ^1.0.6
+      typescript: '>=5.0.0'
+    peerDependenciesMeta:
+      ts-declaration-location:
+        optional: true
+      typescript:
+        optional: true
 
   eslint-plugin-prettier@5.5.7:
     resolution: {integrity: sha512-WjHyn3GrFd+ZR0rzsLiM4zJZ35PZMOE0SUIxzGmnWNG0126yNfJKJzObmmkYDwHJfGlkz3PSlzyG9ez/LJntwg==}
@@ -5131,6 +5131,10 @@ packages:
     resolution: {integrity: sha512-AhO5QUcj8llrbG09iWhPU2B204J1xnPeL8kQmVorSsy+Sjj1sk8gIyh6cUocGmH4L0UuhAJy+hJMRA4mgA4mFQ==}
     engines: {node: '>=8'}
 
+  globals@15.15.0:
+    resolution: {integrity: sha512-7ACyT3wmyp3I61S4fG682L0VA2RGD9otkqGJIwNUMF1SWUombIIk+af1unuDYgMm082aHYwD+mzJvv9Iu8dsgg==}
+    engines: {node: '>=18'}
+
   globalthis@1.0.4:
     resolution: {integrity: sha512-DpLKbNU4WylpxJykQujfCcwYWiV/Jhm50Goo0wrVILAv5jOr9d+H+UR3PhSCD2rCCEIg0uc+G+muBTwD54JhDQ==}
     engines: {node: '>= 0.4'}
@@ -5476,10 +5480,6 @@ packages:
   is-buffer@1.1.6:
     resolution: {integrity: sha512-NcdALwpXkTm5Zvvbk7owOUSvVvBKDgKP5/ewfXEznmQFfs4ZRmanOeKBTjRVjka3QFoN6XJ+9F3USqfHqTaU5w==}
 
-  is-builtin-module@3.2.1:
-    resolution: {integrity: sha512-BSLE3HnV2syZ0FK0iMA/yUGplUeMmNz4AW5fnTunbCIqZi4vG3WjJT9FHMy5D69xmAYBHXQhJdALdpwVxV501A==}
-    engines: {node: '>=6'}
-
   is-callable@1.2.7:
     resolution: {integrity: sha512-1BC0BVFhS/p0qtw6enp8e+8OD0UrK0oFLztSjNzhcKA3WDuJxxAPXzPuPtKkjEY9UUoEWlX/8fgKeu2S8i9JTA==}
     engines: {node: '>= 0.4'}
@@ -5755,6 +5755,10 @@ packages:
 
   js-yaml@4.3.2:
     resolution: {integrity: sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==}
+    hasBin: true
+
+  js-yaml@5.5.0:
+    resolution: {integrity: sha512-paNr4LFIFPjeeSmwNYdrb8FafLLG/Cr2Af3GjbsHJ5CxIjH4r0c2emlmRdAtpPAieP1gRVzk6buBbVP5gBMGAg==}
     hasBin: true
 
   jsesc@1.3.0:
@@ -7093,8 +7097,8 @@ packages:
     engines: {node: '>=10.13.0'}
     hasBin: true
 
-  prettier@3.8.5:
-    resolution: {integrity: sha512-zxcTTCedNGJM4R8sj/Cq/F0W/c4iE0afWBcBwMTRtw4WHYP9TWkYjdiH3npPRUYsXQCPR0hTU9yjovOu+E6EQA==}
+  prettier@3.10.1:
+    resolution: {integrity: sha512-70vp3ZUYoPlFbF9uiTdXHUUCGEIp7d4+6p+8DYbkm2jP7x/3i/paXVF6dopSI3zd/CEitrZN1rc4i85xWmmXlg==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -10055,7 +10059,7 @@ snapshots:
       broccoli-funnel: 3.0.8(supports-color@8.1.1)
       dom-element-descriptors: 0.5.1
       ember-auto-import: 2.13.1(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
-      ember-cli-babel: 8.3.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      ember-cli-babel: 8.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-cli-htmlbars: 6.3.0(supports-color@8.1.1)
       ember-source: 5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
     transitivePeerDependencies:
@@ -10093,7 +10097,7 @@ snapshots:
       '@embroider/shared-internals': 3.1.1(supports-color@8.1.1)
       assert-never: 1.4.0
       babel-import-util: 3.0.1
-      ember-cli-babel: 8.3.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      ember-cli-babel: 8.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       find-up: 5.0.0
       lodash: 4.18.1
       resolve: 1.22.12
@@ -10200,7 +10204,7 @@ snapshots:
   '@fleetbase/ember-accounting@0.0.1(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)':
     dependencies:
       '@babel/core': 7.29.7(supports-color@8.1.1)
-      ember-cli-babel: 8.3.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      ember-cli-babel: 8.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-cli-htmlbars: 6.3.0(supports-color@8.1.1)
       ember-source: 5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
     transitivePeerDependencies:
@@ -10212,8 +10216,8 @@ snapshots:
       compress-json: 3.4.0
       date-fns: 2.30.0
       ember-auto-import: 2.13.1(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
-      ember-can: 6.0.0(@babel/core@7.29.7(supports-color@8.1.1))(@ember/string@3.1.1(supports-color@8.1.1))(ember-inflector@4.0.3(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1))(ember-resolver@11.0.1(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1))(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
-      ember-cli-babel: 8.3.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      ember-can: 6.0.0(@babel/core@7.29.7(supports-color@8.1.1))(@ember/string@3.1.1(supports-color@8.1.1))(ember-inflector@4.0.3(ember-source@5.4.1(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1))(ember-resolver@11.0.1(ember-source@5.4.1(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1))(ember-source@5.4.1(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
+      ember-cli-babel: 8.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-cli-htmlbars: 6.3.0(supports-color@8.1.1)
       ember-cli-notifications: 9.1.0(@babel/core@7.29.7(supports-color@8.1.1))(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
       ember-cli-string-helpers: 6.1.0(supports-color@8.1.1)
@@ -10290,9 +10294,9 @@ snapshots:
       date-fns: 2.30.0
       ember-animated: 1.1.4(@babel/core@7.29.7(supports-color@8.1.1))(@ember/test-helpers@3.3.1(@babel/core@7.29.7(supports-color@8.1.1))(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
       ember-auto-import: 2.13.1(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
-      ember-basic-dropdown: 8.4.0(@ember/test-helpers@3.3.1(@babel/core@7.29.7(supports-color@8.1.1))(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@glimmer/tracking@1.1.2)(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
-      ember-can: 6.0.0(@babel/core@7.29.7(supports-color@8.1.1))(@ember/string@3.1.1(supports-color@8.1.1))(ember-inflector@4.0.3(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1))(ember-resolver@11.0.1(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1))(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
-      ember-cli-babel: 8.3.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      ember-basic-dropdown: 8.4.0(@ember/test-helpers@3.3.1(@babel/core@7.29.7(supports-color@8.1.1))(ember-source@5.4.1(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@glimmer/tracking@1.1.2)(ember-source@5.4.1(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
+      ember-can: 6.0.0(@babel/core@7.29.7(supports-color@8.1.1))(@ember/string@3.1.1(supports-color@8.1.1))(ember-inflector@4.0.3(ember-source@5.4.1(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1))(ember-resolver@11.0.1(ember-source@5.4.1(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1))(ember-source@5.4.1(@babel/core@7.29.7(supports-color@8.1.1))(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
+      ember-cli-babel: 8.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-cli-htmlbars: 6.3.0(supports-color@8.1.1)
       ember-cli-postcss: 8.2.0(supports-color@8.1.1)
       ember-cli-string-helpers: 6.1.0(supports-color@8.1.1)
@@ -10362,7 +10366,7 @@ snapshots:
       '@babel/core': 7.29.7(supports-color@8.1.1)
       '@fleetbase/ember-core': 0.3.27(91c6517ac510ec48b89422c4310ad6d5)
       date-fns: 2.30.0
-      ember-cli-babel: 8.3.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      ember-cli-babel: 8.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-cli-htmlbars: 6.3.0(supports-color@8.1.1)
     transitivePeerDependencies:
       - '@ember/string'
@@ -11679,6 +11683,8 @@ snapshots:
 
   argparse@2.0.1: {}
 
+  argparse@3.0.4: {}
+
   aria-query@5.3.1: {}
 
   aria-query@5.3.2: {}
@@ -12737,13 +12743,7 @@ snapshots:
       base64-js: 1.5.1
       ieee754: 1.2.1
 
-  builtin-modules@3.3.0: {}
-
   builtin-status-codes@3.0.0: {}
-
-  builtins@5.1.0:
-    dependencies:
-      semver: 7.8.5
 
   bytes@1.0.0: {}
 
@@ -13722,7 +13722,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  ember-cli-babel@8.3.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1):
+  ember-cli-babel@8.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1):
     dependencies:
       '@babel/core': 7.29.7(supports-color@8.1.1)
       '@babel/helper-compilation-targets': 7.29.7
@@ -13735,7 +13735,7 @@ snapshots:
       '@babel/plugin-transform-runtime': 7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       '@babel/plugin-transform-typescript': 7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       '@babel/preset-env': 7.29.7(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
-      '@babel/runtime': 7.12.18
+      '@babel/runtime': 7.29.7
       amd-name-resolver: 1.3.1
       babel-plugin-debug-macros: 0.3.4(@babel/core@7.29.7(supports-color@8.1.1))
       babel-plugin-ember-data-packages-polyfill: 0.1.2
@@ -13745,6 +13745,7 @@ snapshots:
       broccoli-debug: 0.6.5(supports-color@8.1.1)
       broccoli-funnel: 3.0.8(supports-color@8.1.1)
       broccoli-source: 3.0.1
+      broccoli-string-replace: 0.1.2(supports-color@8.1.1)
       calculate-cache-key-for-tree: 2.0.0
       clone: 2.1.2
       ember-cli-babel-plugin-helpers: 1.1.1
@@ -14181,7 +14182,7 @@ snapshots:
       '@ember/render-modifiers': 2.1.0(@babel/core@7.29.7(supports-color@8.1.1))(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1)
       '@glimmer/component': 1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-auto-import: 2.13.1(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
-      ember-cli-babel: 8.3.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      ember-cli-babel: 8.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-cli-htmlbars: 6.3.0(supports-color@8.1.1)
       ember-element-helper: 0.8.8(supports-color@8.1.1)
       ember-source: 5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
@@ -14307,7 +14308,7 @@ snapshots:
     dependencies:
       '@babel/core': 7.29.7(supports-color@8.1.1)
       ember-auto-import: 2.13.1(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
-      ember-cli-babel: 8.3.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      ember-cli-babel: 8.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-cli-htmlbars: 6.3.0(supports-color@8.1.1)
       ember-element-helper: 0.8.8(supports-color@8.1.1)
       ember-source: 5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
@@ -14470,7 +14471,7 @@ snapshots:
       calculate-cache-key-for-tree: 2.0.0
       cldr-core: 44.1.0
       ember-auto-import: 2.13.1(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
-      ember-cli-babel: 8.3.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
+      ember-cli-babel: 8.3.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1)
       ember-cli-typescript: 5.3.0(supports-color@8.1.1)
       eventemitter3: 5.0.4
       extend: 3.0.2
@@ -14590,11 +14591,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  ember-page-title@8.2.4(ember-source@5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3)))(supports-color@8.1.1):
+  ember-page-title@9.1.0(supports-color@8.1.1):
     dependencies:
       '@embroider/addon-shim': 1.10.3(supports-color@8.1.1)
       '@simple-dom/document': 1.4.0
-      ember-source: 5.12.0(@glimmer/component@1.1.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(rsvp@4.8.5)(supports-color@8.1.1)(webpack@5.113.0(clean-css@5.3.3)(postcss@8.5.18)(uglify-js@3.19.3))
     transitivePeerDependencies:
       - supports-color
 
@@ -15118,25 +15118,23 @@ snapshots:
       eslint: 8.57.1(supports-color@8.1.1)
       eslint-compat-utils: 0.5.1(eslint@8.57.1(supports-color@8.1.1))
 
-  eslint-plugin-n@16.6.2(eslint@8.57.1(supports-color@8.1.1)):
+  eslint-plugin-n@18.5.0(eslint@8.57.1(supports-color@8.1.1)):
     dependencies:
       '@eslint-community/eslint-utils': 4.9.1(eslint@8.57.1(supports-color@8.1.1))
-      builtins: 5.1.0
+      enhanced-resolve: 5.27.0
       eslint: 8.57.1(supports-color@8.1.1)
       eslint-plugin-es-x: 7.8.0(eslint@8.57.1(supports-color@8.1.1))
       get-tsconfig: 4.14.0
-      globals: 13.24.0
+      globals: 15.15.0
+      globrex: 0.1.2
       ignore: 5.3.2
-      is-builtin-module: 3.2.1
-      is-core-module: 2.16.2
-      minimatch: 3.1.5
-      resolve: 1.22.12
+      js-yaml: 5.5.0
       semver: 7.8.5
 
-  eslint-plugin-prettier@5.5.7(@types/eslint@8.56.12)(eslint-config-prettier@9.1.2(eslint@8.57.1(supports-color@8.1.1)))(eslint@8.57.1(supports-color@8.1.1))(prettier@3.8.5):
+  eslint-plugin-prettier@5.5.7(@types/eslint@8.56.12)(eslint-config-prettier@9.1.2(eslint@8.57.1(supports-color@8.1.1)))(eslint@8.57.1(supports-color@8.1.1))(prettier@3.10.1):
     dependencies:
       eslint: 8.57.1(supports-color@8.1.1)
-      prettier: 3.8.5
+      prettier: 3.10.1
       prettier-linter-helpers: 1.0.1
       synckit: 0.12.3
     optionalDependencies:
@@ -16015,6 +16013,8 @@ snapshots:
     dependencies:
       type-fest: 0.20.2
 
+  globals@15.15.0: {}
+
   globalthis@1.0.4:
     dependencies:
       define-properties: 1.2.1
@@ -16428,10 +16428,6 @@ snapshots:
 
   is-buffer@1.1.6: {}
 
-  is-builtin-module@3.2.1:
-    dependencies:
-      builtin-modules: 3.3.0
-
   is-callable@1.2.7: {}
 
   is-core-module@2.16.2:
@@ -16664,6 +16660,10 @@ snapshots:
   js-yaml@4.3.2:
     dependencies:
       argparse: 2.0.1
+
+  js-yaml@5.5.0:
+    dependencies:
+      argparse: 3.0.4
 
   jsesc@1.3.0: {}
 
@@ -17976,7 +17976,7 @@ snapshots:
 
   prettier@2.8.8: {}
 
-  prettier@3.8.5: {}
+  prettier@3.10.1: {}
 
   pretty-ms@9.3.0:
     dependencies:
@@ -19126,9 +19126,9 @@ snapshots:
       stylelint: 15.11.0(supports-color@8.1.1)
       stylelint-config-recommended: 13.0.0(stylelint@15.11.0(supports-color@8.1.1))
 
-  stylelint-prettier@4.1.0(prettier@3.8.5)(stylelint@15.11.0(supports-color@8.1.1)):
+  stylelint-prettier@4.1.0(prettier@3.10.1)(stylelint@15.11.0(supports-color@8.1.1)):
     dependencies:
-      prettier: 3.8.5
+      prettier: 3.10.1
       prettier-linter-helpers: 1.0.1
       stylelint: 15.11.0(supports-color@8.1.1)
 

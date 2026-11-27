@@ -19,6 +19,7 @@ use Fleetbase\Quickbooks\Observers\FlagProductObserver;
 use Fleetbase\Quickbooks\Observers\FlagWalletObserver;
 use Fleetbase\Quickbooks\Support\Authorizer;
 use Fleetbase\Quickbooks\Support\ConnectionGate;
+use Fleetbase\Quickbooks\Support\SyncColumns;
 use Fleetbase\Quickbooks\Support\SyncSchedule;
 use Fleetbase\Support\NotificationRegistry;
 use Illuminate\Console\Scheduling\Schedule;
@@ -122,6 +123,7 @@ class QuickbooksServiceProvider extends CoreServiceProvider
         }
 
         $this->observeFleetbase();
+        SyncColumns::register();
     }
 
     private function observeFleetbase(): void

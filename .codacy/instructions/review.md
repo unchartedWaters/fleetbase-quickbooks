@@ -64,7 +64,7 @@
 
 ## Stack
 
-- PHP 8.2 (CI), Laravel 12 via `fleetbase/core-api ^2.0`,
+- PHP 8.2 (CI), Laravel 12 via `fleetbase/core-api ^2.0.1`,
   `fleetbase/fleetops-api ^0.7.1`, `fleetbase/ledger-api ^0.1.0`. Supports
   only Fleetbase 0.8.1 or later; 0.7 and core-api 1.x are not supported.
   QuickBooks HTTP goes through Laravel's `Http` client in `QuickBooksClient`.
@@ -180,6 +180,15 @@
   is kept in `refused_tax` so it is not sent again unchanged. A sync field
   added after organizations had copies goes in `SettingsKeys::LATER_SYNC_FIELDS`
   with the value that keeps the old behaviour.
+- The Customers and Invoices QuickBooks columns (`SyncColumns`,
+  `SyncColumnsTransformer`, `addon/extension.js`): data stays in the
+  `quickbooks_*` tables and reaches the console only as `meta.quickbooks` of an
+  internal HTTP list response (never public API, webhook or broadcast), only for
+  a user holding `quickbooks see extension`, and only on the row's own endpoint
+  so nested customers cost no queries. Sort and search join links by
+  `company_uuid`, `local_type` and `local_uuid`. Sort handlers and relations are
+  registered per exact model class (`Contact` and `Customer`); relations use
+  `expand()`, because Fleetbase models skip `resolveRelationUsing`.
 - A 401 gets one refresh and retry, then the connection is marked for reconnect;
   no unbounded retries.
 - Gates: connect returns 422 without Client ID, secret and a public https
