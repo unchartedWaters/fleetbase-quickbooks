@@ -42,7 +42,7 @@
     "publish:registry": "flb publish"
   },
   "dependencies": {
-    "@babel/core": "^7.23.2",
+    "@babel/core": "^7.29.13",
     "@embroider/test-setup": "^3.0.2",
     "@fleetbase/ember-core": "^0.3.27",
     "@fleetbase/ember-ui": "^0.4.7",
