@@ -36,7 +36,10 @@ class CompanyDetails
         $key    = 'quickbooks.company-details.' . $connection->company_uuid . '.' . $connection->realm_id;
         $cached = Cache::get($key);
         if (is_array($cached) === true) {
-            return $cached + $none;
+            return [
+                'company_name'  => is_string($cached['company_name'] ?? null) === true ? $cached['company_name'] : null,
+                'home_currency' => is_string($cached['home_currency'] ?? null) === true ? $cached['home_currency'] : null,
+            ];
         }
 
         $result  = $this->probe->probe(FleetbaseDirectory::connectionToArray($connection));
