@@ -18,17 +18,35 @@
                     {{/if}}
                 </p>
             {{else if this.isConnected}}
-                <p class="text-sm text-gray-500 mb-4" data-test-connected>
-                    {{#if @connection.environment}}
-                        {{t "quickbooks.connection.connected" realm=@connection.realm_id environment=this.environmentLabel}}
-                    {{else}}
-                        {{t "quickbooks.connection.connected-plain" realm=@connection.realm_id}}
+                <div data-test-connected>
+                    <p class="text-sm font-medium text-green-700 dark:text-green-400 mb-3">{{t "quickbooks.connection.connected-status"}}</p>
+                    <dl class="grid grid-cols-1 sm:grid-cols-[max-content_1fr] gap-x-8 gap-y-2 text-sm mb-4" data-test-connection-details>
+                        <dt class="font-medium text-gray-500 dark:text-gray-400">{{t "quickbooks.connection.company"}}</dt>
+                        <dd class="text-gray-900 dark:text-gray-100" data-test-company-name>
+                            {{#if @connection.company_name}}
+                                {{@connection.company_name}}
+                            {{else}}
+                                {{t "quickbooks.connection.company-unknown" realm=@connection.realm_id}}
+                            {{/if}}
+                        </dd>
+                        {{#if @connection.environment}}
+                            <dt class="font-medium text-gray-500 dark:text-gray-400">{{t "quickbooks.connection.environment"}}</dt>
+                            <dd class="text-gray-900 dark:text-gray-100" data-test-environment>{{this.environmentLabel}}</dd>
+                        {{/if}}
+                        {{#if this.quickbooksCurrency}}
+                            <dt class="font-medium text-gray-500 dark:text-gray-400">{{t "quickbooks.connection.currency"}}</dt>
+                            <dd class="text-gray-900 dark:text-gray-100" data-test-currency>{{this.quickbooksCurrency}}</dd>
+                        {{/if}}
+                    </dl>
+                    {{#if this.currencyMismatch}}
+                        <InfoBlock @type="warning" @icon="triangle-exclamation" class="mb-4" data-test-currency-mismatch>
+                            {{t "quickbooks.connection.currency-mismatch" quickbooks=this.quickbooksCurrency organization=this.organizationCurrency}}
+                        </InfoBlock>
                     {{/if}}
-                </p>
+                </div>
                 {{#if @connection.home_currency}}
                     <div class="text-sm text-gray-500 mb-4" data-test-home-currency>
-                        <p>{{t "quickbooks.connection.home-currency" currency=@connection.home_currency}}</p>
-                        <ul class="list-disc pl-5 mt-2 space-y-1">
+                        <ul class="list-disc pl-5 space-y-1">
                             <li>{{t "quickbooks.connection.home-currency-where"}}</li>
                             <li>{{t "quickbooks.connection.home-currency-invoices"}}</li>
                             <li>{{t "quickbooks.connection.home-currency-wallet"}}</li>

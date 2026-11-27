@@ -433,7 +433,8 @@ test('a company with no connection does not receive another company connection',
         session(['company' => 'owner-company']);
         $ownerShown = $controller->show(Request::create('/connection', 'GET'))->getData(true);
 
-        expect($ownerShown['connection']['realm_id'])->toBe('realm-owner');
+        expect($ownerShown['connection']['realm_id'])->toBe('realm-owner')
+            ->and($ownerShown['connection'])->toHaveKeys(['company_name', 'organization_currency']);
     } finally {
         if ($previousDispatcher !== null) {
             $container->instance(Dispatcher::class, $previousDispatcher);

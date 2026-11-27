@@ -11,6 +11,7 @@ use Fleetbase\Quickbooks\Models\PendingSync;
 use Fleetbase\Quickbooks\Models\SyncAttempt;
 use Fleetbase\Quickbooks\Models\SyncBatch;
 use Fleetbase\Quickbooks\Services\BatchRunner;
+use Fleetbase\Quickbooks\Services\CompanyDetails;
 use Fleetbase\Quickbooks\Services\CompanyReset;
 use Fleetbase\Quickbooks\Services\ConnectionProbe;
 use Fleetbase\Quickbooks\Services\ConnectionTokens;
@@ -46,6 +47,7 @@ class ConnectionController extends QuickbooksController
         private SettingsStore $store,
         private ConnectionProbe $probe,
         private ?QuickBooksClient $client = null,
+        private ?CompanyDetails $details = null,
     ) {
         parent::__construct($authorizer);
     }
@@ -793,22 +795,29 @@ class ConnectionController extends QuickbooksController
      *
      * @return array{
      *     realm_id: string|null,
+     *     company_name: string|null,
      *     environment: string|null,
      *     needs_reauth: bool,
      *     home_currency: string|null,
+     *     organization_currency: string|null,
      *     default_item_account: string|null,
      *     last_batch_at: string|null
      * }
      */
     private function forBrowser(Connection $connection): array
     {
+        $this->details ??= new CompanyDetails($this->probe);
+        $details       = $this->details->for($connection);
+
         return [
-            'realm_id'             => $connection->realm_id,
-            'environment'          => $connection->environment,
-            'needs_reauth'         => (bool) $connection->needs_reauth,
-            'home_currency'        => $connection->home_currency,
-            'default_item_account' => $connection->default_item_account,
-            'last_batch_at'        => $connection->last_batch_at?->toIso8601String(),
+            'realm_id'              => $connection->realm_id,
+            'company_name'          => $details['company_name'],
+            'environment'           => $connection->environment,
+            'needs_reauth'          => (bool) $connection->needs_reauth,
+            'home_currency'         => $details['home_currency'] ?? $connection->home_currency,
+            'organization_currency' => $this->details->organizationCurrency((string) $connection->company_uuid),
+            'default_item_account'  => $connection->default_item_account,
+            'last_batch_at'         => $connection->last_batch_at?->toIso8601String(),
         ];
     }
 

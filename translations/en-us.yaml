@@ -10,9 +10,12 @@ quickbooks:
     reauth-no-permission: QuickBooks needs to be connected again before sync can continue. You do not have permission to connect QuickBooks.
     reauth-unknown: QuickBooks needs to be connected again before sync can continue.
     reauth-save-first: QuickBooks needs to be connected again before sync can continue. First, an installation administrator must enter the QuickBooks credentials in Admin → QuickBooks → Settings.
-    connected: "Connected to QuickBooks company {realm} ({environment})."
-    connected-plain: "Connected to QuickBooks company {realm}."
-    home-currency: "The QuickBooks home currency is {currency}."
+    connected-status: Connected to QuickBooks.
+    company: Company
+    company-unknown: "Name not available right now (company ID {realm})"
+    environment: Environment
+    currency: Currency
+    currency-mismatch: "QuickBooks uses {quickbooks}, but this organization uses {organization}. Invoices in {organization} are sent only when Multicurrency is turned on in QuickBooks; otherwise they fail and show in Activity."
     home-currency-where: "To check it in QuickBooks, open the gear menu → Account and settings → Advanced → Currency."
     home-currency-invoices: Invoices in another currency are sent only when Multicurrency is turned on in QuickBooks. Otherwise they fail and show in Activity.
     home-currency-wallet: A wallet in another currency fails when it has no QuickBooks account yet and Fleetbase is Primary. A wallet already linked to an account is still sent.

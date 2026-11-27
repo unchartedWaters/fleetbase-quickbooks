@@ -575,6 +575,16 @@ records are queued to it, and the old refresh token is revoked at Intuit
 ![QuickBooks Setup when connected: company, environment, home currency
 notes, Sync now, and Disconnect][setup-connected]
 
+The Connection card lists the QuickBooks company name (not its ID), the
+environment, and the QuickBooks home currency with its name, such as
+"Canadian Dollar (CAD)". When that currency differs from the currency of the
+Fleetbase organization, a warning says so, because invoices in the
+organization's currency are then sent only when Multicurrency is turned on in
+QuickBooks. The name and currency are read from QuickBooks once a day per
+company and kept in the cache, so opening the page does not call QuickBooks
+each time. Until QuickBooks has answered, the card shows the company ID in
+place of the name and no currency.
+
 ![QuickBooks Setup when QuickBooks must be connected again: a red
 message, Connect to QuickBooks, and Disconnect][setup-reconnect]
 
@@ -625,7 +635,9 @@ its webhook subscription.
 The revoke is skipped while another organization is connected to the same
 QuickBooks company, so that organization stays connected.
 
-Home currency comes from QuickBooks Preferences. The admin-only
+The company name comes from QuickBooks CompanyInfo and the home currency from
+Preferences, which sends the currency code only. The console adds the currency
+name. The admin-only
 `POST /quickbooks/int/v1/connection/test` endpoint also reads Preferences; the
 console has no Test connection button. Tokens are refreshed before a sync,
 import, webhook job, or connection test when they expire within 5 minutes. HTTP
